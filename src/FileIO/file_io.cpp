@@ -617,7 +617,7 @@ void FileInfo::DrawFormatDialog() {
     ImGui::End();
 }
 
-
+#ifdef HAVE_HDF5
 // HDF5用フィールドマッピング設定ウィンドウ
 void FileInfo::ShowHDF5FieldMappingDialog() {
   if (!showHDF5MappingDialog) return;
@@ -743,7 +743,7 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
   
   ImGui::End();
 }
-
+#endif
 
 // ------------------------------
 // computeFormatInfo : 各トークンからレコードサイズと必要フィールドのオフセットを計算
