@@ -3,15 +3,48 @@
 # コンパイラ
 CC = gcc
 CXX = g++
+
+SRC_DIR := src
 BUILD_DIR := build
+EXTERNAL_DIR := external
+
+################## OPTIONS ####################
+OPTION += -DDEBUG_MODE
+
+OPTION += -DUSE_LUA
+OPTION += -DUSE_CONVEX_HULL
+OPTION += -DCLUMP_DATA_READ
+OPTION += -DISO_CONTOUR
+#OPTION += -DNONATIVEFILEDIALOG
+OPTION += -DGEOMETRICAL_ANALYSIS
+OPTION += -DUSE_TBB
+OPTION += -DHAVE_HDF5
+OPTION += -DUSE_MMAP
+
+OPTION += -DSAVE_GPU_MEMORY
+OPTION += -DROTATE_QUATERNION
+OPTION += -DROTATE_ARCBALL
+################################################
 
 UNAME_S := $(shell uname -s)
 ARCH := $(shell uname -m)
 
-NFD_SRC_C = nfd_common.c
+LDFLAGS := -lglfw -lgmp -lmpfr
+
+ifeq ($(findstring HAVE_HDF5, $(OPTION)), HAVE_HDF5)
+LDFLAGS += -lhdf5_cpp -lhdf5
+endif
+
+ifeq ($(findstring USE_LUA, $(OPTION)), USE_LUA)
+LDFLAGS += -llua
+endif
+
+ifeq ($(findstring USE_TBB, $(OPTION)), USE_TBB)
+LDFLAGS += -ltbb
+endif
 
 ifeq ($(UNAME_S), Darwin)
-NFD_SRC_M = nfd_cocoa.m
+NFD_SRC_M = nfd/nfd_cocoa.m
 NFD_LIBS = -framework Cocoa
 
 OPENMP_CFLAGS = -Xpreprocessor -fopenmp
@@ -27,6 +60,10 @@ INCL = -I${HOME}/usr/local/include/vtk-9.4  -I/usr/local/include -I/usr/local/op
 LIBS = -L${HOME}/usr/local/lib -L/usr/local/lib -L/usr/local/opt/libomp/lib
 EIGEN_INC := /usr/local/include/eigen3
 endif
+
+LDFLAGS += -framework OpenGL -framework Cocoa
+else
+LDFLAGS += -ldl -lGL -lpthread
 endif
 
 ifeq ($(UNAME_S),Linux)
@@ -41,51 +78,46 @@ OPENMP_CFLAGS = -fopenmp
 endif
 
 ifeq ($(UNAME_S),Windows_NT)
-NFD_SRC_CPP = nfd_win.cpp
+NFD_SRC_CPP = nfd/nfd_win.cpp
 NFD_LIBS =
 endif
 
-INCL += -I./include -I./imgui -I./imgui/backends -I./glad -I./glad/include/ -I./include/ -I./nativefiledialog/src/include/ -I./implot
-
-#OPTION += -DUSE_LUA
-#OPTION += -DUSE_CONVEX_HULL
-#OPTION += -DCLUMP_DATA_READ
-#OPTION += -DISO_CONTOUR
-#OPTION += -DNONATIVEFILEDIALOG
-#OPTION += -DGEOMETRICAL_ANALYSIS
-OPTION += -DHAVE_HDF5
-OPTION += -DUSE_MMAP
-
-OPTION += -DSAVE_GPU_MEMORY
-OPTION += -DROTATE_QUATERNION
-OPTION += -DROTATE_ARCBALL
+INCL += -I$(SRC_DIR) -I$(EXTERNAL_DIR)/imgui -I$(EXTERNAL_DIR)/imgui/backends -I$(EXTERNAL_DIR)/glad -I$(EXTERNAL_DIR)/glad/include/ -I$(EXTERNAL_DIR)/include/ -I$(EXTERNAL_DIR)/implot -I$(EXTERNAL_DIR)/nfd
 
 # コンパイルオプション（必要なインクルードディレクトリを指定）
-CFLAGS = -std=c11 -O0 -g -Wall $(INCL) $(OPENMP_CFLAGS) $(OPTION)
-CXXFLAGS = -std=c++17 -O0 -g -Wall $(INCL) -I$(EIGEN_INC) $(OPENMP_CFLAGS) $(OPTION) -fsanitize=address -fno-omit-frame-pointer
-OBJCFLAGS = -g -O0 -Wall $(INCL) $(FLAGS) $(OPTION)
+CFLAGS = -std=c11 -g -Wall $(INCL) $(OPENMP_CFLAGS) $(OPTION)
+CXXFLAGS = -std=c++17 -g -Wall $(INCL) -I$(EIGEN_INC) $(OPENMP_CFLAGS) $(OPTION)
+OBJCFLAGS = -g -Wall $(INCL) $(OPTION)
+LDFLAGS += $(LIBS) $(OPENMP_LDFLAGS)
 
-# OS 判定によりリンクオプションを設定
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    LDFLAGS = -lglfw -framework OpenGL -framework Cocoa $(LIBS) -lhdf5_cpp -lhdf5 -llua -lgmp -lmpfr
+ifeq ($(findstring DEBUG_MODE, $(OPTION)), DEBUG_MODE)
+CFLAGS += -O0
+CXXFLAGS += -O0 -fsanitize=address -fno-omit-frame-pointer
+OBJCFLAGS += -O0
 else
-    LDFLAGS = -lglfw -ldl -lGL -lpthread $(LIBS) -lhdf5_cpp -lhdf5 -llua -lgmp -lmpfr
+CFLAGS += -O2
+CXXFLAGS += -O2
+OBJCFLAGS += -O2
 endif
-
-LDFLAGS += $(OPENMP_LDFLAGS)
 
 # ソースファイル群
-SOURCES_CPP = main.cpp make_2D_projection_map.cpp find_clumps.cpp find_clumps_IO.cpp find_clumps_make_chains.cpp \
-          file_io.cpp file_io_hdf5.cpp compute_2D_histogram.cpp compute_radial_profile.cpp create_convex_hull.cpp \
-          ellipse_fitter.cpp \
-          imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_widgets.cpp imgui/imgui_demo.cpp imgui/imgui_tables.cpp \
-          imgui/backends/imgui_impl_glfw.cpp imgui/backends/imgui_impl_opengl3.cpp \
-          implot/implot.cpp implot/implot_items.cpp
+SRC_CPP_BASE = main.cpp make_2D_projection_map.cpp compute_2D_histogram.cpp compute_radial_profile.cpp 
+SRC_CPP_BASE += FileIO/file_io.cpp FileIO/file_io_hdf5.cpp
+SRC_CPP_BASE += FindClumps/find_clumps.cpp FindClumps/find_clumps_IO.cpp FindClumps/find_clumps_make_chains.cpp
+
+ifeq ($(findstring GEOMETRICAL_ANALYSIS, $(OPTION)), GEOMETRICAL_ANALYSIS)
+    SRC_CPP_BASE += GeometricAnalysis/ellipse_fitter.cpp
+endif
 
 ifeq ($(findstring USE_CONVEX_HULL, $(OPTION)), USE_CONVEX_HULL)
-    SOURCES_CPP += create_convex_hull.cpp
+    SRC_CPP_BASE += FindClumps/create_convex_hull.cpp
 endif
+
+IMGUI_CPP_BASE = imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_widgets.cpp imgui/imgui_demo.cpp imgui/imgui_tables.cpp\
+                 imgui/backends/imgui_impl_glfw.cpp imgui/backends/imgui_impl_opengl3.cpp
+
+IMPLOT_CPP_BASE = implot/implot.cpp implot/implot_items.cpp
+
 
 ifeq ($(findstring ISO_CONTOUR, $(OPTION)), ISO_CONTOUR)
 #    VTK_ROOT = /opt/homebrew/opt/vtk
@@ -114,28 +146,32 @@ ifeq ($(findstring ISO_CONTOUR, $(OPTION)), ISO_CONTOUR)
     # ライブラリ名は例えば -lvtkCommonCore-9.2 のようにバージョン付きになることに注意
     VTK_LIBS := -L$(VTK_LIB) $(foreach m,$(VTK_MODULES),-lvtk$(m)-$(VTK_VER)) -lvtksys-$(VTK_VER) -lvtkFiltersExtraction-$(VTK_VER)
 
-    SOURCES_CPP += iso_contour_self.cpp marching_cubes.cpp connectivity_test.cpp density_evaluate.cpp IsoSurfaceGenerator.cpp
+    INCL += -I$(SRC_DIR)/IsoSurface
+    SRC_CPP_BASE += IsoSurface/iso_contour_self.cpp IsoSurface/marching_cubes.cpp IsoSurface/connectivity_test.cpp IsoSurface/density_evaluate.cpp IsoSurface/IsoSurfaceGenerator.cpp
 
     CXXFLAGS += $(VTK_CXXFLAGS)
     LIBS += $(VTK_LIBS)
     LDFLAGS += $(VTK_LIBS) -Wl,-rpath,/Users/j/usr/local/lib
 endif
 
-
+NFD_SRC_C = nfd/nfd_common.c
 ifeq ($(findstring NONATIVEFILEDIALOG, $(OPTION)), NONATIVEFILEDIALOG)
-    SOURCES_CPP += ImGuiFileDialog/ImGuiFileDialog.cpp
-    INCL += -I./ImGuiFileDialog/
+    IMGUI_CPP_BASE += ImGuiFileDialog/ImGuiFileDialog.cpp
+    INCL += -I$(EXTERNAL_DIR)/ImGuiFileDialog/
     NFD_SRC_C =
     NFD_SRC_M =
     NFD_SRC_CPP =
     NFD_SRC_LIBS =
 endif
 
+SOURCES_CPP = $(addprefix $(SRC_DIR)/,$(SRC_CPP_BASE))\
+              $(addprefix $(EXTERNAL_DIR)/,$(IMGUI_CPP_BASE))\
+              $(addprefix $(EXTERNAL_DIR)/,$(IMPLOT_CPP_BASE))\
+              $(addprefix $(EXTERNAL_DIR)/,$(NFD_SRC_CPP))
 
-
-SOURCES_CPP += $(NFD_SRC_CPP)
-SOURCES_C = glad/src/glad.c nfd_common.c $(NFD_SRC_C)
-SOURCES_M = $(NFD_SRC_M)
+SRC_C_EXT_BASE = glad/src/glad.c $(NFD_SRC_C)
+SOURCES_C = $(addprefix $(EXTERNAL_DIR)/,$(SRC_C_EXT_BASE))
+SOURCES_M = $(addprefix $(EXTERNAL_DIR)/,$(NFD_SRC_M))
 
 # ソースファイルからオブジェクトファイル名を生成
 SOURCES = $(SOURCES_CPP) $(SOURCES_C) $(SOURCES_M)
