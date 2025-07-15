@@ -1,0 +1,507 @@
+// ParticleOctree.cpp
+#include "main.h"
+#include "ParticleOctree.h"
+#include "density_evaluate.h"
+#include <algorithm>
+#include "marching_cubes.h"
+
+// ——— ParticleOctree のコンストラクタ ———
+ParticleOctree::ParticleOctree(TrackingVector<ParticleDataForTree>&& all,
+                               const BoundingBox&                    worldBox,
+			       float                                 isoLevel,
+                               size_t                                minParticles,
+                               size_t                                maxDepth)
+  : particles_(std::move(all))
+  , isoLevel_(isoLevel)
+  , minParticles_(minParticles)
+  , maxDepth_(maxDepth)
+{
+  root_ = std::make_unique<Node>(worldBox, 0, particles_.size(), 0, nullptr, 0);
+  printf("aiu0\n");
+  
+  root_->subdivide(*this, particles_, isoLevel_, minParticles_, maxDepth_, 0);
+  printf("aiu1\n");
+
+  //computeValueRangeRoot();
+  
+  balanceTree();
+  computeValueRangeRoot();
+}
+
+// ——— 内部：Node を再帰生成 ———
+std::unique_ptr<ParticleOctree::Node>
+ParticleOctree::buildNode(const BoundingBox& box,
+                          size_t             start,
+                          size_t             count,
+                          size_t             depth)
+{
+  auto node = std::make_unique<Node>(box, start, count, 0, nullptr, 0);  
+  node->subdivide(*this, particles_, isoLevel_, minParticles_, maxDepth_, depth);
+
+  return node;
+}
+
+void ParticleOctree::Node::subdivide(ParticleOctree&           tree,  
+				     TrackingVector<ParticleDataForTree>& particles,
+				     float                                isoLevel,
+                                     size_t                               minParticles,
+                                     size_t                               maxDepth,
+                                     size_t                               depth,
+				     bool   force)
+{
+  if (force)
+    std::cout<<"[force] depth="<<depth<<" start="<<start<<" cnt="<<count<<'\n';
+  
+  if(!force){
+    computeValueRange(particles.data() + start,  count, minValue, maxValue);    
+    if (maxValue < isoLevel || minValue > isoLevel){
+      isLeaf = true;
+      return;
+    }
+  }
+
+  if(!force){
+    if (count < minParticles){
+      isLeaf = true;
+      return;
+    }
+  }
+  
+  // 1) 子ボックスを計算
+  glm::vec3 center = (box.min + box.max) * 0.5f;
+  std::array<BoundingBox,8> childBoxes;
+  for (int i = 0; i < 8; ++i) {
+    glm::vec3 newMin{
+      (i & 1) ? center.x : box.min.x,
+      (i & 2) ? center.y : box.min.y,
+      (i & 4) ? center.z : box.min.z
+    };
+    glm::vec3 newMax{
+      (i & 1) ? box.max.x : center.x,
+      (i & 2) ? box.max.y : center.y,
+      (i & 4) ? box.max.z : center.z
+    };
+    childBoxes[i] = BoundingBox{newMin, newMax};
+  }
+
+  // 2) まずは粒子を数えてみる（dry-run）
+  std::array<size_t,8> childCounts = {0,0,0,0,0,0,0,0};
+  auto itBegin = particles.begin() + start;
+  auto itEnd   = itBegin + count;
+  for (auto it = itBegin; it != itEnd; ++it) {
+    for (int i = 0; i < 8; ++i) {
+      if (childBoxes[i].contains(it->pos)) {
+	++childCounts[i];
+	break;
+      }
+    }
+  }
+
+  // 3) 子ノードのいずれかが minParticles 未満なら、分割せず葉に留める
+  /*if(!force){
+    for (size_t c : childCounts) {
+      if (c > 0 && c < minParticles) {
+	// （c==0 の空ボックスは無視；0でも OK）
+	return;  // isLeaf=true のまま
+      }
+    }
+    }*/
+  
+  // 深さ制限も確認
+  if (depth >= maxDepth) return;
+
+  // 4) 本当に subdivide する
+  isLeaf = false;
+  
+  for (int i = 0; i < 8; ++i) {
+    auto c = std::make_unique<Node>(childBoxes[i], 0, 0, depth+1, this, uint8_t(i));
+    children[i] = std::move(c);
+  }
+
+  // 5) in-place パーティショニング
+  auto beginIt = itBegin;
+  auto endIt   = itEnd;
+  size_t offset = start;
+  for (int i = 0; i < 8; ++i) {
+    const BoundingBox& cb = childBoxes[i];
+    auto it = std::partition(beginIt, endIt,
+			     [&](const ParticleDataForTree& p){ return cb.contains(p.pos); });
+    size_t newCount = std::distance(beginIt, it);
+    children[i]->start = offset;
+    children[i]->count = newCount;
+    offset += newCount;
+    beginIt = it;
+  }
+
+  // 6) 各子ノードを再帰的に subdivide
+  for (auto& child : children) {
+    if (child->count >= minParticles) {
+      child->subdivide(tree, particles, isoLevel, minParticles, maxDepth, depth + 1);
+    }
+  }
+}
+
+void ParticleOctree::balanceTree()
+{
+  bool didRefine = true;
+  int iloop=0;
+    
+  while (didRefine) {
+    didRefine = false;
+    printf("loop%d\n", iloop++);
+	
+    // ① 毎パス最新の葉リストを取り直す
+    TrackingVector<Node*> leaves;
+    collectLeaves(root_.get(), leaves);
+	
+    // ② 2-to-1 ルールを破るペアを探す
+    for (auto leaf : leaves) {
+      for (int dir = 0; dir < 6; ++dir) {
+
+	auto neighbors = findAllNeighbors(leaf, dir);
+	if (neighbors.empty()) continue;
+
+	// ③ 面接触するすべての隣とチェック
+	for (Node* nb : neighbors) {
+	  int depthGap = std::abs(int(nb->depth) - int(leaf->depth));
+	  if (depthGap < 2) continue;  // OK
+
+	  // ギャップ発見！
+	  std::cout << "[gap] leafDepth=" << leaf->depth
+		    << " nbDepth="  << nb->depth
+		    << " leafCnt="  << leaf->count
+		    << " nbCnt="    << nb->count << '\n';
+
+	  // 浅いほうを強制 subdivide
+	  Node* shallower = (leaf->depth < nb->depth) ? leaf : nb;
+	  std::cout << "[refine] node@" << shallower
+		    << " depth=" << shallower->depth
+		    << " cnt="   << shallower->count << '\n';
+
+	  shallower->subdivide(*this,
+			       particles_,
+			       isoLevel_,
+			       minParticles_,
+			       maxDepth_,
+			       shallower->depth,
+			       /*force=*/true);
+
+	  didRefine = true;
+	  break;  // この方向はもう OK
+	}
+	
+	if (didRefine) break;
+      }
+      if (didRefine) break;
+    }
+  }
+}
+
+
+// 全葉ノードを depth‐first に集める
+
+/*
+namespace {
+
+constexpr float kEps = 1e-6f;
+
+/// [a0,a1] と [b0,b1] が 1 次元で重なっているか
+inline bool overlap(float a0, float a1, float b0, float b1)
+{
+    return a1 > b0 + kEps && b1 > a0 + kEps;
+}
+
+/// dir=0..5 のそれぞれで “この box が targetBox と面を共有し得る” か
+inline bool maybeNeighbor(const BoundingBox& box,
+                          const BoundingBox& target,
+                          int dir)
+{
+    switch (dir) {
+        case 0: // +X
+            return std::abs(box.min.x - target.max.x) < kEps &&
+                   overlap(box.min.y, box.max.y, target.min.y, target.max.y) &&
+                   overlap(box.min.z, box.max.z, target.min.z, target.max.z);
+        case 1: // -X
+            return std::abs(box.max.x - target.min.x) < kEps &&
+                   overlap(box.min.y, box.max.y, target.min.y, target.max.y) &&
+                   overlap(box.min.z, box.max.z, target.min.z, target.max.z);
+        case 2: // +Y
+            return std::abs(box.min.y - target.max.y) < kEps &&
+                   overlap(box.min.x, box.max.x, target.min.x, target.max.x) &&
+                   overlap(box.min.z, box.max.z, target.min.z, target.max.z);
+        case 3: // -Y
+            return std::abs(box.max.y - target.min.y) < kEps &&
+                   overlap(box.min.x, box.max.x, target.min.x, target.max.x) &&
+                   overlap(box.min.z, box.max.z, target.min.z, target.max.z);
+        case 4: // +Z
+            return std::abs(box.min.z - target.max.z) < kEps &&
+                   overlap(box.min.x, box.max.x, target.min.x, target.max.x) &&
+                   overlap(box.min.y, box.max.y, target.min.y, target.max.y);
+        case 5: // -Z
+            return std::abs(box.max.z - target.min.z) < kEps &&
+                   overlap(box.min.x, box.max.x, target.min.x, target.max.x) &&
+                   overlap(box.min.y, box.max.y, target.min.y, target.max.y);
+    }
+    return false;
+}
+
+} 
+
+ParticleOctree::Node*
+ParticleOctree::findNeighbor(Node* node,
+                             const BoundingBox& target,
+                             int dir)
+{
+    if (!node) return nullptr;
+    if (!maybeNeighbor(node->box, target, dir))
+        return nullptr;
+
+    // 1) このノードが leaf なら “候補” として返す（ただし捜索は続行して最深を選ぶ）
+    Node* bestLeaf = nullptr;
+    if (node->isLeaf) {
+        bestLeaf = node;              // 深さは node->depth
+    }
+
+    // 2) internal なら子へ降りて “より深い leaf” を探す
+    if (!node->isLeaf) {
+        for (auto& child : node->children) {
+            if (Node* hit = findNeighbor(child.get(), target, dir)) {
+                if (!bestLeaf || hit->depth > bestLeaf->depth)
+                    bestLeaf = hit;   // より深ければ置き換え
+            }
+        }
+    }
+    return bestLeaf;                 // 最深 leaf（無ければ nullptr）
+}
+*/
+
+// -------------- ParticleOctree.cpp ----------------
+namespace {
+
+// 方向 dir (0..5) で face を共有するか
+bool touchesFace(const BoundingBox& a, const BoundingBox& b, int dir)
+{
+    const float eps = 1e-7f;
+    auto overlap = [&](float a0,float a1,float b0,float b1){
+        return a1 > b0 + eps && b1 > a0 + eps;
+    };
+    switch (dir) {
+        case 0: return std::abs(a.max.x - b.min.x) < eps &&
+                       overlap(a.min.y,a.max.y,b.min.y,b.max.y) &&
+                       overlap(a.min.z,a.max.z,b.min.z,b.max.z);
+        case 1: return std::abs(a.min.x - b.max.x) < eps &&
+                       overlap(a.min.y,a.max.y,b.min.y,b.max.y) &&
+                       overlap(a.min.z,a.max.z,b.min.z,b.max.z);
+        case 2: return std::abs(a.max.y - b.min.y) < eps &&
+                       overlap(a.min.x,a.max.x,b.min.x,b.max.x) &&
+                       overlap(a.min.z,a.max.z,b.min.z,b.max.z);
+        case 3: return std::abs(a.min.y - b.max.y) < eps &&
+                       overlap(a.min.x,a.max.x,b.min.x,b.max.x) &&
+                       overlap(a.min.z,a.max.z,b.min.z,b.max.z);
+        case 4: return std::abs(a.max.z - b.min.z) < eps &&
+                       overlap(a.min.x,a.max.x,b.min.x,b.max.x) &&
+                       overlap(a.min.y,a.max.y,b.min.y,b.max.y);
+        case 5: return std::abs(a.min.z - b.max.z) < eps &&
+                       overlap(a.min.x,a.max.x,b.min.x,b.max.x) &&
+                       overlap(a.min.y,a.max.y,b.min.y,b.max.y);
+    }
+    return false;
+}
+
+} // ── anonymous ns
+
+// ------------ 全葉スキャン版 findNeighbor -------------
+ParticleOctree::Node*
+ParticleOctree::findNeighbor(Node* /*unused*/,
+                             const BoundingBox& box,
+                             int dir)
+{
+    // 1) いまの全 leaf を一覧
+    TrackingVector<Node*> leaves;
+    collectLeaves(root_.get(), leaves);
+
+    Node* best = nullptr;
+    for (Node* n : leaves) {
+        if (touchesFace(box, n->box, dir)) {
+            if (!best || n->depth > best->depth) best = n; // 最深 leaf
+        }
+    }
+    return best;     // 無ければ nullptr
+}
+
+inline int siblingIndex(int dir, int myIdx) {
+    // child インデックスはビット構成 (bx,by,bz) = (myIdx&1, (myIdx>>1)&1, (myIdx>>2)&1)
+    // axisBits = 0 for X, 1 for Y, 2 for Z
+    const int axis = (dir/2);             // 0,1,2
+    const int mask = 1 << axis;           // flip したいビットマスク
+    return myIdx ^ mask;                  // ビットを反転させたインデックスが兄弟
+}
+
+TrackingVector<ParticleOctree::Node*>
+ParticleOctree::findAllNeighbors(const Node* leaf, int dir) const {
+  TrackingVector<Node*> result;
+  const Node* cur = leaf;
+
+  // 親をたどって、各レベルで兄弟サブツリーを探す
+  while (cur->parent) {
+    uint8_t myIdx  = cur->childIdx;
+    uint8_t sibIdx = siblingIndex(dir, myIdx);
+    Node* sib = cur->parent->children[sibIdx].get();
+    if (sib) {
+      // その兄弟配下から面接触するすべての葉を集める
+      collectFaceLeaves(sib, dir, leaf->box, result);
+    }
+    cur = cur->parent;
+  }
+
+  return result;
+}
+
+// dir 方向の面を origBox と共有する sib サブツリー配下のすべての葉を out に追加
+void ParticleOctree::collectFaceLeaves(Node* sib,
+				       int          dir,
+				       const BoundingBox& origBox,
+				       TrackingVector<Node*>& out) const
+{
+  if (sib->isLeaf) {
+    if (touchesFace(sib->box, origBox, dir)) 
+      out.push_back(sib);
+    return;
+  }
+
+  const int axis = dir / 2;              // 0=X,1=Y,2=Z
+  const int want = (dir % 2 == 0 ? 1 : 0);// + 方向は bit=0, - 方向は bit=1
+
+  // 子を４つに絞ってチェック
+  for (uint8_t ci = 0; ci < 8; ++ci) {
+    if (((ci >> axis) & 1) != want) 
+      continue;              // 反対側の子は見に行かない
+    auto* c = sib->children[ci].get();
+    if (!c) continue;
+    if (touchesFace(c->box, origBox, dir)) {
+      collectFaceLeaves(c, dir, origBox, out);
+    }
+  }
+}
+
+namespace {
+  inline float sqDistPointAABB(const glm::vec3& p, const BoundingBox& b)
+  {
+    float dx = std::max(std::max(b.min.x - p.x, 0.0f), p.x - b.max.x);
+    float dy = std::max(std::max(b.min.y - p.y, 0.0f), p.y - b.max.y);
+    float dz = std::max(std::max(b.min.z - p.z, 0.0f), p.z - b.max.z);
+    return dx*dx + dy*dy + dz*dz;
+  }  
+} 
+
+// ------------- public -------------
+void ParticleOctree::querySphere(const glm::vec3& center,
+                                 float            radius,
+                                 TrackingVector<const ParticleDataForTree*>& out) const
+{
+    out.clear();
+    querySphereRecursive(root_.get(), center, radius*radius, out);
+}
+
+// ------------- private -------------
+
+void ParticleOctree::querySphereRecursive(
+        const Node*                     node,
+        const glm::vec3&                center,
+        float                           radius2,
+        TrackingVector<const ParticleDataForTree*>& out) const
+{
+  if (!node) return;
+
+  // AABB と球が交差しなければ探索打ち切り
+  if (sqDistPointAABB(center, node->box) > radius2) return;
+
+  if (node->isLeaf) {
+    // 粒子を直接チェック
+    const ParticleDataForTree* base = &particles_[node->start];
+    for (size_t i = 0; i < node->count; ++i) {
+      const auto& p = base[i];
+      float r2 = glm::dot(p.pos - center, p.pos - center);
+      if (r2 <= radius2)
+	out.push_back(&p);
+    }
+  } else {
+    for (const auto& c : node->children)
+      querySphereRecursive(c.get(), center, radius2, out);
+  }
+}
+
+static void printRangesRecursive(const ParticleOctree::Node* n, int indent = 0)
+{
+    if (!n) return;
+    std::string pad(indent * 2, ' ');
+    std::cout << pad << "depth=" << n->depth
+              << "  min=" << n->minValue
+              << "  max=" << n->maxValue << '\n';
+
+    if (!n->isLeaf) {
+        for (const auto& c : n->children)
+            printRangesRecursive(c.get(), indent + 1);
+    }
+}
+
+void ParticleOctree::debugPrintRanges() const
+{
+    std::cout << "=== Octree value ranges ===\n";
+    printRangesRecursive(root_.get());
+    std::cout << "===========================\n";
+}
+
+
+void ParticleOctree::evaluateDensityForAllLeaves(){
+  TrackingVector<ParticleDataForKdTree> particles;
+  particles.reserve(particles_.size());
+  
+  for(auto& pc : particles_){
+    ParticleDataForKdTree p;
+    p.pos = pc.pos;
+    p.val = pc.val;
+
+    particles.push_back(p);
+  }
+
+  SPHInterpolator sph(std::move(particles));
+
+  auto leaves = getAllLeafNodes();    
+  for (auto& leaf : leaves) {
+    for (int i=0;i<8;i++) {
+      auto offs = MarchingCubes::cubeOffsets[i];
+	
+      glm::vec3 extents = leaf->box.max - leaf->box.min;
+      glm::vec3 samplePos = leaf->box.min + offs * extents;
+      
+      float v = sph.sample(samplePos);
+      leaf->edgeValues[i] = v;
+    }
+  }    
+}
+
+bool ParticleOctree::contains(const ParticleOctree::Node* n, const glm::vec3 &p) {
+  return (p.x >= n->box.min.x && p.x <= n->box.max.x &&
+          p.y >= n->box.min.y && p.y <= n->box.max.y &&
+          p.z >= n->box.min.z && p.z <= n->box.max.z);
+}
+
+const ParticleOctree::Node* ParticleOctree::findLeafContainingRoot(const glm::vec3 &p)
+{
+  return findLeafContaining(root_.get(), p);
+}
+
+const ParticleOctree::Node* ParticleOctree::findLeafContaining(const ParticleOctree::Node* node, const glm::vec3 &p)
+{
+  if (node->isLeaf) return node;
+  for (unsigned i = 0; i < 8; ++i) {
+    const auto* c = node->children[i].get();
+    if (contains(c, p))
+      return findLeafContaining(c, p);
+  }
+  // 万一どこにも入らなければ root を返す（理想的には起きない）
+  printf("why?? we could not find the leaf conataining point p=%g %g %g\n", p.x, p.y, p.z);
+
+  return node;
+}

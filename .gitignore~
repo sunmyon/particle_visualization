@@ -1,0 +1,7 @@
+# macOS
+.DS_Store
+
+# ビルド成果物
+*.o
+*.dSYM/
+*.exe
