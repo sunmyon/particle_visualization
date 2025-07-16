@@ -2449,6 +2449,15 @@ void ShowSettingsUI() {
     
     ImGui::InputFloat("Threshold value for iso-contour", &isoLevel);
     ImGui::SliderFloat("Opacity", &isoOpacity, 0.0f, 1.0f); // ← これ
+
+    static int max_treelevel = 15;
+    ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
+
+    const char* quantities_iso[] = { "Density", "Temperature", "val", "val2", "Mass" };
+    // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
+    static int selectedVar_iso = 0;
+    ImGui::Combo("Quantity for Iso-Contour", &selectedVar_iso, quantities_iso, IM_ARRAYSIZE(quantities_iso));
+    std::string var_iso = quantities_iso[selectedVar_iso];
     
     if (ImGui::Button("Build OctTree & Mesh")) {
       showIsocontour = true;
@@ -2456,7 +2465,7 @@ void ShowSettingsUI() {
       TrackingVector<ParticleDataForTree> particles;
       particles.reserve(P->particles.size());
       for (const auto& pd : P->particles) {
-	float val = pd.density;
+	float val = pd.getValue(var_iso);
 	particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
       }
 
@@ -2473,7 +2482,7 @@ void ShowSettingsUI() {
       params.worldBox    = worldBox;
       params.isoLevel    = isoLevel;
       params.minParticles = 8;
-      params.maxDepth     = 15;
+      params.maxDepth     = max_treelevel;
 
       auto mesh = IsoSurfaceGenerator::generateVTK(std::move(params));
 
