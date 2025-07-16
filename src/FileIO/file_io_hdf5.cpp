@@ -31,6 +31,35 @@ bool readAttributeScalar(H5::Group &grp, const std::string &attrName, T &value)
 };
 
 
+template<typename T, int D>
+void readHyperslab(H5::DataSet &ds,
+                   T *out,        // バッファ (count==1 のときは length=T[1], D==2なら T[3])
+                   size_t idx)    // 先頭インデックス
+{
+  // 1) ファイル空間
+  H5::DataSpace fs = ds.getSpace();
+  hsize_t dims[D];
+  fs.getSimpleExtentDims(dims);
+
+  // 2) hyperslab のオフセット／ブロック
+  hsize_t offset[D] = {};
+  hsize_t count[D];
+  for (int i = 0; i < D; ++i) count[i] = (i==0 ? 1 : dims[i]);
+  offset[0] = idx;
+  fs.selectHyperslab(H5S_SELECT_SET, count, offset);
+
+  // 3) メモリ空間
+  H5::DataSpace ms(D, count);
+
+  // 4) 読み込み
+  ds.read(out,
+          std::is_same<T,float>::value   ? H5::PredType::NATIVE_FLOAT
+        : std::is_same<T,int32_t>::value ? H5::PredType::NATIVE_INT32
+        :                                   H5::PredType::NATIVE_DOUBLE,
+          ms, fs);
+}
+
+
 template<typename T, size_t N>
   bool readAttributeArray(H5::Group &grp, const std::string &attrName, T (&arr)[N])
 {
@@ -102,170 +131,109 @@ void readDatasetHdf5(H5::Group &group,
 
 
 bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
-  try {
-    // 1) ファイルを開く
-    file_ = H5::H5File(filename, H5F_ACC_RDONLY);
+  // 1) ファイルを開く
+  file_ = H5::H5File(filename, H5F_ACC_RDONLY);
 
-    // 2) /Header グループを開き、各属性を読み込む
-    H5::Group headerGroup = file_.openGroup("/Header");
-    readAttributeScalar(headerGroup, "Time",                   hdr.time);
-    readAttributeScalar(headerGroup, "BoxSize",                hdr.boxSize);
-    readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
-    readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
-    readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
+  // 2) /Header グループを開き、各属性を読み込む
+  H5::Group headerGroup = file_.openGroup("/Header");
+  readAttributeScalar(headerGroup, "Time",                   hdr.time);
+  readAttributeScalar(headerGroup, "BoxSize",                hdr.boxSize);
+  readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
+  readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
+  readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
 
-    readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);
-    readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
-    readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
+  readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);
+  readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
+  readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
 
-    readAttributeArray (headerGroup, "NumPart_ThisFile",      hdr.NumPart_ThisFile);
-    readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
+  readAttributeArray (headerGroup, "NumPart_ThisFile",       hdr.NumPart_ThisFile);
+  readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
 
-    // 3) /Parameters グループから追加フラグを読み込む
+  npart_ = 0;
+  for(int k=0;k<6;k++){
+    mass_type[k] = hdr.massTable[k];
+    npart_ += hdr.NumPart_ThisFile[k];
+  }
+  
+  factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS);
+  if (hdr.flag_comoving)
+    factor_density_ *= std::pow(hdr.time, -3) * hdr.HubbleParam * hdr.HubbleParam;
+  
+  factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
+  
+  // 3) /Parameters グループから追加フラグを読み込む
+  try{
     H5::Group paramGroup = file_.openGroup("/Parameters");
     readAttributeScalar(paramGroup, "ComovingIntegrationOn",  hdr.flag_comoving);
+  }catch (const H5::Exception &e) {
+    printf("Can't fine group /Parameters\n");
+    hdr.flag_comoving = 0;
+  }
+  
+  hdr.flag_hdf5 = true;
+  
+  size_t globalOff = 0;
+  for(int t=0; t<6; ++t) {
+    //if (flag_skip_DM && (t == 1 || t == 2)) continue;
+      
+    std::string gname = "/PartType" + std::to_string(t);
+    if (!groupExists(file_, gname))
+      continue;
 
-    hdr.flag_hdf5 = true;
+    H5::Group grp = file_.openGroup(gname);
+    int64_t cnt = hdr.NumPart_ThisFile[t];
+      
+    PartGroup pg;
+    pg.type  = t;
+    pg.count = cnt;
 
-    // 4) 総粒子数を取得して配列を確保
-    int64_t totalN = 0;
-    readAttributeScalar(headerGroup, "NumParticles", totalN);
-    hdr.npart = static_cast<int>(totalN);
-    particles_.clear();
-    particles_.reserve(hdr.npart);
+    // 3) トークンごとに FieldSet を作成
+    for(size_t i=0; i<fmt_.tokens.size(); ++i) {
+      auto &tk = fmt_.tokens[i];
+      if (strcmp(tk.label, "dummy") == 0)
+	continue;
+	
+      DataType dty = tk.type;
+      int dim = tk.count;
 
-    // 5) 各 PartType グループをループ処理
-    for (int itype = 0; itype < 6; ++itype) {
-      // 例として Type1, Type2 はスキップ
-      if (itype == 1 || itype == 2) continue;
+      // ラベル→FieldType
+      auto it = labelToField.find(tk.label);
+      FieldType fType = (it!=labelToField.end()
+			 ? it->second
+			 : FieldType::Unknown);
 
-      // グループ名を組み立て
-      char grpName[32];
-      std::snprintf(grpName, sizeof(grpName), "/PartType%d", itype);
-
-      // グループが存在しなければスキップ
-      if (!groupExists(file_, grpName)) {
-        std::cout << grpName << " does not exist. Skipping.\n";
-        continue;
+      bool flag_exist = test_dataset(t, fType);
+      if(flag_exist == false)
+	continue;
+      
+      // データセットを open
+      try{
+	H5::DataSet ds = grp.openDataSet(tk.displayName);
+	PartGroup::FieldSet fs { fType, ds, dty, dim };
+	
+	fs.filespace = fs.ds.getSpace();
+	
+	hsize_t blk[2] = { blockSize_, static_cast<hsize_t>(dim) };
+	fs.memspace  = H5::DataSpace(2, blk);
+	
+	size_t typeSize = (fs.dType==DataType::Double ? sizeof(double)
+			   : fs.dType==DataType::Float   ? sizeof(float)
+			   : sizeof(int32_t));
+	fs.rawBuf.resize(blockSize_ * dim * typeSize);
+	
+	pg.fields.push_back(std::move(fs));
+      }catch (const H5::Exception &e) {
+	printf("Type%d dataset%zu label%s name%s not found.\n", t, i, tk.label, tk.displayName);
       }
-
-      H5::Group grp = file_.openGroup(grpName);
-
-      // 5-1) このタイプの粒子数だけ一時バッファに確保
-      int count = hdr.NumPart_ThisFile[itype];
-      TrackingVector<ParticleData> tmp(count);
-      for (auto &p : tmp) p.type = itype;
-
-      readDatasetHdf5<ParticleData, float, 3>(grp, posName_, tmp,
-        [](ParticleData &p, const float xyz[3]) {
-          p.pos[0] = xyz[0];  p.pos[1] = xyz[1];  p.pos[2] = xyz[2];
-          p.original_pos[0] = xyz[0];  p.original_pos[1] = xyz[1];  p.original_pos[2] = xyz[2];
-        },
-        H5::PredType::NATIVE_FLOAT
-      );
-
-      readDatasetHdf5<ParticleData, float, 3>(grp, velName_, tmp,
-        [](ParticleData &p, const float v[3]) {
-          p.vel[0] = v[0];  p.vel[1] = v[1];  p.vel[2] = v[2];
-        },
-        H5::PredType::NATIVE_FLOAT
-      );
-
-      readDatasetHdf5<ParticleData, float, 1>(grp, massName_, tmp,
-        [](ParticleData &p, const float m[1]) {
-          p.mass = m[0];
-        },
-        H5::PredType::NATIVE_FLOAT
-      );
-
-      readDatasetHdf5<ParticleData, int32_t, 1>(grp, idName_, tmp,
-        [](ParticleData &p, const int32_t id[1]) {
-          p.ID = id[0];
-        },
-        H5::PredType::NATIVE_INT
-      );
-
-      if (itype == 0) {
-        readDatasetHdf5<ParticleData, float, 1>(grp, densityName_, tmp,
-          [](ParticleData &p, const float d[1]) {
-            p.density = d[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, valName_, tmp,
-          [](ParticleData &p, const float v[1]) {
-            p.val = v[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, val2Name_, tmp,
-          [](ParticleData &p, const float v[1]) {
-            p.val2 = v[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, elecName_, tmp,
-          [](ParticleData &p, const float u[1]) {
-            p.temperature = XH + XHe + u[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, h2iName_, tmp,
-          [](ParticleData &p, const float u[1]) {
-            p.temperature -= u[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, gammaName_, tmp,
-          [](ParticleData &p, const float gamma[1]) {
-            p.temperature = (gamma[0] - 1.0) / p.temperature;
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        readDatasetHdf5<ParticleData, float, 1>(grp, ieName_, tmp,
-          [](ParticleData &p, const float u[1]) {
-            p.temperature *= u[0];
-          },
-          H5::PredType::NATIVE_FLOAT
-        );
-
-        // 物理単位変換
-        double fac_d = hdr.UnitMass_in_g /
-                       std::pow(hdr.UnitLength_in_cm, 3) /
-                       (1.2 * PROTONMASS);
-        if (hdr.flag_comoving)
-          fac_d *= std::pow(hdr.time, -3) * hdr.HubbleParam * hdr.HubbleParam;
-
-        double fac_t = PROTONMASS / BOLTZMANN *
-                       hdr.UnitVelocity_in_cm_per_s *
-                       hdr.UnitVelocity_in_cm_per_s;
-
-        for (auto &p : tmp) {
-          p.originalHsml = std::pow(p.mass / p.density * 3.0 / (4.0 * M_PI), 1.0 / 3.0);
-
-          p.temperature *= fac_t;
-          p.density     *= fac_d;
-        }
-      }
-
-      // 6) tmp を全体バッファに追加
-      particles_.insert(particles_.end(), tmp.begin(), tmp.end());
     }
 
-    // 7) 読み出しインデックス初期化
-    curIndex_ = 0;
-    return true;
+    parts_.push_back(std::move(pg));
+    IndexStart[t] = globalOff;
+    globalOff += cnt;
   }
-  catch (const H5::Exception &e) {
-    std::cerr << "HDF5 open/read error: " << e.getDetailMsg() << "\n";
-    return false;
-  }
+  
+  curIndex_ = 0;
+  return true;
 }
 
 

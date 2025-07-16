@@ -141,11 +141,104 @@ void ParticleOctree::Node::subdivide(ParticleOctree&           tree,
   }
 }
 
+#define TEST1 1
+
 void ParticleOctree::balanceTree()
 {
   bool didRefine = true;
   int iloop=0;
+
+#ifdef TEST1
+  TrackingVector<Node*> leaves;
+  collectLeaves(root_.get(), leaves);
+
+  std::vector<Node*> current;
+  for (auto leaf : leaves){
+    bool flag_violate = false;
+    for (int dir = 0; dir < 6; ++dir) {
+      auto neighbors = findAllNeighbors(leaf, dir);
+      if (neighbors.empty()) continue;
+
+      for (Node* nb : neighbors) {
+	int depthGap = std::abs(int(nb->depth) - int(leaf->depth));
+	if (depthGap < 2)
+	  continue;  // OK
+	
+	flag_violate = true;
+	break;
+      }      
+    }
     
+    if (flag_violate)
+      current.push_back(leaf);
+  }
+
+  std::vector<Node*> next; 
+  while (!current.empty()) {
+    next.clear();
+#pragma omp parallel
+    {
+      // スレッドローカルバッファ
+      std::vector<Node*> local_next;
+      local_next.reserve(current.size());
+	
+#pragma omp for schedule(dynamic)
+      for (int i = 0; i < (int)current.size(); ++i) {
+	Node* leaf = current[i];
+
+	if (!leaf->isLeaf)
+	  continue;
+
+	bool leafWasSubdivided = false;
+	for (int dir = 0; dir < 6 && !leafWasSubdivided; ++dir) {
+	  for (Node* nb : findAllNeighbors(leaf, dir)) {
+	    int gap = std::abs(int(nb->depth) - int(leaf->depth));
+	    if (gap < 2) 
+	      continue;
+	    
+	    // 差が2以上 → subdivide
+	    Node* shallower = (leaf->depth < nb->depth) ? leaf : nb;
+	    
+	    if (shallower->try_mark_subdivided()) {
+#pragma omp critical
+	      {
+		shallower->subdivide(*this,
+				     particles_,
+				     isoLevel_,
+				     minParticles_,
+				     maxDepth_,
+				     shallower->depth,
+				     /*force=*/true);
+	      }
+	    }
+	    // subdivide 波及チェック用にキューへ
+	    for (const auto& uptr : shallower->children) {
+	      Node* c = uptr.get();      // unique_ptr<Node> → Node*
+	      if (c)                     // nullptr チェック（念のため）
+		local_next.push_back(c);
+	    }
+	    
+	    // もう一方のセルも enqueue
+	    Node* other = (shallower == leaf ? nb : leaf);
+	    if (other->isLeaf)
+	      local_next.push_back(other);
+	    
+	    // leaf 自身を subdivide した場合だけ後続チェック不要
+	    if (shallower == leaf) {
+	      leafWasSubdivided = true;
+	      break;
+	    }
+	  }
+
+	}
+      }
+      // スレッドローカル → グローバル next へマージ
+#pragma omp critical
+      next.insert(next.end(), local_next.begin(), local_next.end());
+    }
+    current.swap(next);
+  }
+#else
   while (didRefine) {
     didRefine = false;
     printf("loop%d\n", iloop++);
@@ -157,7 +250,6 @@ void ParticleOctree::balanceTree()
     // ② 2-to-1 ルールを破るペアを探す
     for (auto leaf : leaves) {
       for (int dir = 0; dir < 6; ++dir) {
-
 	auto neighbors = findAllNeighbors(leaf, dir);
 	if (neighbors.empty()) continue;
 
@@ -195,6 +287,7 @@ void ParticleOctree::balanceTree()
       if (didRefine) break;
     }
   }
+#endif
 }
 
 

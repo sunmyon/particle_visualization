@@ -44,6 +44,12 @@ public:
     bool                                    isLeaf;    ///< 葉ノードかどうか
     float                                   minValue, maxValue;  
 
+    std::atomic_flag subdivided_flag = ATOMIC_FLAG_INIT;
+
+    bool try_mark_subdivided() {
+      return !subdivided_flag.test_and_set(std::memory_order_acquire);
+    }
+    
     Node*     parent    = nullptr;  // 親ポインタ
     uint8_t   childIdx  = 0;        // 親から見た自分の子番号 (0..7)
     Node(const BoundingBox& b, size_t s, size_t c, size_t d,

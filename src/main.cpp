@@ -172,8 +172,14 @@ void loadConfig() {
 	if (!std::getline(iss, tokenCountStr)) continue;
 	FormatToken ft;
 	std::strncpy(ft.label, tokenLabel.c_str(), sizeof(ft.label)-1);
-	ft.type = (tokenType == "float") ? 'f' : 'i';
+
+	ft.type = (tokenType == "float") ? DataType::Float :
+	  (tokenType == "int32")  ? DataType::Int32 :(tokenType == "int") ? DataType::Int32 :
+	  (tokenType == "int64") ? DataType::Int64 : (tokenType == "long long") ? DataType::Int64 :
+	  DataType::Double;
+	
 	ft.count = std::stoi(tokenCountStr);
+	FormatToken::SetDefaultDisplayName(ft);
 	gFileInfo->formatTokens.push_back(ft);
       }
     }  else if (line.find("ParticleType") == 0) {
@@ -226,7 +232,7 @@ void saveConfig() {
     outfile << "TokenCount=" << gFileInfo->formatTokens.size() << "\n";
     for (size_t i = 0; i < gFileInfo->formatTokens.size(); i++) {
         outfile << gFileInfo->formatTokens[i].label << "," 
-                << ((gFileInfo->formatTokens[i].type=='f')?"float":"int") << ","
+                << ((gFileInfo->formatTokens[i].type==DataType::Float)?"float":(gFileInfo->formatTokens[i].type==DataType::Int32)?"int32":(gFileInfo->formatTokens[i].type==DataType::Int64)?"int64":"double") << ","
                 << gFileInfo->formatTokens[i].count << "\n";
     }
     // ここから粒子タイプごとの設定を保存
@@ -1841,7 +1847,7 @@ void ShowSettingsUI() {
     
     if (ImGui::Button("Edit Data Format")) {
 #ifdef HAVE_HDF5
-      if (gFileInfo->useHDF5)
+      if (gFileInfo->useHDF5 || gFileInfo->getFormatMode() == static_cast<int>(FileFormat::HDF5))
 	gFileInfo->showHDF5Dialog();
       else
 #endif

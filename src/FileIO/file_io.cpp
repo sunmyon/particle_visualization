@@ -412,27 +412,27 @@ int ParticleArray::readClumpData(int snapshotIndex){
 void FileInfo::initDefaultFormatTokens() {
     formatTokens.clear();
     FormatToken token;
-    std::strcpy(token.label, "position"); token.type = 'f'; token.count = 3;
+    std::strcpy(token.label, "position"); token.type = DataType::Float; token.count = 3;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "dummy"); token.type = 'f'; token.count = 1;
+    std::strcpy(token.label, "dummy"); token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "value"); token.type = 'f'; token.count = 1;
+    std::strcpy(token.label, "value"); token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "value2"); token.type = 'f'; token.count = 1;
+    std::strcpy(token.label, "value2"); token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "mass"); token.type = 'f'; token.count = 1;
+    std::strcpy(token.label, "mass"); token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "dummy"); token.type = 'f'; token.count = 10;
+    std::strcpy(token.label, "dummy"); token.type = DataType::Float; token.count = 10;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "Hsml"); token.type = 'f'; token.count = 10;
+    std::strcpy(token.label, "Hsml"); token.type = DataType::Float; token.count = 10;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "density"); token.type = 'f'; token.count = 10;
+    std::strcpy(token.label, "density"); token.type = DataType::Float; token.count = 10;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "temperature"); token.type = 'f'; token.count = 10;
+    std::strcpy(token.label, "temperature"); token.type = DataType::Float; token.count = 10;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "type"); token.type = 'i'; token.count = 1;
+    std::strcpy(token.label, "type"); token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "ID"); token.type = 'i'; token.count = 1;
+    std::strcpy(token.label, "ID"); token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
 }
 
@@ -444,7 +444,7 @@ void FileInfo::DrawFormatDialog() {
   if (!showFormatDialog) return;
   
     ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
-
+    
     if(!ImGui::Begin("Edit Data Format", &showFormatDialog)){
       ImGui::End();
       return;
@@ -458,7 +458,7 @@ void FileInfo::DrawFormatDialog() {
 	char buf[128];
 	std::snprintf(buf, sizeof(buf), "%s, %s, count=%d",
                       formatTokensEdit[i].label,
-                      (formatTokensEdit[i].type == 'f') ? "float" : (formatTokensEdit[i].type == 'i') ? "int": "double",
+                      (formatTokensEdit[i].type == DataType::Float) ? "float" : (formatTokensEdit[i].type == DataType::Int32) ? "int": "double",
                       formatTokensEdit[i].count);
 
         // リスト内の項目として表示（Selectable を使う）
@@ -535,59 +535,59 @@ void FileInfo::DrawFormatDialog() {
 	    // ここで、選択されたラベルに応じて型を自動的に設定する例
             if (strcmp(availableLabels[currentLabelIndex], "type") == 0) {
                 // 例: "type" が選ばれたら整数型にする
-                formatTokensEdit[i].type = 'i';
+                formatTokensEdit[i].type = DataType::Int32;
             }
 	    
             if (strcmp(availableLabels[currentLabelIndex], "ID") == 0) {
                 // 例: "type" が選ばれたら整数型にする
-                formatTokensEdit[i].type = 'i';
+                formatTokensEdit[i].type = DataType::Int32;;
             }
 
             if (strcmp(availableLabels[currentLabelIndex], "density") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "temperature") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 	    
             if (strcmp(availableLabels[currentLabelIndex], "value") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "value2") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "position") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "velocity") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "mass") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
 
 	    if (strcmp(availableLabels[currentLabelIndex], "dummy") == 0) {
                 // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = 'f';
+                formatTokensEdit[i].type = DataType::Float;
             }
         }
 	
-        const char* types[] = { "float", "int", "double" };
-        int currentType = (formatTokensEdit[i].type == 'f') ? 0 : (formatTokensEdit[i].type == 'i') ? 1 : 2;
+        const char* types[] = { "float", "int", "int64", "double" };
+        int currentType = static_cast<int>(formatTokensEdit[i].type);
         ImGui::Combo("Type", &currentType, types, IM_ARRAYSIZE(types));
-        formatTokensEdit[i].type = (currentType == 0) ? 'f' : (currentType == 1) ? 'i' : 'd';
+        formatTokensEdit[i].type = static_cast<DataType>(currentType);	
         ImGui::InputInt("Count", &formatTokensEdit[i].count);
         if (ImGui::Button("Delete")) {
             formatTokensEdit.erase(formatTokensEdit.begin() + i);
@@ -602,7 +602,7 @@ void FileInfo::DrawFormatDialog() {
     if (ImGui::Button("Add Token")) {
         FormatToken newToken;
         std::strcpy(newToken.label, "dummy");
-        newToken.type = 'f';
+        newToken.type = DataType::Float;
         newToken.count = 1;
         formatTokensEdit.push_back(newToken);
     }
@@ -618,7 +618,121 @@ void FileInfo::DrawFormatDialog() {
 }
 
 #ifdef HAVE_HDF5
-// HDF5用フィールドマッピング設定ウィンドウ
+void FileInfo::ShowHDF5FieldMappingDialog() {
+  if (!showHDF5MappingDialog) return;
+  
+  ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+
+  if(!ImGui::Begin("Edit HDF5 Data Format", &showHDF5MappingDialog)){
+    ImGui::End();
+    return;
+  }
+
+  for (auto &tok : formatTokensEdit) {
+    if (tok.displayName[0] == '\0') {
+      FormatToken::SetDefaultDisplayName(tok);
+    }
+  }
+  
+  const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internal energy", "electron fraction", "H2 fraction", "Gamma"};
+
+  // テーブルを使って列をそろえる
+  if (ImGui::BeginTable("FieldTable", 6,
+			ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
+    ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
+    ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < (int)formatTokensEdit.size(); ++i) {
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+
+      // 行番号（または選択用アイコンなど）
+      ImGui::Text("%d", i + 1);
+
+      // Label 列：ドロップダウン＋自由入力
+      ImGui::TableNextColumn();
+      if (ImGui::BeginCombo("##labelCombo", formatTokensEdit[i].label)) {
+	for (int n = 0; n < IM_ARRAYSIZE(availableLabels); n++) {
+	  bool is_selected = (strcmp(formatTokensEdit[i].label, availableLabels[n]) == 0);
+	  if (ImGui::Selectable(availableLabels[n], is_selected)) {
+	    strcpy(formatTokensEdit[i].label, availableLabels[n]);
+	    if (strcmp(availableLabels[n], "ID") == 0)
+	      formatTokensEdit[i].type = DataType::Int32;
+	    else
+	      formatTokensEdit[i].type = DataType::Float;
+	  }
+	  if (is_selected) ImGui::SetItemDefaultFocus();
+	}
+	ImGui::EndCombo();
+      }
+
+      // DisplayName (手入力)
+      ImGui::TableNextColumn();
+      ImGui::PushItemWidth(-1);
+      ImGui::InputText("##displayName", formatTokensEdit[i].displayName,
+		       IM_ARRAYSIZE(formatTokensEdit[i].displayName));
+      ImGui::PopItemWidth();
+
+      // Type 列
+      const char* types[] = { "float", "int", "int64", "double" };
+      ImGui::TableNextColumn();
+      int currentType = static_cast<int>(formatTokensEdit[i].type);
+      if (ImGui::Combo("##type", &currentType, types, IM_ARRAYSIZE(types))) {
+	formatTokensEdit[i].type = static_cast<DataType>(currentType);
+      }
+
+      // Count 列
+      ImGui::TableNextColumn();
+      ImGui::InputInt("##count", &formatTokensEdit[i].count, 1, 10);
+      if (formatTokensEdit[i].count < 1) formatTokensEdit[i].count = 1;
+
+      // Delete ボタン
+      ImGui::TableNextColumn();
+      if (ImGui::Button("-", ImVec2(24,24))) {
+	formatTokensEdit.erase(formatTokensEdit.begin() + i);
+	ImGui::PopID();
+	--i;
+	continue;
+      }
+
+      ImGui::PopID();
+    }
+
+    ImGui::EndTable();
+  }
+
+  // フィールド追加ボタン
+  if (ImGui::Button("Add field")) {
+    FormatToken newToken;
+    strcpy(newToken.label, "dummy");
+    newToken.type  = DataType::Float;
+    newToken.count = 1;
+    std::strncpy(newToken.displayName, "", sizeof(newToken.displayName));
+    newToken.displayName[sizeof(newToken.displayName)-1] = '\0';    
+    formatTokensEdit.push_back(newToken);
+  }
+  ImGui::SameLine();
+  // 確定・キャンセル
+  if (ImGui::Button("OK")) {
+    formatTokens = formatTokensEdit;
+    showHDF5MappingDialog = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel")) {
+    showHDF5MappingDialog = false;
+  }
+    
+  ImGui::End();
+}
+
+
+/*
 void FileInfo::ShowHDF5FieldMappingDialog() {
   if (!showHDF5MappingDialog) return;
   
@@ -742,7 +856,7 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
   }
   
   ImGui::End();
-}
+}*/
 #endif
 
 // ------------------------------
@@ -755,18 +869,7 @@ bool FileInfo::computeFormatInfo(const TrackingVector<FormatToken>& tokens, Form
   
   for (const auto &token : tokens) {
     std::string lbl(token.label);
-
-    size_t size_item;
-    if (token.type == 'f'){
-      size_item = sizeof(float);
-    }else if (token.type == 'i'){
-      size_item = sizeof(int);
-    }else if (token.type == 'd'){
-      size_item = sizeof(double);
-    }else{
-      std::cerr << "Unknown token type: " << token.type << std::endl;
-      return false;
-    }
+    size_t size_item = dataTypeSize(token.type);
     
     if (lbl == "position") {
       info.posOffset = info.recordSize;
@@ -876,21 +979,11 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
     // 2) 拡張子／useHDF5 フラグでリーダーの種類を決定
 #ifdef HAVE_HDF5
     if (ext == ".h5" || ext == ".hdf5") {
-      reader = std::make_unique<HDF5ParticleReader>(candidatePosNames,
-						    candidateVelNames,
-						    candidateMassNames,
-						    candidateIDNames,
-						    candidateDensityNames,
-						    candidateTemperatureNames,
-						    candidateValNames,
-						    candidateVal2Names,
-						    candidateElecNames,
-						    candidateH2INames,
-						    candidateGammaNames,
-						    candidateInternalEnergyNames);
+      fmt.tokens = formatTokens;
+      reader = std::make_unique<HDF5ParticleReader>(fmt);
     }
-#endif
-
+#endif   
+    
     if (!reader) {
       // ネイティブバイナリ or mmap
       // 3) バイナリ系だけここでフォーマット解析
@@ -947,18 +1040,8 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
 
 #ifdef HAVE_HDF5
   case FileFormat::HDF5: {
-    reader = std::make_unique<HDF5ParticleReader>(candidatePosNames,
-						  candidateVelNames,
-						  candidateMassNames,
-						  candidateIDNames,
-						  candidateDensityNames,
-						  candidateTemperatureNames,
-						  candidateValNames,
-						  candidateVal2Names,
-						  candidateElecNames,
-						  candidateH2INames,
-						  candidateGammaNames,
-						  candidateInternalEnergyNames);
+    fmt.tokens = formatTokens;
+    reader = std::make_unique<HDF5ParticleReader>(fmt);
     break;
   }    
 #endif
