@@ -634,7 +634,7 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     }
   }
   
-  const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internal energy", "electron fraction", "H2 fraction", "Gamma"};
+  const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy", "electronfraction", "H2fraction", "Gamma"};
 
   // テーブルを使って列をそろえる
   if (ImGui::BeginTable("FieldTable", 6,
@@ -731,132 +731,6 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
   ImGui::End();
 }
 
-
-/*
-void FileInfo::ShowHDF5FieldMappingDialog() {
-  if (!showHDF5MappingDialog) return;
-  
-  ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
-
-  if(!ImGui::Begin("Edit HDF5 Data Format", &showHDF5MappingDialog)){
-    ImGui::End();
-    return;
-  }
-
-  if (ImGui::BeginTable("data format", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
-    {
-      // 1行目: Position
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Position");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Coordinates", candidatePosNames, IM_ARRAYSIZE(candidatePosNames));
-
-      
-      // 1行目: Position
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Velocity");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Velocities", candidateVelNames, IM_ARRAYSIZE(candidateVelNames));
-
-
-      // 2行目: Mass
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Mass");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Masses", candidateMassNames, IM_ARRAYSIZE(candidateMassNames));
-
-
-      // 3行目: ID
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("ID");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##ID", candidateIDNames, IM_ARRAYSIZE(candidateIDNames));
-
-
-      // 5行目: Density
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Density");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Density", candidateDensityNames, IM_ARRAYSIZE(candidateDensityNames));
-
-
-      // 6行目: Temperature
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Temperature");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Temperature", candidateTemperatureNames, IM_ARRAYSIZE(candidateTemperatureNames));
-
-      // 7行目: ElectronAbundance
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("ElectronAbundance");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##ElectronAbundance", candidateElecNames, IM_ARRAYSIZE(candidateElecNames));
-
-      // 8行目: H2IAbundance
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("H2IAbundance");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##H2IAbundance", candidateH2INames, IM_ARRAYSIZE(candidateH2INames));
-
-      // 9行目: Gamma
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Gamma");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Gamma", candidateGammaNames, IM_ARRAYSIZE(candidateGammaNames));
-
-      // 10行目: InternalEnergy
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("InternalEnergy");
-      ImGui::TableSetColumnIndex(1);    
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##InternalEnergy", candidateInternalEnergyNames, IM_ARRAYSIZE(candidateInternalEnergyNames));
-
-
-      // 11行目: Val
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Val");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Val", candidateValNames, IM_ARRAYSIZE(candidateValNames));
-
-
-      // 12行目: Val2
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("Val2");
-      ImGui::TableSetColumnIndex(1);
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);	  
-      ImGui::InputText("##Val2", candidateVal2Names, IM_ARRAYSIZE(candidateVal2Names));
-
-      ImGui::EndTable();
-    }
-  
-  if (ImGui::Button("OK")) {
-    showHDF5MappingDialog = false;
-  }
-  
-  ImGui::End();
-}*/
 #endif
 
 // ------------------------------
@@ -954,11 +828,15 @@ bool FileInfo::computeFormatInfo(const TrackingVector<FormatToken>& tokens, Form
 
 
 bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& particles, HeaderInfo &hdr) {
+  hdr.UnitLength_in_cm = UnitLength_in_cm;
+  hdr.UnitMass_in_g = UnitMass_in_g;
+  hdr.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
+  hdr.HubbleParam = Hubble;
+  
   // 1) フルパスを組み立て
   char fileName[512];
   std::snprintf(fileName, sizeof(fileName), fileFormat, fileNumber);
   std::string fullPath = std::string(folderPath) + fileName;
-
 
   // 拡張子が .h5/.hdf5 なら HDF5
   std::string ext;
@@ -1201,10 +1079,10 @@ void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>&
 
   if(Header.flag_hdf5 == true){
     UnitLength_in_pc   = Header.UnitLength_in_cm / 3.08e18;;
-    UnitMass_in_msolar = Header.UnitMass_in_g / 1.998e33;
+    UnitMass_in_msolar = Header.UnitMass_in_g / 1.998e33;    
     Hubble             = Header.HubbleParam;
     useComovingCorrdinate = Header.flag_comoving;
-
+    
     setUnits();
   }
   

@@ -1,5 +1,5 @@
-FileFormat=output_Zindaiji3_%04d
-FolderPath=/Users/j/Library/CloudStorage/Dropbox/VISUALIZATION/example/
+FileFormat=snap_%03d.hdf5
+FolderPath=/Users/j/Downloads/
 TokenCount=11
 position,float,3
 velocity,float,3
@@ -7,10 +7,10 @@ Hsml,float,1
 type,int32,1
 ID,int32,1
 density,float,1
-temperature,float,1
+internalenergy,float,1
 value,float,1
 value2,float,1
-dummy,float,4
+dummy,float,19
 mass,float,1
 ParticleType0_Size=1.993
 ParticleType0_Min=0
@@ -44,8 +44,8 @@ ParticleType5_Periodic=0
 ParticleType5_UseLog=1
 NormalizationFactor=100
 skipStep=100
-currentStep=9
+currentStep=0
 UnitMass_in_msolar=1e+10
 UnitLength_in_pc=1000
 Hubble=0.677
-useComovingCorrdinate=1
+useComovingCorrdinate=0

@@ -141,10 +141,10 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
   readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
   readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
   readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
-  
-  bool flag_unit_read = readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);
-  flag_unit_read = readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
-  flag_unit_read = readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
+
+  readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);  
+  readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
+  readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
 
   readAttributeArray (headerGroup, "NumPart_ThisFile",       hdr.NumPart_ThisFile);
   readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
@@ -153,15 +153,6 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
   for(int k=0;k<6;k++){
     mass_type[k] = hdr.massTable[k];
     npart_ += hdr.NumPart_ThisFile[k];
-  }
-
-  factor_density_ = factor_temperature_ = 1.;
-  if(flag_unit_read == true){
-    factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS);
-    if (hdr.flag_comoving)
-      factor_density_ *= std::pow(hdr.time, -3) * hdr.HubbleParam * hdr.HubbleParam;
-    
-    factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
   }
   
   // 3) /Parameters グループから追加フラグを読み込む
@@ -172,8 +163,19 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
     printf("Can't fine group /Parameters\n");
     hdr.flag_comoving = 0;
   }
+
+  factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS) * hdr.HubbleParam * hdr.HubbleParam;
+  if (hdr.flag_comoving && hdr.time > 0.)
+    factor_density_ *= std::pow(hdr.time, -3);
+  
+  factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
+
+  printf("factors=%g %g Unit=%g %g %g\n", factor_density_, factor_temperature_, hdr.UnitLength_in_cm, hdr.UnitMass_in_g, hdr.UnitVelocity_in_cm_per_s);
   
   hdr.flag_hdf5 = true;
+
+  flag_computeTemperature_ = true;
+  bool flag_read_internal_energy = false;
   
   size_t globalOff = 0;
   for(int t=0; t<6; ++t) {
@@ -209,7 +211,7 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
 	continue;
       
       // データセットを open
-      try{
+      try{		
 	H5::DataSet ds = grp.openDataSet(tk.displayName);
 	//H5::PredType dtype = ds.getDataType();
 	H5::DataType baseType = ds.getDataType();
@@ -218,6 +220,7 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
 	PartGroup::FieldSet fs { fType, ds, dtype, dim };
 	
 	fs.filespace = fs.ds.getSpace();
+	std::strncpy(fs.name,tk.displayName, sizeof(fs.name)-1);
 	
 	hsize_t blk[2] = { blockSize_, static_cast<hsize_t>(dim) };
 	fs.memspace  = H5::DataSpace(2, blk);
@@ -226,6 +229,12 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
 	fs.rawBuf.resize(blockSize_ * dim * typeSize);
 	
 	pg.fields.push_back(std::move(fs));
+
+	if(t==0 && strcmp(tk.label,"temperature") == 0)
+	  flag_computeTemperature_ = false;
+
+	if(t==0 && strcmp(tk.label,"internalenergy") == 0)
+	  flag_read_internal_energy = true;	
       }catch (const H5::Exception &e) {
 	printf("Type%d dataset%zu label%s name%s not found.\n", t, i, tk.label, tk.displayName);
       }
@@ -235,6 +244,11 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
     IndexStart[t] = globalOff;
     globalOff += cnt;
   }
+
+  printf("flag_computeTemperature_=%d\n", flag_computeTemperature_);
+  
+  if(flag_read_internal_energy == false)
+    flag_computeTemperature_ = false;
   
   curIndex_ = 0;
   return true;

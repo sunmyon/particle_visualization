@@ -855,6 +855,7 @@ class HDF5ParticleReader : public IParticleReader {
       H5::DataSpace filespace;     // open() で取得・保持
       H5::DataSpace memspace;      // open() で作成 (2D: {blockSize, dim})
       std::vector<char> rawBuf;    // blockSize×dim×sizeof(type)
+      char name[255];
     };
     std::vector<FieldSet>     fields;     // この PartType に含まれるすべてのトークン
   };
@@ -899,6 +900,9 @@ public:
       
       // 4) 型ごとに一時バッファを用意して読み込み
 
+      if(curIndex_ < 10)
+	printf("ftype=%d\n", fs.fType);
+      
       if(fs.dType == H5::PredType::NATIVE_FLOAT){
 	float* buf = reinterpret_cast<float*>(base);
 	switch (fs.fType) {
@@ -919,10 +923,10 @@ public:
 	  break;
 	}
 
-      }else if(fs.dType == H5::PredType::NATIVE_INT32){
+      }else if(fs.dType == H5::PredType::NATIVE_INT32 || fs.dType == H5::PredType::NATIVE_UINT){
 	int* buf = reinterpret_cast<int*>(base);
 	assignField<int32_t>(p, fs.fType, buf, fs.dim);
-      }else if(fs.dType == H5::PredType::NATIVE_LLONG){
+      }else if(fs.dType == H5::PredType::NATIVE_LLONG || fs.dType == H5::PredType::NATIVE_ULLONG){
 	long long* buf = reinterpret_cast<long long*>(base);
 	std::vector<int> tmp(fs.dim);
 	for (int i = 0; i < fs.dim; ++i)
@@ -952,16 +956,18 @@ public:
 	  break;
 	}
       }else{
-	printf("Unknown data type for this field...\n");
+	if(localIdx < 10)
+	  printf("Unknown data type for this field... label:%s\n", fs.name);
       }            
     }
     
     // 5) 温度の後処理（必要なら）
-    if (flag_computeTemperature_) 
+    if (flag_computeTemperature_) {
       p.temperature = computeTemperature_(electronFrac, H2Frac, gammaVal, intEnergy);
-
+      p.temperature *= factor_temperature_;
+    }
+    
     p.originalHsml = std::pow(p.mass / p.density * 3.0 / (4.0 * M_PI), 1.0 / 3.0);    
-    p.temperature *= factor_temperature_;
     p.density     *= factor_density_;
    
     ++curIndex_;
@@ -985,6 +991,9 @@ private:
 
   if(gamma < 0.)
     gamma = 5./3.;
+
+  if(curIndex_ < 10)
+    printf("gamma=%g Eint=%g denom=%g val=%g\n", gamma, Eint, denom, (gamma - 1.0f) * Eint / denom);
   
   return (gamma - 1.0f) * Eint / denom;
 }
@@ -1137,8 +1146,8 @@ public:
   char folderPath[255] = "./example/";              // 末尾に "/" を付加する
   char filePath[512] = "./example/output_0000.dat";              // 末尾に "/" を付加する
 
-  int currentBatchStart = initialIndex;  // 現在のバッチの開始ファイル番号
-
+  int currentBatchStart = initialIndex;  // 現在のバッチの開始ファイル番号  
+  
   // ------------------------------
   // データフォーマット編集用ダイアログ用変数
   // ------------------------------
@@ -1186,7 +1195,12 @@ private:
   void initDefaultFormatTokens();
   bool computeFormatInfo(const TrackingVector<FormatToken>& tokens, FormatInfo &info);  
   void load_particle_from_buffer(const char* base, int npart, int recordSize, FormatInfo &info, TrackingVector<ParticleData>& particles);
-    
+
+  double UnitLength_in_cm;
+  double UnitMass_in_g;
+  double UnitVelocity_in_cm_per_s;
+  double Hubble;
+  
 public:
   FileInfo(CameraContext& cam):
     camCtx(cam)
@@ -1194,6 +1208,12 @@ public:
     initDefaultFormatTokens();
   }
 
+  void setUnit(ParticleArray *P){
+    UnitLength_in_cm = P->UnitLength_in_cm;
+    UnitMass_in_g = P->UnitMass_in_g;
+    UnitVelocity_in_cm_per_s = P->UnitVelocity_in_cgs;
+    Hubble = P->Hubble;
+  }
   
   void loadNewSnapshot(int newindex, ParticleArray* P);
   void loadBatch(int targetFile, int batchSize, int skipStep, ParticleArray *P);

@@ -2529,6 +2529,7 @@ void ShowSettingsUI() {
 
     if(unitChanged){
       P->setUnits();
+      gFileInfo->setUnit(P);
     }
     
     if(ImGui::CollapsingHeader("Zoom Range")){
@@ -3103,13 +3104,13 @@ void ShowTopParticlesUI() {
   for(size_t i=0;i<historyData.size();i++){
     auto &p = historyData[i];
     
-    char label[128];
+    char label[256];
     std::snprintf(label, sizeof(label),
-		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), radius = %g density=%g temp=%g",
+		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g H=%g",
 		  p.ID, p.mass * (P->UnitMass_in_msolar/P->Hubble),
 		  p.pos[0], p.pos[1], p.pos[2],
 		  p.vel[0], p.vel[1], p.vel[2]
-		  , p.originalHsml, p.density, p.temperature);
+		  , p.originalHsml, p.density, p.temperature, P->Hubble);
 
     if (ImGui::Selectable(label)) {
       // 選択された粒子の位置をカメラの注視点に設定
@@ -3217,11 +3218,14 @@ void ShowTopParticlesUI() {
 
   ImGui::Text("Type %d : Showing top %d particles sorted by mass", particleType, count);
   for (int i = 0; i < count; i++) {
-    char label[128];
+    char label[256];
     std::snprintf(label, sizeof(label),
-		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), radius = %g",
+		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g Hubble=%g",
 		  filtered[i].ID, filtered[i].mass * (P->UnitMass_in_msolar/P->Hubble),
-		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2], filtered[i].originalHsml);
+		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2],
+		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2],
+		  filtered[i].originalHsml,
+		  filtered[i].density, filtered[i].temperature, P->Hubble);
     if (ImGui::Selectable(label)) {
       // 選択された粒子の位置をカメラの注視点に設定
       float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
@@ -3847,6 +3851,8 @@ int main() {
   InitBuffers();     // OpenGL の VAO/VBO の初期化
   loadConfig();
 
+  gFileInfo->setUnit(P);
+  
   int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
   gFileInfo->loadBatch(newFileIndex, gFileInfo->batchSize, gFileInfo->skipStep, P);      
   
