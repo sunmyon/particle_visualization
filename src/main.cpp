@@ -1562,33 +1562,37 @@ void ShowTime(){
 
 std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
 {
-    // 最後の数字がある位置を探す
-    size_t pos = filename.find_last_of("0123456789");
+  size_t dotPos = filename.find_last_of('.');
+  std::string basename = (dotPos == std::string::npos) ? filename : filename.substr(0, dotPos);
+  std::string extension = (dotPos == std::string::npos) ? "" : filename.substr(dotPos); 
+
+  // 最後の数字がある位置を探す
+    size_t pos = basename.find_last_of("0123456789");
     if (pos == std::string::npos)
         return std::make_pair(filename, 0); // 数字が見つからなければそのまま返す
 
     // 数字部分の開始位置を後ろから辿って求める
     size_t numEnd = pos;
     size_t numStart = pos;
-    while (numStart > 0 && std::isdigit(filename[numStart - 1])) {
+    while (numStart > 0 && std::isdigit(basename[numStart - 1])) {
         numStart--;
     }
     size_t numLen = numEnd - numStart + 1;
 
     // ファイル名の前半部分（数字部分以前）を取得
-    std::string prefix = filename.substr(0, numStart);
+    std::string prefix = basename.substr(0, numStart);
     // この例では数字部分以降の文字列は取り除く（必要に応じて拡張子などを扱えます）
     std::string suffix = "";
 
     // 桁数に合わせたフォーマット指定子を作成（例: 3桁なら "%03d"）
     std::string formatSpecifier = "%" + std::string("0") + std::to_string(numLen) + "d";
 
-    std::string newFormat = prefix + formatSpecifier + suffix;
+    std::string newFormat = prefix + formatSpecifier + suffix + extension;
 
     // 数字部分を整数に変換
     int fileNumber = -1;
     try {
-        fileNumber = std::stoi(filename.substr(numStart, numLen));
+        fileNumber = std::stoi(basename.substr(numStart, numLen));
     } catch (const std::exception& e) {
         fileNumber = -1;
     }

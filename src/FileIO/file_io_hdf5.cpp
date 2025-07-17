@@ -196,7 +196,6 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
       if (strcmp(tk.label, "dummy") == 0)
 	continue;
 	
-      DataType dty = tk.type;
       int dim = tk.count;
 
       // ラベル→FieldType
@@ -212,16 +211,18 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
       // データセットを open
       try{
 	H5::DataSet ds = grp.openDataSet(tk.displayName);
-	PartGroup::FieldSet fs { fType, ds, dty, dim };
+	//H5::PredType dtype = ds.getDataType();
+	H5::DataType baseType = ds.getDataType();
+	H5::PredType& dtype = static_cast<H5::PredType&>(baseType);
+	
+	PartGroup::FieldSet fs { fType, ds, dtype, dim };
 	
 	fs.filespace = fs.ds.getSpace();
 	
 	hsize_t blk[2] = { blockSize_, static_cast<hsize_t>(dim) };
 	fs.memspace  = H5::DataSpace(2, blk);
 	
-	size_t typeSize = (fs.dType==DataType::Double ? sizeof(double)
-			   : fs.dType==DataType::Float   ? sizeof(float)
-			   : sizeof(int32_t));
+	size_t typeSize = fs.dType.getSize();
 	fs.rawBuf.resize(blockSize_ * dim * typeSize);
 	
 	pg.fields.push_back(std::move(fs));

@@ -850,7 +850,7 @@ class HDF5ParticleReader : public IParticleReader {
     struct FieldSet {
       FieldType               fType;      // ParticleData のどのメンバに対応するか
       H5::DataSet             ds;         // データセットハンドル
-      DataType                dType;      // ネイティブ型
+      H5::PredType            dType;      // ネイティブ型
       int                     dim;        // 1 or 2 (1→スカラ, 2→ベクトル)
       H5::DataSpace filespace;     // open() で取得・保持
       H5::DataSpace memspace;      // open() で作成 (2D: {blockSize, dim})
@@ -893,13 +893,13 @@ public:
     for(auto &fs : pg.fields) {
       size_t dim = fs.dim;
       size_t elemIdx = (localIdx - blockLoadedIdx_) * dim;      // 要素番号
-      size_t typeSize = dataTypeSize(fs.dType);
+      size_t typeSize = fs.dType.getSize();
 
       char *base = fs.rawBuf.data() + elemIdx * typeSize;
       
       // 4) 型ごとに一時バッファを用意して読み込み
-      switch (fs.dType) {
-      case DataType::Float: {
+
+      if(fs.dType == H5::PredType::NATIVE_FLOAT){
 	float* buf = reinterpret_cast<float*>(base);
 	switch (fs.fType) {
 	case FieldType::ElectronFraction:
@@ -918,14 +918,17 @@ public:
 	  assignField<float>(p, fs.fType, buf, fs.dim);
 	  break;
 	}
-	break;
-      }
-      case DataType::Int32: {
+
+      }else if(fs.dType == H5::PredType::NATIVE_INT32){
 	int* buf = reinterpret_cast<int*>(base);
 	assignField<int32_t>(p, fs.fType, buf, fs.dim);
-	break;
-      }
-      case DataType::Double: {
+      }else if(fs.dType == H5::PredType::NATIVE_LLONG){
+	long long* buf = reinterpret_cast<long long*>(base);
+	std::vector<int> tmp(fs.dim);
+	for (int i = 0; i < fs.dim; ++i)
+	  tmp[i] = static_cast<int>(buf[i]);
+	assignField<int32_t>(p, fs.fType, tmp.data(), fs.dim);
+      }else if(fs.dType == H5::PredType::NATIVE_DOUBLE){
 	double* buf = reinterpret_cast<double*>(base);
 	switch (fs.fType) {
 	case FieldType::ElectronFraction:
@@ -948,11 +951,9 @@ public:
 	  assignField<float>(p, fs.fType, tmp.data(), fs.dim);
 	  break;
 	}
-	break;
-      }
-      default:
-	break;
-      }      
+      }else{
+	printf("Unknown data type for this field...\n");
+      }            
     }
     
     // 5) 温度の後処理（必要なら）
@@ -1107,7 +1108,7 @@ void loadBlock(size_t gIdx) {
     hsize_t offsetMem[2] = { 0, 0 };
     fs.memspace.selectHyperslab(H5S_SELECT_SET, blockFs, offsetMem);
     
-    H5::PredType ntype = (fs.dType==DataType::Float) ? H5::PredType::NATIVE_FLOAT : (fs.dType==DataType::Int32) ? H5::PredType::NATIVE_INT32: (fs.dType==DataType::Int64) ? H5::PredType::NATIVE_INT64 : H5::PredType::NATIVE_DOUBLE;          
+    H5::PredType ntype = fs.dType;
     fs.ds.read(fs.rawBuf.data(),
 	       ntype,
 	       fs.memspace, fs.filespace);
