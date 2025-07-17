@@ -14,11 +14,11 @@ OPTION += -DDEBUG_MODE
 #OPTION += -DUSE_LUA
 #OPTION += -DUSE_CONVEX_HULL
 #OPTION += -DCLUMP_DATA_READ
-OPTION += -DISO_CONTOUR
+#OPTION += -DISO_CONTOUR
 #OPTION += -DNONATIVEFILEDIALOG
 #OPTION += -DGEOMETRICAL_ANALYSIS
 #OPTION += -DUSE_TBB
-#OPTION += -DHAVE_HDF5
+OPTION += -DHAVE_HDF5
 OPTION += -DUSE_MMAP
 
 OPTION += -DSAVE_GPU_MEMORY
@@ -144,7 +144,7 @@ ifeq ($(findstring ISO_CONTOUR, $(OPTION)), ISO_CONTOUR)
     # --- VTK フラグ ---
     VTK_CXXFLAGS := -I$(VTK_INCLUDE)
     # ライブラリ名は例えば -lvtkCommonCore-9.2 のようにバージョン付きになることに注意
-    VTK_LIBS := -L$(VTK_LIB) $(foreach m,$(VTK_MODULES),-lvtk$(m)-$(VTK_VER)) -lvtksys-$(VTK_VER) -lvtkFiltersExtraction-$(VTK_VER)
+    VTK_LIBS := -L$(VTK_LIB) $(foreach m,$(VTK_MODULES),-lvtk$(m)-$(VTK_VER)) -lvtksys-$(VTK_VER)
 
     INCL += -I$(SRC_DIR)/IsoSurface
     SRC_CPP_BASE += IsoSurface/iso_contour_self.cpp IsoSurface/marching_cubes.cpp IsoSurface/connectivity_test.cpp IsoSurface/density_evaluate.cpp IsoSurface/IsoSurfaceGenerator.cpp

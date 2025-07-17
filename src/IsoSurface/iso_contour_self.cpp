@@ -141,7 +141,7 @@ void ParticleOctree::Node::subdivide(ParticleOctree&           tree,
   }
 }
 
-#define TEST1 1
+//#define TEST1 1
 
 void ParticleOctree::balanceTree()
 {

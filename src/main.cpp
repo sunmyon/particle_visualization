@@ -3101,9 +3101,11 @@ void ShowTopParticlesUI() {
     
     char label[128];
     std::snprintf(label, sizeof(label),
-		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), radius = %g",
+		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), radius = %g density=%g temp=%g",
 		  p.ID, p.mass * (P->UnitMass_in_msolar/P->Hubble),
-		  p.pos[0], p.pos[1], p.pos[2], p.originalHsml);
+		  p.pos[0], p.pos[1], p.pos[2],
+		  p.vel[0], p.vel[1], p.vel[2]
+		  , p.originalHsml, p.density, p.temperature);
 
     if (ImGui::Selectable(label)) {
       // 選択された粒子の位置をカメラの注視点に設定

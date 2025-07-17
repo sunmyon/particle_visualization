@@ -141,10 +141,10 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
   readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
   readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
   readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
-
-  readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);
-  readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
-  readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
+  
+  bool flag_unit_read = readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);
+  flag_unit_read = readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
+  flag_unit_read = readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
 
   readAttributeArray (headerGroup, "NumPart_ThisFile",       hdr.NumPart_ThisFile);
   readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
@@ -154,12 +154,15 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
     mass_type[k] = hdr.massTable[k];
     npart_ += hdr.NumPart_ThisFile[k];
   }
-  
-  factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS);
-  if (hdr.flag_comoving)
-    factor_density_ *= std::pow(hdr.time, -3) * hdr.HubbleParam * hdr.HubbleParam;
-  
-  factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
+
+  factor_density_ = factor_temperature_ = 1.;
+  if(flag_unit_read == true){
+    factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS);
+    if (hdr.flag_comoving)
+      factor_density_ *= std::pow(hdr.time, -3) * hdr.HubbleParam * hdr.HubbleParam;
+    
+    factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
+  }
   
   // 3) /Parameters グループから追加フラグを読み込む
   try{
