@@ -1,4 +1,4 @@
-   // main.cpp
+// main.cpp
 // -------------
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -145,6 +145,17 @@ float isoOpacityEllipsoid=0.5;
 bool showDisks = false;
 float diskOpacity=0.5;
 #endif
+
+#ifdef STREAM_LINE
+bool showStreamLine = false;
+bool flagStreamDirty = true;
+float streamlineopacity = 0.9;
+
+#include "StreamLine/stream_line.h"
+StreamlineComputer *gStreamLine;
+#endif
+
+bool flagCubesDirty = true;
 
 // ------------------------------
 // config ファイル読み込み／保存
@@ -947,6 +958,60 @@ void main(){ FragColor = vec4(color, opacity); }
 )";
 #endif
 
+#ifdef STREAM_LINE
+const char* streamlineVertexShaderSource = R"(
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main(){
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+}
+)";
+
+
+const char* streamlineFragmentShaderSource = R"(
+out vec4 FragColor;
+uniform vec3  color;
+uniform float opacity;
+
+void main()
+{
+    FragColor = vec4(color, opacity);
+}
+)";
+#endif
+
+const char* cubicShaderSource = R"(
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in mat4 instanceModel;
+layout(location = 5) in float instanceOpacity;
+
+uniform mat4 view;
+uniform mat4 projection;
+
+out float vOpacity;
+
+void main(){
+    gl_Position = projection * view * instanceModel * vec4(aPos, 1.0);
+    vOpacity = instanceOpacity;
+}
+)";
+
+
+const char* cubicFragmentShaderSource = R"(
+out vec4 FragColor;
+uniform vec3  color;
+in  float vOpacity;  
+
+void main()
+{
+    FragColor = vec4(color, vOpacity);
+}
+)";
+
 static float quadVertices[] = {
     //   inPos (x,y)   inTexCoord (u,v)
     -1.f, -1.f,    0.f, 0.f,
@@ -1057,6 +1122,12 @@ GLuint diskProgram = 0;
 GLuint isocontourProgram;
 #endif
 
+#ifdef STREAM_LINE
+GLuint streamlineProgram;
+#endif
+
+GLuint cubicProgram;
+
 #define N_LINES_FOR_CROSS 3
 
 void InitShaders() {
@@ -1073,7 +1144,12 @@ void InitShaders() {
   ellipsoidProgram = createShaderProgram(ellipsoidVertexShaderSource, ellipsoidFragmentShaderSource);
   diskProgram = createShaderProgram(diskVertexShaderSource, diskFragmentShaderSource);  
 #endif
-  
+
+#ifdef STREAM_LINE
+  streamlineProgram = createShaderProgram(streamlineVertexShaderSource, streamlineFragmentShaderSource);
+#endif
+
+  cubicProgram = createShaderProgram(cubicShaderSource, cubicFragmentShaderSource);
   quadShader = createShaderProgram(colormap2DShaderSource, colormap2DFragmentShaderSource);
   // Quad 準備
   SetupQuad();
@@ -1122,6 +1198,10 @@ void InitVelocityArrowGeometry() {
 }
 
 GLuint particleVAO, particleVBO, crossVAO, crossVBO;
+GLuint cubicVAO, cubicVBO, cubicEBO, cubicInstanceVBO, cubicOpacityVBO;
+#ifdef STREAM_LINE
+GLuint streamlineVAO, streamlineVBO;
+#endif
 #ifdef GEOMETRICAL_ANALYSIS
 GLuint ellipsoidVAO = 0, ellipsoidVBO = 0;
 GLuint diskVAO, diskVBO, diskEBO;
@@ -1224,6 +1304,31 @@ inline MeshData buildFlatDiskMesh(int slices = 64)
   return m;
 }
 #endif
+
+float cubicVerts[] = {
+    -0.5f, -0.5f, -0.5f,  
+     0.5f, -0.5f, -0.5f,  
+     0.5f,  0.5f, -0.5f,  
+    -0.5f,  0.5f, -0.5f,  
+    -0.5f, -0.5f,  0.5f,  
+     0.5f, -0.5f,  0.5f,  
+     0.5f,  0.5f,  0.5f,  
+    -0.5f,  0.5f,  0.5f   
+};
+unsigned int cubicIdx[] = {
+    // back face
+    0,1,2,  2,3,0,
+    // front face
+    4,5,6,  6,7,4,
+    // left face
+    4,0,3,  3,7,4,
+    // right face
+    1,5,6,  6,2,1,
+    // bottom face
+    4,5,1,  1,0,4,
+    // top face
+    3,2,6,  6,7,3
+};
 
 void InitBuffers() {
   // ---- パーティクルデータの VAO/VBO を作成 ----
@@ -1348,7 +1453,70 @@ void InitBuffers() {
   glBindVertexArray(0);
   g_indexCountDisk = static_cast<GLsizei>(m.inds.size());
 #endif
+
+#ifdef STREAM_LINE
+  glGenVertexArrays(1, &streamlineVAO);
+  glGenBuffers     (1, &streamlineVBO);
+
+  glBindVertexArray(streamlineVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, streamlineVBO);
+  // 頂点属性 layout(location=0) に vec3 を割り当て
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+  glBindVertexArray(0);
+#endif
+
+  glGenVertexArrays(1, &cubicVAO);
+  glGenBuffers(1, &cubicVBO);
+  glGenBuffers(1, &cubicEBO);
+  glGenBuffers(1, &cubicInstanceVBO);
+  glGenBuffers(1, &cubicOpacityVBO);
   
+  // 2) VAO に頂点属性を登録
+  glBindVertexArray(cubicVAO);
+
+  // ── (a) 既存の頂点座標バッファ
+  glBindBuffer(GL_ARRAY_BUFFER, cubicVBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(cubicVerts), cubicVerts, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+  // ── (b) インデンス行列用バッファ（まだ中身は入れない。後で glBufferData します）
+  glBindBuffer(GL_ARRAY_BUFFER, cubicInstanceVBO);
+  // 4×4 行列は vec4 が 4 つに分かれるので attribute location 1,2,3,4 を使う
+  GLsizei vec4Size = sizeof(glm::vec4);
+  for (GLuint i = 0; i < 4; ++i) {
+    glEnableVertexAttribArray(1 + i);
+    glVertexAttribPointer(
+			  1 + i,             // location 1,2,3,4
+			  4,                  // vec4
+			  GL_FLOAT, GL_FALSE,
+			  sizeof(glm::mat4),  // ストライド
+			  (void*)(i * vec4Size)
+			  );
+    glVertexAttribDivisor(1 + i, 1);  // ★ インスタンスごとに１個進める
+  }
+
+  // ── (c) インスタンス不透明度用バッファ (location = 5)
+  glBindBuffer(GL_ARRAY_BUFFER, cubicOpacityVBO);
+  glEnableVertexAttribArray(5);
+  glVertexAttribPointer(
+			5,               // location 5
+			1,               // float
+			GL_FLOAT,
+			GL_FALSE,
+			sizeof(float),   // stride (1要素)
+			(void*)0         // offset
+			);
+  glVertexAttribDivisor(5, 1);
+  
+  // ── (c) インデックスバッファ
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubicEBO);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubicIdx), cubicIdx, GL_STATIC_DRAW);
+
+  // VAO 設定完了
+  glBindVertexArray(0);
+    
   InitVelocityArrowGeometry();
 }
 
@@ -1872,8 +2040,8 @@ void ShowSettingsUI() {
       gFileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
     }
 
-    if (ImGui::Button("Use other data format")) {
-      gFileInfo->showDialog();      
+    if (ImGui::Button("Generate test data")) {
+      gFileInfo->generateTestData(P);      
     }
     
   }
@@ -2452,7 +2620,7 @@ void ShowSettingsUI() {
     static float isoLevel = 0.;
     
     ImGui::InputFloat("Threshold value for iso-contour", &isoLevel);
-    ImGui::SliderFloat("Opacity", &isoOpacity, 0.0f, 1.0f); // ← これ
+    ImGui::SliderFloat("Opacity", &isoOpacity, 0.0f, 1.0f);
 
     static int max_treelevel = 15;
     ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
@@ -2506,6 +2674,97 @@ void ShowSettingsUI() {
   }
 #endif
 
+#ifdef STREAM_LINE
+  if (ImGui::CollapsingHeader("Render stream line")) {
+    static int n_seeds=0;
+    ImGui::Text("Seed setup");
+    ImGui::InputInt("number of seed points", &n_seeds);
+
+    static float seed_center[3] = {0.,0.,0.}, seed_len[3] = {0.,0.,0.}, seed_opacity = 0.5;
+    bool seedRegionDirty = false;
+    
+    if (ImGui::InputFloat3("Center of the region to place seed points", seed_center, "%.3f")){
+      seedRegionDirty = true;
+    }
+
+    // 2) Side‐length: rebuild when changed
+    if (ImGui::InputFloat3("side len", seed_len, "%.3f")) {
+      seedRegionDirty = true;
+    }
+
+    // 3) Opacity: rebuild when changed
+    if (ImGui::SliderFloat("opacity##cubic", &seed_opacity, 0.f, 1.f, "%.2f")) {
+      seedRegionDirty = true;
+    }
+
+    // 4) If either length or opacity changed, re‐create exactly one cube
+    if (seedRegionDirty) {
+      // remove only the old seed region cubes
+      gCubeManager.clearGroup("seedRegion");
+
+      if (seed_len[0] > 0.f && seed_len[1] > 0.f && seed_len[2] > 0.f) {
+        // add new cube with updated len & opacity
+        gCubeManager.addCube(
+			     glm::vec3(seed_center[0], seed_center[1], seed_center[2]),
+			     glm::vec3(0.5f * seed_len[0], 0.5f * seed_len[1], 0.5f * seed_len[2]),
+			     glm::quat{1,0,0,0},       // no rotation
+			     seed_opacity,            // per‐instance opacity
+			     "seedRegion"             // tag
+			     );
+        gStreamLine->setRegionByHand(seed_center, seed_len);
+      }
+      else {
+        // zero‐size ⇒ disable region if you like
+        gStreamLine->disableRegion();
+      }
+
+      flagCubesDirty = true;
+      seedRegionDirty = false;
+    }
+
+    static bool flag_limit_stream_region = false;
+    static float sl_center[3]={0.,0.,0.}, sl_len[3]={0.,0.,0.};
+    
+    ImGui::Text("Stream line setting");    
+    ImGui::Checkbox("limit stream lines in box", &flag_limit_stream_region);
+    if(flag_limit_stream_region){
+      bool flag_reset_region = false;
+      if(ImGui::InputFloat3("center of stream line region", sl_center, "%.3f")){
+	flag_reset_region = true;
+      }
+
+      if(ImGui::InputFloat3("side len##stream line", sl_len, "%.3f")){
+	flag_reset_region = true;
+      }
+
+      if(flag_reset_region){
+	if(sl_len[0] > 0. && sl_len[1] > 0. && sl_len[2] > 0.){
+	  gStreamLine->setStreamRegionByHand(sl_center, sl_len);
+	}else{
+	  gStreamLine->disableStreamRegion();
+	}
+      }
+    }else
+      gStreamLine->disableStreamRegion();
+      
+    if (ImGui::Button("Build stream lines")) {
+      gStreamLine->setRegionFromParticleData(P->particles);
+      gStreamLine->setStreamRegionFromParticleData(P->particles);
+
+      gStreamLine->setSeeds(P->particles, n_seeds);
+      float degree = 10.;
+      gStreamLine->build(P->particles, degree);
+      
+      showStreamLine = true;
+      flagStreamDirty = true;
+    }
+    
+    if (ImGui::Button("disable Grid & Mesh")) {
+      showStreamLine = false;
+    }    
+  }
+#endif
+  
   if(ImGui::CollapsingHeader("Other settings")){
     bool unitChanged = false;
     if(ImGui::CollapsingHeader("Units")){
@@ -3223,7 +3482,7 @@ void ShowTopParticlesUI() {
 		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g Hubble=%g",
 		  filtered[i].ID, filtered[i].mass * (P->UnitMass_in_msolar/P->Hubble),
 		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2],
-		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2],
+		  filtered[i].vel[0], filtered[i].vel[1], filtered[i].vel[2],
 		  filtered[i].originalHsml,
 		  filtered[i].density, filtered[i].temperature, P->Hubble);
     if (ImGui::Selectable(label)) {
@@ -3781,8 +4040,8 @@ void RenderScene() {
     glm::mat4 M = gDiskFinder->getModelMatrix();
     
     glUniformMatrix4fv(glGetUniformLocation(diskProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
+    glUniformMatrix4fv(glGetUniformLocation(diskProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(diskProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
     glUniform3f(glGetUniformLocation(diskProgram,"color"), 1.0f,1.0f,1.0f);
     glUniform1f(glGetUniformLocation(diskProgram,"opacity"), diskOpacity);
     
@@ -3797,6 +4056,108 @@ void RenderScene() {
     glDisable(GL_BLEND);
   }
 #endif
+
+#ifdef STREAM_LINE
+  if (showStreamLine && streamlineVAO) {
+    static std::vector<size_t> m_firsts, m_counts;    
+    static std::vector<GLint> firstsGL;
+    static std::vector<GLsizei> countsGL;
+    
+    if(flagStreamDirty){
+      const StreamlineMeshData stream_mesh = gStreamLine->meshData();
+      
+      m_firsts = stream_mesh.firsts;
+      m_counts = stream_mesh.counts;
+
+      firstsGL.resize(m_firsts.size());
+      countsGL.resize(m_counts.size());
+      for(size_t i=0;i<m_firsts.size();++i){
+	firstsGL [i] = static_cast<GLint>(m_firsts[i]);
+	countsGL [i] = static_cast<GLsizei>(m_counts[i]);
+      }
+      
+      glBindBuffer(GL_ARRAY_BUFFER, streamlineVBO);
+      glBufferData(GL_ARRAY_BUFFER,
+		   stream_mesh.vertices.size()*sizeof(float),
+		   stream_mesh.vertices.data(),
+		   GL_DYNAMIC_DRAW);
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+      flagStreamDirty = false;
+    }
+    
+    glUseProgram(streamlineProgram);
+
+    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"model"),1,GL_FALSE,glm::value_ptr(model));
+    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
+    glUniform3f(glGetUniformLocation(streamlineProgram,"color"), 1.0f,1.0f,1.0f);
+    glUniform1f(glGetUniformLocation(streamlineProgram,"opacity"), streamlineopacity);
+
+    int streamlineCount = firstsGL.size();
+    glBindVertexArray(streamlineVAO);
+    glMultiDrawArrays(
+		      GL_LINE_STRIP,
+		      firstsGL.data(),
+		      countsGL.data(),
+		      (GLsizei)streamlineCount
+		      );
+    glBindVertexArray(0);
+  }
+#endif
+
+  if (gCubeManager.showCubes() && cubicVAO) {
+    static std::vector<glm::mat4> instanceModels;
+    std::vector<float> opacities;
+    
+    if (flagCubesDirty) {
+      // 1) インスタンス変換行列を再構築
+      instanceModels.clear();
+      const auto& cubes = gCubeManager.getCubes(); // 立方体の位置・スケール情報を持つ自前管理クラス
+      instanceModels.reserve(cubes.size());
+      for (auto& c : cubes) {
+	glm::mat4 M = glm::mat4(1.0f);
+	M = glm::translate(M, c.position);
+	M = glm::scale   (M, glm::vec3(c.size));
+	instanceModels.push_back(M);
+	opacities.push_back(c.opacity);
+      }
+
+      // 2) GPU にアップロード
+      glBindBuffer(GL_ARRAY_BUFFER, cubicInstanceVBO);    // ← ここを instanceVBO に
+      glBufferData(GL_ARRAY_BUFFER,
+		   instanceModels.size() * sizeof(glm::mat4),
+		   instanceModels.data(),
+		   GL_DYNAMIC_DRAW);
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
+      
+      glBindBuffer(GL_ARRAY_BUFFER, cubicOpacityVBO);
+      glBufferData(GL_ARRAY_BUFFER,
+		   opacities.size() * sizeof(float),
+		   opacities.data(),
+		   GL_DYNAMIC_DRAW);
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
+      
+      flagCubesDirty = false;
+    }
+
+    // 3) シェーダーと行列セットアップ
+    glUseProgram(cubicProgram);
+    glUniformMatrix4fv(glGetUniformLocation(cubicProgram, "view"),       1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(cubicProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniform3f(glGetUniformLocation(cubicProgram,"color"), 1.0f,1.0f,1.0f);
+    // 必要なら色やライティングパラメータもここで set
+
+    // 4) 描画
+    glBindVertexArray(cubicVAO);
+    // インデックス数 36 (= 12 面×3 頂点)、インスタンス数だけ一度に描く
+    glDrawElementsInstanced(GL_TRIANGLES,
+                            36,
+                            GL_UNSIGNED_INT,
+                            nullptr,
+                            (GLsizei)instanceModels.size());
+    glBindVertexArray(0);
+  }
   
   RenderColorBar();
   RenderColorBarLabels();
@@ -3868,6 +4229,10 @@ int main() {
   gConvexHullRenderer = new ConvexHullRenderer();
   gConvexHullRenderer->Init(lineProgram);
 #endif
+
+#ifdef STREAM_LINE
+  gStreamLine = new StreamlineComputer();
+#endif
   
   // メインループ
   while (!glfwWindowShouldClose(window)) {
@@ -3902,6 +4267,9 @@ int main() {
   
   Cleanup(); // メモリ解放 & ImGui 終了処理
 
+#ifdef STREAM_LINE
+  delete gStreamLine;
+#endif
 #ifdef USE_CONVEX_HULL
   delete gConvexHullRenderer;
 #endif

@@ -196,8 +196,8 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
     for(size_t i=0; i<fmt_.tokens.size(); ++i) {
       auto &tk = fmt_.tokens[i];
       if (strcmp(tk.label, "dummy") == 0)
-	continue;
-	
+	continue;      
+      
       int dim = tk.count;
 
       // ラベル→FieldType
@@ -215,9 +215,26 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
 	H5::DataSet ds = grp.openDataSet(tk.displayName);
 	//H5::PredType dtype = ds.getDataType();
 	H5::DataType baseType = ds.getDataType();
-	H5::PredType& dtype = static_cast<H5::PredType&>(baseType);
+	//H5::PredType& dtype = static_cast<H5::PredType&>(baseType);
+	hid_t native_tid = H5Tget_native_type(baseType.getId(), H5T_DIR_DEFAULT);
+
+	H5::PredType dtype = H5::PredType::NATIVE_FLOAT;  // デフォルト
+	if      (H5Tequal(native_tid, H5T_NATIVE_FLOAT))  dtype = H5::PredType::NATIVE_FLOAT;
+	else if (H5Tequal(native_tid, H5T_NATIVE_DOUBLE)) dtype = H5::PredType::NATIVE_DOUBLE;
+	else if (H5Tequal(native_tid, H5T_NATIVE_INT))    dtype = H5::PredType::NATIVE_INT;
+	else if (H5Tequal(native_tid, H5T_NATIVE_INT32))  dtype = H5::PredType::NATIVE_INT32;
+	else if (H5Tequal(native_tid, H5T_NATIVE_UINT))   dtype = H5::PredType::NATIVE_UINT;
+	else if (H5Tequal(native_tid, H5T_NATIVE_LLONG))  dtype = H5::PredType::NATIVE_LLONG;
+	else if (H5Tequal(native_tid, H5T_NATIVE_ULLONG)) dtype = H5::PredType::NATIVE_ULLONG;
+
+	H5::DataSpace fspace = ds.getSpace();
+	int    rank = fspace.getSimpleExtentNdims(); 
+	std::vector<hsize_t> dims(rank);
+	fspace.getSimpleExtentDims(dims.data());	
+	int components = (rank>=2 ? int(dims[1]) : 1);
 	
-	PartGroup::FieldSet fs { fType, ds, dtype, dim };
+	// 3) その hid_t から PredType オブジェクトを作る	
+	PartGroup::FieldSet fs { fType, ds, dtype, components };
 	
 	fs.filespace = fs.ds.getSpace();
 	std::strncpy(fs.name,tk.displayName, sizeof(fs.name)-1);
@@ -229,12 +246,14 @@ bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
 	fs.rawBuf.resize(blockSize_ * dim * typeSize);
 	
 	pg.fields.push_back(std::move(fs));
-
+	
 	if(t==0 && strcmp(tk.label,"temperature") == 0)
 	  flag_computeTemperature_ = false;
 
 	if(t==0 && strcmp(tk.label,"internalenergy") == 0)
-	  flag_read_internal_energy = true;	
+	  flag_read_internal_energy = true;
+
+	printf("[%d] label=%s dtype=%d\n", i, tk.label, dtype.getClass());
       }catch (const H5::Exception &e) {
 	printf("Type%d dataset%zu label%s name%s not found.\n", t, i, tk.label, tk.displayName);
       }

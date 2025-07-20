@@ -130,10 +130,10 @@ struct FormatToken {
     else if (strcmp(tok.label, "ID")          == 0) strcpy(tok.displayName, candidateIDNames);
     else if (strcmp(tok.label, "density")     == 0) strcpy(tok.displayName, candidateDensityNames);
     else if (strcmp(tok.label, "temperature") == 0) strcpy(tok.displayName, candidateTemperatureNames);
-    else if (strcmp(tok.label, "H2 fraction") == 0) strcpy(tok.displayName, candidateH2INames);    
-    else if (strcmp(tok.label, "electron fraction") == 0) strcpy(tok.displayName, candidateElecNames);
+    else if (strcmp(tok.label, "H2fraction") == 0) strcpy(tok.displayName, candidateH2INames);    
+    else if (strcmp(tok.label, "electronfraction") == 0) strcpy(tok.displayName, candidateElecNames);
     else if (strcmp(tok.label, "Gamma") == 0) strcpy(tok.displayName, candidateGammaNames);    
-    else if (strcmp(tok.label, "internal energy") == 0) strcpy(tok.displayName, candidateInternalEnergyNames);
+    else if (strcmp(tok.label, "internalenergy") == 0) strcpy(tok.displayName, candidateInternalEnergyNames);
     else if (strcmp(tok.label, "value")       == 0) strcpy(tok.displayName, candidateValNames);
     else if (strcmp(tok.label, "value2")      == 0) strcpy(tok.displayName, candidateVal2Names);
     else {
@@ -905,6 +905,10 @@ public:
       
       if(fs.dType == H5::PredType::NATIVE_FLOAT){
 	float* buf = reinterpret_cast<float*>(base);
+
+	if(curIndex_<10 && fs.fType == FieldType::Velocity)
+	  printf("velocity is float!\n");
+	
 	switch (fs.fType) {
 	case FieldType::ElectronFraction:
 	  electronFrac = buf[0];
@@ -920,9 +924,11 @@ public:
 	  break;
 	default:
 	  assignField<float>(p, fs.fType, buf, fs.dim);
+	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
+	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+	  
 	  break;
 	}
-
       }else if(fs.dType == H5::PredType::NATIVE_INT32 || fs.dType == H5::PredType::NATIVE_UINT){
 	int* buf = reinterpret_cast<int*>(base);
 	assignField<int32_t>(p, fs.fType, buf, fs.dim);
@@ -934,6 +940,10 @@ public:
 	assignField<int32_t>(p, fs.fType, tmp.data(), fs.dim);
       }else if(fs.dType == H5::PredType::NATIVE_DOUBLE){
 	double* buf = reinterpret_cast<double*>(base);
+
+	if(curIndex_<10 && fs.fType == FieldType::Velocity)
+	  printf("velocity is double!\n");
+	
 	switch (fs.fType) {
 	case FieldType::ElectronFraction:
 	  electronFrac = buf[0];
@@ -951,8 +961,11 @@ public:
 	  std::vector<float> tmp(fs.dim);
 	  for (int i = 0; i < fs.dim; ++i)
 	    tmp[i] = static_cast<float>(buf[i]);
-	    
+
 	  assignField<float>(p, fs.fType, tmp.data(), fs.dim);
+	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
+	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+	  
 	  break;
 	}
       }else{
@@ -1111,16 +1124,18 @@ void loadBlock(size_t gIdx) {
       static_cast<hsize_t>(count),
       static_cast<hsize_t>(fs.dim)
     };
-    
-    fs.filespace.selectHyperslab(H5S_SELECT_SET, blockFs, offset);
+
+    H5::DataSpace fileSpace = fs.ds.getSpace();
+    fileSpace.selectHyperslab(H5S_SELECT_SET, blockFs, offset);   
 
     hsize_t offsetMem[2] = { 0, 0 };
-    fs.memspace.selectHyperslab(H5S_SELECT_SET, blockFs, offsetMem);
+    H5::DataSpace memSpace(fs.memspace);
+    memSpace.selectHyperslab(H5S_SELECT_SET, blockFs, offsetMem);
     
     H5::PredType ntype = fs.dType;
     fs.ds.read(fs.rawBuf.data(),
 	       ntype,
-	       fs.memspace, fs.filespace);
+	       memSpace, fileSpace);
   }
   currentBlockCount_ = count;
   blockLoadedIdx_   = localStart;
@@ -1217,7 +1232,8 @@ public:
   
   void loadNewSnapshot(int newindex, ParticleArray* P);
   void loadBatch(int targetFile, int batchSize, int skipStep, ParticleArray *P);
-
+  void generateTestData(ParticleArray *P);
+  
 #ifdef HAVE_HDF5
   void ShowHDF5FieldMappingDialog();
   void showHDF5Dialog(void){    

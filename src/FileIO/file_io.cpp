@@ -21,6 +21,7 @@
 #include <thread>
 #include <fstream>
 #include <cstring>
+#include <random>
 
 TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
   TrackingVector<ParticleData> particles;
@@ -36,6 +37,85 @@ TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
   }
 
   return IDs;
+}
+
+void FileInfo::generateTestData(ParticleArray *P){
+  std::mt19937_64 rng(12345);
+  std::uniform_real_distribution<double> ud(-1.0, 1.0);
+
+  const int n_side = 50;
+  const double x_min = -50.;
+  const double x_max = 50.;
+  const double xlen = 100.;
+  double dx = xlen / static_cast<double>(n_side);
+
+  double amp = 0.001;
+  double Omega = 100.;
+  
+  HeaderInfo header;
+  header.npart = n_side * n_side * n_side;
+  header.time = 0.;
+  header.boxSize = xlen;
+  header.flag_comoving = 0;
+  header.flag_hdf5 = 0;
+
+  TrackingVector<ParticleData> particles;
+  particles.reserve(n_side * n_side * n_side);
+  
+  for (int i = 0; i < n_side; i++) {
+    double x = x_min + dx * i;    
+
+    for (int j = 0; j < n_side; j++) {
+      double y = x_min + dx * j;
+      
+      for (int k = 0; k < n_side; k++) {
+	double z = x_min + dx * k;
+
+	double dx = ud(rng);
+	double dy = ud(rng);
+	double dz = ud(rng);
+
+	double x_out = x + amp * dx;
+	double y_out = y + amp * dy;
+	double z_out = z + amp * dz;
+	
+	double r2 = x_out * x_out + y_out * y_out + z_out * z_out;
+
+	ParticleData p;
+	p.pos[0] = x_out;  p.pos[1] = y_out;  p.pos[2] = z_out;
+	p.original_pos[0] = x_out;  p.original_pos[1] = y_out;  p.original_pos[2] = z_out;
+
+	p.vel[0] = x_out;
+	p.vel[1] = y_out;
+	p.vel[2] = z_out;
+
+	double v_rot_x = -Omega * y_out;
+        double v_rot_y =  Omega * x_out;
+        double v_rot_z =  0.0;
+	
+	p.vel[0] += v_rot_x;
+	p.vel[1] += v_rot_y;
+	p.vel[2] += v_rot_z;
+	
+	p.Hsml = dx;
+	p.originalHsml = dx;
+
+	p.mass = 1.;
+	p.density = 1.;
+	p.temperature = 1.;
+	p.type = 0;
+	
+	particles.push_back(p);
+      }
+    }
+  }
+
+  batchParticles.resize(1);
+  batchParticles[0] = std::move(particles);
+  headerBatch.resize(1);
+  headerBatch[0] = header;
+  
+  P->swap_particles(batchParticles, 0, headerBatch[0], 1);  
 }
 
 void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
@@ -666,6 +746,8 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 	      formatTokensEdit[i].type = DataType::Int32;
 	    else
 	      formatTokensEdit[i].type = DataType::Float;
+	    
+	    FormatToken::SetDefaultDisplayName(formatTokensEdit[i]);
 	  }
 	  if (is_selected) ImGui::SetItemDefaultFocus();
 	}

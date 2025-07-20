@@ -18,6 +18,7 @@ OPTION += -DDEBUG_MODE
 #OPTION += -DNONATIVEFILEDIALOG
 #OPTION += -DGEOMETRICAL_ANALYSIS
 #OPTION += -DUSE_TBB
+OPTION += -DSTREAM_LINE
 OPTION += -DHAVE_HDF5
 OPTION += -DUSE_MMAP
 
@@ -111,6 +112,10 @@ endif
 
 ifeq ($(findstring USE_CONVEX_HULL, $(OPTION)), USE_CONVEX_HULL)
     SRC_CPP_BASE += FindClumps/create_convex_hull.cpp
+endif
+
+ifeq ($(findstring STREAM_LINE, $(OPTION)), STREAM_LINE)
+    SRC_CPP_BASE += StreamLine/stream_line.cpp
 endif
 
 IMGUI_CPP_BASE = imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_widgets.cpp imgui/imgui_demo.cpp imgui/imgui_tables.cpp\
