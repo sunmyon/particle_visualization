@@ -1,3 +1,6 @@
+git clone --recurse-submodules <repo_url>
+git submodule update --init --recursive　
+
 For Mac users:
 brew install glfw
 brew install glm
