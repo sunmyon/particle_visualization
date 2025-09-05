@@ -8,4 +8,4 @@ brew install hdf5
 
 
 For Ubuntu users:
-apt install -y libglfw3 ligbglfw3-dev libglm-dev libhdf5-dev freeglut3-dev mesa-common-dev libglu1-mesa-dev
+apt install -y libglfw3 libglfw3-dev libglm-dev libhdf5-dev freeglut3-dev mesa-common-dev libglu1-mesa-dev
