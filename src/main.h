@@ -107,8 +107,8 @@ public:
   float val_show;
 #endif
   float mass;            // mass
-  int   type;            // 粒子タイプ (0～5)
-  int   flag;
+  uint8_t   type;            // 粒子タイプ (0～5)
+  uint8_t   flag_stress;
   int   ID;
 
   float getValue(const std::string &var) const;  

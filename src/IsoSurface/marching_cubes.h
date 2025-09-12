@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 #include <glm/glm.hpp>
-#include "IsoSurface/ParticleOctree.h"
+#include "OctTree/ParticleOctree.h"
 #include "IsoSurface/mesh_data.h"
 
 class MarchingCubes {
@@ -80,7 +80,7 @@ public:
 			 int                  dir,
 			 Mesh&                out);  
 
-    static const std::array<glm::vec3,8> cubeOffsets;
+  static const std::array<glm::vec3,8> cubeOffsets;
   
 private:
   static float sampleValue(const ParticleOctree& tree, const glm::vec3& pos, float radius);

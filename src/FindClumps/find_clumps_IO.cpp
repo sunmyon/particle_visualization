@@ -1,8 +1,10 @@
-#include "H5Cpp.h"
-#include "HDF5Helpers.h"
+#include "main.h"
 #include "FindClumps/find_clumps_IO.h"
 
 #ifdef CLUMP_DATA_READ
+#include "H5Cpp.h"
+#include "HDF5Helpers.h"
+
 namespace ClumpIO {
   template<typename T>
   void readDatasetIf(

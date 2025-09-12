@@ -1,8 +1,9 @@
 #pragma once
-
+#include <nanoflann.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+
 /**** needed for Im32U ****/
 
 class ProjectionMapGenerator;
@@ -109,6 +110,35 @@ public:
 
 
 class FindClump{
+public:
+  struct ParticleDataFiltered{
+    float pos[3];
+    float Hsml;
+    float density;
+    float val;             // 物理量（0～1）
+    float mass;            // mass
+    uint8_t type;          // 粒子タイプ (0～5)
+    int ID;
+    int original_index;
+  };
+  
+  ParticleDataFiltered filter_particle_for_clump_find(const ParticleData p, const std::string &var) const{
+    ParticleDataFiltered p_f;
+    p_f.pos[0] = p.pos[0];
+    p_f.pos[1] = p.pos[1];
+    p_f.pos[2] = p.pos[2];
+
+    p_f.Hsml = p.Hsml;
+    p_f.mass = p.mass;  
+    p_f.density = p.density;  
+    p_f.val = p.getValue(var);
+
+    p_f.type = p.type;
+    p_f.ID = p.ID;
+
+    return p_f;
+  }  
+
 private:
   bool showWindowClumpFinder = false;
 
@@ -238,16 +268,38 @@ private:
   
   CameraContext& camCtx;  
 
+  struct ParticleCloud {
+    TrackingVector<ParticleDataFiltered> pts;
+
+    inline size_t kdtree_get_point_count() const {
+      return pts.size();
+    }
+
+    inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
+      return pts[idx].pos[dim];
+    }
+
+    template <class BBOX>
+    bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
+  };
+
+  // nanoflann 用 KD-Treeの型定義
+  typedef nanoflann::KDTreeSingleIndexAdaptor<
+    nanoflann::L2_Simple_Adaptor<double, ParticleCloud>,
+    ParticleCloud,
+    3  // 次元数
+    > KDTree_t;
+  
   TrackingVector<StructureNode *> findClumps(TrackingVector<ParticleData>& cloud, int minParticles, const std::string &var);
   int find_parent(TrackingVector<int>& parent, int i);
   void union_sets(TrackingVector<int>& parent, int a, int b);
 
   TrackingVector<StructureNode *> findClumpsDendrogram(TrackingVector<ParticleData>& cloud, double min_npix, const std::string &var);
-  void calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleData>& p);
+  void calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleDataFiltered>& p);
   void traverseHierarchy(StructureNode* node, TrackingVector<StructureNode*>& sortedNodes);
   void sortNodesByMass(TrackingVector<StructureNode*>& nodes);
   void sortNodesByHierarchy(TrackingVector<StructureNode*>& nodes);
-  TrackingVector<ParticleData> filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const;
+  TrackingVector<ParticleDataFiltered> filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const;
   TrackingVector<ParticleData> getAllChildren(StructureNode* node, TrackingVector<ParticleData>& p) const;
 
   void findClumpsInNextSnapshot(TrackingVector<ParticleData>&particles);
@@ -269,7 +321,7 @@ private:
     
     // 現在のノードの indices を処理
     for (auto idx : node->indices) {
-      particles[idx].flag = 1;
+      particles[idx].flag_stress = 1;
     }
     
     // 子ノードに対して同じ処理を再帰的に実行

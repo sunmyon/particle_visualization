@@ -1,5 +1,6 @@
 #pragma once
 
+#ifdef CLUMP_DATA_READ
 enum LoadMask : uint32_t {
   L_TIME                        = 1u << 0,
     L_CLUMP_ID                    = 1u << 1,
@@ -68,7 +69,6 @@ struct ClumpInfoIO {
   ClumpInfoIO() = default;
 };
 
-#ifdef CLUMP_DATA_READ
 //------------------------------------------------------------------------------
 // ClumpIO: HDF5ファイルの読み書きを行う名前空間
 namespace ClumpIO {

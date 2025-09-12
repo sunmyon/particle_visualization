@@ -30,9 +30,10 @@ public:
   /// コンストラクタ：粒子をムーブし、空間全体(worldBox)をカバーするルートを構築
   ParticleOctree(TrackingVector<ParticleDataForTree>&& allParticles,
 		 const BoundingBox&             worldBox,
-		 float                          isoLevel,
 		 size_t                         minParticles = 8,
-		 size_t                         maxDepth     = 20);
+		 size_t                         maxDepth     = 20,
+		 float                          isoLevel     = 0.,
+		 bool                           isIsoDensity = false);
 
   /// ノード構造体（内部/葉判定とパーティション情報のみ持つ）
   struct Node {
@@ -69,10 +70,11 @@ public:
      */
     void subdivide(ParticleOctree&           tree,  
 		   TrackingVector<ParticleDataForTree>& particles,
-		   float                                isoLevel,
 		   size_t                               minParticles,
 		   size_t                               maxDepth,
 		   size_t                               depth,
+		   float                                isoLevel = 0.,
+		   bool   isIsoDensity = false,
 		   bool   force = false);
   };
 
@@ -113,7 +115,7 @@ public:
       outMin = outMax = 0.0f;
   }
   
-  void balanceTree();
+  void balanceTree(bool isIsoDensity);
   void querySphere(const glm::vec3& center,
 		   float            radius,
 		   TrackingVector<const ParticleDataForTree*>& out) const;
@@ -128,6 +130,16 @@ public:
     dumpNode(root_.get(), 0);
   }
 
+  void computeValueRangeRoot() {
+    if(_flag_value_evaluated == false){
+      evaluateEdgeValueForAllLeaves();      
+      _flag_value_evaluated = true;
+    }
+    
+    computeRangeRecursive(root_.get());
+  }
+  
+  void evaluateEdgeValueForAllLeaves(void);  
   
 private:
   /**
@@ -141,20 +153,10 @@ private:
   std::unique_ptr<Node> buildNode(const BoundingBox& box,
 				  size_t             start,
 				  size_t             count,
-				  size_t             depth);
+				  size_t             depth,
+				  bool               isIsoDensity = false);
 
-
-  void evaluateDensityForAllLeaves(void);  
-  
-  void computeValueRangeRoot() {
-    if(_flag_value_evaluated == false){
-      evaluateDensityForAllLeaves();      
-      _flag_value_evaluated = true;
-    }
     
-    computeRangeRecursive(root_.get());
-  }
-  
   void computeRangeRecursive(Node* node) {
     if (node->isLeaf) {
       // 葉は粒子自体を走査

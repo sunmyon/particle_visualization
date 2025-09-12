@@ -4,14 +4,7 @@
 #include "FindClumps/create_convex_hull.h"
 #include "FindClumps/find_clumps.h"
 #include "compute_2D_histogram.h"
-
-#ifdef MACOS
-#include <OpenGL/gl.h>
-#include <OpenGL/glu.h>
-#else
-#include <GL/gl.h>
-#include <GL/glu.h>
-#endif
+#include "glad/glad.h"
 
 #include <CGAL/convex_hull_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>

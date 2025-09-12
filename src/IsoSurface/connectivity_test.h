@@ -1,5 +1,5 @@
 #pragma once
-#include "IsoSurface/ParticleOctree.h"
+#include "OctTree/ParticleOctree.h"
 #include "IsoSurface/marching_cubes.h"
 #include "IsoSurface/mesh_data.h"
 

@@ -21,14 +21,6 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-#ifdef MACOS
-#include <OpenGL/gl.h>
-#include <OpenGL/glu.h>
-#else
-#include <GL/gl.h>
-#include <GL/glu.h>
-#endif
-
 // もし外部で定義されるカラーマップがあれば、宣言しておく（例: jetMap, viridisMap, plasmaMap）
 extern const float jetMap[];
 extern const float viridisMap[];

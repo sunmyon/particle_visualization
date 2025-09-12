@@ -1094,7 +1094,8 @@ void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>&
 	for (int k = 0; k < 3; ++k)
 	  p.pos[k] = p.original_pos[k];  // スケーリングは後でまとめて行う
 	p.Hsml = p.originalHsml;
-
+	p.flag_stress = 0;
+	
 	// getValue を使わず手動展開（高速化のため）
 	float values[4] = {p.density, p.temperature, p.val, p.val2};
 

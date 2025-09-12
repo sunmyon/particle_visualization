@@ -12,27 +12,7 @@
 #include <nanoflann.hpp>
 
 namespace{
-  struct ParticleCloud {
-    TrackingVector<ParticleData> pts;
 
-    inline size_t kdtree_get_point_count() const {
-      return pts.size();
-    }
-
-    inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
-      return pts[idx].pos[dim];
-    }
-
-    template <class BBOX>
-    bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
-  };
-
-  // nanoflann 用 KD-Treeの型定義
-  typedef nanoflann::KDTreeSingleIndexAdaptor<
-    nanoflann::L2_Simple_Adaptor<double, ParticleCloud>,
-    ParticleCloud,
-    3  // 次元数
-    > KDTree_t;
 }
 
 
@@ -55,7 +35,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
 						      const std::string &var
 						      )
 {
-  TrackingVector<ParticleData> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
+  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -198,7 +178,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   });
  
   // ⑤ ソート結果に基づいて、sortedParticles を作成
-  TrackingVector<ParticleData> sortedParticles;
+  TrackingVector<ParticleDataFiltered> sortedParticles;
   sortedParticles.resize(groupIndex.size());
   for (size_t i = 0; i < groupIndex.size(); i++)
     sortedParticles[i] = cloud.pts[groupIndex[i].second];  
@@ -218,13 +198,13 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
 
     double vpeak = 0.;
     for(int idx = index_start; idx < index_start + count; idx++){
-      int original_index = sortedParticles[idx].flag;
+      int original_index = sortedParticles[idx].original_index;
       indices.push_back(original_index);
 
       if(sortedParticles[idx].type >= 3)
 	continue;
       
-      double value = sortedParticles[idx].getValue(var);
+      double value = sortedParticles[idx].val;
       if(vpeak < value)
 	vpeak = value;
     }
@@ -380,7 +360,7 @@ namespace pruning {
 TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParticles,
 								double min_npix, const std::string &var)
 {
-  TrackingVector<ParticleData> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
+  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -428,7 +408,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
   //int currentClusterID = 0;  
   
   for (int idx : sortedIndices) {
-    const ParticleData& p = cloud.pts[idx];
+    const ParticleDataFiltered& p = cloud.pts[idx];
     double query_pt[3] = { p.pos[0], p.pos[1], p.pos[2] };
 
     // KDTree_t に依存する型エイリアスの取得
@@ -605,7 +585,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
     
     for(size_t i = 0; i < node->indices.size() ; i++){
       int idx = node -> indices[i];
-      int original_index = filteredParticles[idx].flag;
+      int original_index = filteredParticles[idx].original_index;
       indices_new.push_back(original_index);
     }
     
@@ -615,7 +595,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
   return nodes;
 }
 
-void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleData>& p){
+void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleDataFiltered>& p){
   if(ns->_done_statistics == true)
     return;
 
@@ -709,38 +689,38 @@ void FindClump::sortNodesByHierarchy(TrackingVector<StructureNode*>& nodes) {
 
 
 // フィルタリング処理の例
-TrackingVector<ParticleData> FindClump::filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const{
-  TrackingVector<ParticleData> filtered;  
+TrackingVector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const{
+  TrackingVector<ParticleDataFiltered> filtered;  
   for (size_t i = 0; i < particles.size(); ++i) {
       const ParticleData &p = particles[i];
       if(p.type >= 3){
-	ParticleData copy = p;  // Particle をコピー
-	copy.flag = static_cast<int>(i);  // 元のインデックスを保存
+	ParticleDataFiltered copy = filter_particle_for_clump_find(p, var);
+	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
       
       if (p.getValue(var) >= threshold) {
-	ParticleData copy = p;  // Particle をコピー
-	copy.flag = static_cast<int>(i);  // 元のインデックスを保存
+	ParticleDataFiltered copy = filter_particle_for_clump_find(p, var);
+	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
   }
   return filtered;
 }
 
-TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, TrackingVector<ParticleData>& p) const{
+TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, TrackingVector<ParticleData>& original_p) const{
   TrackingVector<ParticleData> pts;
   if (!node)
     return pts;
 
   // 現在のノードの indices を追加
   for (int idx : node->indices) {
-    pts.push_back(p[idx]);
+    pts.push_back(original_p[idx]);
   }
 
   // 子ノードに対して再帰的に処理し、得られた indices を結合
   for (StructureNode* child : node->children) {
-    TrackingVector<ParticleData> childIndices = getAllChildren(child, p);
+    TrackingVector<ParticleData> childIndices = getAllChildren(child, original_p);
     pts.insert(pts.end(), childIndices.begin(), childIndices.end());
   }
 
@@ -932,7 +912,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 #ifdef USE_CONVEX_HULL
 	if(flag_button_pushed){
 	  for(auto &p : originalParticles)
-	    p.flag = 0;
+	    p.flag_stress = 0;
 
 	  for(size_t i=0;i<showHull.size();i++){
 	    if(showHull[i] == 0)

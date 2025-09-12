@@ -1,7 +1,7 @@
 // test_descriptor_isosurface.cpp
 #include "IsoSurface/IsoSurfaceGenerator.h"
-#include "IsoSurface/ParticleOctree.h"
 #include "IsoSurface/mesh_data.h"
+#include "OctTree/ParticleOctree.h"
 
 #include <vtkHyperTreeGridNonOrientedCursor.h>  
 #include <vtkHyperTreeGridContour.h> 
@@ -80,11 +80,15 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
 {
   ParticleOctree octree(std::move(params.particles),
 			params.worldBox,
-			params.isoLevel,
 			params.minParticles,
-			params.maxDepth
+			params.maxDepth,
+			params.isoLevel,
+			true
 			);
 
+  octree.balanceTree(true);
+  octree.computeValueRangeRoot();
+  
   octree.dumpNodeRoot();
   
   std::string descriptor = makeDescriptor(octree, params.maxDepth);

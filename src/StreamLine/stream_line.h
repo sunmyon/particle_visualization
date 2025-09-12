@@ -17,7 +17,7 @@ static float dot(const Vec3&a,const Vec3&b){
 }
 
 static float len(const Vec3&a){
-    return std::sqrt(dot(a,a));
+  return sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
 }
 
 

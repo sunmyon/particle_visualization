@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include <unordered_map>
 
 // mmap + madvise 用
 #include <sys/mman.h>
