@@ -229,7 +229,7 @@ private:
     float c = std::sqrt(rhoMin_ * rhoMax_);
     float w = std::max( (rhoMax_ - rhoMin_) * 0.05f, 1e-6f );
     if(type == TFShape::Gaussian)
-      w = std::max(log10(std::max(rhoMax_/rhoMin_, 1.e-6f)) * 0.1f, 1.e-6f);    
+      w = std::max(log10(std::max(static_cast<double>(rhoMax_/rhoMin_), 1.e-6)) * 0.1f, 1.e-6);    
     
     comps_.push_back({ type, c, w, 0.5f });
     selected_ = (int)comps_.size() - 1;

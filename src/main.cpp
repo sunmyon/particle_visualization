@@ -5549,8 +5549,10 @@ void RenderScene() {
     glDrawBuffers(2, bufs);
 
     // 重要：初期値
-    glClearBufferfv(GL_COLOR, 0, (GLfloat[4]){0,0,0,0});  // accum = 0
-    glClearBufferfv(GL_COLOR, 1, (GLfloat[4]){1,0,0,0});  // reveal= 1（積の単位元）
+    GLfloat color0[4] = {0.f, 0.f, 0.f, 0.f};
+    GLfloat color1[4] = {1.f, 0.f, 0.f, 0.f};
+    glClearBufferfv(GL_COLOR, 0, color0);  // accum = 0
+    glClearBufferfv(GL_COLOR, 1, color1);  // reveal= 1（積の単位元）
 
     // 3) ブレンド設定（添付ごとに別設定）
     glEnablei(GL_BLEND, 0); // color0 (accum)

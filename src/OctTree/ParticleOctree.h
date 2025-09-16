@@ -6,7 +6,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
-#include "DensityEstimator.h"
+#include "IsoSurface/DensityEstimator.h"
 #include "main.h"
 
 struct ParticleDataForTree {
