@@ -3,6 +3,7 @@
 bulid/
 build/
 
+config.txt
 *~
 *.o
 *.dSYM/

@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <glm/glm.hpp>
+#include <cstring>
 #include "OctTree/ParticleOctree.h"
 #include "IsoSurface/mesh_data.h"
 

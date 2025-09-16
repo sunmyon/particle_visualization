@@ -25,7 +25,7 @@ option(USE_MMAP            "Enable mmap IO"                      ON)
 option(SAVE_GPU_MEMORY     "Save GPU memory"                     ON)
 option(ROTATE_QUATERNION   "Use quaternion rotation"             ON)
 option(ROTATE_ARCBALL      "Use arcball rotation"                ON)
-option(NONATIVEFILEDIALOG  "Disable native file dialog"          OFF)
+option(NONATIVEFILEDIALOG  "Disable native file dialog"          ON)
 
 # グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
@@ -52,6 +52,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/FindClumps/find_clumps.cpp
   ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
   ${SRC_DIR}/FindClumps/find_clumps_make_chains.cpp
+  ${SRC_DIR}/OctTree/ParticleOctree.cpp
+  ${SRC_DIR}/IsoSurface/density_evaluate.cpp
 )
 
 if(GEOMETRICAL_ANALYSIS)
@@ -205,9 +207,69 @@ function(detect_and_link target lib_name pkg_name)
   find_package(${lib_name} QUIET CONFIG)
   if(${lib_name}_FOUND)
     message(STATUS "${lib_name} found via find_package")
+
     if(TARGET ${lib_name}::${lib_name})
       target_link_libraries(${target} PRIVATE ${lib_name}::${lib_name})
       message(STATUS "[detect_and_link] ${lib_name} → LINK_LIBRARIES = ${_libs}")
+    else()
+      message(STATUS "[detect_and_link] could not find target link libraries")	
+    endif()
+    return()
+  endif()
+
+  # 2. pkg-config
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(${lib_name}_PC QUIET ${pkg_name})
+    if(${lib_name}_PC_FOUND)
+      message(STATUS "[detect_and_link] ${lib_name}: found via pkg-config (${pkg_name})")
+      message(STATUS "[detect_and_link] include: ${${lib_name}_PC_INCLUDE_DIRS}")
+      message(STATUS "[detect_and_link] libs:    ${${lib_name}_PC_LIBRARIES}")
+      target_include_directories(${target} PRIVATE ${${lib_name}_PC_INCLUDE_DIRS})
+      target_link_directories(${target} PRIVATE ${${lib_name}_PC_LIBRARY_DIRS})
+      target_link_libraries(${target} PRIVATE ${${lib_name}_PC_LIBRARIES})
+      return()
+    endif()
+  endif()
+
+  # 3. manual fallback
+  message(WARNING "${lib_name} not found via CMake or pkg-config, falling back to manual search")
+  find_library(${lib_name}_LIB NAMES ${pkg_name} PATH_SUFFIXES lib lib64)
+  find_path(${lib_name}_INC NAMES ${pkg_name}.h PATH_SUFFIXES include)
+  if(${lib_name}_LIB AND ${lib_name}_INC)
+    target_include_directories(${target} PRIVATE ${${lib_name}_INC})
+    target_link_libraries(${target} PRIVATE ${${lib_name}_LIB})
+    message(STATUS "[detect_and_link] ${lib_name} → LINK_LIBRARIES = ${_libs}")
+  else()
+    message(FATAL_ERROR "${lib_name} not found. Please install it.")
+  endif()
+endfunction()
+
+function(detect_and_link_glfw target lib_name pkg_name)
+  # lib_name: CMake のパッケージ名 (例: GLFW, GMP, VTK)
+  # pkg_name: pkg-config 名 (例: glfw3, gmp, vtk)
+
+  # 1. CMake の find_package
+  find_package(glfw QUIET CONFIG)
+  if(NOT glfw_FOUND)
+    find_package(glfw3 QUIET CONFIG)
+  endif()
+
+  if(glfw_FOUND OR glfw3_FOUND)
+    message(STATUS "${lib_name} found via find_package")
+    if(TARGET glfw)
+      target_link_libraries(${target} PRIVATE glfw)
+      message(STATUS "Target 'glfw' is available")
+    elseif(TARGET glfw::glfw)
+      target_link_libraries(${target} PRIVATE glfw::glfw)
+      message(STATUS "Target 'glfw::glfw' is available")
+    elseif(TARGET glfw3::glfw3)
+      target_link_libraries(${target} PRIVATE glfw3::glfw3)
+      message(STATUS "Target 'glfw3::glfw3' is available")
+    elseif(TARGET glfw3)
+      target_link_libraries(${target} PRIVATE glfw3)
+      message(STATUS "Target 'glfw3' is available")
+    else()
+      message(STATUS "[detect_and_link] could not find target link libraries")	
     endif()
     return()
   endif()
@@ -323,9 +385,7 @@ if(ISO_CONTOUR)
   target_sources(${PROJECT_NAME} PRIVATE
     ${SRC_DIR}/IsoSurface/marching_cubes.cpp
     ${SRC_DIR}/IsoSurface/connectivity_test.cpp
-    ${SRC_DIR}/IsoSurface/density_evaluate.cpp
     ${SRC_DIR}/IsoSurface/IsoSurfaceGenerator.cpp
-    ${SRC_DIR}/OctTree/ParticleOctree.cpp
   )
 
   # インクルードパス
@@ -357,7 +417,7 @@ if(ISO_CONTOUR)
   target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
 endif()
 
-detect_and_link(${PROJECT_NAME} "GLFW" "glfw3")
+detect_and_link_glfw(${PROJECT_NAME} "glfw3" "glfw3")
 detect_and_link(${PROJECT_NAME} "GMP" "gmp")
 detect_and_link(${PROJECT_NAME} "MPFR" "mpfr")
 
