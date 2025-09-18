@@ -3,6 +3,7 @@
 bulid/
 build/
 /.vcpkg-cache/
+example/data/
 
 config.txt
 particle_vis

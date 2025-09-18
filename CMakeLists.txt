@@ -24,7 +24,7 @@ option(HAVE_HDF5           "Enable HDF5 IO"                      ON)
 option(SAVE_GPU_MEMORY     "Save GPU memory"                     ON)
 option(ROTATE_QUATERNION   "Use quaternion rotation"             ON)
 option(ROTATE_ARCBALL      "Use arcball rotation"                ON)
-option(NONATIVEFILEDIALOG  "Disable native file dialog"          ON)
+option(NONATIVEFILEDIALOG  "Disable native file dialog"          OFF)
 
 set(USE_MMPA_DEFAULT ON)
 if(WIN32)
