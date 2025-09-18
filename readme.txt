@@ -10,6 +10,9 @@ For Ubuntu users:
 apt install -y libglfw3 libglfw3-dev libglm-dev libhdf5-dev freeglut3-dev mesa-common-dev libglu1-mesa-dev
 
 For Windows users:
+⚠️ Note: You can compile the code inside WSL2 (Windows Subsystem for Linux). However, enabling GPU acceleration inside WSL2 may cause problems or unexpected behavior.
+✅ For best results, it is recommended to build the project on native Windows with Visual Studio.
+
 1. Install prerequisites
 	A.	Visual Studio 2022 (Community or higher)
 	•	During installation, make sure to select the following workloads:
