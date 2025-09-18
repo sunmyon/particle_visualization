@@ -575,3 +575,24 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "USE_GLES: ${USE_GLES}")
 
+# ===== After build: create a symlink to the executable in the repo root =====
+set(_ROOT_LINK_NAME
+  $<IF:$<PLATFORM_ID:Windows>,${CMAKE_SOURCE_DIR}/${PROJECT_NAME}.exe,${CMAKE_SOURCE_DIR}/${PROJECT_NAME}>
+)
+
+# オプション: Windows で権限がない場合に "コピー" に切り替える
+option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" OFF)
+
+if(WIN32 AND WINDOWS_LINK_AS_COPY)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove -f "${_ROOT_LINK_NAME}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${PROJECT_NAME}>" "${_ROOT_LINK_NAME}"
+    COMMENT "Copying ${PROJECT_NAME} to repo root (Windows fallback)"
+    VERBATIM)
+else()
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove -f "${_ROOT_LINK_NAME}"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink "$<TARGET_FILE:${PROJECT_NAME}>" "${_ROOT_LINK_NAME}"
+    COMMENT "Creating symlink to ${PROJECT_NAME} in repo root"
+    VERBATIM)
+endif()

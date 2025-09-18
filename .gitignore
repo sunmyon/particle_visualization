@@ -7,6 +7,7 @@ example/data/
 
 config.txt
 particle_vis
+particle_vis.exe
 
 *~
 *.o
