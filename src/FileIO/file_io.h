@@ -3,12 +3,15 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <cstring>
 #include <unordered_map>
 
-// mmap + madvise 用
-#include <sys/mman.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #ifdef HAVE_HDF5
 #include "H5Cpp.h"
 #endif
@@ -260,6 +263,8 @@ private:
   }
 };
 
+#ifdef USE_MMAP
+#include <sys/mman.h>
 class MMapParticleReader : public IParticleReader {
   int           fd_          = -1;
   char*         data_        = nullptr;
@@ -362,7 +367,7 @@ private:
     }
   }
 };
-
+#endif
 
 
 class BlockwiseParticleReader : public IParticleReader {

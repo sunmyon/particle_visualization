@@ -14,8 +14,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 #include <future>
 #include <thread>
@@ -956,11 +954,11 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
 	  return false;
 	}
 	
-	if (USE_MMAP) {
+#ifdef USE_MMAP
 	  reader = std::make_unique<MMapParticleReader>(fmt);
-	} else {
+#else
 	  reader = std::make_unique<BinaryParticleReader>(fmt);
-	}
+#endif
 
 	bool flag_success = reader->check(fullPath, hdr);
 	if(flag_success)
@@ -1011,11 +1009,11 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
       return false;
     }
     
-    if (USE_MMAP) {
+#ifdef USE_MMAP
       reader = std::make_unique<MMapParticleReader>(fmt);
-    }else{
+#else
       reader = std::make_unique<BinaryParticleReader>(fmt);
-    }
+#endif
     break;
   }
   case FileFormat::Gadget: {

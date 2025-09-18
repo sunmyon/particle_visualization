@@ -1,5 +1,11 @@
 #include "tau_sph.h"
+#define _USE_MATH_DEFINES 
 #include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.141592653589793
+#endif
+
 #include <cassert>
 
 namespace sphlut {

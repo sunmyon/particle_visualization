@@ -2,8 +2,11 @@
 
 bulid/
 build/
+/.vcpkg-cache/
 
 config.txt
+particle_vis
+
 *~
 *.o
 *.dSYM/

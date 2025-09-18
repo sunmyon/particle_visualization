@@ -66,7 +66,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   
 #pragma omp parallel for
   // 各粒子について近傍探索し、対象同士を union する
-  for (size_t i = 0; i < numParticles; i++) {
+  for (int i = 0; i < static_cast<int>(numParticles); i++) {
     double query_pt[3] = { cloud.pts[i].pos[0], cloud.pts[i].pos[1], cloud.pts[i].pos[2] };
 
     // KDTree_t に依存する型エイリアスの取得

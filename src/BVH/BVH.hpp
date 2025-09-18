@@ -304,19 +304,42 @@ namespace lbvh {
     static uint64_t morton3D(uint32_t qx,uint32_t qy,uint32_t qz){
       return (expand21(qx) << 0) | (expand21(qy) << 1) | (expand21(qz) << 2);
     }
-    
-    static int clz64(uint64_t x){
-#if defined(_MSC_VER) && !defined(__clang__)
-      unsigned long idx;
-      if (_BitScanReverse64(&idx, x))
-	return 63 - int(idx);
-      
-      return 64;
+
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+    static inline int clz32(uint32_t x) {
+#if defined(_MSC_VER)
+  	if (!x) return 32;
+        unsigned long idx;
+        _BitScanReverse(&idx, x);                 // 最上位1bitの位置
+        return 31 - static_cast<int>(idx);        // 先頭の0ビット数
 #else
-      return (x==0)?64:__builtin_clzll(x);
+        return x ? __builtin_clz(x) : 32;
 #endif
     }
-    static inline int clz32(uint32_t x){ return x ? __builtin_clz(x) : 32; }
+
+    static inline int clz64(uint64_t x) {
+#if defined(_MSC_VER)  // MSVC / clang-cl
+        if (!x) return 64;
+        unsigned long idx;
+#if defined(_M_X64)
+        _BitScanReverse64(&idx, x);
+        return 63 - static_cast<int>(idx);
+#else
+        // 32bit ターゲットのフォールバック
+        if (x >> 32) {
+            _BitScanReverse(&idx, static_cast<unsigned long>(x >> 32));
+            return 31 - static_cast<int>(idx);
+        } else {
+            _BitScanReverse(&idx, static_cast<unsigned long>(x));
+            return 63 - static_cast<int>(idx);
+        }
+#endif
+#else
+        return x ? __builtin_clzll(x) : 64;
+#endif
+    }
     
     void computeMortonCodes(const TrackingVector<ParticleData>& P){
       Vec3 ext = { wmax_.x - wmin_.x, wmax_.y - wmin_.y, wmax_.z - wmin_.z };

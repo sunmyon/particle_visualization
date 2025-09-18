@@ -1,0 +1,48 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 4, "minor": 1 },
+  "configurePresets": [
+    {
+      "name": "windows-msvc-base",
+      "displayName": "Windows MSVC + vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "windows-msvc-vcpkgroot",
+      "inherits": "windows-msvc-base",
+      "condition": { "type": "notEquals", "lhs": "$env{VCPKG_ROOT}", "rhs": ""},
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake"
+      }
+    },
+    {
+      "name": "windows-msvc-vctools",
+      "inherits": "windows-msvc-base",
+      "condition": { "type": "notEquals", "lhs": "$env{VCToolsInstallDir}", "rhs": ""},
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCToolsInstallDir}\\..\\..\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "inherits": "windows-msvc-base"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug"
+    }
+  ]
+}

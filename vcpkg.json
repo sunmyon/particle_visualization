@@ -1,0 +1,14 @@
+{
+  "name": "particle-visualization",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "eigen3",
+    "glfw3",
+    "gmp",
+    { "name": "hdf5", "features": ["cpp"] },
+    "mpfr",
+    "glm",
+    "cgal",
+    "vtk"
+  ]
+}

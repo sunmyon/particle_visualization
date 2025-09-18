@@ -21,11 +21,16 @@ option(GEOMETRICAL_ANALYSIS "Enable geometrical analysis"        ON)
 option(STREAM_LINE         "Enable streamline feature"           ON)
 option(VOLUME_RENDERING    "Enable volume rendering"             ON)
 option(HAVE_HDF5           "Enable HDF5 IO"                      ON)
-option(USE_MMAP            "Enable mmap IO"                      ON)
 option(SAVE_GPU_MEMORY     "Save GPU memory"                     ON)
 option(ROTATE_QUATERNION   "Use quaternion rotation"             ON)
 option(ROTATE_ARCBALL      "Use arcball rotation"                ON)
 option(NONATIVEFILEDIALOG  "Disable native file dialog"          ON)
+
+set(USE_MMPA_DEFAULT ON)
+if(WIN32)
+  set(USE_MMPA_DEFAULT OFF)
+endif()
+option(USE_MMPA "Use POSIX mmap for file IO" {USE_MMAP_DEFAULT})
 
 # グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
@@ -417,7 +422,7 @@ if(ISO_CONTOUR)
   target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
 endif()
 
-detect_and_link_glfw(${PROJECT_NAME} "glfw3" "glfw3")
+detect_and_link_glfw(${PROJECT_NAME} "glfw" "glfw")
 detect_and_link(${PROJECT_NAME} "GMP" "gmp")
 detect_and_link(${PROJECT_NAME} "MPFR" "mpfr")
 

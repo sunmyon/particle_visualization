@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <filesystem>
+#include <sstream>
 
 // GLM 関連
 //#include <glm/gtc/matrix_transform.hpp>
