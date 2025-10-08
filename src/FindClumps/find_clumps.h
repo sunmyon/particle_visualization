@@ -1,8 +1,6 @@
 #pragma once
 #include <nanoflann.hpp>
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 
 /**** needed for Im32U ****/
 

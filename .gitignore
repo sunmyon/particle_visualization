@@ -13,3 +13,6 @@ particle_vis.exe
 *.o
 *.dSYM/
 *.exe
+
+jupyter_work/*
+!jupyter_work/shm_reader.py

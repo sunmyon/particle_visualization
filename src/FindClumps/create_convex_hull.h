@@ -1,7 +1,4 @@
 #pragma once
-
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>  // glm::mat4用
 
 // 前方宣言で依存を隠蔽
@@ -9,24 +6,21 @@ class FindClump;
 class ParticleArray;
 class histogram2D;
 
-class ConvexHullRenderer {
+class ConvexHullGenerator {
 public:
     // コンストラクタ・デストラクタ
-    ConvexHullRenderer();
-    ~ConvexHullRenderer();
-    
-    // 初期化時にlineProgramを受け取る
-    void Init(GLuint lineProgram);
+    ConvexHullGenerator();
+    ~ConvexHullGenerator();
 
-    // 毎フレーム呼び出す描画関数
-    void Render(const glm::mat4& view, const glm::mat4& projection,
-                FindClump* clump, ParticleArray* P, histogram2D* hist);
-    
- private:
-    // コピー禁止（安全性のため）
-    ConvexHullRenderer(const ConvexHullRenderer&) = delete;
-    ConvexHullRenderer& operator=(const ConvexHullRenderer&) = delete;
+  TrackingVector<float>  
+  buildLineVertices(const TrackingVector<ParticleData>& pts);
 
-    struct Impl;
-    Impl* impl;  // PImplイディオムで実装を隠蔽
+private:
+  // コピー禁止（安全性のため）
+  ConvexHullGenerator(const ConvexHullGenerator&) = delete;
+  ConvexHullGenerator& operator=(const ConvexHullGenerator&) = delete;
+  
+  struct Impl;
+  Impl* impl;  // PImplイディオムで実装を隠蔽
 };
+

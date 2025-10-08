@@ -264,6 +264,8 @@ public:
   static constexpr double GravConst = 6.6743e-8;
   
   TrackingVector<ParticleData> particles;
+  TrackingVector<uint8_t> flag_mask;
+  
   TrackingVector<HaloData> Haloes;
 
   TrackingVector<ClumpData> Clumps;

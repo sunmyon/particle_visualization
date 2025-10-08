@@ -4,8 +4,6 @@
 #include "compute_2D_histogram.h"
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 #include "implot.h"
 
 /// ── 2Dヒストグラム計算関数 ─────────────────────────────────────

@@ -5,8 +5,6 @@
 #include "FileIO/file_io.h"
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 #include "implot.h"
 
 #include <chrono>
@@ -947,17 +945,26 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
       // 3) バイナリ系だけここでフォーマット解析
 
       int iter = 0;
-      const int iter_max = 20;      
-      while(iter < iter_max){	
-	if (!computeFormatInfo(formatTokens, fmt)) {
+      const int iter_max = 20;
+
+      auto fmt_orig = fmt;
+      auto tokens_orig = formatTokens;
+ 
+      while(iter < iter_max){
+	auto testTokens = formatTokens;
+	auto testFmt    = fmt;
+	
+	if (!computeFormatInfo(testTokens, testFmt)) {
 	  std::cerr<<"failed to read format info\n";
+	  fmt = fmt_orig;
+	  formatTokens = tokens_orig;
 	  return false;
 	}
 	
 #ifdef USE_MMAP
-	  reader = std::make_unique<MMapParticleReader>(fmt);
+	  reader = std::make_unique<MMapParticleReader>(testFmt);
 #else
-	  reader = std::make_unique<BinaryParticleReader>(fmt);
+	  reader = std::make_unique<BinaryParticleReader>(testFmt);
 #endif
 
 	bool flag_success = reader->check(fullPath, hdr);
@@ -965,13 +972,13 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
 	  break;
 
 	bool has_dummy = false;
-	for(size_t i=0;i<formatTokens.size();i++){
-	  if(std::strcmp(formatTokens[i].label, "dummy") == 0){
+	for(size_t i=0;i<testTokens.size();i++){
+	  if(std::strcmp(testTokens[i].label, "dummy") == 0){
 	    has_dummy = true;
 	    if(iter == 0){
-	      formatTokens[i].count = 0;
+	      testTokens[i].count = 0;
 	    }else{
-	      formatTokens[i].count++;
+	      testTokens[i].count++;
 	      break;
 	    }
 	    
@@ -984,12 +991,17 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
 	  break;
 	}
 
+	formatTokens = std::move(testTokens);
+	fmt = std::move(testFmt);
+	
 	printf("iter=%d failed to read the file...\n", iter);	
 	iter++;
       }
 
       if(iter >= iter_max){
 	printf("Too many iterations.\n");
+	fmt = fmt_orig;
+	formatTokens = tokens_orig;
 	return false;
       }
     }
@@ -1166,6 +1178,8 @@ void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>&
     
     setUnits();
   }
+
+  flag_mask.resize(particles.size(), 0);  
   
   particlesDirty = true;  // グローバルなフラグをtrueに設定
   flagParticleIndexDirty = true;

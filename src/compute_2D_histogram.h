@@ -7,7 +7,7 @@
 
 class histogram2D{
 public:
-  const glm::vec3 camCenter; // ここではカメラの注視点を中心とする例
+  const glm::vec3 &camCenter; // ここではカメラの注視点を中心とする例
   
   bool showWindow2Dhistogram = false;
   bool histogram2DLogScaleX = true;

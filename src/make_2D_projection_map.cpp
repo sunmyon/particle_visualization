@@ -10,8 +10,6 @@
 //#include <glm/gtc/matrix_transform.hpp>
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 
 #include"make_2D_projection_map.h"
 
@@ -356,16 +354,6 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
     make_density_map(P, filename);
     
   ImGui::End();
-
-  if(!flag2DprojectionComputed)
-    return;
-  
-  ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
-  ImGui::Begin("projection map", &flag2DprojectionComputed, ImGuiWindowFlags_None);
-  
-  ImGui::Image((ImTextureID)(intptr_t)texID, ImVec2((float)outW, (float)outH));
-  
-  ImGui::End();
 }
 
 
@@ -688,7 +676,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   //output PNG file
   stbi_write_png(filename, outW, outH, 3, outImage.data(), outW*3);
     
-  texID = CreateTexture2D(outImage.data(), outW, outH);
+  setTexture2D(outImage, outW, outH);
   flag2DprojectionComputed = true;
 }
 
@@ -2098,31 +2086,4 @@ void ProjectionMapGenerator::draw_text_label_centered(TrackingVector<unsigned ch
     }
 
     free(char_widths);
-}
-
-GLuint ProjectionMapGenerator::CreateTexture2D(const unsigned char* data, int width, int height)
-{
-  // -------------- ここが修正ポイント (1) --------------
-  // テクスチャへピクセル転送する前に、ピクセル行のアライメントを1に設定
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  // -----------------------------------------------------
-  
-  GLuint texID;
-  glGenTextures(1, &texID);
-  glBindTexture(GL_TEXTURE_2D, texID);
-
-  // ここでは RGB8 画像を想定
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
-	       GL_RGB, GL_UNSIGNED_BYTE, data);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  // -------------- ここが修正ポイント (2) --------------
-  // 必要に応じて、後の描画処理に影響しないようデフォルト(4)に戻す
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-  // -----------------------------------------------------
-    
-  return texID;
 }

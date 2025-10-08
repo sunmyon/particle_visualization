@@ -4,7 +4,6 @@
 #include "FindClumps/create_convex_hull.h"
 #include "FindClumps/find_clumps.h"
 #include "compute_2D_histogram.h"
-#include "glad/glad.h"
 
 #include <CGAL/convex_hull_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -31,20 +30,8 @@ private:
   CGAL::Side_of_triangle_mesh<Polyhedron_3, Kernel> tester_;
 };
 
-
 // PImplイディオムで内部実装を分離
-struct ConvexHullRenderer::Impl {
-    GLuint convexHullVAO = 0, convexHullVBO = 0;
-    GLuint lineProgram = 0;
-
-    std::unordered_map<int, Polyhedron_3> convexHullCache;
-    std::unordered_map<int, GLuint> convexHullVAOCache;
-    std::unordered_map<int, GLuint> convexHullVBOCache;
-    std::unordered_map<int, size_t> convexHullVertexCountCache;
-    std::unordered_map<int, bool> convexHullDirtyMap;
-
-    TrackingVector<bool> convexHullDirty;
-
+struct ConvexHullGenerator::Impl {
     Polyhedron_3 computeConvexHullForClump(const TrackingVector<ParticleData>& pts) {
         TrackingVector<Point_3> points;
         for (const ParticleData& p : pts) {
@@ -82,102 +69,18 @@ struct ConvexHullRenderer::Impl {
     }
 };
 
-
-ConvexHullRenderer::ConvexHullRenderer() {
+ConvexHullGenerator::ConvexHullGenerator() {
     impl = new Impl();
 }
 
-ConvexHullRenderer::~ConvexHullRenderer() {
+ConvexHullGenerator::~ConvexHullGenerator() {
     delete impl;
 }
 
-void ConvexHullRenderer::Init(GLuint lineProgram) {
-  impl->lineProgram = lineProgram;
-
-    glGenVertexArrays(1, &impl->convexHullVAO);
-    glGenBuffers(1, &impl->convexHullVBO);
+TrackingVector<float>
+ConvexHullGenerator::buildLineVertices(const TrackingVector<ParticleData>& pts) {
+  auto poly = impl->computeConvexHullForClump(pts);
+  return impl->ExtractLineVertices(poly);
 }
 
-
-void ConvexHullRenderer::Render(const glm::mat4 &view, const glm::mat4 &projection, FindClump *clump, ParticleArray *P, histogram2D *hist) {
-  if(!clump->checkClumpComputation())
-    return;
-  
-  // シェーダーのuniform更新（view/projectionは毎フレーム更新）
-  glUseProgram(impl->lineProgram);
-  glUniformMatrix4fv(glGetUniformLocation(impl->lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-  glUniformMatrix4fv(glGetUniformLocation(impl->lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-  int nclumps = clump->get_nclumps() ;
-
-  if(clump->checkClearCache()){
-    impl->convexHullCache.clear();
-    impl->convexHullVBOCache.clear();
-    impl->convexHullVAOCache.clear();
-    impl->convexHullVertexCountCache.clear();
-    impl->convexHullDirtyMap.clear();
-    for (int i = 0; i < nclumps; i++) 
-      impl->convexHullDirtyMap[i] = true;    // 初回は更新が必要
-
-    clump->finishClearCache();
-
-    // 変換先のコンテナ
-    TrackingVector<std::shared_ptr<IConvexHull>> convexHullsVec;
-    
-    // unordered_map の各要素について、CGALConvexHull の shared_ptr を作成
-    for (const auto &pair : impl->convexHullCache) {
-      // pair.first はキー、pair.second は Polyhedron_3
-      convexHullsVec.push_back(std::make_shared<CGALConvexHull>(pair.second));
-    }
-
-    hist->setConvexHulls(convexHullsVec);
-    P->particlesDirty = true;  // グローバルなフラグをtrueに設定
-  }
-  
-  // gClumpList は、検出された各クランプの情報が入っているとする
-  for (int i = 0; i < nclumps; i++) {
-    if (clump->flagShowHull(i)){
-      // dirtyフラグがtrueなら再計算・VBO更新
-      if (impl->convexHullDirtyMap[i]) {
-	TrackingVector<ParticleData> pts = clump->get_particle_indices(i, P->particles);	
-	Polyhedron_3 poly = impl->computeConvexHullForClump(pts);	
-	TrackingVector<float> vertices = impl->ExtractLineVertices(poly);
-	impl->convexHullVertexCountCache[i] = vertices.size() / 3;
-	impl->convexHullCache[i] = poly;
-	
-	GLuint vbo, vao;
-	if (impl->convexHullVBOCache.find(i) == impl->convexHullVBOCache.end()) {
-	  glGenBuffers(1, &vbo);
-	  impl->convexHullVBOCache[i] = vbo;
-	} else {
-	  vbo = impl->convexHullVBOCache[i];
-	}
-
-	// VAO の生成
-	if (impl->convexHullVAOCache.find(i) == impl->convexHullVAOCache.end()) {
-	  glGenVertexArrays(1, &vao);
-	  impl->convexHullVAOCache[i] = vao;
-	} else {
-	  vao = impl->convexHullVAOCache[i];
-	}
-	// VAO バインドして VBO を更新、頂点属性を設定
-	glBindVertexArray(vao);
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-		
-	impl->convexHullDirtyMap[i] = false;
-      }
-      // 描画：キャッシュ済みのVAOをバインドしてドローコール
-      GLuint vao = impl->convexHullVAOCache[i];
-      glBindVertexArray(vao);
-      size_t vertexCount = impl->convexHullVertexCountCache[i];
-      glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertexCount));
-      glBindVertexArray(0);
-    }
-  }
-}
 #endif

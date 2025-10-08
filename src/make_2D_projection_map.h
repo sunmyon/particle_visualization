@@ -17,9 +17,12 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-/***** needed for GLuint texID *****/
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
+struct ProjectionImage {
+  int width = 0;
+  int height = 0;
+  uint64_t version = 0; 
+  TrackingVector<uint8_t> rgb; // size = width*height*3, RGB8
+};
 
 // もし外部で定義されるカラーマップがあれば、宣言しておく（例: jetMap, viridisMap, plasmaMap）
 extern const float jetMap[];
@@ -27,6 +30,12 @@ extern const float viridisMap[];
 extern const float plasmaMap[];
 
 class ProjectionMapGenerator {
+private:
+  ProjectionImage image_;
+  bool flag_image_ = false;
+  bool dirty_ = true;
+  uint64_t nextVersion_ = 1;
+  
 public:
   int npixel = 200;
   float xlen[3] = {2.,2.,1.};
@@ -117,10 +126,31 @@ public:
   std::vector<std::string> availableFonts = {};
   std::vector<ImFont*> loadedFonts = {};
   
-  GLuint texID; //to be detached
-
   ProjectionMapGenerator();
 
+  void reset_flag(){
+    flag_image_ = false;
+    dirty_ = true;
+  }
+
+  void setTexture2D(const TrackingVector<unsigned char> &rgb, const int width, const int height){
+    image_.width = width;
+    image_.height = height;
+    image_.rgb = rgb;
+
+    flag_image_ = true;
+    dirty_ = true;
+    image_.version = nextVersion_++;
+  }
+
+  ProjectionImage getImage(){
+    return image_;
+  }
+
+  bool getImageFlag(){
+    return flag_image_;
+  }
+  
   glm::vec3 calc_angular_momentum_axis(const TrackingVector<ParticleData>& originalParticles, glm::vec3 &center, float *xlen);
   
   void RenderProjectionUI(ParticleArray *P, CameraContext& camCtx, int fileindex);
@@ -195,8 +225,6 @@ public:
 				  const char* text,
 				  stbtt_fontinfo *font, float charpixelsize);
   
-  GLuint CreateTexture2D(const unsigned char* data, int width, int height);
-
   void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis, 
 				 const float* pos_center, const float len, const float val_min, const float val_max,
 				 const int npixel_input, const int nslices, std::string var);

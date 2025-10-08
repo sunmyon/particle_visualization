@@ -61,7 +61,28 @@
 
 #ifdef USE_CONVEX_HULL
 #include "FindClumps/create_convex_hull.h"
-ConvexHullRenderer* gConvexHullRenderer = nullptr;
+ConvexHullGenerator* gConvexHullGenerator = nullptr;
+
+struct HullGpuEntry {
+  GLuint vao = 0, vbo = 0;
+  GLsizei vertexCount = 0; // = number of float3 vertices
+  bool dirty = true;
+};
+static std::unordered_map<int, HullGpuEntry> s_hull;
+#endif
+
+#ifdef PYTHON_BRIDGE
+#include "PythonBridge/BridgeAdapter.h"
+#include "PythonBridge/PythonBridge.h"
+#include "PythonBridge/ShmLayout.h"
+
+struct PyBridgeState {
+  std::unique_ptr<PythonBridge> ptr;
+  bool launched = false;
+  bool needUploadPos = false;
+};
+
+static PyBridgeState g_py; 
 #endif
 
 // ------------------------------
@@ -1886,6 +1907,8 @@ void InitImGui() {
     ImGuiIO &io = ImGui::GetIO(); (void)io;
     ImGui::StyleColorsDark();
     ImPlot::CreateContext();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange; 
+    
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 }
@@ -2732,7 +2755,6 @@ std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::s
 }
 
 
-bool flagCullingSphere = false;
 float radiusCullingSphere = 1.;
 
 void ShowSettingsUI() {
@@ -3118,17 +3140,101 @@ void ShowSettingsUI() {
       // クォータニオンも更新（必要な場合）
       camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
     }
-    
-    bool flag = flagCullingSphere;
-    ImGui::Checkbox("Culling sphere region", &flag);
-    if(flag != flagCullingSphere){
-      flagCullingSphere = flag;
-      P->particlesDirty = true;  // グローバルなフラグをtrueに設定
+
+    ImGui::InputFloat("Culling radius", &radiusCullingSphere);    
+    if(ImGui::Button("Culling sphere region")){
+      for(size_t i=0;i<P->particles.size();i++){
+	auto &p = P->particles[i];
+	uint8_t flag_mask = 0;
+	if(glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) > radiusCullingSphere)
+	  flag_mask = 1;
+	
+	P->flag_mask[i] = flag_mask;
+      }
+      
+      P->particlesDirty = true; 
     }
-    
-    ImGui::InputFloat("Culling radius", &radiusCullingSphere);
+
+    if(ImGui::Button("disable Culling")){
+      for(size_t i=0;i<P->particles.size();i++)
+	P->flag_mask[i] = 0;            
+      P->particlesDirty = true; 
+    }
   }
 
+#ifdef PYTHON_BRIDGE
+  if (ImGui::CollapsingHeader("Python:Jupyter notebook")) {
+    const bool isOpen = (g_py.ptr != nullptr);
+
+    if (ImGui::Button(isOpen ? "Close notebook" : "Open notebook")) {
+      if (!isOpen) {
+	// --- Open ---
+	g_py.ptr.reset(CreatePythonBridge());
+	if (!g_py.ptr) {
+	  ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge creation failed");
+	} else {
+	  // 共有メモリ準備
+	  const uint64_t N = static_cast<uint64_t>(P->particles.size());
+	  if (!g_py.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
+	    ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge init failed");
+	    g_py.ptr.reset();
+	  } else {
+	    bridge::loadInitialFromAoS(*g_py.ptr, *P, sizeof(ParticleData));	    
+	    // Notebook 起動（非同期でもOK／boolで可否だけ握る）
+	    g_py.launched = g_py.ptr->launchNotebook("./jupyter_work");
+	  }
+	}
+      } else {
+	// --- Close ---
+	g_py.ptr->shutdown();
+	g_py.ptr.reset();
+	g_py.launched = false;
+	g_py.needUploadPos = false;
+      }
+    }
+
+    // ステータス表示
+    if (g_py.ptr) {
+      ImGui::SameLine();
+      ImGui::TextColored(g_py.launched ? ImVec4(0.6f,1,0.6f,1) : ImVec4(1,0.8f,0.4f,1),
+			 g_py.launched ? "launched" : "launching...");
+    }
+
+    if (g_py.ptr && g_py.launched) {
+      const auto& info = g_py.ptr->notebookInfo();
+
+      ImGui::SeparatorText("Jupyter Notebook");
+      ImGui::Text("Port : %d", info.port);
+      ImGui::TextWrapped("URL  : %s", info.url.c_str());
+
+      // クリップボードにコピー
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Copy URL")) {
+	ImGui::SetClipboardText(info.url.c_str());
+      }
+
+      // 既に JupyterLauncher で open/xdg-open 済みでも、手動で開けるボタンを用意
+      if (ImGui::SmallButton("Open in Browser")) {
+#if defined(__APPLE__)
+	std::string cmd = "open \"" + info.url + "\"";
+	std::system(cmd.c_str());
+#elif defined(__linux__)
+	std::string cmd = "xdg-open \"" + info.url + "\"";
+	std::system(cmd.c_str());
+#elif defined(_WIN32)
+	// Windows: start はシェル内蔵。cmd /c 経由で。
+	std::string cmd = "cmd /c start \"\" \"" + info.url + "\"";
+	std::system(cmd.c_str());
+#endif
+      }
+
+      // 状態表示（任意）
+      ImGui::SameLine();
+      ImGui::TextDisabled("(token: %s)", info.token.c_str());
+    }
+  }
+#endif
+  
   if (ImGui::CollapsingHeader("Show velocity field")) {
     ImGui::InputInt("show velocity field out of n particles", &velocitySubtraction);
     ImGui::InputFloat("Arrow Scale", &arrowScale, 0.1f, 1.0f, "%.2f");
@@ -4704,7 +4810,7 @@ void ShowTopParticlesUI() {
       
       int bin = static_cast<int>((mass - range1_min) / binSize);
 
-      printf("mass=%g min=%g bin=%d\n", mass, range1_min, bin);
+      printf("var=%s mass=%g min=%g bin=%d\n", var.c_str(), mass, range1_min, bin);
       
       if (bin < 0) bin = 0;
       if (bin >= bins) bin = bins - 1;
@@ -5043,31 +5149,18 @@ void RenderScene() {
       }
     }
 #endif
-    
-    if(flagCullingSphere){
-      TrackingVector<ParticleData> filtered;
-      filtered.reserve(P->particles.size());
-      for (const auto& p : P->particles) {
-        if (glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) <= radiusCullingSphere
-	    && flagHideParticles[p.type] == false)
-	  filtered.push_back(p);
-      }
-      
-      g_filteredParticleCount = filtered.size();
-      
-      glBufferData(GL_ARRAY_BUFFER, filtered.size() * sizeof(ParticleData), filtered.data(), GL_DYNAMIC_DRAW);      
-    }else{
-      TrackingVector<ParticleData> filtered;
-      filtered.reserve(P->particles.size());
-      for (const auto& p : P->particles) {
-        if (flagHideParticles[p.type] == false)
-	  filtered.push_back(p);
-      }
 
-      g_filteredParticleCount = filtered.size();      
-      glBufferData(GL_ARRAY_BUFFER, filtered.size() * sizeof(ParticleData), filtered.data(), GL_DYNAMIC_DRAW);
+    TrackingVector<ParticleData> filtered;
+    filtered.reserve(P->particles.size());
+    for (size_t i=0;i<P->particles.size();i++){
+      auto &p = P->particles[i];
+      if (P->flag_mask[i] == 0 && flagHideParticles[p.type] == false)
+	filtered.push_back(p);
     }
-    
+      
+    g_filteredParticleCount = filtered.size();    
+    glBufferData(GL_ARRAY_BUFFER, filtered.size() * sizeof(ParticleData), filtered.data(), GL_DYNAMIC_DRAW);      
+        
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     P->particlesDirty = false; // 転送後、フラグをクリア
     P->velocityDirty = true;
@@ -5099,11 +5192,6 @@ void RenderScene() {
     return (H > 0) ? (0.5f * (float)H) / tanf(0.5f * fovYrad) : 1.0f;
   };    
   float focalPx = focalPxFromFovY(viewportH, fovY);
-  
-#ifdef USE_CONVEX_HULL
-  // 例：各クランプの凸包描画（チェックボックスがONの場合）
-  gConvexHullRenderer->Render(view, projection, gClumpFind, P, gHistogram2D);  
-#endif
   
   if (g_flagShowCuboid)
     RenderCuboid(view, projection);
@@ -5615,12 +5703,143 @@ void RenderScene() {
     glUseProgram(0);
   }
 #endif
-  
+
+#ifdef USE_CONVEX_HULL
+  if (gClumpFind->checkClumpComputation()){
+    glUseProgram(lineProgram);
+    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+    const int nclumps = gClumpFind->get_nclumps();
+
+    // 2) clump側が「全クリア」と言ったらGPUキャッシュも削除
+    if (gClumpFind->checkClearCache()) {
+      for (auto& [id, e] : s_hull) {
+	if (e.vbo) glDeleteBuffers(1, &e.vbo);
+	if (e.vao) glDeleteVertexArrays(1, &e.vao);
+      }
+      s_hull.clear();
+      gClumpFind->finishClearCache();
+      // CPU側のPolyhedronや頂点配列は**持っていない**ので何もする必要なし
+    }
+
+    // 3) 各クランプの描画
+    for (int i = 0; i < nclumps; ++i) {
+      if (!gClumpFind->flagShowHull(i)) continue;
+
+      // エントリ確保
+      auto& e = s_hull[i];
+      if (e.vao == 0) {
+	// 初回だけVAO/VBO作成＆レイアウト設定
+	glGenVertexArrays(1, &e.vao);
+	glGenBuffers(1, &e.vbo);
+	glBindVertexArray(e.vao);
+	glBindBuffer(GL_ARRAY_BUFFER, e.vbo);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0);
+	glBindVertexArray(0);
+	e.dirty = true; // 新規なので更新が必要
+      }
+
+      // dirtyなら：点群→凸包→線分→VBOへアップロード
+      if (e.dirty) {
+	TrackingVector<ParticleData> pts = gClumpFind->get_particle_indices(i, P->particles);       
+	TrackingVector<float> vertices = gConvexHullGenerator->buildLineVertices(pts);
+
+	e.vertexCount = (GLsizei)(vertices.size() / 3);
+
+	glBindBuffer(GL_ARRAY_BUFFER, e.vbo);
+	glBufferData(GL_ARRAY_BUFFER, vertices.size()*sizeof(float), vertices.data(), GL_STATIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	e.dirty = false;
+      }
+
+      // ドロー：**VAOは描画時にバインドが必要**
+      glBindVertexArray(e.vao);
+      glDrawArrays(GL_LINES, 0, e.vertexCount);
+      glBindVertexArray(0);
+    }
+
+    glUseProgram(0);
+  }
+#endif
+    
   RenderColorBar();
   RenderColorBarLabels();
 }
 
+static GLuint   gProjTex = 0;
+static int      gProjW = 0, gProjH = 0;
+static uint64_t gUploadedVersion = 0;
+
+void RenderProjectionUI(ProjectionMapGenerator& gen)
+{
+  if (!gen.getImageFlag())
+    return;
+  
+  const auto& img = gen.getImage();
+
+  // ImGui ウィンドウはここで初めて開く
+  ImGui::Begin("2D Projection Map");
+
+  if (img.width > 0 && img.height > 0 &&
+      img.rgb.size() == static_cast<size_t>(img.width * img.height * 3))
+    {
+      // 新しいバージョンならGPUへアップロード
+      if (img.version != gUploadedVersion)
+        {
+	  if (gProjTex == 0) {
+	    glGenTextures(1, &gProjTex);
+	    glBindTexture(GL_TEXTURE_2D, gProjTex);
+	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	    gProjW = gProjH = 0;
+	  }
+
+	  glBindTexture(GL_TEXTURE_2D, gProjTex);
+	  GLint prevUnpack;
+	  glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpack);
+	  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+	  if (img.width != gProjW || img.height != gProjH) {
+	    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+			 img.width, img.height, 0,
+			 GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
+	    gProjW = img.width;
+	    gProjH = img.height;
+	  } else {
+	    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+			    img.width, img.height,
+			    GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
+	  }
+
+	  glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpack);
+	  glBindTexture(GL_TEXTURE_2D, 0);
+	  gUploadedVersion = img.version;
+        }
+
+      // ImGui上にテクスチャを表示
+      ImVec2 size((float)gProjW, (float)gProjH);
+      ImGui::Image((ImTextureID)(intptr_t)gProjTex, size);
+    }
+  else {
+    ImGui::TextUnformatted("Invalid image buffer.");
+  }
+
+  ImGui::End();
+}
+
 void Cleanup() {
+#ifdef PYTHON_BRIDGE
+  if (g_py.ptr) {
+    g_py.ptr->shutdown(); 
+    g_py.ptr.reset();
+  }
+#endif
+  
   // OpenGL バッファ解放
   glDeleteVertexArrays(1, &particleVAO);
   glDeleteBuffers(1, &particleVBO);
@@ -5683,8 +5902,7 @@ int main() {
   colormapForType[5] = plasmaTex;
 
 #ifdef USE_CONVEX_HULL
-  gConvexHullRenderer = new ConvexHullRenderer();
-  gConvexHullRenderer->Init(lineProgram);
+  gConvexHullGenerator = new ConvexHullGenerator();
 #endif
 
 #ifdef STREAM_LINE
@@ -5715,8 +5933,20 @@ int main() {
     ImGui::NewFrame();
     
     // 4. UI の描画
-    UpdateUI();            // ImGui UI の更新
+    UpdateUI();            // ImGui UI の更新    
     
+#ifdef PYTHON_BRIDGE
+    if (g_py.ptr) {
+      std::vector<FieldId> dirty;
+      g_py.ptr->drainEditFields(dirty);
+      if (!dirty.empty()) {
+	bridge::applyFromSharedToAoS(g_py.ptr->shared(), *P, dirty);
+	P->particlesDirty = true;      // 位置などを使うなら
+      }
+    }
+#endif
+
+    RenderProjectionUI(*gProjectionMap2D);
     // 5. 3D シーンの描画
     RenderScene();         // OpenGL 描画
         
@@ -5737,7 +5967,7 @@ int main() {
   delete gStreamLine;
 #endif
 #ifdef USE_CONVEX_HULL
-  delete gConvexHullRenderer;
+  delete gConvexHullGenerator;
 #endif
 #ifdef GEOMETRICAL_ANALYSIS
   delete gDiskFinder;
