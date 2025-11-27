@@ -13,7 +13,7 @@ endif()
 
 # ===== オプション（MakefileのOPTION相当） =====
 option(DEBUG_MODE          "Enable debug mode"                   ON)
-option(USE_LUA             "Enable Lua"                          OFF)
+option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
 option(CLUMP_DATA_READ     "Enable Clump data read"              ON)
 option(ISO_CONTOUR         "Enable iso-contour/VTK"              ON)
@@ -26,6 +26,7 @@ option(ROTATE_QUATERNION   "Use quaternion rotation"             ON)
 option(ROTATE_ARCBALL      "Use arcball rotation"                ON)
 option(NONATIVEFILEDIALOG  "Disable native file dialog"          OFF)
 option(PYTHON_BRIDGE       "Bridge the main code to python"      ON)
+option(CLOUDY              "Bridge the main code to CLOUDY"      OFF)
 
 set(USE_MMPA_DEFAULT ON)
 if(WIN32)
@@ -104,10 +105,56 @@ set(IMPLOT_SRC
 
 set(NFD_SRC_COMMON ${EXTERNAL_DIR}/nfd/nfd_common.c)
 
-
 # デスクトップGL用 glad（Windows/macOS/Linux のデスクトップGLで使用）
 # ※ USE_GLES=ON の場合は glad を使わず <GLES3/gl3.h> を使う方針
 set(GLAD_SRC ${EXTERNAL_DIR}/glad/src/glad.c)
+
+
+# Compute "$(uname -m)" once for a deterministic default
+execute_process(COMMAND uname -m
+  OUTPUT_VARIABLE _uname_m
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+# Build the default prefix: $HOME/usr/local/cloudy/c25.00-$(uname -m)
+set(_CLOUDY_PREFIX_DEFAULT "$ENV{HOME}/usr/local/cloudy/c25.00-${_uname_m}")
+
+# Expose CLOUDY_PREFIX cache var with that default (user can override on cmdline)
+set(CLOUDY_PREFIX "${_CLOUDY_PREFIX_DEFAULT}" CACHE PATH
+    "Prefix to prebuilt Cloudy (e.g. $ENV{HOME}/usr/local/cloudy/c25.00-$(uname -m))")
+
+if(CLOUDY)
+  # Locate headers and library under CLOUDY_PREFIX
+  find_path(CLOUDY_INCLUDE_DIR
+    NAMES cddefines.h
+    HINTS
+      "${CLOUDY_PREFIX}/include/cloudy"
+      "${CLOUDY_PREFIX}/src/source"
+      "${CLOUDY_PREFIX}/source"
+    NO_DEFAULT_PATH)
+
+  find_library(CLOUDY_LIBRARY
+    NAMES cloudy_core cloudy
+    HINTS
+      "${CLOUDY_PREFIX}/lib"
+      "${CLOUDY_PREFIX}"
+    NO_DEFAULT_PATH)
+
+  if(NOT CLOUDY_INCLUDE_DIR OR NOT CLOUDY_LIBRARY)
+    message(FATAL_ERROR
+      "Cloudy not found under CLOUDY_PREFIX='${CLOUDY_PREFIX}'.\n"
+      "Expected: <prefix>/include/cloudy/cddefines.h and <prefix>/lib/libcloudy_core.a")
+  endif()
+
+  add_library(Cloudy::core STATIC IMPORTED GLOBAL)
+  set_target_properties(Cloudy::core PROPERTIES
+    IMPORTED_LOCATION             "${CLOUDY_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CLOUDY_INCLUDE_DIR}"
+    INTERFACE_COMPILE_FEATURES    "cxx_std_17"
+    INTERFACE_POSITION_INDEPENDENT_CODE ON
+  )
+
+  message(STATUS "Cloudy: inc='${CLOUDY_INCLUDE_DIR}', lib='${CLOUDY_LIBRARY}'")
+endif()
 
 # 目標ターゲット
 add_executable(${PROJECT_NAME}
@@ -576,12 +623,15 @@ endif()
 
 # ===== Lua =====
 if(USE_LUA)
+  # まずはモジュール検索
   find_package(Lua QUIET)
-  if(Lua_FOUND)
+  if(Lua_FOUND AND TARGET Lua::Lua)
     target_link_libraries(${PROJECT_NAME} PRIVATE Lua::Lua)
+  elseif(Lua_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
   elseif(PKG_CONFIG_FOUND)
-    # 複数バージョン候補を試す
-    pkg_check_modules(LUA QUIET lua5.4 lua5.3 lua)
+    pkg_check_modules(LUA QUIET lua-5.4 lua5.4 lua5.3 lua)
     if(LUA_FOUND)
       target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIRS})
       target_link_directories(${PROJECT_NAME} PRIVATE ${LUA_LIBRARY_DIRS})

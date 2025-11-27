@@ -1,6 +1,5 @@
 
 #include "main.h"
-#include "camera.h"
 #include "compute_2D_histogram.h"
 
 #include <imgui.h>
@@ -38,8 +37,20 @@ histogram2D::compute2DHistogram(const TrackingVector<ParticleData>& particles,
       if (!condition(p))
 	continue;
 
-      float v1 = p.getValue(var1);
-      float v2 = p.getValue(var2);
+      float v1, v2;
+      if(var1 == "r"){
+	glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
+	v1 = glm::length(pos - this->camCenter) ;
+      }else{
+	v1 = p.getValue(var1);
+      }
+
+      if(var2 == "r"){
+	glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
+	v2 = glm::length(pos - this->camCenter) ;
+      }else{	
+	v2 = p.getValue(var2);
+      }
 
       if(histogram2DLogScaleX) v1 = log10(v1);
       if(histogram2DLogScaleY) v2 = log10(v2);
@@ -116,8 +127,10 @@ histogram2D::compute2DHistogram(const TrackingVector<ParticleData>& particles,
     
     for (int i = 0; i < bins1; i++){
       for (int j = 0; j < bins2; j++){
+	printf("[%d,%d] val=%g min_val=%g\n", i, j, histogram[i][j], min_val);
+	
 	if(histogram[i][j] == 0.)
-	  histogram[i][j] = 0.1 * min_val;	
+	  histogram[i][j] = 0.1 * min_val;
 	histogram[i][j] = log10(histogram[i][j]);
       }
     }

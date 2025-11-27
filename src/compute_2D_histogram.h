@@ -1,4 +1,5 @@
 #pragma once
+#include <glm/glm.hpp>
 
 #include <functional>
 #ifdef USE_CONVEX_HULL  

@@ -1043,9 +1043,9 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
   }
   }
   
-  // 4) open / readNext ループ / close
+  // 4) open / readNext loop / close
   if (!reader->open(fullPath, hdr)) {
-    std::cerr<<"ファイルオープン失敗: "<< fullPath << "\n";
+    std::cerr<<"failed to open the file: "<< fullPath << "\n";
     return false;
   }
   particles.clear();
@@ -1257,12 +1257,12 @@ static inline double cubic_spline_W(double r, double h) {
 
   // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
   // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
-void ParticleArray::computeStellarDensity(int type)
+void ParticleArray::computeStellarDensity(int type, bool flag_overwrite_hsml)
 {
   const int N_neighbours = 32;
 
   bool flag_star = false;
-  if(type == 3)
+  if(type >= 3)
     flag_star = true;
     
   // type >= 3 の粒子のみを抽出
@@ -1303,6 +1303,17 @@ void ParticleArray::computeStellarDensity(int type)
   // knnSearch の結果を格納するためのコンテナ
   TrackingVector<KDTreeType::IndexType> ret_indexes(N_neighbours);
   TrackingVector<float> out_dists_sqr(N_neighbours);
+
+  double cosmofac = 1.;
+  if(useComovingCorrdinate)
+    cosmofac = Header.time;
+
+  if(cosmofac < 1.e-2 || cosmofac > 1.)
+    cosmofac = 1.;
+
+  double hubble = Hubble;
+  if(hubble < 0.1 || hubble > 1.0)
+    hubble = 1.;
   
   nanoflann::SearchParameters params;
   // 各粒子について近傍を探索
@@ -1341,18 +1352,19 @@ void ParticleArray::computeStellarDensity(int type)
         
     // 面積 = π * r^2
     double area = M_PI * h * h;
-    double cosmofac = 1.;
-    if(useComovingCorrdinate)
-      cosmofac = Header.time;
     
     int original_index = cloud.particles[i].index;
     if(flag_star)
       particles[original_index].density = totalMass * UnitMass_in_msolar
-	/ area / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_pc, 2.) * Hubble;
+	/ area / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_pc, 2.) * hubble;
     else
-      particles[original_index].density = density / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_cm, 3.) * Hubble * Hubble;
+      particles[original_index].density = density * UnitMass_in_msolar * 1.998e33 / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_cm, 3.) * hubble * hubble;
+
+    if(flag_overwrite_hsml)
+      particles[original_index].Hsml = h;
     
-    printf("i=%d mass=%g h=%g desnity=%g\n", original_index, totalMass, h, particles[original_index].density);
+    printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g %g\n"
+	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * UnitLength_in_cm, hubble, Hubble);
   }
 }
 

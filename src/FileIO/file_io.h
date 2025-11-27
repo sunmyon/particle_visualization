@@ -888,7 +888,7 @@ public:
     if(mass_type[ptype] > 0.)
       p.mass = mass_type[ptype];	  
 
-    if(curIndex_%10000 == 0)
+    if(curIndex_%10000 == 0 || ptype >= 3)
       printf("i=%zu type=%zu npart_=%d\n", curIndex_, ptype, npart_);
         
     if (localIdx < blockLoadedIdx_ ||
@@ -906,7 +906,7 @@ public:
       
       // 4) 型ごとに一時バッファを用意して読み込み
 
-      if(curIndex_ < 10)
+      if(curIndex_ < 10 || ptype>=3)
 	printf("ftype=%d\n", fs.fType);
       
       if(fs.dType == H5::PredType::NATIVE_FLOAT){
@@ -932,6 +932,9 @@ public:
 	  assignField<float>(p, fs.fType, buf, fs.dim);
 	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
 	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+
+	  if(ptype>=5 && fs.fType == FieldType::Mass)
+	    printf("Mass=%g buf=%g\n", p.mass, buf[0]);
 	  
 	  break;
 	}
@@ -971,6 +974,9 @@ public:
 	  assignField<float>(p, fs.fType, tmp.data(), fs.dim);
 	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
 	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+
+	  if(ptype>=3 && fs.fType == FieldType::Mass)
+	    printf("Mass=%g buf=%g\n", p.mass, buf[0]);
 	  
 	  break;
 	}
@@ -1126,23 +1132,40 @@ void loadBlock(size_t gIdx) {
   hsize_t offset[2] = { static_cast<hsize_t>(localStart), 0 };
 
   for (auto &fs : pg.fields) {
-    hsize_t blockFs[2] = {
-      static_cast<hsize_t>(count),
-      static_cast<hsize_t>(fs.dim)
-    };
-
     H5::DataSpace fileSpace = fs.ds.getSpace();
-    fileSpace.selectHyperslab(H5S_SELECT_SET, blockFs, offset);   
+    int rank = fileSpace.getSimpleExtentNdims();
 
-    hsize_t offsetMem[2] = { 0, 0 };
-    H5::DataSpace memSpace(fs.memspace);
-    memSpace.selectHyperslab(H5S_SELECT_SET, blockFs, offsetMem);
-    
-    H5::PredType ntype = fs.dType;
-    fs.ds.read(fs.rawBuf.data(),
-	       ntype,
-	       memSpace, fileSpace);
+    if (rank == 1) {
+      // ---- 1D データセット（例：Mass, Density などスカラ配列）----
+      hsize_t block1[1] = { static_cast<hsize_t>(count) };
+      hsize_t off1[1]   = { static_cast<hsize_t>(localStart) };
+      fileSpace.selectHyperslab(H5S_SELECT_SET, block1, off1);
+
+      // メモリ側も 1D（長さ count）をその都度作る（rawBuf 先頭に詰める）
+      H5::DataSpace mem1(1, block1);
+
+      fs.ds.read(fs.rawBuf.data(), fs.dType, mem1, fileSpace);
+    } else {
+      // ---- 2D データセット（例：Position/Velocity の Nx3 など）----
+      hsize_t block2[2] = {
+	static_cast<hsize_t>(count),
+	static_cast<hsize_t>(fs.dim)   // fs.dim は “実成分数”
+      };
+      hsize_t off2[2] = {
+	static_cast<hsize_t>(localStart),
+	0
+      };
+      fileSpace.selectHyperslab(H5S_SELECT_SET, block2, off2);
+
+      // memspace は (blockSize_, fs.dim)。ここから (count, fs.dim) を切り出す。
+      H5::DataSpace mem2(fs.memspace);
+      hsize_t offMem[2] = { 0, 0 };
+      mem2.selectHyperslab(H5S_SELECT_SET, block2, offMem);
+
+      fs.ds.read(fs.rawBuf.data(), fs.dType, mem2, fileSpace);
+    }    
   }
+  
   currentBlockCount_ = count;
   blockLoadedIdx_   = localStart;
 }

@@ -2,6 +2,7 @@
 #include "camera.h"
 #include "object.h"
 
+#include <chrono>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -239,8 +240,12 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
   if (selectedAxis == 0) normal = glm::vec3(1, 0, 0); // X 軸 (YZ 平面)
   if (selectedAxis == 1) normal = glm::vec3(0, 1, 0); // X 軸 (YZ 平面)
   if (selectedAxis == 2) normal = glm::vec3(0, 0, 1); // Z 軸 (XY 平面)
-
+  
   g_selectedAxis = selectedAxis;
+
+  const char* typeLabels[] = { "0", "1", "2", "3", "4", "5"};
+  ImGui::Combo("SelectedParticleType", &selectedType, typeLabels, IM_ARRAYSIZE(typeLabels));
+  type_ = selectedType;
   
   // cuboidTransform（四元数）を適用して回転後の法線を計算
   planeNormal = glm::normalize(cuboidTransform * normal);
@@ -291,8 +296,16 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
   if(flagTimeLabel){
     ImGui::Indent(); 
     ImGui::InputText("Time Format", timeFormatBuf, IM_ARRAYSIZE(timeFormatBuf));    
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Use redshift", &flagUseRedshift);
+
+    ImGui::InputFloat("Time unit to display", &factorShownTimeInUnitTime);
+
     ImGui::Unindent();
   }
+
+
   
   ImGui::Checkbox("Show Spacial scale", &flagPlaceScale);
   if(flagPlaceScale){
@@ -314,7 +327,7 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
   if(flagSpecifyZoomRegionByMass){
     ImGui::Indent(); 
     ImGui::SetNextItemWidth(80);
-    ImGui::InputFloat("critical gas mass", &criticalGasMassForZoomRegion, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("critical mass", &criticalGasMassForZoomRegion, 0.0f, 0.0f, "%g");
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
@@ -390,9 +403,9 @@ void ProjectionMapGenerator::set_projection_parameters(const TrackingVector<Part
   if (!var_new.empty())
     var = var_new;
   
-  flagShowStarParticles = true;
-  flagDensityWeight = true;
-  flagLogScale = true;
+  //flagShowStarParticles = true;
+  //flagDensityWeight = true;
+  //flagLogScale = true;
   //flagVoronoi = true;
   
   if(useAngularMomentumAxis){
@@ -500,7 +513,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     
     int count = 0;
     for (const auto& p : originalParticles) {
-      if(p.type != 0)
+      if(p.type != type_)
 	continue;
       
       if(p.mass > criticalGasMassForZoomRegion)
@@ -564,6 +577,9 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   TrackingVector<ParticleData> insideParticles;
   
   for (const auto& p : originalParticles) {
+    if(p.type != type_)
+      continue;
+    
     glm::vec4 localPos = glm::inverse(cuboidTransform) * glm::vec4(glm::vec3(p.pos[0] - center.x, p.pos[1] - center.y, p.pos[2] - center.z), 1.0f) + glm::vec4(center.x, center.y, center.z, 0.);
     if (localPos.x >= xmin_cut[0] && localPos.x <= xmax_cut[0] &&
 	localPos.y >= xmin_cut[1] && localPos.y <= xmax_cut[1] &&
@@ -610,20 +626,43 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   map.flagLogScale = flagLogScale;
     
   // 平面の基底を計算
-  glm::vec3 up(0.f, 1.f, 0.f);
-  if (fabs(glm::dot(up, planeNormal)) > 0.99f) 
-    up = glm::vec3(1.f, 0.f, 0.f);
-        
-  map.uAxis = glm::normalize(glm::cross(planeNormal, up));
-  map.vAxis = glm::normalize(glm::cross(planeNormal, map.uAxis));
-  map.wAxis = glm::normalize(planeNormal);
+  glm::vec3 axisX = glm::normalize(cuboidTransform * glm::vec3(1,0,0));
+  glm::vec3 axisY = glm::normalize(cuboidTransform * glm::vec3(0,1,0));
+  glm::vec3 axisZ = glm::normalize(cuboidTransform * glm::vec3(0,0,1));
+
+  // selectedAxis: 0=X, 1=Y, 2=Z から見ている
+  if (g_selectedAxis == 0) {
+    // X 軸方向から見る: 画面奥(w)が axisX、画面 x が axisY、画面 y が axisZ
+    map.wAxis = axisX;
+    map.uAxis = axisY;
+    map.vAxis = axisZ;
+  }
+  else if (g_selectedAxis == 1) {
+    // Y 軸方向から見る
+    map.wAxis = axisY;
+    map.uAxis = axisZ;
+    map.vAxis = axisX;
+  }
+  else { // selectedAxis == 2
+    // Z 軸方向から見る（face-on）
+    map.wAxis = axisZ;
+    map.uAxis = axisX;
+    map.vAxis = axisY;
+  }
+
   map.center = center;
-    
+  
+  using namespace std::chrono;
+  auto start = high_resolution_clock::now();
+  
   if(flagVoronoi == true)
     createVoronoiSliceMap(map, insideParticles);
   else    
     createProjectionMap(map, insideParticles);
 
+  auto end = high_resolution_clock::now();    
+  std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
+  
   float minVal = FLT_MAX;    
   for (auto val : map.values){
     if(val < minVal && val > 0.)
@@ -641,7 +680,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     }else
       printf("minus quantity appears. we will use linear scale.\n");
   }
-    
+  
   map.minVal = *std::min_element(map.values.begin(), map.values.end());
   map.maxVal = *std::max_element(map.values.begin(), map.values.end());
 
@@ -665,17 +704,17 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
 
   if(flagShowStarParticles)
     overlayStarParticles(map, originalParticles);
-
+  
   outW = map.npixel_x;
   outH = map.npixel_y;
 
   int colorBarWidth = static_cast<int>(0.07 * outW);
   outImage = map.image;
   addColorBarToMap(map, range_min, range_max, colorBarWidth, colorMap, countColorMap, outImage, outW, outH, var.c_str());
-
+  
   //output PNG file
   stbi_write_png(filename, outW, outH, 3, outImage.data(), outW*3);
-    
+  
   setTexture2D(outImage, outW, outH);
   flag2DprojectionComputed = true;
 }
@@ -872,6 +911,7 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const Tra
   }
 
   for (size_t i = 0; i < map.values.size(); i++){
+    printf("[%d] value=%g weights=%g\n", i, map.values[i], map.weights[i]);
     if(map.weights[i])
       map.values[i] /= map.weights[i];       
   }
@@ -969,9 +1009,12 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
 #endif
   
   for (const auto &p : particles) {
+    if(p.type < 3 || p.type > 5)
+      continue;
+    
     double pointSize = 5.0;
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
-
+    
 #ifdef USE_LUA
     if(flag_init_lua){
       lua_settop(gLua, 0);
@@ -983,14 +1026,14 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
       lua_setglobal(gLua, "val");
       lua_pushnumber(gLua, p.type);
       lua_setglobal(gLua, "ptype");
-      
+
       // 1. フィルタ条件の評価
       bool pass = false;
       if (!EvaluateLuaExpressionBool(filterExpr, pass)) {
 	std::cerr << "Error evaluating filter expression\n";
 	continue;
       }
-      
+
       if (!pass) {
 	continue;  // 条件に合致しなければ描画しない
       }
@@ -1008,62 +1051,59 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
       }
     }
 #endif
-    
+
     unsigned char ur = static_cast<unsigned char>(r * 255);
     unsigned char ug = static_cast<unsigned char>(g * 255);
     unsigned char ub = static_cast<unsigned char>(b * 255);
       
-    if (p.type >= 3 && p.type <= 5) {
-      // 3D位置から2D画像上の座標 (px, py) を計算（createProjectionMap() と同じ手法で）
-      glm::vec3 rad = glm::vec3(p.pos[0],p.pos[1],p.pos[2]) - map.center;
-      float u = glm::dot(rad, map.uAxis);  // 画像上のX軸方向の成分
-      float v = glm::dot(rad, map.vAxis);  // 画像上のY軸方向の成分
-      int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
-      int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
+    // 3D位置から2D画像上の座標 (px, py) を計算（createProjectionMap() と同じ手法で）
+    glm::vec3 rad = glm::vec3(p.pos[0],p.pos[1],p.pos[2]) - map.center;
+    float u = glm::dot(rad, map.uAxis);  // 画像上のX軸方向の成分
+    float v = glm::dot(rad, map.vAxis);  // 画像上のY軸方向の成分
+    int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
+    int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
       
-      // 画像の幅に応じたスケール因子を計算
-      float desiredStarSize = pointSize * map.npixel_x * 0.02f; // 例: 画像幅の2%が星全体のサイズ
+    // 画像の幅に応じたスケール因子を計算
+    float desiredStarSize = pointSize * map.npixel_x * 0.02f; // 例: 画像幅の2%が星全体のサイズ
 
-      // 指定文字のグリフビットマップを取得
-      float scale = stbtt_ScaleForPixelHeight(&fontCharacter, desiredStarSize);
-      int width, height, xoffset, yoffset;
+    // 指定文字のグリフビットマップを取得
+    float scale = stbtt_ScaleForPixelHeight(&fontCharacter, desiredStarSize);
+    int width, height, xoffset, yoffset;
 
-      int codepoint = static_cast<int>('*');
-      unsigned char* bitmap = stbtt_GetCodepointBitmap(&fontCharacter, 0, scale, codepoint, &width, &height, &xoffset, &yoffset);
-      if (!bitmap) {
-        std::cerr << "Failed to generate bitmap for character: " << codepoint << std::endl;
-        return;
-      }
-
-      //printf("width=%d height=%d xoffset=%d yoffset=%d", width, height, xoffset, yoffset);
-      
-      int penX = px - (width / 2);// + xoffset;
-      int penY = py - (height / 2);// + yoffset;
-
-      // bitmap を image バッファにコピーする（image は RGB 形式）
-      for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i++) {
-	  unsigned char pixelAlpha = bitmap[i + j * width];
-
-	  int x = penX + i;
-	  int y = penY + j;
-	  
-	  if (x >= 0 && x < map.npixel_x && y >= 0 && y < map.npixel_y) {
-	    int idx = (y * map.npixel_x + x) * 3;
-	    
-	    unsigned char ur_new = (ur * pixelAlpha / 255) + (map.image[idx + 0] * (255 - pixelAlpha) / 255);
-	    unsigned char ug_new = (ug * pixelAlpha / 255) + (map.image[idx + 1] * (255 - pixelAlpha) / 255);
-	    unsigned char ub_new = (ub * pixelAlpha / 255) + (map.image[idx + 2] * (255 - pixelAlpha) / 255);
-	  
-	    map.image[idx + 0] = ur_new;
-	    map.image[idx + 1] = ug_new;
-	    map.image[idx + 2] = ub_new;
-	  }
-	  
-	}
-      }
-      
+    int codepoint = static_cast<int>('*');
+    unsigned char* bitmap = stbtt_GetCodepointBitmap(&fontCharacter, 0, scale, codepoint, &width, &height, &xoffset, &yoffset);
+    if (!bitmap) {
+      std::cerr << "Failed to generate bitmap for character: " << codepoint << std::endl;
+      return;
     }
+
+    //printf("width=%d height=%d xoffset=%d yoffset=%d", width, height, xoffset, yoffset);
+      
+    int penX = px - (width / 2);// + xoffset;
+    int penY = py - (height / 2);// + yoffset;
+
+    // bitmap を image バッファにコピーする（image は RGB 形式）
+    for (int j = 0; j < height; j++) {
+      for (int i = 0; i < width; i++) {
+	unsigned char pixelAlpha = bitmap[i + j * width];
+
+	int x = penX + i;
+	int y = penY + j;
+	  
+	if (x >= 0 && x < map.npixel_x && y >= 0 && y < map.npixel_y) {
+	  int idx = (y * map.npixel_x + x) * 3;
+	    
+	  unsigned char ur_new = (ur * pixelAlpha / 255) + (map.image[idx + 0] * (255 - pixelAlpha) / 255);
+	  unsigned char ug_new = (ug * pixelAlpha / 255) + (map.image[idx + 1] * (255 - pixelAlpha) / 255);
+	  unsigned char ub_new = (ub * pixelAlpha / 255) + (map.image[idx + 2] * (255 - pixelAlpha) / 255);
+	  
+	  map.image[idx + 0] = ur_new;
+	  map.image[idx + 1] = ug_new;
+	  map.image[idx + 2] = ub_new;
+	}
+	  
+      }
+    }          
   }
 }
 
@@ -1440,7 +1480,10 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
 
   if(flagTimeLabel){
     char timeStr[64];
-    double t = Header.time; // 適切な時間値
+    double t = Header.time * factorShownTimeInUnitTime; // 適切な時間値
+    if(flagUseRedshift)
+      t = 1./Header.time - 1.;
+    
     snprintf(timeStr, sizeof(timeStr), timeFormatBuf, t);
 
     // 1) テキストの実際の表示サイズを先に計測する
@@ -1487,10 +1530,11 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
   // (9) 空間スケールの矢印の描画（例：左下に 100px のスケール表示）
   if(flagPlaceScale)
     {
-      int arrowLenX_in_pixel = static_cast<int>(arrowLenX / map.cell_size);
-
+      double arrowLenX_scaled = arrowLenX;
       if(flagScaleOriginalCoordinate)
-	arrowLenX_in_pixel *= (desiredMax /originalMax);
+	arrowLenX_scaled *= (desiredMax /originalMax);
+
+      int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / map.cell_size);
 	
       int arrowCenterX = map.npixel_x / 2;
       int arrowStartX = arrowCenterX - arrowLenX_in_pixel / 2;

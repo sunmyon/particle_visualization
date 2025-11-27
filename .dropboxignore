@@ -1,0 +1,5 @@
+external/cloudy/source/*.o
+external/cloudy/source/*.d
+external/cloudy/source/cloudy.exe
+external/cloudy/source/cloudyconfig.h
+external/cloudy/source/version*.h

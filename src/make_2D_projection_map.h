@@ -35,6 +35,7 @@ private:
   bool flag_image_ = false;
   bool dirty_ = true;
   uint64_t nextVersion_ = 1;
+  char type_ = 0;
   
 public:
   int npixel = 200;
@@ -68,6 +69,7 @@ public:
   char arrowLabelStr[255]="100 au";
 
   bool flagTimeLabel = true;
+  bool flagUseRedshift = false;
   char timeFormatBuf[255] = "t=%.3f";
   
   double originalMax;
@@ -80,6 +82,7 @@ public:
   std::string var;
   
   int selectedAxis = 2;
+  int selectedType = 0;
   glm::quat cuboidTransform;
   glm::vec3 center;
   glm::vec3 planeNormal;
@@ -92,6 +95,8 @@ public:
   int outW, outH;     
   bool flag2DprojectionComputed = false;
 
+  float factorShownTimeInUnitTime = 1.;
+  
 #ifdef USE_LUA
   lua_State* gLua = nullptr;
   bool flag_init_lua = false;
@@ -143,7 +148,7 @@ public:
     image_.version = nextVersion_++;
   }
 
-  ProjectionImage getImage(){
+  const ProjectionImage &getImage() const noexcept{
     return image_;
   }
 

@@ -2,6 +2,10 @@
 
 bulid/
 build/
+
+ffmpeg_frames/
+output/
+
 /.vcpkg-cache/
 example/data/
 

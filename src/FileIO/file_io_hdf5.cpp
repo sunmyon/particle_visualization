@@ -132,145 +132,181 @@ void readDatasetHdf5(H5::Group &group,
 
 bool HDF5ParticleReader::open(const std::string& filename, HeaderInfo& hdr) {
   // 1) ファイルを開く
-  file_ = H5::H5File(filename, H5F_ACC_RDONLY);
-
-  // 2) /Header グループを開き、各属性を読み込む
-  H5::Group headerGroup = file_.openGroup("/Header");
-  readAttributeScalar(headerGroup, "Time",                   hdr.time);
-  readAttributeScalar(headerGroup, "BoxSize",                hdr.boxSize);
-  readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
-  readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
-  readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
-
-  readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);  
-  readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
-  readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
-
-  readAttributeArray (headerGroup, "NumPart_ThisFile",       hdr.NumPart_ThisFile);
-  readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
-
-  npart_ = 0;
-  for(int k=0;k<6;k++){
-    mass_type[k] = hdr.massTable[k];
-    npart_ += hdr.NumPart_ThisFile[k];
+  if (!std::filesystem::exists(filename)) {
+    printf("Couldn't find the file, %s.\n", filename.c_str());
+    return false;
   }
+
+  H5::Exception::dontPrint();
   
-  // 3) /Parameters グループから追加フラグを読み込む
   try{
-    H5::Group paramGroup = file_.openGroup("/Parameters");
-    readAttributeScalar(paramGroup, "ComovingIntegrationOn",  hdr.flag_comoving);
-  }catch (const H5::Exception &e) {
-    printf("Can't fine group /Parameters\n");
-    hdr.flag_comoving = 0;
-  }
+    file_ = H5::H5File(filename, H5F_ACC_RDONLY);
 
-  factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS) * hdr.HubbleParam * hdr.HubbleParam;
-  if (hdr.flag_comoving && hdr.time > 0.)
-    factor_density_ *= std::pow(hdr.time, -3);
+    // 2) /Header グループを開き、各属性を読み込む
+    H5::Group headerGroup = file_.openGroup("/Header");
+    readAttributeScalar(headerGroup, "Time",                   hdr.time);
+    readAttributeScalar(headerGroup, "BoxSize",                hdr.boxSize);
+    readAttributeScalar(headerGroup, "Omega0",                 hdr.Omega0);
+    readAttributeScalar(headerGroup, "OmegaLambda",            hdr.OmegaLambda);
+    readAttributeScalar(headerGroup, "HubbleParam",            hdr.HubbleParam);
+
+    readAttributeScalar(headerGroup, "UnitLength_in_cm",       hdr.UnitLength_in_cm);  
+    readAttributeScalar(headerGroup, "UnitVelocity_in_cm_per_s", hdr.UnitVelocity_in_cm_per_s);
+    readAttributeScalar(headerGroup, "UnitMass_in_g",          hdr.UnitMass_in_g);
+
+    readAttributeArray (headerGroup, "NumPart_ThisFile",       hdr.NumPart_ThisFile);
+    readAttributeArray (headerGroup, "MassTable",              hdr.massTable);
+
+    npart_ = 0;
+    for(int k=0;k<6;k++){
+      mass_type[k] = hdr.massTable[k];
+      npart_ += hdr.NumPart_ThisFile[k];
+    }
   
-  factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
-
-  printf("factors=%g %g Unit=%g %g %g\n", factor_density_, factor_temperature_, hdr.UnitLength_in_cm, hdr.UnitMass_in_g, hdr.UnitVelocity_in_cm_per_s);
-  
-  hdr.flag_hdf5 = true;
-
-  flag_computeTemperature_ = true;
-  bool flag_read_internal_energy = false;
-  
-  size_t globalOff = 0;
-  for(int t=0; t<6; ++t) {
-    //if (flag_skip_DM && (t == 1 || t == 2)) continue;
-      
-    std::string gname = "/PartType" + std::to_string(t);
-    if (!groupExists(file_, gname))
-      continue;
-
-    H5::Group grp = file_.openGroup(gname);
-    int64_t cnt = hdr.NumPart_ThisFile[t];
-      
-    PartGroup pg;
-    pg.type  = t;
-    pg.count = cnt;
-
-    // 3) トークンごとに FieldSet を作成
-    for(size_t i=0; i<fmt_.tokens.size(); ++i) {
-      auto &tk = fmt_.tokens[i];
-      if (strcmp(tk.label, "dummy") == 0)
-	continue;      
-      
-      int dim = tk.count;
-
-      // ラベル→FieldType
-      auto it = labelToField.find(tk.label);
-      FieldType fType = (it!=labelToField.end()
-			 ? it->second
-			 : FieldType::Unknown);
-
-      bool flag_exist = test_dataset(t, fType);
-      if(flag_exist == false)
-	continue;
-      
-      // データセットを open
-      try{		
-	H5::DataSet ds = grp.openDataSet(tk.displayName);
-	//H5::PredType dtype = ds.getDataType();
-	H5::DataType baseType = ds.getDataType();
-	//H5::PredType& dtype = static_cast<H5::PredType&>(baseType);
-	hid_t native_tid = H5Tget_native_type(baseType.getId(), H5T_DIR_DEFAULT);
-
-	H5::PredType dtype = H5::PredType::NATIVE_FLOAT;  // デフォルト
-	if      (H5Tequal(native_tid, H5T_NATIVE_FLOAT))  dtype = H5::PredType::NATIVE_FLOAT;
-	else if (H5Tequal(native_tid, H5T_NATIVE_DOUBLE)) dtype = H5::PredType::NATIVE_DOUBLE;
-	else if (H5Tequal(native_tid, H5T_NATIVE_INT))    dtype = H5::PredType::NATIVE_INT;
-	else if (H5Tequal(native_tid, H5T_NATIVE_INT32))  dtype = H5::PredType::NATIVE_INT32;
-	else if (H5Tequal(native_tid, H5T_NATIVE_UINT))   dtype = H5::PredType::NATIVE_UINT;
-	else if (H5Tequal(native_tid, H5T_NATIVE_LLONG))  dtype = H5::PredType::NATIVE_LLONG;
-	else if (H5Tequal(native_tid, H5T_NATIVE_ULLONG)) dtype = H5::PredType::NATIVE_ULLONG;
-
-	H5::DataSpace fspace = ds.getSpace();
-	int    rank = fspace.getSimpleExtentNdims(); 
-	std::vector<hsize_t> dims(rank);
-	fspace.getSimpleExtentDims(dims.data());	
-	int components = (rank>=2 ? int(dims[1]) : 1);
-	
-	// 3) その hid_t から PredType オブジェクトを作る	
-	PartGroup::FieldSet fs { fType, ds, dtype, components };
-	
-	fs.filespace = fs.ds.getSpace();
-	std::strncpy(fs.name,tk.displayName, sizeof(fs.name)-1);
-	
-	hsize_t blk[2] = { blockSize_, static_cast<hsize_t>(dim) };
-	fs.memspace  = H5::DataSpace(2, blk);
-	
-	size_t typeSize = fs.dType.getSize();
-	fs.rawBuf.resize(blockSize_ * dim * typeSize);
-	
-	pg.fields.push_back(std::move(fs));
-	
-	if(t==0 && strcmp(tk.label,"temperature") == 0)
-	  flag_computeTemperature_ = false;
-
-	if(t==0 && strcmp(tk.label,"internalenergy") == 0)
-	  flag_read_internal_energy = true;
-
-	printf("[%d] label=%s dtype=%d\n", i, tk.label, dtype.getClass());
-      }catch (const H5::Exception &e) {
-	printf("Type%d dataset%zu label%s name%s not found.\n", t, i, tk.label, tk.displayName);
-      }
+    // 3) /Parameters グループから追加フラグを読み込む
+    try{
+      H5::Group paramGroup = file_.openGroup("/Parameters");
+      readAttributeScalar(paramGroup, "ComovingIntegrationOn",  hdr.flag_comoving);
+    }catch (const H5::Exception &e) {
+      printf("Can't fine group /Parameters\n");
+      hdr.flag_comoving = 0;
     }
 
-    parts_.push_back(std::move(pg));
-    IndexStart[t] = globalOff;
-    globalOff += cnt;
-  }
+    factor_density_ = hdr.UnitMass_in_g / std::pow(hdr.UnitLength_in_cm, 3) / (1.2 * PROTONMASS) * hdr.HubbleParam * hdr.HubbleParam;
+    if (hdr.flag_comoving && hdr.time > 0.)
+      factor_density_ *= std::pow(hdr.time, -3);
+  
+    factor_temperature_ = PROTONMASS / BOLTZMANN * hdr.UnitVelocity_in_cm_per_s * hdr.UnitVelocity_in_cm_per_s;    
 
-  printf("flag_computeTemperature_=%d\n", flag_computeTemperature_);
+    printf("factors=%g %g Unit=%g %g %g\n", factor_density_, factor_temperature_, hdr.UnitLength_in_cm, hdr.UnitMass_in_g, hdr.UnitVelocity_in_cm_per_s);
   
-  if(flag_read_internal_energy == false)
-    flag_computeTemperature_ = false;
+    hdr.flag_hdf5 = true;
+
+    flag_computeTemperature_ = true;
+    bool flag_read_internal_energy = false;
+
+    parts_.clear();
+    parts_.resize(6);
+    for (int t = 0; t < 6; ++t) {
+      parts_[t].type  = t;
+      parts_[t].count = 0;
+    } 
+    
+    size_t globalOff = 0;
+    for(int t=0; t<6; ++t) {
+      //if (flag_skip_DM && (t == 1 || t == 2)) continue;
+      
+      std::string gname = "/PartType" + std::to_string(t);
+      if (!groupExists(file_, gname)){
+	IndexStart[t] = globalOff;
+	continue;
+      }
+
+      H5::Group grp = file_.openGroup(gname);
+      int64_t cnt = hdr.NumPart_ThisFile[t];
+      
+      PartGroup pg;
+      pg.type  = t;
+      pg.count = cnt;
+
+      // 3) トークンごとに FieldSet を作成
+      for(size_t i=0; i<fmt_.tokens.size(); ++i) {
+	auto &tk = fmt_.tokens[i];
+	if (strcmp(tk.label, "dummy") == 0)
+	  continue;      
+      
+	// ラベル→FieldType
+	auto it = labelToField.find(tk.label);
+	FieldType fType = (it!=labelToField.end()
+			   ? it->second
+			   : FieldType::Unknown);
+
+	bool flag_exist = test_dataset(t, fType);
+	if(flag_exist == false)
+	  continue;
+	
+      
+	// データセットを open
+	try{		
+	  H5::DataSet ds = grp.openDataSet(tk.displayName);
+	  //H5::PredType dtype = ds.getDataType();
+	  H5::DataType baseType = ds.getDataType();
+	  //H5::PredType& dtype = static_cast<H5::PredType&>(baseType);
+	  hid_t native_tid = H5Tget_native_type(baseType.getId(), H5T_DIR_DEFAULT);
+
+	  H5::PredType dtype = H5::PredType::NATIVE_FLOAT;  // デフォルト
+	  if      (H5Tequal(native_tid, H5T_NATIVE_FLOAT))  dtype = H5::PredType::NATIVE_FLOAT;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_DOUBLE)) dtype = H5::PredType::NATIVE_DOUBLE;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_INT))    dtype = H5::PredType::NATIVE_INT;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_INT32))  dtype = H5::PredType::NATIVE_INT32;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_UINT))   dtype = H5::PredType::NATIVE_UINT;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_LLONG))  dtype = H5::PredType::NATIVE_LLONG;
+	  else if (H5Tequal(native_tid, H5T_NATIVE_ULLONG)) dtype = H5::PredType::NATIVE_ULLONG;
+
+	  H5::DataSpace fspace = ds.getSpace();
+	  int    rank = fspace.getSimpleExtentNdims(); 
+	  std::vector<hsize_t> dims(rank);
+	  fspace.getSimpleExtentDims(dims.data());	
+	  int components = (rank>=2 ? int(dims[1]) : 1);
+
+	  int token_expected = tk.count;
+	  if (token_expected > 0 && token_expected != components) {
+	    fprintf(stderr,
+		    "[HDF5] WARN: field '%s' components mismatch: token=%d, file=%d\n",
+		    tk.displayName, token_expected, components);
+	  }
+
+	  
+	  // 3) その hid_t から PredType オブジェクトを作る	
+	  PartGroup::FieldSet fs { fType, ds, dtype, components };
+	
+	  fs.filespace = fs.ds.getSpace();
+	  std::strncpy(fs.name,tk.displayName, sizeof(fs.name)-1);
+
+	  hsize_t blk[2] = { blockSize_, static_cast<hsize_t>(fs.dim) };
+	  fs.memspace  = H5::DataSpace(2, blk);
+
+	  size_t typeSize = fs.dType.getSize();
+	  fs.rawBuf.resize(blockSize_ * fs.dim * typeSize);
+	
+	  pg.fields.push_back(std::move(fs));
+	
+	  if(t==0 && strcmp(tk.label,"temperature") == 0)
+	    flag_computeTemperature_ = false;
+
+	  if(t==0 && strcmp(tk.label,"internalenergy") == 0)
+	    flag_read_internal_energy = true;
+
+	  printf("Type%d [label%d] name:%s dtype=%d\n", t, i, tk.label, dtype.getClass());
+	}catch (const H5::Exception &e) {
+	  printf("Type%d dataset%zu label%s name %s not found.\n", t, i, tk.label, tk.displayName);
+	}
+      }
+
+      parts_[t] = std::move(pg);;
+      IndexStart[t] = globalOff;
+      globalOff += cnt;
+    }
+
+    printf("flag_computeTemperature_=%d\n", flag_computeTemperature_);
   
-  curIndex_ = 0;
-  return true;
+    if(flag_read_internal_energy == false)
+      flag_computeTemperature_ = false;
+  
+    curIndex_ = 0;
+  
+    return true;
+  }
+  catch (const H5::Exception& e) {
+    // どこかで HDF5 例外が飛んできたらここで吸収して false
+    // （必要なら e.getDetailMsg() をログ）
+    fprintf(stderr, "[HDF5] exception: %s\n", e.getDetailMsg().c_str());
+    return false;
+  }
+  catch (const std::exception& e) {
+    fprintf(stderr, "[HDF5] std::exception: %s\n", e.what());
+    return false;
+  }
 }
 
 
