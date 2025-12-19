@@ -20,13 +20,12 @@
 #include <random>
 
 TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
-  TrackingVector<ParticleData> particles;
-  HeaderInfo header;
-  loadSingleFile(indexFile, particles, header);
+  ParticleBlock p_block;
+  loadSingleFile(indexFile, p_block);
 
   TrackingVector<int> IDs;
   
-  for(auto &p : particles){
+  for(auto &p : p_block.particles){
     if(p.type < 3)
       continue;
     IDs.push_back(p.ID);
@@ -106,12 +105,11 @@ void FileInfo::generateTestData(ParticleArray *P){
     }
   }
 
-  batchParticles.resize(1);
-  batchParticles[0] = std::move(particles);
-  headerBatch.resize(1);
-  headerBatch[0] = header;
+  batchParticleBlocks.resize(1);
+  batchParticleBlocks[0].particles = std::move(particles);
+  batchParticleBlocks[0].header = header;
   
-  P->swap_particles(batchParticles, 0, headerBatch[0], 1);  
+  P->swap_particles(batchParticleBlocks, 0, 1);  
 }
 
 void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
@@ -119,7 +117,7 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
       newFileIndex < currentBatchStart + batchSize * skipStep) {
     int batchIndex = (newFileIndex - currentBatchStart) / skipStep;
     if (batchIndex >= 0 && batchIndex < batchSize) 
-      P->swap_particles(batchParticles, batchIndex, headerBatch[batchIndex], 0);
+      P->swap_particles(batchParticleBlocks, batchIndex, 0);
     
   } else {
     if (!isLoading)
@@ -168,23 +166,20 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
 
 
 void FileInfo::syncLoadFirstFile(int targetFile, ParticleArray *P) {
-  TrackingVector<ParticleData> firstParticles;
-  HeaderInfo firstHeader;
-  if (loadSingleFile(targetFile, firstParticles, firstHeader)) {
+  ParticleBlock pBlock;  
+  if (loadSingleFile(targetFile, pBlock)) {
     {
       std::lock_guard<std::mutex> lock(g_dataMutex);
       // 例えば、バッチの最初の要素として設定
-      batchParticles.resize(1);
-      batchParticles[0] = std::move(firstParticles);
-      headerBatch.resize(1);
-      headerBatch[0] = firstHeader;
+      batchParticleBlocks.resize(1);
+      batchParticleBlocks[0] = std::move(pBlock);
     }
     // 最初のファイルのデータを即座に反映する
 
-    P->swap_particles(batchParticles, 0, headerBatch[0], 1);
+    P->swap_particles(batchParticleBlocks, 0, 1);
   } else {
     // 読み込みに失敗した場合の処理
-    P->particles = TrackingVector<ParticleData>{};   
+    P->particleBlock.particles = TrackingVector<ParticleData>{};   
     std::cerr << "Failed to load first file: " << targetFile << std::endl;
   }
 }
@@ -193,18 +188,14 @@ void FileInfo::syncLoadFirstFile(int targetFile, ParticleArray *P) {
 void FileInfo::asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep) {
   // バッチのサイズが1以上であることが前提
   // ここでは1つ目以外のファイルを読み込みます
-  TrackingVector<TrackingVector<ParticleData>> newBatch(batchSize - 1);
-  TrackingVector<HeaderInfo> newheaderBatch(batchSize - 1);
+  TrackingVector<ParticleBlock> newBatch(batchSize - 1);
   for (int i = 1; i < batchSize; i++) {
     int fileNumber = targetFile + i * skipStep;
-    TrackingVector<ParticleData> particles;
-    HeaderInfo header;
-    if (loadSingleFile(fileNumber, particles, header)) {
-      newBatch[i - 1] = std::move(particles);
-      newheaderBatch[i - 1] = header;
+    ParticleBlock pBlock;
+    if (loadSingleFile(fileNumber, pBlock)) {
+      newBatch[i - 1] = std::move(pBlock);
     } else {
-      newBatch[i - 1] = TrackingVector<ParticleData>(); // 読み込み失敗時は空
-      newheaderBatch[i - 1] = {};
+      newBatch[i - 1] = {}; // 読み込み失敗時は空
     }
   }
   {
@@ -212,8 +203,7 @@ void FileInfo::asyncLoadRemainingFiles(int targetFile, int batchSize, int skipSt
     // バッチの先頭はすでに設定済みなので、残りを後ろに追加するか、必要に応じてスワップする
     for (size_t i = 0; i < newBatch.size(); i++) {
       // ここでは単純に後ろに追加する例
-      batchParticles.push_back(std::move(newBatch[i]));
-      headerBatch.push_back(newheaderBatch[i]);
+      batchParticleBlocks.push_back(std::move(newBatch[i]));
     }
   }
   // 必要なら、メインスレッドで後から swap_particles するタイミングを設ける
@@ -487,30 +477,32 @@ int ParticleArray::readClumpData(int snapshotIndex){
 
 void FileInfo::initDefaultFormatTokens() {
     formatTokens.clear();
-    FormatToken token;
-    std::strcpy(token.label, "position"); token.type = DataType::Float; token.count = 3;
+    FieldSpec token;
+    token.label = "position"; token.type = DataType::Float; token.count = 3;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "dummy"); token.type = DataType::Float; token.count = 1;
+    token.label = "velocity"; token.type = DataType::Float; token.count = 3;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "value"); token.type = DataType::Float; token.count = 1;
+    token.label = "type"; token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "value2"); token.type = DataType::Float; token.count = 1;
+    token.label = "ID"; token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "mass"); token.type = DataType::Float; token.count = 1;
+    token.label = "Hsml"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "dummy"); token.type = DataType::Float; token.count = 10;
+    token.label = "density"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "Hsml"); token.type = DataType::Float; token.count = 10;
+    token.label = "temperature"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "density"); token.type = DataType::Float; token.count = 10;
+    token.label = "dummy"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "temperature"); token.type = DataType::Float; token.count = 10;
+    token.label = "value"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "type"); token.type = DataType::Int32; token.count = 1;
+    token.label = "value2"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    std::strcpy(token.label, "ID"); token.type = DataType::Int32; token.count = 1;
+    token.label = "dummy"; token.type = DataType::Float; token.count = 4;
     formatTokens.push_back(token);
-}
+    token.label = "mass"; token.type = DataType::Float; token.count = 1;
+    formatTokens.push_back(token);
+} 
 
 
 // ------------------------------
@@ -519,178 +511,194 @@ void FileInfo::initDefaultFormatTokens() {
 void FileInfo::DrawFormatDialog() {
   if (!showFormatDialog) return;
   
-    ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
     
-    if(!ImGui::Begin("Edit Data Format", &showFormatDialog)){
-      ImGui::End();
-      return;
-    }
-
-    const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "type", "ID", "dummy"};
-    
-    for (size_t i = 0; i < formatTokensEdit.size(); i++) {
-        ImGui::PushID(i);
-
-	char buf[128];
-	std::snprintf(buf, sizeof(buf), "%s, %s, count=%d",
-                      formatTokensEdit[i].label,
-                      (formatTokensEdit[i].type == DataType::Float) ? "float" : (formatTokensEdit[i].type == DataType::Int32) ? "int": "double",
-                      formatTokensEdit[i].count);
-
-        // リスト内の項目として表示（Selectable を使う）
-        if (ImGui::Selectable(buf))
-        {
-            // ※選択時の処理（必要なら）
-        }
-
-        // ここからドラッグ＆ドロップのソース処理
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
-        {
-            // 現在の項目インデックスを payload として送る
-            ImGui::SetDragDropPayload("DND_FORMAT_TOKEN", &i, sizeof(int));
-            ImGui::Text("Moving %s", buf);
-            ImGui::EndDragDropSource();
-        }
-
-	// --- ドロップ先としての処理 ---
-        if (ImGui::BeginDragDropTarget())
-        {
-            // ※ここでは、ドロップ位置を細かく判定するために、現在の項目の矩形を利用します
-            ImVec2 itemMin = ImGui::GetItemRectMin();
-            ImVec2 itemMax = ImGui::GetItemRectMax();
-            float midY = (itemMax.y + itemMin.y) * 0.5;
-
-	    const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DND_FORMAT_TOKEN");
-	    
-	    if (payload)
-	      {
-		IM_ASSERT(payload->DataSize == sizeof(int));
-		int srcIndex = *(const int*)payload->Data;
-		if(static_cast<size_t>(srcIndex) > i)
-		  midY = itemMax.y;
-		else
-		  midY = itemMin.y;
-	      }
-
-            // マウス位置と項目の中央を比較して、挿入すべき位置を決める
-            int dropIndex = i;  // 基本は「この項目の前」に挿入
-            if (ImGui::GetIO().MousePos.y > midY)
-                dropIndex = i + 1;  // 項目の下側なら「この項目の後ろ」に挿入
-
-            if (payload)
-            {
-                IM_ASSERT(payload->DataSize == sizeof(int));
-                int srcIndex = *(const int*)payload->Data;
-                if (srcIndex != dropIndex && srcIndex != dropIndex - 1)
-                {
-                    // 取り出し
-                    FormatToken token = formatTokensEdit[srcIndex];
-                    formatTokensEdit.erase(formatTokensEdit.begin() + srcIndex);
-                    // 調整：削除前のインデックスが dropIndex より小さい場合は、dropIndex が1つ減る
-                    if (srcIndex < dropIndex)
-                        dropIndex--;
-                    formatTokensEdit.insert(formatTokensEdit.begin() + dropIndex, token);
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-	
-        // ----- ラベルの選択（InputText の代わりにドロップダウンを利用） -----
-        // 現在のラベルが候補リストのどれに対応するか調べる
-        int currentLabelIndex = 0;
-        for (int j = 0; j < IM_ARRAYSIZE(availableLabels); ++j) {
-            if (strcmp(formatTokensEdit[i].label, availableLabels[j]) == 0) {
-                currentLabelIndex = j;
-                break;
-            }
-        }
-        // ドロップダウン（コンボボックス）でラベルを選択
-        if (ImGui::Combo("Label", &currentLabelIndex, availableLabels, IM_ARRAYSIZE(availableLabels))) {
-            // 選択が変更された場合、トークンのラベルを更新
-            std::strcpy(formatTokensEdit[i].label, availableLabels[currentLabelIndex]);
-	    // ここで、選択されたラベルに応じて型を自動的に設定する例
-            if (strcmp(availableLabels[currentLabelIndex], "type") == 0) {
-                // 例: "type" が選ばれたら整数型にする
-                formatTokensEdit[i].type = DataType::Int32;
-            }
-	    
-            if (strcmp(availableLabels[currentLabelIndex], "ID") == 0) {
-                // 例: "type" が選ばれたら整数型にする
-                formatTokensEdit[i].type = DataType::Int32;;
-            }
-
-            if (strcmp(availableLabels[currentLabelIndex], "density") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "temperature") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-	    
-            if (strcmp(availableLabels[currentLabelIndex], "value") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "value2") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "position") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "velocity") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "mass") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-
-	    if (strcmp(availableLabels[currentLabelIndex], "dummy") == 0) {
-                // 例: "value" が選ばれたら浮動小数点型にする
-                formatTokensEdit[i].type = DataType::Float;
-            }
-        }
-	
-        const char* types[] = { "float", "int", "int64", "double" };
-        int currentType = static_cast<int>(formatTokensEdit[i].type);
-        ImGui::Combo("Type", &currentType, types, IM_ARRAYSIZE(types));
-        formatTokensEdit[i].type = static_cast<DataType>(currentType);	
-        ImGui::InputInt("Count", &formatTokensEdit[i].count);
-        if (ImGui::Button("Delete")) {
-            formatTokensEdit.erase(formatTokensEdit.begin() + i);
-            ImGui::PopID();
-            i--;
-            continue;
-        }
-        ImGui::Separator();
-        ImGui::PopID();
-    }
-    
-    if (ImGui::Button("Add Token")) {
-        FormatToken newToken;
-        std::strcpy(newToken.label, "dummy");
-        newToken.type = DataType::Float;
-        newToken.count = 1;
-        formatTokensEdit.push_back(newToken);
-    }
-    if (ImGui::Button("OK")) {
-        formatTokens = formatTokensEdit;
-        showFormatDialog = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
-        showFormatDialog = false;
-    }
+  if(!ImGui::Begin("Edit Data Format", &showFormatDialog)){
     ImGui::End();
+    return;
+  }
+
+  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "type", "ID", "dummy"};
+    
+  for (size_t i = 0; i < formatTokensEdit.size(); i++) {
+    ImGui::PushID(i);
+
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "%s, %s, count=%d",
+		  formatTokensEdit[i].label.c_str(),
+		  (formatTokensEdit[i].type == DataType::Float) ? "float" : (formatTokensEdit[i].type == DataType::Int32) ? "int": "double",
+		  formatTokensEdit[i].count);
+
+    // リスト内の項目として表示（Selectable を使う）
+    if (ImGui::Selectable(buf))
+      {
+	// ※選択時の処理（必要なら）
+      }
+
+    // ここからドラッグ＆ドロップのソース処理
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
+      {
+	// 現在の項目インデックスを payload として送る
+	ImGui::SetDragDropPayload("DND_FORMAT_TOKEN", &i, sizeof(int));
+	ImGui::Text("Moving %s", buf);
+	ImGui::EndDragDropSource();
+      }
+
+    // --- ドロップ先としての処理 ---
+    if (ImGui::BeginDragDropTarget())
+      {
+	// ※ここでは、ドロップ位置を細かく判定するために、現在の項目の矩形を利用します
+	ImVec2 itemMin = ImGui::GetItemRectMin();
+	ImVec2 itemMax = ImGui::GetItemRectMax();
+	float midY = (itemMax.y + itemMin.y) * 0.5;
+
+	const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DND_FORMAT_TOKEN");
+	    
+	if (payload)
+	  {
+	    IM_ASSERT(payload->DataSize == sizeof(int));
+	    int srcIndex = *(const int*)payload->Data;
+	    if(static_cast<size_t>(srcIndex) > i)
+	      midY = itemMax.y;
+	    else
+	      midY = itemMin.y;
+	  }
+
+	// マウス位置と項目の中央を比較して、挿入すべき位置を決める
+	int dropIndex = i;  // 基本は「この項目の前」に挿入
+	if (ImGui::GetIO().MousePos.y > midY)
+	  dropIndex = i + 1;  // 項目の下側なら「この項目の後ろ」に挿入
+
+	if (payload)
+	  {
+	    IM_ASSERT(payload->DataSize == sizeof(int));
+	    int srcIndex = *(const int*)payload->Data;
+	    if (srcIndex != dropIndex && srcIndex != dropIndex - 1)
+	      {
+		// 取り出し
+		FieldSpec token = formatTokensEdit[srcIndex];
+		formatTokensEdit.erase(formatTokensEdit.begin() + srcIndex);
+		// 調整：削除前のインデックスが dropIndex より小さい場合は、dropIndex が1つ減る
+		if (srcIndex < dropIndex)
+		  dropIndex--;
+		formatTokensEdit.insert(formatTokensEdit.begin() + dropIndex, token);
+	      }
+	  }
+	ImGui::EndDragDropTarget();
+      }
+	
+    // ----- ラベルの選択（InputText の代わりにドロップダウンを利用） -----
+    // 現在のラベルが候補リストのどれに対応するか調べる
+    int currentLabelIndex = 0;
+    for (int j = 0; j < IM_ARRAYSIZE(availableLabels); ++j) {
+      if (formatTokensEdit[i].label ==  availableLabels[j]) {
+	currentLabelIndex = j;
+	break;
+      }
+    }
+    // ドロップダウン（コンボボックス）でラベルを選択
+    if (ImGui::Combo("Label", &currentLabelIndex, availableLabels, IM_ARRAYSIZE(availableLabels))) {
+      // 選択が変更された場合、トークンのラベルを更新
+      formatTokensEdit[i].label = availableLabels[currentLabelIndex];
+      // ここで、選択されたラベルに応じて型を自動的に設定する例
+      if (strcmp(availableLabels[currentLabelIndex], "type") == 0) {
+	// 例: "type" が選ばれたら整数型にする
+	formatTokensEdit[i].type = DataType::Int32;
+	formatTokensEdit[i].count = 1;
+      }
+	    
+      if (strcmp(availableLabels[currentLabelIndex], "ID") == 0) {
+	// 例: "type" が選ばれたら整数型にする
+	formatTokensEdit[i].type = DataType::Int32;;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "density") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "temperature") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "Bfield") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 3;
+      }
+	    
+      if (strcmp(availableLabels[currentLabelIndex], "value") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "value2") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "position") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 3;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "velocity") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 3;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "mass") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+
+      if (strcmp(availableLabels[currentLabelIndex], "dummy") == 0) {
+	// 例: "value" が選ばれたら浮動小数点型にする
+	formatTokensEdit[i].type = DataType::Float;
+	formatTokensEdit[i].count = 1;
+      }
+    }
+	
+    const char* types[] = { "float", "int", "int64", "double" };
+    int currentType = static_cast<int>(formatTokensEdit[i].type);
+    ImGui::Combo("Type", &currentType, types, IM_ARRAYSIZE(types));
+    formatTokensEdit[i].type = static_cast<DataType>(currentType);	
+    ImGui::InputInt("Count", &formatTokensEdit[i].count);
+    if (ImGui::Button("Delete")) {
+      formatTokensEdit.erase(formatTokensEdit.begin() + i);
+      ImGui::PopID();
+      i--;
+      continue;
+    }
+    ImGui::Separator();
+    ImGui::PopID();
+  }
+    
+  if (ImGui::Button("Add Token")) {
+    FieldSpec newToken;
+    newToken.label = "dummy";
+    newToken.type = DataType::Float;
+    newToken.count = 1;
+    formatTokensEdit.push_back(newToken);
+  }
+  if (ImGui::Button("OK")) {
+    formatTokens = formatTokensEdit;
+    showFormatDialog = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel")) {
+    showFormatDialog = false;
+  }
+  ImGui::End();
 }
 
 #ifdef HAVE_HDF5
@@ -704,11 +712,9 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     return;
   }
 
-  for (auto &tok : formatTokensEdit) {
-    if (tok.displayName[0] == '\0') {
-      FormatToken::SetDefaultDisplayName(tok);
-    }
-  }
+  for (auto &tok : formatTokensEdit) 
+    if (tok.displayName.empty()) 
+      FieldSpec::SetDefaultDisplayName(tok);
   
   const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy", "electronfraction", "H2fraction", "Gamma"};
 
@@ -733,17 +739,17 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 
       // Label 列：ドロップダウン＋自由入力
       ImGui::TableNextColumn();
-      if (ImGui::BeginCombo("##labelCombo", formatTokensEdit[i].label)) {
+      if (ImGui::BeginCombo("##labelCombo", formatTokensEdit[i].label.c_str())) {
 	for (int n = 0; n < IM_ARRAYSIZE(availableLabels); n++) {
-	  bool is_selected = (strcmp(formatTokensEdit[i].label, availableLabels[n]) == 0);
+	  bool is_selected = (formatTokensEdit[i].label == availableLabels[n]);
 	  if (ImGui::Selectable(availableLabels[n], is_selected)) {
-	    strcpy(formatTokensEdit[i].label, availableLabels[n]);
+	    formatTokensEdit[i].label = availableLabels[n];
 	    if (strcmp(availableLabels[n], "ID") == 0)
 	      formatTokensEdit[i].type = DataType::Int32;
 	    else
 	      formatTokensEdit[i].type = DataType::Float;
 	    
-	    FormatToken::SetDefaultDisplayName(formatTokensEdit[i]);
+	    FieldSpec::SetDefaultDisplayName(formatTokensEdit[i]);
 	  }
 	  if (is_selected) ImGui::SetItemDefaultFocus();
 	}
@@ -753,8 +759,13 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
       // DisplayName (手入力)
       ImGui::TableNextColumn();
       ImGui::PushItemWidth(-1);
-      ImGui::InputText("##displayName", formatTokensEdit[i].displayName,
-		       IM_ARRAYSIZE(formatTokensEdit[i].displayName));
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "%s", formatTokensEdit[i].displayName.c_str());
+      
+      if (ImGui::InputText("##displayName", buf, IM_ARRAYSIZE(buf))) {
+	formatTokensEdit[i].displayName = buf;
+      }
+      
       ImGui::PopItemWidth();
 
       // Type 列
@@ -787,12 +798,11 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 
   // フィールド追加ボタン
   if (ImGui::Button("Add field")) {
-    FormatToken newToken;
-    strcpy(newToken.label, "dummy");
+    FieldSpec newToken;
+    newToken.label = "dummy";
     newToken.type  = DataType::Float;
     newToken.count = 1;
-    std::strncpy(newToken.displayName, "", sizeof(newToken.displayName));
-    newToken.displayName[sizeof(newToken.displayName)-1] = '\0';    
+    newToken.displayName.clear();
     formatTokensEdit.push_back(newToken);
   }
   ImGui::SameLine();
@@ -811,105 +821,12 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 
 #endif
 
-// ------------------------------
-// computeFormatInfo : 各トークンからレコードサイズと必要フィールドのオフセットを計算
-// ------------------------------
-bool FileInfo::computeFormatInfo(const TrackingVector<FormatToken>& tokens, FormatInfo& info)
-{
-  info.recordSize = 0;
-  info.tokens = tokens;
-  
-  for (const auto &token : tokens) {
-    std::string lbl(token.label);
-    size_t size_item = dataTypeSize(token.type);
-    
-    if (lbl == "position") {
-      info.posOffset = info.recordSize;
-      if (token.count != 3) {
-	std::cerr << "Error: 'position' token count must be 3." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "velocity") {
-      info.velOffset = info.recordSize;
-      if (token.count != 3) {
-	std::cerr << "Error: 'velocity' token count must be 3." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "density") {
-      info.densityOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'density' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "temperature") {
-      info.tempOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'temperature' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "value") {
-      info.valOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'value' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "value2") {
-      info.val2Offset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'value2' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "Hsml") {
-      info.hsmlOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'Hsml' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "mass") {
-      info.massOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'mass' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "type") {
-      info.typeOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'type' token count must be 1." << std::endl;
-	return false;
-      }
-    }
-    else if (lbl == "ID") {
-      info.IDOffset = info.recordSize;
-      if (token.count != 1) {
-	std::cerr << "Error: 'ID' token count must be 1." << std::endl;
-	return false;
-      }
-    }
 
-    info.recordSize += token.count * size_item;
-  }
-  
-  if (info.posOffset < 0) {
-    std::cerr << "Error: Missing required tokens (position)." << std::endl;
-    return false;
-  }
-  return true;
-}
-
-
-bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& particles, HeaderInfo &hdr) {
-  hdr.UnitLength_in_cm = UnitLength_in_cm;
-  hdr.UnitMass_in_g = UnitMass_in_g;
-  hdr.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
-  hdr.HubbleParam = Hubble;
+bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
+  outBlock.header.UnitLength_in_cm = UnitLength_in_cm;
+  outBlock.header.UnitMass_in_g = UnitMass_in_g;
+  outBlock.header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
+  outBlock.header.HubbleParam = Hubble;
   
   // 1) フルパスを組み立て
   char fileName[512];
@@ -927,114 +844,49 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
     ext.clear();  // ドットなし
   }
 
-  FormatInfo fmt;
-  std::unique_ptr<IParticleReader> reader;
+  std::unique_ptr<IParticleReader> reader;  
   
   switch (readFileFormat) {
   case FileFormat::Auto:  
     // 2) 拡張子／useHDF5 フラグでリーダーの種類を決定
 #ifdef HAVE_HDF5
     if (ext == ".h5" || ext == ".hdf5") {
-      fmt.tokens = formatTokens;
-      reader = std::make_unique<HDF5ParticleReader>(fmt);
+      reader = std::make_unique<HDF5Reader>();
     }
-#endif   
-    
-    if (!reader) {
-      // ネイティブバイナリ or mmap
-      // 3) バイナリ系だけここでフォーマット解析
-
-      int iter = 0;
-      const int iter_max = 20;
-
-      auto fmt_orig = fmt;
-      auto tokens_orig = formatTokens;
- 
-      while(iter < iter_max){
-	auto testTokens = formatTokens;
-	auto testFmt    = fmt;
-	
-	if (!computeFormatInfo(testTokens, testFmt)) {
-	  std::cerr<<"failed to read format info\n";
-	  fmt = fmt_orig;
-	  formatTokens = tokens_orig;
-	  return false;
-	}
-	
-#ifdef USE_MMAP
-	  reader = std::make_unique<MMapParticleReader>(testFmt);
-#else
-	  reader = std::make_unique<BinaryParticleReader>(testFmt);
 #endif
-
-	bool flag_success = reader->check(fullPath, hdr);
-	if(flag_success)
-	  break;
-
-	bool has_dummy = false;
-	for(size_t i=0;i<testTokens.size();i++){
-	  if(std::strcmp(testTokens[i].label, "dummy") == 0){
-	    has_dummy = true;
-	    if(iter == 0){
-	      testTokens[i].count = 0;
-	    }else{
-	      testTokens[i].count++;
-	      break;
-	    }
-	    
-	  }
-	}
-
-	if (!has_dummy) {
-	  std::cerr << "There is no label named dummy. No room for the adjustment\n";
-	  return false;
-	  break;
-	}
-
-	formatTokens = std::move(testTokens);
-	fmt = std::move(testFmt);
-	
-	printf("iter=%d failed to read the file...\n", iter);	
-	iter++;
-      }
-
-      if(iter >= iter_max){
-	printf("Too many iterations.\n");
-	fmt = fmt_orig;
-	formatTokens = tokens_orig;
-	return false;
-      }
-    }
+    
+    if(!reader){
+#ifdef USE_MMAP
+      reader = std::make_unique<MMapReader>();
+#else
+      reader = std::make_unique<BinaryReader>();
+#endif
+    }    
     break;
   
-
 #ifdef HAVE_HDF5
   case FileFormat::HDF5: {
-    fmt.tokens = formatTokens;
-    reader = std::make_unique<HDF5ParticleReader>(fmt);
+    reader = std::make_unique<HDF5Reader>();
     break;
-  }    
+  }
 #endif
+
   case FileFormat::Binary: {
-    if (!computeFormatInfo(formatTokens, fmt)) {
-      std::cerr<<"フォーマット情報解析失敗\n";
-      return false;
-    }
-    
 #ifdef USE_MMAP
-      reader = std::make_unique<MMapParticleReader>(fmt);
+    reader = std::make_unique<MMapReader>();
 #else
-      reader = std::make_unique<BinaryParticleReader>(fmt);
+    reader = std::make_unique<BinaryReader>();
 #endif
     break;
   }
+
   case FileFormat::Gadget: {
-    fmt.tokens = formatTokens;
-    reader = std::make_unique<BlockwiseParticleReader>(fmt);    
+    //reader = std::make_unique<BlockwiseReader>();    
     break;
   }
+
   case FileFormat::Framed: {
-    reader = std::make_unique<FramedBinaryParticleReader>();
+    //reader = std::make_unique<FramedBinaryReader>();
     break;
   }
   default: {
@@ -1042,28 +894,33 @@ bool FileInfo::loadSingleFile(int fileNumber, TrackingVector<ParticleData>& part
     return false;
   }
   }
-  
-  // 4) open / readNext loop / close
-  if (!reader->open(fullPath, hdr)) {
+
+  // npart を reader が知るなら outBlock.resize(npart) を呼ぶ必要はなく、readAll 内で確保でもOK
+  if(!reader->tryFixAndCheckBinary(fullPath, outBlock.header, formatTokens)){
+    std::cerr<<"the format is incorrect\n";
+    return false;
+  }
+
+  if (!reader->open(fullPath, outBlock.header)){
     std::cerr<<"failed to open the file: "<< fullPath << "\n";
     return false;
   }
-  particles.clear();
-  ParticleData p;
-  while (reader->readNext(p)) {
-    particles.push_back(p);
-  }
+  
+  IOPlan plan = buildPlanFromToks(formatTokens);
+  bool ok = reader->readAll(outBlock, formatTokens, plan);
+
   reader->close();
-	
+  	
   return true;
 }
 
-void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>& batchP, int ibatch, HeaderInfo header, int flag_reset){
+void ParticleArray::swap_particles(TrackingVector<ParticleBlock>& batchP, int ibatch, int flag_reset){
   float newParticleValueMin[4][6];
   float newParticleValueMax[4][6];
   float maxVal = 0.0f;
   
-  TrackingVector<ParticleData>& newParticles = batchP[ibatch];
+  ParticleBlock& newParticleBlock = batchP[ibatch];
+  TrackingVector<ParticleData>& newParticles = newParticleBlock.particles;
   
   if (!newParticles.empty()) {    
     int npart_type[6] = {0,0,0,0,0,0};	  
@@ -1155,10 +1012,10 @@ void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>&
   }
 
   if(flag_reset == 0)
-    batchP[particles_index] = std::move(particles);
+    batchP[particleBlock_index] = std::move(particleBlock);
 
-  particles = std::move(newParticles);
-  particles_index = ibatch;
+  particleBlock = std::move(newParticleBlock);
+  particleBlock_index = ibatch;
 
   for(int icolor=0;icolor<4;icolor++){
     for(int i=0;i<6;i++){
@@ -1168,18 +1025,17 @@ void ParticleArray::swap_particles(TrackingVector<TrackingVector<ParticleData>>&
   }
   
   originalMax = maxVal;
-  Header = header;
 
-  if(Header.flag_hdf5 == true){
-    UnitLength_in_pc   = Header.UnitLength_in_cm / 3.08e18;;
-    UnitMass_in_msolar = Header.UnitMass_in_g / 1.998e33;    
-    Hubble             = Header.HubbleParam;
-    useComovingCorrdinate = Header.flag_comoving;
+  if(particleBlock.header.flag_hdf5 == true){
+    UnitLength_in_pc   = particleBlock.header.UnitLength_in_cm / 3.08e18;
+    UnitMass_in_msolar = particleBlock.header.UnitMass_in_g / 1.998e33;    
+    Hubble             = particleBlock.header.HubbleParam;
+    useComovingCorrdinate = particleBlock.header.flag_comoving;
     
     setUnits();
   }
 
-  flag_mask.resize(particles.size(), 0);  
+  flag_mask.resize(particleBlock.particles.size(), 0);  
   
   particlesDirty = true;  // グローバルなフラグをtrueに設定
   flagParticleIndexDirty = true;
@@ -1226,9 +1082,9 @@ namespace{
 
 bool ParticleArray::findParticleID(int ID, float *pos){
   bool flag = false;
-  for (size_t i=0;i<particles.size();i++)
+  for (size_t i=0;i<particleBlock.particles.size();i++)
     {
-      const ParticleData& p = particles[i];
+      const ParticleData& p = particleBlock.particles[i];
       int ID0 = p.ID;
       if(ID == ID0){
 	flag = true;
@@ -1264,7 +1120,9 @@ void ParticleArray::computeStellarDensity(int type, bool flag_overwrite_hsml)
   bool flag_star = false;
   if(type >= 3)
     flag_star = true;
-    
+
+  TrackingVector<ParticleData> & particles = particleBlock.particles;
+  
   // type >= 3 の粒子のみを抽出
   TrackingVector<starParticle> filtered;
   for (size_t i=0;i<particles.size();i++)
@@ -1306,7 +1164,7 @@ void ParticleArray::computeStellarDensity(int type, bool flag_overwrite_hsml)
 
   double cosmofac = 1.;
   if(useComovingCorrdinate)
-    cosmofac = Header.time;
+    cosmofac = particleBlock.header.time;
 
   if(cosmofac < 1.e-2 || cosmofac > 1.)
     cosmofac = 1.;

@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <unordered_map>
+#include <filesystem>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -12,9 +13,6 @@
 #include <unistd.h>
 #endif
 
-#ifdef HAVE_HDF5
-#include "H5Cpp.h"
-#endif
 #include <fstream>
 
 
@@ -27,93 +25,13 @@ enum class FileFormat {
   _Count
 };
 
-enum class DataType : uint8_t {
-  Float = 0,
-  Int32 = 1,
-  Int64 = 2,
-  Double = 3
-};
 
-constexpr std::size_t dataTypeSize(DataType dt) noexcept {
-  switch (dt) {
-    case DataType::Float:  return sizeof(float);
-    case DataType::Int32:  return sizeof(int32_t);
-    case DataType::Int64:  return sizeof(int64_t);
-    case DataType::Double: return sizeof(double);
-  }
-
-  return 0;
-}
-
-class IParticleReader {
-public:
-  virtual ~IParticleReader() {}
-  virtual bool check(const std::string& path, HeaderInfo& header) {
-    if (!open(path, header)) {
-      return false;
-    }
-
-    int iter = 0;
-    bool flag_success = true;
-    ParticleData p;
-    while (readNext(p) && iter < 100) {
-      if(p.type < 0 || p.type > 5){
-	flag_success = false;
-	printf("Why? P[%d].type = %d\n", iter, p.type);
-	break;
-      }
-
-      iter++;
-    }
-        
-    close();
-    return flag_success;
-  }
-  
-  // ファイルを開いてヘッダ情報を返す
-  virtual bool  open(const std::string& path, HeaderInfo& header) = 0;
-  // 次の粒子を読み込む（false: EOF or error）
-  virtual bool  readNext(ParticleData& p) = 0;
-  // クローズ  
-  virtual void  close() = 0;
-};
-
-struct FormatInfo {
-  int recordSize    = 0;
-  int posOffset     = -1;
-  int velOffset     = -1;
-  int densityOffset = -1;
-  int tempOffset    = -1;
-  int valOffset     = -1;
-  int val2Offset    = -1;
-  int hsmlOffset    = -1;
-  int massOffset    = -1;
-  int typeOffset    = -1;
-  int IDOffset      = -1;
-  
-  bool flag_header = true;
-  size_t size_header = sizeof(int) + sizeof(float);
-  
-  TrackingVector<struct FormatToken> tokens;
-};
-
-
-struct FormatToken {
-  char label[32];
+struct FieldSpec {
+  std::string label;        // "position" "velocity" "Bfield" ...
   DataType type;
-  char displayName[32] = {};  // C++11 以降で全要素を '\0' で初期化
-  int  count;
-  
-  // デフォルト／引数付きコンストラクタ
-  FormatToken(const char* l = "dummy", DataType t = DataType::Float, int c = 1)
-    : type(t), count(c)
-  {
-    std::strncpy(label, l, sizeof(label));
-    label[sizeof(label)-1] = '\0';
-    // displayName は in-class 初期化で既にゼロクリア済み
-  }
+  int count;                // 1 or 3 etc
+  std::string displayName;  // HDF5 dataset 名 or Binary token 名
 
-  // C++17 の inline static を使ってヘッダ内で定義＋初期化
   inline static const char* candidatePosNames         = "Coordinates";
   inline static const char* candidateVelNames         = "Velocities";
   inline static const char* candidateMassNames        = "Masses";
@@ -127,26 +45,206 @@ struct FormatToken {
   inline static const char* candidateValNames         = "Metallicity";
   inline static const char* candidateVal2Names        = "ElectronAbundance";
 
-  static void SetDefaultDisplayName(FormatToken &tok) {
-    if      (strcmp(tok.label, "position")    == 0) strcpy(tok.displayName, candidatePosNames);
-    else if (strcmp(tok.label, "velocity")    == 0) strcpy(tok.displayName, candidateVelNames);
-    else if (strcmp(tok.label, "mass")        == 0) strcpy(tok.displayName, candidateMassNames);
-    else if (strcmp(tok.label, "ID")          == 0) strcpy(tok.displayName, candidateIDNames);
-    else if (strcmp(tok.label, "density")     == 0) strcpy(tok.displayName, candidateDensityNames);
-    else if (strcmp(tok.label, "temperature") == 0) strcpy(tok.displayName, candidateTemperatureNames);
-    else if (strcmp(tok.label, "H2fraction") == 0) strcpy(tok.displayName, candidateH2INames);    
-    else if (strcmp(tok.label, "electronfraction") == 0) strcpy(tok.displayName, candidateElecNames);
-    else if (strcmp(tok.label, "Gamma") == 0) strcpy(tok.displayName, candidateGammaNames);    
-    else if (strcmp(tok.label, "internalenergy") == 0) strcpy(tok.displayName, candidateInternalEnergyNames);
-    else if (strcmp(tok.label, "value")       == 0) strcpy(tok.displayName, candidateValNames);
-    else if (strcmp(tok.label, "value2")      == 0) strcpy(tok.displayName, candidateVal2Names);
-    else {
-      // デフォルトは label のまま
-      std::strncpy(tok.displayName, tok.label, sizeof(tok.displayName));
-      tok.displayName[sizeof(tok.displayName)-1] = '\0';
+  static void SetDefaultDisplayName(FieldSpec& tok) {
+    if      (tok.label == "position"        ) tok.displayName = candidatePosNames;
+    else if (tok.label == "velocity"        ) tok.displayName = candidateVelNames;
+    else if (tok.label == "mass"            ) tok.displayName = candidateMassNames;
+    else if (tok.label == "ID"              ) tok.displayName = candidateIDNames;
+    else if (tok.label == "density"         ) tok.displayName = candidateDensityNames;
+    else if (tok.label == "temperature"     ) tok.displayName = candidateTemperatureNames;
+    else if (tok.label == "H2fraction"      ) tok.displayName = candidateH2INames;    
+    else if (tok.label == "electronfraction") tok.displayName = candidateElecNames;
+    else if (tok.label == "Gamma"           ) tok.displayName = candidateGammaNames;    
+    else if (tok.label == "internalenergy"  ) tok.displayName = candidateInternalEnergyNames;
+    else if (tok.label == "value"           ) tok.displayName = candidateValNames;
+    else if (tok.label == "value2"          ) tok.displayName = candidateVal2Names;
+    else    tok.displayName = tok.label;    
+  }
+};
+
+struct FieldLayout{
+  FieldSpec spec;
+  int offset;
+};
+
+static inline bool isAoSCoreLabel(const std::string& lbl){
+  return (lbl == "position" ||
+          lbl == "velocity" ||
+          lbl == "mass" ||
+          lbl == "density" ||
+          lbl == "temperature" ||
+          lbl == "value" ||
+          lbl == "value2" ||
+          lbl == "Hsml" ||
+          lbl == "type" ||
+          lbl == "ID");
+}
+
+
+
+enum class DestKind { AoSCore, AoSExt, SoA, Ignore };
+
+struct FieldPlanItem {
+  DestKind dest = DestKind::Ignore;
+  size_t aosExtOffset = 0;          // AoSExt のとき
+  std::string soaKey;               // SoA のとき（例 "Bfield"）
+  DataType type{};
+  int count = 1;
+};
+
+struct IOPlan {
+  std::unordered_map<std::string, FieldPlanItem> plan; // label->item
+  size_t aosExtStride = 0;                             // AoSExt stride
+};
+
+static IOPlan buildPlanFromToks(const std::vector<FieldSpec>& toks) {
+  IOPlan plan;
+
+  for (const auto& fs : toks) {
+    FieldPlanItem item;
+    item.type  = fs.type;
+    item.count = fs.count;
+
+    // 例：Bfield は SoA
+    if (fs.label == "Bfield") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "Bfield";
     }
+    // それ以外は AoSCore（ParticleData に入れる）か Ignore
+    else if (isAoSCoreLabel(fs.label)) {
+      item.dest = DestKind::AoSCore;
+    }
+    else {
+      // 将来の未知フィールドは、とりあえず読まない（Ignore）
+      // 「未知も保持したい」なら SoA に落とすのが一番簡単
+      item.dest = DestKind::Ignore;
+    }
+
+    plan.plan[fs.label] = std::move(item);
   }
 
+  return plan;
+}
+
+// ---- AoSCoreへの代入（最低限。あなたの assignField をここに集約してもOK）----
+template<class T>
+static inline void assignCore(ParticleData& p, const std::string& label, const T* v){
+  if(label=="position"){
+    for(int k=0;k<3;k++){ p.pos[k]=float(v[k]); p.original_pos[k]=p.pos[k]; }
+  } else if(label=="velocity"){
+    for(int k=0;k<3;k++){ p.vel[k]=float(v[k]); }
+  } else if(label=="mass"){
+    p.mass=float(v[0]);
+  } else if(label=="density"){
+    p.density=float(v[0]);
+  } else if(label=="temperature"){
+    p.temperature=float(v[0]);
+  } else if(label=="value"){
+    p.val=float(v[0]);
+  } else if(label=="value2"){
+    p.val2=float(v[0]);
+  } else if(label=="Hsml"){
+    p.Hsml=float(v[0]); p.originalHsml=p.Hsml;
+  } else if(label=="type"){
+    p.type=int(v[0]);
+  } else if(label=="ID"){
+    p.ID=int(v[0]);
+  }
+}
+
+
+
+class IParticleReader {
+public:
+  virtual ~IParticleReader() = default;
+
+  virtual bool open(const std::string& path, HeaderInfo& header) = 0;
+  virtual void close() = 0;
+
+  virtual size_t particleCount() const = 0;
+
+  virtual bool readRange(ParticleBlock& out,
+                         size_t begin, size_t count,
+                         const std::vector<FieldSpec>& fields,
+                         const IOPlan& plan) = 0;
+
+  virtual bool is_binary() { return false; };
+  
+  // 便利関数：全読み
+  bool readAll(ParticleBlock& out,
+               const std::vector<FieldSpec>& fields,
+               const IOPlan& plan)
+  {
+    return readRange(out, 0, particleCount(), fields, plan);
+  }
+
+  bool tryFixAndCheckBinary(const std::string& fullPath, HeaderInfo& hdr, std::vector<FieldSpec>& formatTokens){
+    if(is_binary() == false){
+      return true;
+    }
+
+    const int iter_max = 20;    
+      
+    auto testTokens = formatTokens;
+    for(int iter=0;iter<iter_max;iter++){	
+      IOPlan plan = buildPlanFromToks(testTokens);      
+      bool flag_success = check(fullPath, hdr, testTokens, plan);
+      if(flag_success){
+	formatTokens = std::move(testTokens);
+	return true;
+      }
+
+      bool has_dummy = false;
+      for(size_t i=0;i<testTokens.size();i++){
+	if(testTokens[i].label == "dummy"){
+	  has_dummy = true;
+	  if(iter == 0){
+	    testTokens[i].count = 0;
+	    break;
+	  }else{
+	    testTokens[i].count++;
+	    break;
+	  }	    
+	}
+      }
+
+      if (!has_dummy) {
+	std::cerr << "There is no label named dummy. No room for the adjustment\n";
+	return false;
+      }
+
+      printf("iter=%d failed to read the file...\n", iter);	
+    }
+
+    printf("Too many iterations. Fialed to read the file %s\n", fullPath.c_str());
+    return false;    
+  }
+  
+  bool check(const std::string& path, HeaderInfo& header,
+             const std::vector<FieldSpec>& fields,
+             const IOPlan& plan,
+             size_t ncheck = 100)
+  {
+    if (!open(path, header)) return false;
+
+    const size_t n = std::min(ncheck, particleCount());
+    ParticleBlock blk;
+    bool ok = readRange(blk, 0, n, fields, plan);
+
+    if (ok) {
+      for (size_t i = 0; i < n; ++i) {
+        const auto &p = blk.particles[i];
+        if (p.type < 0 || p.type > 5) {
+          ok = false;
+          printf("Why? P[%zu].type = %d\n", i, p.type);
+          break;
+        }
+      }
+    }
+
+    close();
+    return ok;
+  }
 };
 
 
@@ -189,988 +287,630 @@ static const std::unordered_map<std::string,FieldType> labelToField = {
 };
 
 
-class BinaryParticleReader : public IParticleReader {
+// record 全体の配置情報
+struct RecordLayout {
+  size_t recordSize = 0;
+  std::vector<FieldLayout> fields;
+};
+
+static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& tokens) {
+  RecordLayout rl;
+  rl.fields.reserve(tokens.size());
+
+  size_t off = 0;
+
+  for (const auto& tok : tokens) {
+    if (tok.count <= 0) {
+      throw std::runtime_error("buildRecordLayout: token.count must be > 0");
+    }
+
+    const size_t elemSz = dataTypeSize(tok.type);
+    const size_t bytes  = elemSz * static_cast<size_t>(tok.count);
+
+    FieldLayout fl;
+    fl.offset = off;
+    fl.spec   = tok;
+
+    rl.fields.push_back(fl);
+    off += bytes;
+  }
+
+  rl.recordSize = off;
+  return rl;
+}
+
+
+template<class T>
+static inline void writeToDest(ParticleBlock& out, size_t i,
+                               const FieldSpec& fs, const IOPlan& plan,
+                               const T* vals)
+{
+  auto it = plan.plan.find(fs.label);
+  if(it==plan.plan.end()) return;
+  const auto& pi = it->second;
+
+  if(pi.dest==DestKind::Ignore) return;
+
+  if(pi.dest==DestKind::AoSCore){
+    assignCore(out.particles[i], fs.label, vals);
+    return;
+  }
+
+  if(pi.dest==DestKind::AoSExt){
+    if(out.aosExt.stride==0) return;
+    uint8_t* dst = out.aosExt.ptr(i) + pi.aosExtOffset;
+    std::memcpy(dst, vals, (size_t)fs.count * sizeof(T));
+    return;
+  }
+
+  if(pi.dest==DestKind::SoA){
+    auto &f = out.soa[pi.soaKey];
+    if(f.bytes.empty()){
+      f.type = fs.type;
+      f.comps = fs.count;
+      f.resize(out.particles.size());
+    }
+    std::memcpy(f.ptr(i), vals, (size_t)fs.count * sizeof(T));
+    return;
+  }
+}
+
+
+class BinaryReader final : public IParticleReader {
   std::ifstream file_;
-  FormatInfo    fmt_;
-  TrackingVector<char> buf_;
-  size_t curIdx_ = 0;
+  size_t npart_ = 0;
+  size_t data_offset_ = 0;
   
 public:
-  explicit BinaryParticleReader(FormatInfo fmt)
-    : fmt_(std::move(fmt)), buf_(fmt.recordSize)  {}
-
   bool open(const std::string& path, HeaderInfo& header) override {
     file_.open(path, std::ios::binary);
     if(!file_) return false;
 
-    if(fmt_.flag_header){
-      float t; int n;
-      file_.read(reinterpret_cast<char*>(&t), sizeof t);
-      file_.read(reinterpret_cast<char*>(&n), sizeof n);
-      header.time = t;
-      header.npart = n;
-    }else{
-      header.time = 0.;
-    }
-    
-    header.flag_hdf5 = false;
-
-    return true;
-  }
-
-  bool readNext(ParticleData& p) override {
-    file_.read(buf_.data(), buf_.size());
+    // ---- header 読み ----
+    float t;
+    int   n;
+    file_.read(reinterpret_cast<char*>(&t), sizeof t);
+    file_.read(reinterpret_cast<char*>(&n), sizeof n);
     if(!file_) return false;
 
-    const char* base = buf_.data();
+    header.time  = t;
+    header.npart = n;
+    header.flag_hdf5 = false;
 
-    readField(base, fmt_.posOffset,     p.pos,           3);
-    readField(base, fmt_.posOffset,     p.original_pos,  3);
-    readField(base, fmt_.velOffset,     p.vel,           3);
-    readField(base, fmt_.densityOffset, &p.density,      1);
-    readField(base, fmt_.tempOffset,    &p.temperature,  1);
-    readField(base, fmt_.valOffset,     &p.val,          1);
-    readField(base, fmt_.val2Offset,    &p.val2,         1);
-    readField(base, fmt_.hsmlOffset,    &p.Hsml,         1);
-    readField(base, fmt_.hsmlOffset,    &p.originalHsml, 1);
-    readField(base, fmt_.massOffset,    &p.mass,         1);
-    readField(base, fmt_.typeOffset,    &p.type,         1);
-    readField(base, fmt_.IDOffset,      &p.ID,           1);
+    npart_ = static_cast<size_t>(n);
 
-    if(fmt_.typeOffset == -1)
-      p.type = 0;
+    // ---- ここが重要 ----
+    // この位置が「粒子 record の先頭」
+    data_offset_ = file_.tellg();
 
-    ++curIdx_;
-    
     return true;
   }
 
   void close() override {
-    if (file_.is_open())
-      file_.close();
+    file_.close();
   }
 
-private:
-  template<typename T>
-  inline void readField(const char* base, int offset, T* dest, size_t count)
+  bool is_binary() override {
+    return true;
+  }
+  
+  size_t particleCount() const override {
+    return npart_;
+  }
+  
+  bool readRange(ParticleBlock& out,
+                 size_t begin, size_t count,
+                 const std::vector<FieldSpec>& fields,
+                 const IOPlan& plan) override
   {
-    if (offset >= 0){ 
-      std::memcpy(dest, base + offset, count * sizeof(T));
-    }else {
-      for (size_t i = 0; i < count; ++i) 
-	dest[i] = T{};      
+    if(begin + count > npart_) return false;
+    
+    // record layout（FieldSpec順）
+    const RecordLayout layout = buildRecordLayout(fields);
+
+    out.aosExt.stride = plan.aosExtStride;
+    out.resize(count);
+
+    // ---- SoA 事前確保 ----
+    for(const auto& fs : fields){
+      auto it = plan.plan.find(fs.label);
+      if(it!=plan.plan.end() && it->second.dest==DestKind::SoA){
+        auto &f = out.soa[it->second.soaKey];
+        f.type  = fs.type;
+        f.comps = fs.count;
+        f.resize(count);
+      }
     }
+
+    // ---- begin 番目の粒子まで seek ----
+    const std::streamoff offset =
+      data_offset_ + static_cast<std::streamoff>(begin * layout.recordSize);
+
+    file_.seekg(offset, std::ios::beg);
+    if(!file_) return false;
+
+    std::vector<uint8_t> record(layout.recordSize);
+
+    for(size_t i = 0; i < count; ++i){
+      file_.read(reinterpret_cast<char*>(record.data()),
+                 static_cast<std::streamsize>(record.size()));
+      if(file_.gcount() != static_cast<std::streamsize>(record.size()))
+        return false;
+
+      // ---- record 内の各 field を振り分け ----
+      for(const auto& fl : layout.fields){
+        const uint8_t* src = record.data() + fl.offset;
+        const FieldSpec& fs = fl.spec;
+
+        switch(fs.type){
+	case DataType::Float:
+	  writeToDest(out, i, fs, plan,
+		      reinterpret_cast<const float*>(src));
+	  break;
+	case DataType::Double:
+	  writeToDest(out, i, fs, plan,
+		      reinterpret_cast<const double*>(src));
+	  break;
+	case DataType::Int32:
+	  writeToDest(out, i, fs, plan,
+		      reinterpret_cast<const int32_t*>(src));
+	  break;
+	case DataType::Int64:
+	  writeToDest(out, i, fs, plan,
+		      reinterpret_cast<const int64_t*>(src));
+	  break;
+        }
+      }
+    }
+
+    return true;
   }
 };
 
 #ifdef USE_MMAP
 #include <sys/mman.h>
-class MMapParticleReader : public IParticleReader {
-  int           fd_          = -1;
-  char*         data_        = nullptr;
-  size_t        mappingSize_ = 0;
-  size_t        curIdx_      = 0;
-  const char*   cur_         = nullptr;
-  const char*   end_         = nullptr;
-  FormatInfo    fmt_;
-
+class MMapReader final : public IParticleReader {
+  int fd_ = -1;
+  uint8_t* data_ = nullptr;
+  size_t size_ = 0;
+  size_t npart_ = 0;
+  size_t data_offset_ = 0;
+  
 public:
-  explicit MMapParticleReader(const FormatInfo& fmt)
-    : fmt_(fmt) {}
-
-  // ───────────────────────────────────────────────────────────────────
-  inline bool open(const std::string& path, HeaderInfo& header) override {
+  bool open(const std::string& path, HeaderInfo& header) override {
     fd_ = ::open(path.c_str(), O_RDONLY);
-    if (fd_ < 0) { perror("open"); return false; }
-    struct stat sb;
-    if (fstat(fd_, &sb) == -1) { perror("fstat"); ::close(fd_); return false; }
+    if (fd_ < 0) return false;
 
-    //you always need header in this format
-    float t; int n;
-    if (::read(fd_, &t, sizeof t) != sizeof t ||
-	::read(fd_, &n, sizeof n) != sizeof n) {
-      std::cerr << "Header read error\n";
-      ::close(fd_);
+    struct stat st{};
+    if (::fstat(fd_, &st) != 0) {
+      close();
       return false;
     }
-    header.time      = t;
-    header.npart     = n;
-    
-    header.flag_hdf5 = false;
-    
-    // 3) mmap
-    size_t headerSize   = sizeof(float) + sizeof(int);
-    mappingSize_        = headerSize + fmt_.recordSize * size_t(n);
-    
-    data_ = static_cast<char*>(mmap(nullptr, mappingSize_, PROT_READ, MAP_PRIVATE, fd_, 0));
+    size_ = static_cast<size_t>(st.st_size);
+
+    data_ = static_cast<uint8_t*>(::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0));
     if (data_ == MAP_FAILED) {
-      perror("mmap");
-      ::close(fd_);
+      data_ = nullptr;
+      close();
       return false;
     }
-    cur_ = data_ + headerSize;
-    end_ = data_ + mappingSize_;
-    madvise(data_, mappingSize_, MADV_SEQUENTIAL | MADV_WILLNEED);
+
+    // ---- header 読み（先頭に time(float), npart(int)）----
+    if (size_ < sizeof(float) + sizeof(int)) {
+      close();
+      return false;
+    }
+
+    float t;
+    int n;
+    std::memcpy(&t, data_, sizeof(float));
+    std::memcpy(&n, data_ + sizeof(float), sizeof(int));
+
+    header.time  = t;
+    header.npart = n;
+    header.flag_hdf5 = false;
+
+    if (n < 0) { // 念のため
+      close();
+      return false;
+    }
+    npart_ = static_cast<size_t>(n);
+
+    // ---- ここが重要：粒子データはこの位置から始まる ----
+    data_offset_ = sizeof(float) + sizeof(int);
 
     return true;
   }
 
-  // ───────────────────────────────────────────────────────────────────
-  inline bool readNext(ParticleData& p) override {
-    if (cur_ + fmt_.recordSize > end_) return false;
+  void close() override {
+    if(data_){ ::munmap(data_, size_); data_=nullptr; }
+    if(fd_>=0){ ::close(fd_); fd_=-1; }
+    size_=0; npart_=0; data_offset_=0;
+  }
 
-    const char* base = cur_;
-
-    readField(base, fmt_.posOffset,     p.pos,           3);
-    readField(base, fmt_.posOffset,     p.original_pos,  3);
-    readField(base, fmt_.velOffset,     p.vel,           3);
-    readField(base, fmt_.densityOffset, &p.density,      1);
-    readField(base, fmt_.tempOffset,    &p.temperature,  1);
-    readField(base, fmt_.valOffset,     &p.val,          1);
-    readField(base, fmt_.val2Offset,    &p.val2,         1);
-    readField(base, fmt_.hsmlOffset,    &p.Hsml,         1);
-    readField(base, fmt_.hsmlOffset,    &p.originalHsml, 1);
-    readField(base, fmt_.massOffset,    &p.mass,         1);
-    readField(base, fmt_.typeOffset,    &p.type,         1);
-    readField(base, fmt_.IDOffset,      &p.ID,           1);
-
-    if(fmt_.typeOffset == -1)
-      p.type = 0;
-    
-    cur_ += fmt_.recordSize;
-    ++curIdx_;
-    
+  bool is_binary() override {
     return true;
   }
-
-  // ───────────────────────────────────────────────────────────────────
-  inline void close() override {
-    if (data_) {
-      madvise(data_, mappingSize_, MADV_DONTNEED);
-      munmap(data_, mappingSize_);
-      data_ = nullptr;
-    }
-    if (fd_ >= 0) {
-      ::close(fd_);
-      fd_ = -1;
-    }
+  
+  size_t particleCount() const override {
+    return npart_;
   }
 
-private:
-  template<typename T>
-  inline void readField(const char* base, int offset, T* dest, size_t count) {
-    if (offset >= 0) {
-      std::memcpy(dest, base + offset, count * sizeof(T));
-    } else {
-      for (size_t i = 0; i < count; ++i)
-	dest[i] = T{};
+  bool readRange(ParticleBlock& out,
+                 size_t begin, size_t count,
+                 const std::vector<FieldSpec>& fields,
+                 const IOPlan& plan) override
+  {
+    const RecordLayout layout = buildRecordLayout(fields);
+
+    if (layout.recordSize == 0) return false;
+    if (begin + count > npart_) return false;
+
+    // ファイルサイズ整合性チェック（重要）
+    const size_t needBytes = data_offset_ + npart_ * layout.recordSize;
+    if (needBytes > size_) {
+      // header の npart と実ファイルサイズが矛盾している
+      return false;
     }
+
+    out.aosExt.stride = plan.aosExtStride;
+    out.resize(count);
+
+    // SoA 事前確保
+    for(const auto& fs : fields){
+      auto it = plan.plan.find(fs.label);
+      if(it!=plan.plan.end() && it->second.dest==DestKind::SoA){
+        auto &f = out.soa[it->second.soaKey];
+        f.type = fs.type;
+        f.comps = fs.count;
+        f.resize(count);
+      }
+    }
+
+    const uint8_t* base = data_ + data_offset_ + begin * layout.recordSize;
+    const uint8_t* end = base + count * layout.recordSize;
+    if(end > data_ + size_) return false;
+
+    for(size_t i=0;i<count;i++){
+      const uint8_t* rec = base + i * layout.recordSize;
+
+      for(const auto& fl : layout.fields){
+        const uint8_t* src = rec + fl.offset;
+        const auto& fs = fl.spec;
+
+        switch(fs.type){
+	case DataType::Float:
+	  writeToDest(out, i, fs, plan, reinterpret_cast<const float*>(src));
+	  break;
+	case DataType::Double:
+	  writeToDest(out, i, fs, plan, reinterpret_cast<const double*>(src));
+	  break;
+	case DataType::Int32:
+	  writeToDest(out, i, fs, plan, reinterpret_cast<const int32_t*>(src));
+	  break;
+	case DataType::Int64:
+	  writeToDest(out, i, fs, plan, reinterpret_cast<const int64_t*>(src));
+	  break;
+        }
+      }
+    }
+    return true;
   }
 };
 #endif
 
 
-class BlockwiseParticleReader : public IParticleReader {
-  struct StreamInfo {
-    std::ifstream  stm;
-    DataType dataType;
-    FieldType fieldType;
-    size_t size_item;
-    size_t componentCount;
-    bool flag_read[6];
-  };
-  
-  struct header_Gadget{
-    int npart[6];                        /*!< number of particles of each type in this file */
-    double mass[6];                      /*!< mass of particles of each type. If 0, then the masses are explicitly */
-    double time;                         /*!< time of snapshot file */
-    double redshift;                     /*!< redshift of snapshot file */
-    int flag_sfr;                        /*!< flags whether the simulation was including star formation */
-    int flag_feedback;                   /*!< flags whether feedback was included (obsolete) */
-    unsigned int npartTotal[6];          /*!< total number of particles of each type in this snapshot. This can bedifferent from npart if one is dealing with a multi-file snapshot. */
-    int flag_cooling;                    /*!< flags whether cooling was included  */
-    int num_files;                       /*!< number of files in multi-file snapshot */
-    double BoxSize;                      /*!< box-size of simulation in case periodic boundaries were used */
-    double Omega0;                       /*!< matter density in units of critical density */
-    double OmegaLambda;                  /*!< cosmological constant parameter */
-    double HubbleParam;                  /*!< Hubble parameter in units of 100 km/sec/Mpc */
-    int flag_stellarage;                 /*!< flags whether the file contains formation times of star particles */
-    int flag_metals;                     /*!< flags whether the file contains metallicity values for gas and star particles */
-    unsigned int npartTotalHighWord[6];  /*!< High word of the total number of particles of each type */
-    int  flag_entropy_instead_u;         /*!< flags that IC-file contains entropy instead of u */
-    int  flag_splv;                      /*!< flags whether the simulation was including star formation */
-    int  flag_doulbe;                    /*!< flags whether the simulation was including star formation */
-    char fill[52];                       /*!< fills to 256 Bytes */
-  } header_gadget;
+#ifdef HAVE_HDF5
+#include <H5Cpp.h>
+#include "hdf5_utils.h"
 
-  std::ifstream file_;
-  std::vector<StreamInfo>  streams_;
-  FormatInfo               fmt_;
-  size_t                   npart_, curIdx_ = 0;
-  size_t                   npart_mass_read_;
-  
-  bool                     flag_computeTemperature_;
-  bool                     flag_mass_read[6];
-  
-  std::vector<size_t>      fieldOffset_;
-  std::vector<size_t>      fieldStride_;
-  
+class HDF5Reader final : public IParticleReader {
+  H5::H5File file_;
+
+  size_t npart_ = 0;
+  size_t blockSize_ = 1 << 16; // chunk read
+
+  // Gadget 系を想定：ptype=0..5
+  double mass_type_[6]{};   // MassTable
+  size_t count_[6]{};       // NumPart_Total/ThisFile
+  size_t IndexStart_[7]{};  // prefix sum
+
+  bool   flag_skip_DM_ = false;            // 必要なら
+  bool   flag_computeTemperature_ = false; // 以前と同じ後処理
+  double factor_temperature_ = 1.0;
+  double factor_density_ = 1.0;
+
+  // ---- temperature formula (元の式) ----
+  double computeTemperature_(double f_elec, double f_H2, double gamma, double Eint) const {
+    double denom = 1.2;
+    if (f_elec > 0.) denom += f_elec;
+    if (f_H2   > 0.) denom -= f_H2;
+    if (gamma  < 0.) gamma = 5.0/3.0;
+    return (gamma - 1.0) * Eint / denom;
+  }
+
+  static std::string partPath_(int ptype, const std::string& dsName) {
+    return "/PartType" + std::to_string(ptype) + "/" + dsName;
+  }
+
+  // ---- attribute helpers ----
+  static bool hasAttr_(H5::H5Object& obj, const char* name) {
+    // H5Cpp には exists の便利関数が弱いので例外で判定
+    try { (void)obj.openAttribute(name); return true; }
+    catch (...) { return false; }
+  }
+
+  // ---- dataset rank ----
+  static int getRank_(const H5::DataSet& ds) {
+    H5::DataSpace sp = ds.getSpace();
+    return sp.getSimpleExtentNdims();
+  }
+
+  // ---- infer particle count from dataset dims ----
+  static size_t inferCountFromDataset_(H5::H5File& f, int ptype, const std::string& dsName) {
+    try {
+      H5::DataSet ds = f.openDataSet(partPath_(ptype, dsName));
+      H5::DataSpace sp = ds.getSpace();
+      int nd = sp.getSimpleExtentNdims();
+      if (nd < 1) return 0;
+      std::vector<hsize_t> dims((size_t)nd, 0);
+      sp.getSimpleExtentDims(dims.data());
+      return (size_t)dims[0];
+    } catch (...) {
+      return 0;
+    }
+  }
+
 public:
-  BlockwiseParticleReader(FormatInfo fmt) : fmt_(std::move(fmt))
-  {  }
+  HDF5Reader() = default;
+
+  bool is_binary() override { return false; }
+  size_t particleCount() const override { return npart_; }
 
   bool open(const std::string& path, HeaderInfo& header) override {
-    file_.open(path, std::ios::binary);
-    if (!file_) return false;
+    // 初期化
+    npart_ = 0;
+    for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; IndexStart_[t]=0; }
+    IndexStart_[6]=0;
 
-    fieldOffset_.resize(fmt_.tokens.size());
-    fieldStride_.resize(fmt_.tokens.size());
-    
-    int32_t rec1, rec2;
-    file_.read(reinterpret_cast<char*>(&rec1), sizeof(rec1));
-    file_.read(reinterpret_cast<char*>(&header_gadget), sizeof(header_gadget));
-    file_.read(reinterpret_cast<char*>(&rec2), sizeof(rec2));
+    // open file
+    file_ = H5::H5File(path, H5F_ACC_RDONLY);
 
-    if (!file_ || rec1 != rec2) return false;
-    
-    npart_ = 0;    
-    npart_mass_read_ = 0;    
-    for(int t=0; t<6; ++t){
-      npart_ += header_gadget.npart[t];
-      flag_mass_read[t] = false;
-      if(header_gadget.npart[t] > 0 && header_gadget.mass[t] == 0.){
-	npart_mass_read_ += header_gadget.npart[t];
-	flag_mass_read[t] = true;
+    // /Header の属性を読む
+    bool hasHeader = false;
+    try {
+      H5::Group hg = file_.openGroup("/Header");
+      hasHeader = true;
+
+      double time = 0.0;
+      (void)readAttributeScalar(hg, "Time", time);
+      header.time = (float)time;
+
+      // MassTable double[6]
+      double mt[6]{};
+      if (readAttributeArray(hg, "MassTable", mt)) {
+        for (int t=0;t<6;++t) mass_type_[t] = mt[t];
+      } else {
+        for (int t=0;t<6;++t) mass_type_[t] = 0.0;
       }
 
-      printf("header.mass[%d]=%g npart=%d boxsize=%g\n", t, header_gadget.mass[t], header_gadget.npart[t], header_gadget.BoxSize);
-    }    
-    
-    // ヘッダ部の終わり位置を記録
-    size_t headerEnd = static_cast<size_t>(file_.tellg());
+      // NumPart_Total (uint64 or uint32)
+      bool okNum = false;
+      {
+        unsigned long long n64[6]{};
+        unsigned int       n32[6]{};
 
-    size_t pos = headerEnd;
-    for (size_t i = 0; i < fmt_.tokens.size(); ++i) {
-      file_.clear();
-      file_.seekg(pos, std::ios::beg);
-
-      if(npart_mass_read_ == 0 && std::strcmp(fmt_.tokens[i].label, "mass") == 0)
-	continue;
-      
-      int32_t blkBytes = 0;
-      file_.read(reinterpret_cast<char*>(&blkBytes), sizeof(blkBytes));
-      
-      size_t dummy1 = blkBytes;
-      size_t dataStart = static_cast<size_t>(file_.tellg());
-      fieldOffset_[i] = dataStart;
-
-      size_t size_item = dataTypeSize(fmt_.tokens[i].type);      
-      size_t bytePer = fmt_.tokens[i].count * size_item;
-      fieldStride_[i] = bytePer;
-
-      auto it = labelToField.find(fmt_.tokens[i].label);
-      FieldType fType = (it != labelToField.end()
-			 ? it->second
-			 : FieldType::Unknown);
-
-      bool flag_read[6];
-      getReadBlock(flag_read, fType);
-      
-      int np = 0;
-      for(int k=0;k<6;k++){
-	if(flag_read[k])
-	  np += header_gadget.npart[k];
+        if (readAttributeArray(hg, "NumPart_Total", n64)) {
+          for (int t=0;t<6;++t) count_[t] = (size_t)n64[t];
+          okNum = true;
+        } else if (readAttributeArray(hg, "NumPart_Total", n32)) {
+          for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
+          okNum = true;
+        }
       }
 
-      size_t pos_dummy2 = dataStart + bytePer * np;
-      file_.seekg(pos_dummy2, std::ios::beg);
-      int32_t dummy2;
-      file_.read(reinterpret_cast<char*>(&dummy2), sizeof(dummy2));
+      if (!okNum) {
+        unsigned long long n64[6]{};
+        unsigned int       n32[6]{};
 
-      if(dummy1 != dummy2){
-	printf("%s: incorrect dummy size has been detected!\n"
-	       , fmt_.tokens[i].label);
-      }	
-      
-      size_t size_record = sizeof(blkBytes) + bytePer * np;      
-      pos = dataStart + size_record;      
+        if (readAttributeArray(hg, "NumPart_ThisFile", n64)) {
+          for (int t=0;t<6;++t) count_[t] = (size_t)n64[t];
+          okNum = true;
+        } else if (readAttributeArray(hg, "NumPart_ThisFile", n32)) {
+          for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
+          okNum = true;
+        }
+      }
+
+      // okNum=false のときは後で dataset から推定
+
+    } catch (...) {
+      hasHeader = false;
+      header.time = 0.0f;
+      for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
     }
 
-    // 各フィールドのブロック先頭バイト offset が fmt_.fieldOffsets[] に
-    bool flag_temperature = false;
-    for (size_t i = 0; i < fmt_.tokens.size(); ++i) {
-      const auto &tk = fmt_.tokens[i];
-      if(std::strcmp(tk.label,"dummy") == 0)
-	continue;
+    // /Header から count が取れていない場合のフォールバック
+    bool allZero = true;
+    for (int t=0;t<6;++t) if (count_[t] > 0) { allZero=false; break; }
 
-      if(npart_mass_read_ == 0 && std::strcmp(tk.label,"mass") == 0){
-	streams_.emplace_back();
-	auto &si = streams_.back();
-	si.fieldType = FieldType::Mass;
-	for(int k=0;k<6;k++)
-	  si.flag_read[k] = false;
-	
-	continue;
-      }
-	
-      if(std::strcmp(tk.label, "temperature") == 0)
-	flag_temperature = true;
-	
-      // 1) まず文字列ラベルから FieldType を取得
-      auto it = labelToField.find(tk.label);
-      FieldType fType = (it != labelToField.end()
-			 ? it->second
-			 : FieldType::Unknown);
-      
-      DataType dtype = tk.type;
-      size_t size_item = dataTypeSize(dtype);
-      
-      streams_.emplace_back();
-      auto &si = streams_.back();
-      si.stm.open(path, std::ios::binary);
-      si.stm.seekg(fieldOffset_[i], std::ios::beg);
-
-      si.dataType = dtype;
-      si.fieldType = fType;
-      si.size_item = size_item;
-      si.componentCount = tk.count;
-
-      bool flag_read[6];
-      getReadBlock(flag_read, fType);
-      for(int k=0;k<6;k++)
-	si.flag_read[k] = flag_read[k];
-    }
-
-    flag_computeTemperature_ = flag_temperature;
-    
-    // 準備完了
-    header.flag_hdf5 = false;
-    return true;
-  }
-
-  bool readNext(ParticleData& p) override {
-    if (curIdx_ >= npart_) return false;
-
-    int ptype = 0;
-    for(int np=0, k=0;k<6;k++){
-      np += header_gadget.npart[k];
-      if(curIdx_ < np){
-	ptype = k;
-	break;
+    if (!hasHeader || allZero) {
+      for (int t=0;t<6;++t) {
+        size_t n = inferCountFromDataset_(file_, t, "Coordinates");
+        if (n==0) n = inferCountFromDataset_(file_, t, "Velocities");
+        if (n==0) n = inferCountFromDataset_(file_, t, "ParticleIDs");
+        count_[t] = n;
       }
     }
 
-    p.type = ptype;
-    
-    double electronFrac = -1., H2Frac = -1., gammaVal = -1., intEnergy = -1.;
-    for (size_t i = 0; i < streams_.size(); ++i) {
-      auto &si      = streams_[i];
+    // prefix sum
+    IndexStart_[0] = 0;
+    for (int t=0;t<6;++t) IndexStart_[t+1] = IndexStart_[t] + count_[t];
+    npart_ = IndexStart_[6];
 
-      if(si.fieldType == FieldType::Mass){
-	if(flag_mass_read[ptype] == false)
-	  p.mass = header_gadget.mass[ptype];
-      }	
+    header.npart     = (int)npart_;
+    header.flag_hdf5 = true;
 
-      if(si.flag_read[ptype]){
-	size_t comps  = si.componentCount;
-	size_t bytes  = comps * si.size_item;
-      
-	std::vector<uint8_t> raw(bytes);      
-	si.stm.read(reinterpret_cast<char*>(raw.data()), bytes);
-	if (!si.stm) return false;
-      
-           
-	switch (si.dataType) {
-	case DataType::Float: { // float
-	  auto *vals = reinterpret_cast<float*>(raw.data());
-	  switch (si.fieldType) {
-	  case FieldType::ElectronFraction:
-	    electronFrac = vals[0];
-	    break;
-	  case FieldType::H2Fraction:
-	    H2Frac = vals[0];
-	    break;
-	  case FieldType::Gamma:
-	    gammaVal = vals[0];
-	    break;
-	  case FieldType::InternalEnergy:
-	    intEnergy = vals[0];
-	    break;
-	  default:
-	    assignField<float>(p, si.fieldType, vals, comps);
-	    break;
-	  }
-	  break;
-	}
-	case DataType::Int32: { // int32_t
-	  auto *ivals = reinterpret_cast<int32_t*>(raw.data());
-	  assignField<int>(p, si.fieldType, ivals, comps);
-	  break;
-	}
-	case DataType::Double: { // double
-	  auto *dvals = reinterpret_cast<double*>(raw.data());
-	  switch (si.fieldType) {
-	  case FieldType::ElectronFraction:
-	    electronFrac = dvals[0];
-	    break;
-	  case FieldType::H2Fraction:
-	    H2Frac = dvals[0];
-	    break;
-	  case FieldType::Gamma:
-	    gammaVal = dvals[0];
-	    break;
-	  case FieldType::InternalEnergy:
-	    intEnergy = dvals[0];
-	    break;
-	  default:
-	    assignField<double>(p, si.fieldType, dvals, comps);
-	    break;
-	  }
-	}
-	default:
-	  break;
-	
-	}
-      }
-    }
-    
-    // 5) 温度の後処理（必要なら）
-    if (flag_computeTemperature_) 
-      p.temperature = computeTemperature_(electronFrac, H2Frac, gammaVal, intEnergy);
+    // ここで unit 由来の係数を設定したいならここで
+    // factor_density_ = ...
+    // factor_temperature_ = ...
 
-    if(curIdx_% 1000 == 0)
-      printf("%zu mass=%g type=%d pos=%g %g %g vel=%g %g %g ID=%d header.npart=%d %d mass=%g %g\n"
-	     , curIdx_, p.mass, p.type, p.pos[0], p.pos[1], p.pos[2], p.vel[0], p.vel[1], p.vel[2], p.ID
-	     , header_gadget.npart[0], header_gadget.npart[1], header_gadget.mass[0], header_gadget.mass[1]);
-    
-    ++curIdx_;
     return true;
   }
 
   void close() override {
-    for (auto &si : streams_){
-      if (si.stm.is_open())
-	si.stm.close();
-    }
+    try { file_.close(); } catch (...) {}
+    npart_ = 0;
+    for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; IndexStart_[t]=0; }
+    IndexStart_[6]=0;
   }
 
-private:
-double computeTemperature_(double f_elec, double f_H2, double gamma, double Eint){
-  float denom = 1.2;
-  if(f_elec > 0.)
-    denom += f_elec;
+  bool readRange(ParticleBlock& out,
+                 size_t begin, size_t count,
+                 const std::vector<FieldSpec>& fields,
+                 const IOPlan& plan) override
+  {
+    if (begin + count > npart_) return false;
 
-  if(f_H2 > 0.)
-    denom -= f_H2;
+    out.resize(count);
 
-  if(gamma < 0.)
-    gamma = 5./3.;
-  
-  return (gamma - 1.0f) * Eint / denom;
-}
-
-template<typename T>
-void assignField(ParticleData &p,
-                 FieldType    fType,
-                 const T     *vals,
-                 size_t       comps)
-{
-  switch (fType) {
-  case FieldType::Position:
-    for (int i = 0; i < 3; ++i) {
-      p.pos[i]          = static_cast<float>(vals[i]);
-      p.original_pos[i] = p.pos[i];
-    }
-    break;
-
-  case FieldType::Velocity:
-    for (int i = 0; i < 3; ++i)
-      p.vel[i] = static_cast<float>(vals[i]);
-    break;
-
-  case FieldType::Hsml:
-    p.Hsml = p.originalHsml = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Mass:
-    p.mass = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Density:
-    p.density = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Value:
-    p.val = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Value2:
-    p.val2 = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Temperature:
-    p.temperature = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::ID:
-    if constexpr (std::is_integral_v<T>) {
-      p.ID = static_cast<int>(vals[0]);
-    } else {
-      p.ID = static_cast<int>(std::lround(vals[0]));
-    }
-    break;
-  default:
-    break;
-  }
-}
-
-
-void getReadBlock(bool *flag, FieldType fType)
-{
-  /** Minimal setting for Gadget format **/
-  for (int i = 0; i < 6; ++i) 
-    flag[i] = 0;    
-
-  switch (fType) {
-  case FieldType::Position:
-    for (int i = 0; i < 6; ++i) 
-      flag[i] = 1;    
-    break;
-    
-  case FieldType::Velocity:
-    for (int i = 0; i < 6; ++i)
-      flag[i] = 1;
-    break;
-    
-  case FieldType::Mass:
-    for (int i = 0; i < 6; ++i)
-      flag[i] = flag_mass_read[i];
-    break;
-    
-  case FieldType::ID:
-    for (int i = 0; i < 6; ++i)
-      flag[i] = 1;
-    break;
-  default:
-    flag[0] = 1;
-    break;
-  }
-}
-};
-
-struct particle_data_read {
-  double time;
-  double Pos[3];
-  double r;
-  double Mass;
-};
-
-class FramedBinaryParticleReader : public IParticleReader {
-  FILE*          fp_    = nullptr;
-  size_t         npart_ = 0;
-  size_t         read_  = 0;
-public:
-  FramedBinaryParticleReader() = default;
-
-  bool open(const std::string &path, HeaderInfo &hdr) override {
-    fp_ = std::fopen(path.c_str(), "rb");
-    if (!fp_) {
-      std::perror("fopen");
-      return false;
+    // SoA allocate (planで指定されたものだけ)
+    for (const auto& fs : fields) {
+      auto pit = plan.plan.find(fs.label);
+      if (pit != plan.plan.end() && pit->second.dest == DestKind::SoA) {
+        auto &f = out.soa[pit->second.soaKey];
+        f.type  = fs.type;
+        f.comps = fs.count;
+        f.resize(count);
+      }
     }
 
-    int n;
-    float dummy;
-    if (std::fread(&dummy, sizeof(dummy), 1, fp_) != 1) return false;
-    if (std::fread(&n, sizeof(n), 1, fp_) != 1) return false;
-    if (std::fread(&dummy, sizeof(dummy), 1, fp_) != 1) return false;
+    // 温度後処理用（元コード踏襲）
+    std::vector<double> tmp_e(count, -1.0), tmp_h2(count, -1.0), tmp_g(count, -1.0), tmp_u(count, -1.0);
 
-    printf("n=%d data aray...\n", n);
-    
-    hdr.time      = 0.;
-    hdr.flag_hdf5 = false;
-    hdr.npart     = 0;
-    npart_        = static_cast<size_t>(n);
-    read_         = 0;
-    return true;
-  }
+    const size_t globalBegin = begin;
+    const size_t globalEnd   = begin + count;
 
-  bool readNext(ParticleData &p) override {
-    if (read_ >= npart_) return false;
+    for (int ptype=0; ptype<6; ++ptype) {
+      if (flag_skip_DM_ && ptype==1) continue;
 
-    float dummy;
-    if (std::fread(&dummy, sizeof(dummy), 1, fp_) != 1) {      
-      close();
-      return false;
-    }
-    
-    particle_data_read raw;
-    if (std::fread(&raw, sizeof(raw), 1, fp_) != 1) return false;
-    if (std::fread(&dummy, sizeof(dummy), 1, fp_) != 1) return false;
+      const size_t pBeg = IndexStart_[ptype];
+      const size_t pEnd = IndexStart_[ptype+1];
+      if (pEnd <= globalBegin || globalEnd <= pBeg) continue;
 
-    // copy into your ParticleData
-    for (int k = 0; k < 3; ++k) {
-      p.pos[k]          = static_cast<float>(raw.Pos[k]);
-      p.original_pos[k] = p.pos[k];
-      p.vel[k]          = 0.;
-    }
-    p.mass             = static_cast<float>(raw.Mass);
-    p.type             = 0;
-    p.ID               = 0;
+      const size_t subBegG  = std::max(globalBegin, pBeg);
+      const size_t subEndG  = std::min(globalEnd,   pEnd);
+      const size_t subCount = subEndG - subBegG;
 
-    ++read_;
-    return true;
-  }
+      const size_t localStart = subBegG - pBeg;
+      const size_t outStart   = subBegG - globalBegin;
 
-  void close() override {
-    if (fp_) {
-      std::fclose(fp_);
-      fp_ = nullptr;
-    }
-  }
-};
+      // type/mass の固定値（元コード同様）
+      for (size_t i=0;i<subCount;++i) {
+        out.particles[outStart+i].type = ptype;
+        if (mass_type_[ptype] > 0.0) out.particles[outStart+i].mass = (float)mass_type_[ptype];
+      }
 
+      // fields を読む
+      for (const auto& fs : fields) {
+        auto pit = plan.plan.find(fs.label);
+        if (pit == plan.plan.end() || pit->second.dest == DestKind::Ignore) continue;
 
-#ifdef HAVE_HDF5
-class HDF5ParticleReader : public IParticleReader {
-  H5::H5File                     file_;
-  TrackingVector<ParticleData>   particles_;
-  size_t                         curIndex_ = 0;
-  size_t                         blockSize_ = 1024;
-  size_t                         blockLoadedIdx_ = 0;
-  size_t                         currentBlockCount_ = 0;
-  int                            npart_ = 0;
-  FormatInfo                     fmt_;
-  
-  bool flag_skip_DM = false;
-  bool flag_computeTemperature_ = false;
-
-  double factor_temperature_;
-  double factor_density_;
-  double mass_type[6];
-  size_t IndexStart[6];
-  
-  struct PartGroup {
-    int                       type;       // PartType の番号
-    int64_t                   count;      // 粒子数
-    struct FieldSet {
-      FieldType               fType;      // ParticleData のどのメンバに対応するか
-      H5::DataSet             ds;         // データセットハンドル
-      H5::PredType            dType;      // ネイティブ型
-      int                     dim;        // 1 or 2 (1→スカラ, 2→ベクトル)
-      H5::DataSpace filespace;     // open() で取得・保持
-      H5::DataSpace memspace;      // open() で作成 (2D: {blockSize, dim})
-      std::vector<char> rawBuf;    // blockSize×dim×sizeof(type)
-      char name[255];
-    };
-    std::vector<FieldSet>     fields;     // この PartType に含まれるすべてのトークン
-  };
-
-  std::vector<PartGroup> parts_;
-  
-public:
-  HDF5ParticleReader(FormatInfo fmt) : fmt_(std::move(fmt))
-  {}
-  
-  bool open(const std::string &path, HeaderInfo &header) override;
-
-  bool readNext(ParticleData &p) override{
-    if (curIndex_ >= npart_) return false;
-    
-    // 4) curIndex_ → (groupIndex, localIdx)
-    size_t ptype = 0;
-    while(ptype + 1 < 6 && curIndex_ >= IndexStart[ptype+1])
-      ++ptype;
-    size_t localIdx = curIndex_ - IndexStart[ptype];
-    auto &pg = parts_[ptype];
-
-    p.type = ptype;
-    if(mass_type[ptype] > 0.)
-      p.mass = mass_type[ptype];	  
-
-    if(curIndex_%10000 == 0 || ptype >= 3)
-      printf("i=%zu type=%zu npart_=%d\n", curIndex_, ptype, npart_);
-        
-    if (localIdx < blockLoadedIdx_ ||
-	localIdx >= blockLoadedIdx_ + currentBlockCount_) {
-      loadBlock(ptype);
-    }
-        
-    double electronFrac = -1., H2Frac = -1., gammaVal = -1., intEnergy = -1.;
-    for(auto &fs : pg.fields) {
-      size_t dim = fs.dim;
-      size_t elemIdx = (localIdx - blockLoadedIdx_) * dim;      // 要素番号
-      size_t typeSize = fs.dType.getSize();
-
-      char *base = fs.rawBuf.data() + elemIdx * typeSize;
-      
-      // 4) 型ごとに一時バッファを用意して読み込み
-
-      if(curIndex_ < 10 || ptype>=3)
-	printf("ftype=%d\n", fs.fType);
-      
-      if(fs.dType == H5::PredType::NATIVE_FLOAT){
-	float* buf = reinterpret_cast<float*>(base);
-
-	if(curIndex_<10 && fs.fType == FieldType::Velocity)
-	  printf("velocity is float!\n");
+	const std::string dsName = fs.displayName.empty() ? fs.label : fs.displayName;
 	
-	switch (fs.fType) {
-	case FieldType::ElectronFraction:
-	  electronFrac = buf[0];
-	  break;
-	case FieldType::H2Fraction:
-	  H2Frac = buf[0];
-	  break;
-	case FieldType::Gamma:
-	  gammaVal = buf[0];
-	  break;
-	case FieldType::InternalEnergy:
-	  intEnergy = buf[0];
-	  break;
-	default:
-	  assignField<float>(p, fs.fType, buf, fs.dim);
-	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
-	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+        H5::DataSet ds;
+        try {
+          ds = file_.openDataSet(partPath_(ptype, dsName));
+        } catch (...) {
+          // dataset無い場合はスキップ（MassTableなどで埋まるものはそれでOK）
+          continue;
+        }
 
-	  if(ptype>=5 && fs.fType == FieldType::Mass)
-	    printf("Mass=%g buf=%g\n", p.mass, buf[0]);
-	  
-	  break;
-	}
-      }else if(fs.dType == H5::PredType::NATIVE_INT32 || fs.dType == H5::PredType::NATIVE_UINT){
-	int* buf = reinterpret_cast<int*>(base);
-	assignField<int32_t>(p, fs.fType, buf, fs.dim);
-      }else if(fs.dType == H5::PredType::NATIVE_LLONG || fs.dType == H5::PredType::NATIVE_ULLONG){
-	long long* buf = reinterpret_cast<long long*>(base);
-	std::vector<int> tmp(fs.dim);
-	for (int i = 0; i < fs.dim; ++i)
-	  tmp[i] = static_cast<int>(buf[i]);
-	assignField<int32_t>(p, fs.fType, tmp.data(), fs.dim);
-      }else if(fs.dType == H5::PredType::NATIVE_DOUBLE){
-	double* buf = reinterpret_cast<double*>(base);
+        H5::PredType dtype =
+          (fs.type == DataType::Float)  ? H5::PredType::NATIVE_FLOAT  :
+          (fs.type == DataType::Double) ? H5::PredType::NATIVE_DOUBLE :
+          (fs.type == DataType::Int32)  ? H5::PredType::NATIVE_INT32  :
+                                          H5::PredType::NATIVE_LLONG;
 
-	if(curIndex_<10 && fs.fType == FieldType::Velocity)
-	  printf("velocity is double!\n");
-	
-	switch (fs.fType) {
-	case FieldType::ElectronFraction:
-	  electronFrac = buf[0];
-	  break;
-	case FieldType::H2Fraction:
-	  H2Frac = buf[0];
-	  break;
-	case FieldType::Gamma:
-	  gammaVal = buf[0];
-	  break;
-	case FieldType::InternalEnergy:
-	  intEnergy = buf[0];
-	  break;
-	default:
-	  std::vector<float> tmp(fs.dim);
-	  for (int i = 0; i < fs.dim; ++i)
-	    tmp[i] = static_cast<float>(buf[i]);
+        const int comps = fs.count;
+        const size_t elemSz = dataTypeSize(fs.type);
 
-	  assignField<float>(p, fs.fType, tmp.data(), fs.dim);
-	  if(curIndex_<10 && fs.fType == FieldType::Velocity)
-	    printf("Vel=%g %g %g buf=%g %g %g\n", p.vel[0], p.vel[1], p.vel[2], buf[0], buf[1], buf[2]);
+        size_t done = 0;
+        std::vector<uint8_t> buf;
 
-	  if(ptype>=3 && fs.fType == FieldType::Mass)
-	    printf("Mass=%g buf=%g\n", p.mass, buf[0]);
-	  
-	  break;
-	}
-      }else{
-	if(localIdx < 10)
-	  printf("Unknown data type for this field... label:%s\n", fs.name);
-      }            
-    }
-    
-    // 5) 温度の後処理（必要なら）
+        while (done < subCount) {
+          const size_t chunk = std::min(blockSize_, subCount - done);
+
+          const int rank = getRank_(ds);
+          if (!(rank==1 || rank==2)) return false;
+
+	  readHyperslabBytes(ds, dtype,
+			     (hsize_t)(localStart + done),
+			     (hsize_t)chunk,
+			     comps, buf, elemSz);
+
+          const size_t bytesPerParticle = (size_t)comps * elemSz;
+
+          if (pit->second.dest == DestKind::SoA) {
+            auto &f = out.soa[pit->second.soaKey];
+            std::memcpy(f.bytes.data() + (outStart + done) * bytesPerParticle,
+                        buf.data(),
+                        chunk * bytesPerParticle);
+          } else {
+            for (size_t j=0;j<chunk;++j) {
+              const size_t oi = outStart + done + j;
+              const uint8_t* one = buf.data() + j * bytesPerParticle;
+
+              // AoSCore へ（あなたの既存 writeToDest を使用）
+              switch (fs.type) {
+                case DataType::Float:  writeToDest(out, oi, fs, plan, reinterpret_cast<const float*>(one)); break;
+                case DataType::Double: writeToDest(out, oi, fs, plan, reinterpret_cast<const double*>(one)); break;
+                case DataType::Int32:  writeToDest(out, oi, fs, plan, reinterpret_cast<const int32_t*>(one)); break;
+                case DataType::Int64:  writeToDest(out, oi, fs, plan, reinterpret_cast<const int64_t*>(one)); break;
+              }
+
+              // 温度補正用に拾う（fs.label はあなたの label 設計に合わせてください）
+              if (flag_computeTemperature_) {
+                auto get0 = [&](void)->double{
+                  if (fs.type == DataType::Double) return reinterpret_cast<const double*>(one)[0];
+                  if (fs.type == DataType::Float)  return (double)reinterpret_cast<const float*>(one)[0];
+                  if (fs.type == DataType::Int32)  return (double)reinterpret_cast<const int32_t*>(one)[0];
+                  if (fs.type == DataType::Int64)  return (double)reinterpret_cast<const int64_t*>(one)[0];
+                  return -1.0;
+                };
+                const double v0 = get0();
+
+                if      (fs.label == "electronfraction" || fs.label == "ElectronFraction") tmp_e[oi]  = v0;
+                else if (fs.label == "H2fraction"       || fs.label == "H2Fraction")       tmp_h2[oi] = v0;
+                else if (fs.label == "Gamma")                                           tmp_g[oi]  = v0;
+                else if (fs.label == "internalenergy"   || fs.label == "InternalEnergy") tmp_u[oi]  = v0;
+              }
+            }
+          }
+
+          done += chunk;
+        } // while done
+      } // for fields
+    } // for ptype
+
+    // 後処理：temperature（元コードの式）
     if (flag_computeTemperature_) {
-      p.temperature = computeTemperature_(electronFrac, H2Frac, gammaVal, intEnergy);
-      p.temperature *= factor_temperature_;
+      for (size_t i=0;i<count;++i) {
+        const double T = computeTemperature_(tmp_e[i], tmp_h2[i], tmp_g[i], tmp_u[i]);
+        out.particles[i].temperature = (float)(T * factor_temperature_);
+      }
     }
-    
-    p.originalHsml = std::pow(p.mass / p.density * 3.0 / (4.0 * M_PI), 1.0 / 3.0);    
-    p.density     *= factor_density_;
-   
-    ++curIndex_;
-    return true;
-  }
-  
-  void close() override {
-    particles_.clear();
-    curIndex_ = 0;
-    file_.close();
-  }
 
-private:
-  double computeTemperature_(double f_elec, double f_H2, double gamma, double Eint){
-  float denom = 1.2;
-  if(f_elec > 0.)
-    denom += f_elec;
-
-  if(f_H2 > 0.)
-    denom -= f_H2;
-
-  if(gamma < 0.)
-    gamma = 5./3.;
-
-  if(curIndex_ < 10)
-    printf("gamma=%g Eint=%g denom=%g val=%g\n", gamma, Eint, denom, (gamma - 1.0f) * Eint / denom);
-  
-  return (gamma - 1.0f) * Eint / denom;
-}
-
-template<typename T>
-void assignField(ParticleData &p,
-                 FieldType    fType,
-                 const T     *vals,
-                 size_t       comps)
-{
-  switch (fType) {
-  case FieldType::Position:
-    for (int i = 0; i < 3; ++i) {
-      p.pos[i]          = static_cast<float>(vals[i]);
-      p.original_pos[i] = p.pos[i];
+    // density factor（元コード踏襲するならここで）
+    if (factor_density_ != 1.0) {
+      for (size_t i=0;i<count;++i) out.particles[i].density = (float)((double)out.particles[i].density * factor_density_);
     }
-    break;
 
-  case FieldType::Velocity:
-    for (int i = 0; i < 3; ++i)
-      p.vel[i] = static_cast<float>(vals[i]);
-    break;
-
-  case FieldType::Hsml:
-    p.Hsml = p.originalHsml = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Mass:
-    p.mass = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Density:
-    p.density = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Value:
-    p.val = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Value2:
-    p.val2 = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::Temperature:
-    p.temperature = static_cast<float>(vals[0]);
-    break;
-
-  case FieldType::ID:
-    if constexpr (std::is_integral_v<T>) {
-      p.ID = static_cast<int>(vals[0]);
-    } else {
-      p.ID = static_cast<int>(std::lround(vals[0]));
-    }
-    break;
-  default:
-    break;
+    return true;
   }
-}
-  
-bool test_dataset(int t, FieldType fType)
-{
-  switch (fType) {
-  case FieldType::Position:
-    return true;
-    break;
-  case FieldType::Velocity:
-    return true;
-    break;    
-  case FieldType::Mass:
-    if(mass_type[t] > 0.)
-      return false;
-    else
-      return true;
-    break;    
-  case FieldType::ID:
-    return true;
-    break;
-  case FieldType::Hsml:
-    return (t==0?true:false);
-    break;
-  case FieldType::Density:    
-    return (t==0?true:false);
-    break;
-  case FieldType::Temperature:
-    return (t==0?true:false);
-    break;
-  case FieldType::InternalEnergy:
-    return (t==0?true:false);
-    break;
-  case FieldType::ElectronFraction:
-    return (t==0?true:false);
-    break;
-  case FieldType::H2Fraction:
-    return (t==0?true:false);
-    break;
-  case FieldType::Gamma:
-    return (t==0?true:false);
-    break;
-  default:
-    return true;
-    break;
-  }
-}
-
-void loadBlock(size_t gIdx) {
-  auto &pg = parts_[gIdx];
-  size_t localStart = curIndex_ - IndexStart[gIdx];
-  size_t rem = static_cast<size_t>(pg.count - localStart);
-  size_t count = std::min(blockSize_, rem);
-
-  hsize_t offset[2] = { static_cast<hsize_t>(localStart), 0 };
-
-  for (auto &fs : pg.fields) {
-    H5::DataSpace fileSpace = fs.ds.getSpace();
-    int rank = fileSpace.getSimpleExtentNdims();
-
-    if (rank == 1) {
-      // ---- 1D データセット（例：Mass, Density などスカラ配列）----
-      hsize_t block1[1] = { static_cast<hsize_t>(count) };
-      hsize_t off1[1]   = { static_cast<hsize_t>(localStart) };
-      fileSpace.selectHyperslab(H5S_SELECT_SET, block1, off1);
-
-      // メモリ側も 1D（長さ count）をその都度作る（rawBuf 先頭に詰める）
-      H5::DataSpace mem1(1, block1);
-
-      fs.ds.read(fs.rawBuf.data(), fs.dType, mem1, fileSpace);
-    } else {
-      // ---- 2D データセット（例：Position/Velocity の Nx3 など）----
-      hsize_t block2[2] = {
-	static_cast<hsize_t>(count),
-	static_cast<hsize_t>(fs.dim)   // fs.dim は “実成分数”
-      };
-      hsize_t off2[2] = {
-	static_cast<hsize_t>(localStart),
-	0
-      };
-      fileSpace.selectHyperslab(H5S_SELECT_SET, block2, off2);
-
-      // memspace は (blockSize_, fs.dim)。ここから (count, fs.dim) を切り出す。
-      H5::DataSpace mem2(fs.memspace);
-      hsize_t offMem[2] = { 0, 0 };
-      mem2.selectHyperslab(H5S_SELECT_SET, block2, offMem);
-
-      fs.ds.read(fs.rawBuf.data(), fs.dType, mem2, fileSpace);
-    }    
-  }
-  
-  currentBlockCount_ = count;
-  blockLoadedIdx_   = localStart;
-}
-
 };
+
+
 #endif
 
 
@@ -1199,7 +939,7 @@ public:
 #ifdef HAVE_HDF5
   bool useHDF5 = false;
 #endif
-  TrackingVector<FormatToken> formatTokens;
+  std::vector<FieldSpec> formatTokens;
 
   void setFormatMode(FileFormat form){
     readFileFormat = form;
@@ -1214,15 +954,14 @@ private:
   FileFormat readFileFormat = FileFormat::Auto;
   
   // バッチ管理用変数
-  TrackingVector<TrackingVector<ParticleData>> batchParticles; // バッチ内の各ファイルの粒子データ
-  TrackingVector<HeaderInfo> headerBatch; // バッチ内の各ファイルの粒子データ
+  TrackingVector<ParticleBlock> batchParticleBlocks; // バッチ内の各ファイルの粒子データ
 
 #ifdef HAVE_HDF5
   bool showHDF5MappingDialog = false;
 #endif
   
   bool showFormatDialog = false;
-  TrackingVector<FormatToken> formatTokensEdit; // 編集用一時コピー
+  std::vector<FieldSpec> formatTokensEdit; // 編集用一時コピー
   
   // 更新タイミングでのみ使うmutex
   std::mutex g_dataMutex;
@@ -1230,15 +969,13 @@ private:
   void syncLoadFirstFile(int targetFile, ParticleArray *P);
   void asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep);
 
-  bool loadSingleFile(int fileNumber, TrackingVector<ParticleData>& particles, HeaderInfo &header_return);
+  bool loadSingleFile(int fileNumber, ParticleBlock& particles);
 
 #ifdef HAVE_HDF5
   TrackingVector<ParticleData> loadParticlesFromHDF5(const std::string& filename, HeaderInfo& hdr);
 #endif
   
   void initDefaultFormatTokens();
-  bool computeFormatInfo(const TrackingVector<FormatToken>& tokens, FormatInfo &info);  
-  void load_particle_from_buffer(const char* base, int npart, int recordSize, FormatInfo &info, TrackingVector<ParticleData>& particles);
 
   double UnitLength_in_cm;
   double UnitMass_in_g;

@@ -7,7 +7,7 @@ namespace bridge {
   bool loadInitialFromAoS(PythonBridge& bridge, const ParticleArray& P, size_t stride_bytes) {
     auto& S = bridge.shared();
     
-    const size_t srcN = P.particles.size();
+    const size_t srcN = P.particleBlock.particles.size();
     const size_t N    = std::min(static_cast<size_t>(S.N), srcN);
     if (N == 0) return false;
     
@@ -17,9 +17,9 @@ namespace bridge {
       {
 	const ParticleData* src;
 	if (contiguous) {
-	  src = &P.particles[i];
+	  src = &P.particleBlock.particles[i];
 	} else {
-	  const uint8_t* base = reinterpret_cast<const uint8_t*>(P.particles.data());
+	  const uint8_t* base = reinterpret_cast<const uint8_t*>(P.particleBlock.particles.data());
 	  src = reinterpret_cast<const ParticleData*>(base + i * stride_bytes);
 	}
 
@@ -69,7 +69,7 @@ namespace bridge {
 
   void applyFromSharedToAoS(const PythonBridge::Shared& S, ParticleArray& P,
 			    const std::vector<FieldId>& dirty) {
-    const size_t N = std::min<size_t>(S.N, P.particles.size());
+    const size_t N = std::min<size_t>(S.N, P.particleBlock.particles.size());
     auto need = [&](FieldId id){
       if (dirty.empty()) return true;
       return std::find(dirty.begin(), dirty.end(), id) != dirty.end();
@@ -77,32 +77,32 @@ namespace bridge {
 
     if (need(F_POS) && S.pos) {
       for (size_t i=0; i<N; ++i) {
-	P.particles[i].pos[0] = S.pos[3*i+0];
-	P.particles[i].pos[1] = S.pos[3*i+1];
-	P.particles[i].pos[2] = S.pos[3*i+2];
+	P.particleBlock.particles[i].pos[0] = S.pos[3*i+0];
+	P.particleBlock.particles[i].pos[1] = S.pos[3*i+1];
+	P.particleBlock.particles[i].pos[2] = S.pos[3*i+2];
       }
       P.particlesDirty = true;
     }
 
     if (need(F_VEL) && S.vel) {
       for (size_t i=0; i<N; ++i) {
-	P.particles[i].vel[0] = S.vel[3*i+0];
-	P.particles[i].vel[1] = S.vel[3*i+1];
-	P.particles[i].vel[2] = S.vel[3*i+2];
+	P.particleBlock.particles[i].vel[0] = S.vel[3*i+0];
+	P.particleBlock.particles[i].vel[1] = S.vel[3*i+1];
+	P.particleBlock.particles[i].vel[2] = S.vel[3*i+2];
       }
       P.velocityDirty = true;
     }
 
-    if (need(F_DENS) && S.dens) for (size_t i=0; i<N; ++i) P.particles[i].density     = S.dens[i];
-    if (need(F_TEMP) && S.temp) for (size_t i=0; i<N; ++i) P.particles[i].temperature = S.temp[i];
-    if (need(F_MASS) && S.mass) for (size_t i=0; i<N; ++i) P.particles[i].mass        = S.mass[i];
-    if (need(F_HSML) && S.hsml) for (size_t i=0; i<N; ++i) P.particles[i].Hsml        = S.hsml[i];
-    if (need(F_VAL ) && S.val ) for (size_t i=0; i<N; ++i) P.particles[i].val         = S.val[i];
-    if (need(F_VAL2)&& S.val2) for (size_t i=0; i<N; ++i) P.particles[i].val2        = S.val2[i];
-    if (need(F_ID)   && S.id)   for (size_t i=0; i<N; ++i) P.particles[i].ID   = static_cast<uint32_t>(S.id[i]);
-    if (need(F_TYPE) && S.type) for (size_t i=0; i<N; ++i) P.particles[i].type = static_cast<uint8_t>(S.type[i]);
+    if (need(F_DENS) && S.dens) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].density     = S.dens[i];
+    if (need(F_TEMP) && S.temp) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].temperature = S.temp[i];
+    if (need(F_MASS) && S.mass) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].mass        = S.mass[i];
+    if (need(F_HSML) && S.hsml) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].Hsml        = S.hsml[i];
+    if (need(F_VAL ) && S.val ) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].val         = S.val[i];
+    if (need(F_VAL2)&& S.val2) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].val2        = S.val2[i];
+    if (need(F_ID)   && S.id)   for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].ID   = static_cast<uint32_t>(S.id[i]);
+    if (need(F_TYPE) && S.type) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].type = static_cast<uint8_t>(S.type[i]);
 
-    if (need(F_FLAG) && S.flag) for (size_t i=0; i<N; ++i) P.particles[i].flag_stress = static_cast<uint8_t>(S.flag[i]);
+    if (need(F_FLAG) && S.flag) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].flag_stress = static_cast<uint8_t>(S.flag[i]);
     if (need(F_MASK) && S.mask) for (size_t i=0; i<N; ++i) P.flag_mask[i] = static_cast<uint8_t>(S.mask[i]);
   }
 

@@ -245,8 +245,8 @@ void loadConfig() {
 	if (!std::getline(iss, tokenLabel, ',')) continue;
 	if (!std::getline(iss, tokenType, ',')) continue;
 	if (!std::getline(iss, tokenCountStr)) continue;
-	FormatToken ft;
-	std::strncpy(ft.label, tokenLabel.c_str(), sizeof(ft.label)-1);
+	FieldSpec ft;
+	ft.label = tokenLabel;
 
 	ft.type = (tokenType == "float") ? DataType::Float :
 	  (tokenType == "int32")  ? DataType::Int32 :(tokenType == "int") ? DataType::Int32 :
@@ -254,7 +254,7 @@ void loadConfig() {
 	  DataType::Double;
 	
 	ft.count = std::stoi(tokenCountStr);
-	FormatToken::SetDefaultDisplayName(ft);
+	FieldSpec::SetDefaultDisplayName(ft);
 	gFileInfo->formatTokens.push_back(ft);
       }
     }  else if (line.find("ParticleType") == 0) {
@@ -2167,7 +2167,7 @@ void InitBuffers() {
   glBindBuffer(GL_ARRAY_BUFFER, particleVBO);    
     
   // 初期データを転送（サイズは `originalParticles` に応じて変更可能）
-  glBufferData(GL_ARRAY_BUFFER, P->particles.size() * sizeof(ParticleData), P->particles.data(), GL_DYNAMIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, P->particleBlock.particles.size() * sizeof(ParticleData), P->particleBlock.particles.data(), GL_DYNAMIC_DRAW);
     
   // attribute 0: pos → offset 0
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ParticleData),  (void*)offsetof(ParticleData, pos));
@@ -2710,7 +2710,7 @@ void ShowTime(){
                  ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoSavedSettings);
     // glfwGetTime() を用いて経過時間を表示（必要に応じてフォーマットを変更してください）
-    ImGui::Text("Time: %.4f", P->Header.time);
+    ImGui::Text("Time: %.4f", P->particleBlock.header.time);
     ImGui::End();
 }
 
@@ -3143,8 +3143,8 @@ void ShowSettingsUI() {
 
     ImGui::InputFloat("Culling radius", &radiusCullingSphere);    
     if(ImGui::Button("Culling sphere region")){
-      for(size_t i=0;i<P->particles.size();i++){
-	auto &p = P->particles[i];
+      for(size_t i=0;i<P->particleBlock.particles.size();i++){
+	auto &p = P->particleBlock.particles[i];
 	uint8_t flag_mask = 0;
 	if(glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) > radiusCullingSphere)
 	  flag_mask = 1;
@@ -3156,7 +3156,7 @@ void ShowSettingsUI() {
     }
 
     if(ImGui::Button("disable Culling")){
-      for(size_t i=0;i<P->particles.size();i++)
+      for(size_t i=0;i<P->particleBlock.particles.size();i++)
 	P->flag_mask[i] = 0;            
       P->particlesDirty = true; 
     }
@@ -3174,7 +3174,7 @@ void ShowSettingsUI() {
 	  ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge creation failed");
 	} else {
 	  // 共有メモリ準備
-	  const uint64_t N = static_cast<uint64_t>(P->particles.size());
+	  const uint64_t N = static_cast<uint64_t>(P->particleBlock.particles.size());
 	  if (!g_py.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
 	    ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge init failed");
 	    g_py.ptr.reset();
@@ -3297,10 +3297,10 @@ void ShowSettingsUI() {
 	int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
 	gFileInfo->loadNewSnapshot(newFileIndex, P);            
 
-	if(P->particles.size() == 0)
+	if(P->particleBlock.particles.size() == 0)
 	  continue;
 	
-	gClumpFind->do_FOF_and_output_clump_data(method, P->particles, P->Header, filename, newFileIndex);
+	gClumpFind->do_FOF_and_output_clump_data(method, P->particleBlock.particles, P->particleBlock.header, filename, newFileIndex);
       }
             
       gFileInfo->currentStep = savedStep;
@@ -3409,7 +3409,7 @@ void ShowSettingsUI() {
 	  int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
 	  gFileInfo->loadNewSnapshot(newFileIndex, P);            
 	
-	  if(P->particles.size() == 0)
+	  if(P->particleBlock.particles.size() == 0)
 	    continue;
 	
 	  char filename_format[512];
@@ -3441,7 +3441,7 @@ void ShowSettingsUI() {
 	    double pos_init[3];
 	    bool flag_found = false;
 	    if(flagSinkCenterMassive == false){
-	      for(auto &p : P->particles){
+	      for(auto &p : P->particleBlock.particles){
 		if(p.ID == particleID_center){
 		  pos_init[0] = p.pos[0];
 		  pos_init[1] = p.pos[1];
@@ -3455,7 +3455,7 @@ void ShowSettingsUI() {
 
 	    if(flagSinkCenterMassive || (flag_found == false)){
 	      double mass_max = 0.;
-	      for(auto &p : P->particles){
+	      for(auto &p : P->particleBlock.particles){
 		if(p.type < 3)
 		  continue;
 		
@@ -3478,7 +3478,7 @@ void ShowSettingsUI() {
 	      
 	    if(flag_found && flagMassCenter){
 	      double pos_temp[3] = {0.,0.,0.}, weight = 0.;
-	      for(auto &p : P->particles){
+	      for(auto &p : P->particleBlock.particles){
 		if(p.type == 1 || p.type == 2)
 		  continue;
 
@@ -3508,7 +3508,7 @@ void ShowSettingsUI() {
 	  }
 	  
 
-	  gProjectionMap2D->set_projection_parameters(P->particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
+	  gProjectionMap2D->set_projection_parameters(P->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
 						      std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
        	
 	  gProjectionMap2D->make_density_map(P, filename);
@@ -3545,7 +3545,7 @@ void ShowSettingsUI() {
     
     if (ImGui::Button("Find a disk around the paritlce")) {
       bool flag_found = false;
-      for(auto &p : P->particles){
+      for(auto &p : P->particleBlock.particles){
 	if(p.ID == queryID_disk){
 	  param_disk.mass = p.mass;
 	  for(int k=0;k<3;k++){
@@ -3565,7 +3565,7 @@ void ShowSettingsUI() {
 	param_disk.max_shell = 100;
 	param_disk.scale_fac = P->originalMax / P->desiredMax;
 	
-	gDiskFinder->compute(P->particles, param_disk);
+	gDiskFinder->compute(P->particleBlock.particles, param_disk);
       }
     }
     
@@ -3629,7 +3629,7 @@ void ShowSettingsUI() {
 	for (int i=0;i<100;i++) {
 	  int snap = snap_init + gFileInfo->skipStep * i;	  
 	  gFileInfo->loadNewSnapshot(snap, P);
-	  if(P->particles.size() == 0)
+	  if(P->particleBlock.particles.size() == 0)
 	    continue;
 	  
 	  double r1, r2;
@@ -3651,7 +3651,7 @@ void ShowSettingsUI() {
 
 	    DiskRadiusFinder::Params param_disk0;
 	    bool flag_found = false;
-	    for(auto &p : P->particles){
+	    for(auto &p : P->particleBlock.particles){
 	      if(p.ID == id){
 		if(p.type != 0){
 		  param_disk0.mass = p.mass;
@@ -3673,7 +3673,7 @@ void ShowSettingsUI() {
 	      param_disk0.max_shell = 100;
 	      param_disk0.scale_fac = P->originalMax / P->desiredMax;
 	      
-	      gDiskFinder->compute(P->particles, param_disk0);
+	      gDiskFinder->compute(P->particleBlock.particles, param_disk0);
 	      *r_disk = gDiskFinder->getDiskRadius();
 	    }else
 	      flag_found_binary = false;
@@ -3686,7 +3686,7 @@ void ShowSettingsUI() {
 	  if(flag_first){
 	    fp_evo = std::fopen(fname_evolution, "w");
 	    flag_first = false;
-	    time_not_disk = P->Header.time;
+	    time_not_disk = P->particleBlock.header.time;
 	    snap_not_disk = snap;
 	  }else
 	    fp_evo = std::fopen(fname_evolution, "a");
@@ -3703,18 +3703,18 @@ void ShowSettingsUI() {
 	  double scale_fac = P->originalMax / P->desiredMax;
 	  
 	  std::fprintf(fp_evo, "%d %g %g %g %g %d\n"
-		       , snap, P->Header.time, sqrt(dist2)*scale_fac, r1*scale_fac, r2*scale_fac, static_cast<int>(flag_disk));
+		       , snap, P->particleBlock.header.time, sqrt(dist2)*scale_fac, r1*scale_fac, r2*scale_fac, static_cast<int>(flag_disk));
 	  std::fclose(fp_evo);
 
 	  if(flag_disk){
-	    time_disk = P->Header.time;
+	    time_disk = P->particleBlock.header.time;
 	    dist_disk = sqrt(dist2) * scale_fac;
 	    snap_disk = snap;
 	    r_disk1 = r1 * scale_fac;
 	    r_disk2 = r2 * scale_fac;	    
 	    break;
 	  }else{
-	    time_not_disk = P->Header.time;
+	    time_not_disk = P->particleBlock.header.time;
 	    snap_not_disk = snap;
 	  }
 	}
@@ -3733,7 +3733,7 @@ void ShowSettingsUI() {
     
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
       showEllipsoid = true;
-      gEllipsoid->computeEllipse(P->particles, queryID1, queryID2);
+      gEllipsoid->computeEllipse(P->particleBlock.particles, queryID1, queryID2);
     }
     
     if (ImGui::Button("disable Ellipsoid")) {
@@ -3773,10 +3773,10 @@ void ShowSettingsUI() {
 	  continue;
 	
         gFileInfo->loadNewSnapshot(r.snap, P);
-	if(P->particles.size() == 0)
+	if(P->particleBlock.particles.size() == 0)
 	  continue;        
 	
-	gEllipsoid->computeEllipse(P->particles, r.idA, r.idB);
+	gEllipsoid->computeEllipse(P->particleBlock.particles, r.idA, r.idB);
 
 	FILE *fp_out;
 	if(flag_first)
@@ -3821,8 +3821,8 @@ void ShowSettingsUI() {
       showIsocontour = true;
 
       TrackingVector<ParticleDataForTree> particles;
-      particles.reserve(P->particles.size());
-      for (const auto& pd : P->particles) {
+      particles.reserve(P->particleBlock.particles.size());
+      for (const auto& pd : P->particleBlock.particles) {
 	float val = pd.getValue(var_iso);
 	particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
       }
@@ -3905,7 +3905,7 @@ void ShowSettingsUI() {
     if(ImGui::Button("set Render Opacitiy")){
 
       float val_max = -1.e30, val_min = 1.e30;
-      for (const auto& pd : P->particles) {
+      for (const auto& pd : P->particleBlock.particles) {
 	if(pd.type != 0) continue;	  
 	float val = pd.getValue(var_volume);
 	if(val > val_max) val_max = val;
@@ -3918,14 +3918,14 @@ void ShowSettingsUI() {
     
     if (ImGui::Button("do volume rendering")) {
       if(flagRT == 1){
-	gBVHresult = gBVH->build(P->particles);
+	gBVHresult = gBVH->build(P->particleBlock.particles);
 	lbvh::computeSigma(gBVHresult, g_rho2sigma);
       }
 
       if(flagRT == 2){
 	TrackingVector<ParticleDataForTree> particles;
-	particles.reserve(P->particles.size());
-	for (const auto& pd : P->particles) {
+	particles.reserve(P->particleBlock.particles.size());
+	for (const auto& pd : P->particleBlock.particles) {
 	  if(pd.type != 0)
 	    continue;
 	  
@@ -4055,12 +4055,12 @@ void ShowSettingsUI() {
       gStreamLine->disableStreamRegion();
       
     if (ImGui::Button("Build stream lines")) {
-      gStreamLine->setRegionFromParticleData(P->particles);
-      gStreamLine->setStreamRegionFromParticleData(P->particles);
+      gStreamLine->setRegionFromParticleData(P->particleBlock.particles);
+      gStreamLine->setStreamRegionFromParticleData(P->particleBlock.particles);
 
-      gStreamLine->setSeeds(P->particles, n_seeds);
+      gStreamLine->setSeeds(P->particleBlock.particles, n_seeds);
       float degree = 10.;
-      gStreamLine->build(P->particles, degree);
+      gStreamLine->build(P->particleBlock, degree);
       
       showStreamLine = true;
       flagStreamDirty = true;
@@ -4135,8 +4135,8 @@ void UpdateLabelIndicesIfNeeded()
   struct Hit { size_t idx; float dist2; };
   std::vector<Hit> hits;
 
-  for (size_t i = 0; i < P->particles.size(); ++i) {
-    auto &p = P->particles[i];
+  for (size_t i = 0; i < P->particleBlock.particles.size(); ++i) {
+    auto &p = P->particleBlock.particles[i];
 
     if(p.type <= 2)
       continue;
@@ -4164,7 +4164,7 @@ void UpdateLabelIndicesIfNeeded()
 
 void DrawParticleLabels(const glm::mat4& view, const glm::mat4& proj)
 {
-  if(P->particles.size() == 0){
+  if(P->particleBlock.particles.size() == 0){
     //to avoid an error when the particle is not loaded.
     return;
   }
@@ -4179,7 +4179,7 @@ void DrawParticleLabels(const glm::mat4& view, const glm::mat4& proj)
   ImDrawList* draw = ImGui::GetBackgroundDrawList(); 
   
   for (size_t idx : g_labelIndices) {
-    const auto& p = P->particles[idx];
+    const auto& p = P->particleBlock.particles[idx];
 
     glm::vec4 clip = proj * view *
       glm::vec4(p.pos[0], p.pos[1], p.pos[2], 1.0f);
@@ -4627,7 +4627,7 @@ void ShowTopParticlesUI() {
   
   if (ImGui::Button("Show Info")) {
     hasFound = false;
-    for (const auto &p : P->particles) {
+    for (const auto &p : P->particleBlock.particles) {
       if (p.ID == queryID) {
         foundParticle = p;
         hasFound = true;
@@ -4660,9 +4660,9 @@ void ShowTopParticlesUI() {
 	continue;
       
       auto it = std::find_if(
-          P->particles.begin(), P->particles.end(),
+          P->particleBlock.particles.begin(), P->particleBlock.particles.end(),
           [&](const ParticleData &p){ return p.ID == oldP.ID; });
-      if (it != P->particles.end()) {
+      if (it != P->particleBlock.particles.end()) {
         newHistory.push_back(*it);
 	seen.insert(oldP.ID);
       }
@@ -4790,8 +4790,8 @@ void ShowTopParticlesUI() {
   if(flag_pushed){
     filtered = {};
   
-    for (size_t i=0;i<P->particles.size();i++){
-      const ParticleData p = P->particles[i];
+    for (size_t i=0;i<P->particleBlock.particles.size();i++){
+      const ParticleData p = P->particleBlock.particles[i];
       if(P->flag_mask[i] != 0)
 	continue;
 	
@@ -5059,9 +5059,9 @@ void UpdateUI() {
   ShowSettingsUI();          // 設定 UI
   ShowCameraSettingsUI();
 
-  gRadialProfile->ShowRadialProfileUI(P->particles, P->UnitMass_in_g, P->UnitLength_in_cm, P->UnitTime_in_s);     // Radial Profile の UI
-  gHistogram2D->Show2DHistogramUI(P->particles);
-  gClumpFind->ShowFindClumpsUI(P->particles, P->Header);
+  gRadialProfile->ShowRadialProfileUI(P->particleBlock.particles, P->UnitMass_in_g, P->UnitLength_in_cm, P->UnitTime_in_s);     // Radial Profile の UI
+  gHistogram2D->Show2DHistogramUI(P->particleBlock.particles);
+  gClumpFind->ShowFindClumpsUI(P->particleBlock.particles, P->particleBlock.header);
 
 #ifdef CLUMP_DATA_READ
   gClumpFind->ReadAndShowClumpsUI(P, gFileInfo->currentFileIndex);
@@ -5265,7 +5265,7 @@ void RenderScene() {
 #ifdef SAVE_GPU_MEMORY
     for(int i=0;i<6;i++){
       const auto& var = quantities_to_show[selectedColorMode[i]];
-      for (auto& p : P->particles) {
+      for (auto& p : P->particleBlock.particles) {
 	int itype = p.type;
 	if(itype != i)
 	  continue;
@@ -5276,9 +5276,9 @@ void RenderScene() {
 #endif
 
     TrackingVector<ParticleData> filtered;
-    filtered.reserve(P->particles.size());
-    for (size_t i=0;i<P->particles.size();i++){
-      auto &p = P->particles[i];
+    filtered.reserve(P->particleBlock.particles.size());
+    for (size_t i=0;i<P->particleBlock.particles.size();i++){
+      auto &p = P->particleBlock.particles[i];
       if (P->flag_mask[i] == 0 && flagHideParticles[p.type] == false)
 	filtered.push_back(p);
     }
@@ -5364,7 +5364,7 @@ void RenderScene() {
   if (showVelocityVectors) {
     // 速度データが更新されている場合のみインスタンスバッファを更新
     if (P->velocityDirty) {
-      UpdateVelocityInstanceBuffer(P->particles);
+      UpdateVelocityInstanceBuffer(P->particleBlock.particles);
       P->velocityDirty = false;
     }
     RenderVelocityVectors(view, projection, arrowScale, useVelocityArrowLogScale);
@@ -5867,7 +5867,7 @@ void RenderScene() {
 
       // dirtyなら：点群→凸包→線分→VBOへアップロード
       if (e.dirty) {
-	TrackingVector<ParticleData> pts = gClumpFind->get_particle_indices(i, P->particles);       
+	TrackingVector<ParticleData> pts = gClumpFind->get_particle_indices(i, P->particleBlock.particles);       
 	TrackingVector<float> vertices = gConvexHullGenerator->buildLineVertices(pts);
 
 	e.vertexCount = (GLsizei)(vertices.size() / 3);

@@ -119,7 +119,7 @@ void StreamlineComputer::setSeeds(TrackingVector<ParticleData>& particles, int n
   }
 }
 
-void StreamlineComputer::build(TrackingVector<ParticleData>& particles,
+void StreamlineComputer::build(ParticleBlock& particles,
 			       double theta_max_in_degree = 10.0f){
 
   printf("estimating grad vector field...\n");
@@ -153,10 +153,14 @@ void StreamlineComputer::build(TrackingVector<ParticleData>& particles,
   flattenLines_();
 }
 
-void StreamlineComputer::estimate_gradB(TrackingVector<ParticleData>& particles){
+void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock){
   TrackingVector<struct particle_stream> p_stream;
+
+  bool flag_Bfield = particleBlock.hasBfield();
   
-  for(auto &p : particles){
+  for(size_t i=0; i< particleBlock.particles.size();i++){
+    ParticleData& p = particleBlock.particles[i];
+    
     if(p.type != 0) continue;
       
     if(p.pos[0] < xmin_[0] || p.pos[0] > xmax_[0])
@@ -164,12 +168,20 @@ void StreamlineComputer::estimate_gradB(TrackingVector<ParticleData>& particles)
     if(p.pos[1] < xmin_[1] || p.pos[1] > xmax_[1])
       continue;
     if(p.pos[2] < xmin_[2] || p.pos[2] > xmax_[2])
-      continue;      
-
+      continue;
+    
     struct particle_stream ps;
-    for(int k=0;k<3;k++){
+    for(int k=0;k<3;k++)
       ps.pos[k] = p.pos[k];
-      ps.vect[k] = p.vel[k]; //temporally
+
+    if(flag_Bfield){
+      const float *bf = particleBlock.getBfield(i);
+      ps.vect[0] = bf[0];
+      ps.vect[1] = bf[1];
+      ps.vect[2] = bf[2];
+    }else{
+      for(int k=0;k<3;k++)
+	ps.vect[k] = p.vel[k];
     }
 
     p_stream.push_back(ps);

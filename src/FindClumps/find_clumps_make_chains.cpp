@@ -680,7 +680,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
       ImGui::Text("current snapshot index: %d (init=%d now=%d step=%d) time=%g\n"
 		  , gFileInfo->initialIndex + (selected_chain.first_snapshot + i_snapshot) * gFileInfo->skipStep
 		  , selected_chain.first_snapshot, selected_chain.first_snapshot + i_snapshot, gFileInfo->skipStep
-		  , P->Header.time);
+		  , P->particleBlock.header.time);
       
       if(flag_button_pushed){
 	int snapshot = gFileInfo->initialIndex + (selected_chain.first_snapshot + i_snapshot) * gFileInfo->skipStep;
@@ -787,7 +787,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	  ImPlot::PlotLine(var.c_str(), times.data(), values.data(), times.size());	  	
 	}
 	
-	double currentTime = P->Header.time;
+	double currentTime = P->particleBlock.header.time;
 	  
         // 現在時刻に対応する縦の破線を描画（例：赤色、太さ 1.0）
         ImU32 red = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
@@ -836,7 +836,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	  char fname_output[512];
 	  snprintf(fname_output, sizeof(fname_output), "%s/image_clump%d_%04zu.png", fdir, selected_chain_index, i);
 	  
-	  proj->set_projection_parameters(P->particles, flag_use_amvector, pos_center, len, val_min, val_max, npixel_input, nslices, var);
+	  proj->set_projection_parameters(P->particleBlock.particles, flag_use_amvector, pos_center, len, val_min, val_max, npixel_input, nslices, var);
 	  proj->make_density_map(P, fname_output);
 	}
       }

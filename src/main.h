@@ -118,6 +118,153 @@ public:
   float getValue(const std::string &var) const;  
 };
 
+
+struct AoSExtensionBuffer {
+  size_t stride = 0;               // bytes per particle
+  std::vector<uint8_t> bytes;      // size = stride * N
+
+  void resize(size_t n) {
+    bytes.resize(n * stride);
+  }
+
+  uint8_t* ptr(size_t i) {
+    return bytes.data() + i * stride;
+  }
+
+  const uint8_t* ptr(size_t i) const {
+    return bytes.data() + i * stride;
+  }
+};
+
+enum class DataType : uint8_t {
+  Float = 0,
+  Int32 = 1,
+  Int64 = 2,
+  Double = 3
+};
+
+static inline size_t dataTypeSize(DataType t) {
+  switch (t) {
+    case DataType::Float:  return 4;
+    case DataType::Int32:  return 4;
+    case DataType::Int64:  return 8;
+    case DataType::Double: return 8;
+  }
+  return 0;
+}
+
+struct SoAField {
+  DataType type{};
+  int comps = 1;                   // number of components per particle
+  std::vector<uint8_t> bytes;      // raw data buffer
+
+  void resize(size_t n) {
+    bytes.resize(n * (size_t)comps * dataTypeSize(type));
+  }
+
+  uint8_t* ptr(size_t i) {
+    return bytes.data() + i * (size_t)comps * dataTypeSize(type);
+  }
+
+  const uint8_t* ptr(size_t i) const {
+    return bytes.data() + i * (size_t)comps * dataTypeSize(type);
+  }
+};
+
+
+template<typename T>
+static inline DataType toDataType();
+
+template<> inline DataType toDataType<float>()  { return DataType::Float; }
+template<> inline DataType toDataType<double>() { return DataType::Double; }
+template<> inline DataType toDataType<int32_t>(){ return DataType::Int32; }
+template<> inline DataType toDataType<int64_t>(){ return DataType::Int64; }
+
+static constexpr const char* kBfieldKey = "Bfield";
+
+struct ParticleBlock {
+  // ---- AoS core ----
+  TrackingVector<ParticleData> particles;
+
+  // ---- AoS extension (optional) ----
+  AoSExtensionBuffer aosExt;
+
+  // ---- SoA fields (optional) ----
+  // key = field label (e.g. "Bfield")
+  std::unordered_map<std::string, SoAField> soa;
+
+  HeaderInfo header;
+  
+  void resize(size_t n) {
+    particles.resize(n);
+
+    if (aosExt.stride > 0)
+      aosExt.resize(n);
+
+    for (auto &kv : soa)
+      kv.second.resize(n);
+  }
+ 
+  size_t size() const {
+    return particles.size();
+  }
+
+  void clear() {
+    particles.clear();
+    aosExt.bytes.clear();
+    soa.clear();
+  }
+
+  // ---- SoA getter (const) ----
+  template<typename T>
+  const T* getSoA(const std::string& key, size_t i, int expectedComps) const {
+    auto it = soa.find(key);
+    if (it == soa.end()) return nullptr;
+
+    const SoAField& f = it->second;
+    if (f.type != toDataType<T>()) return nullptr;
+    if (f.comps != expectedComps)   return nullptr;
+    if (i >= particles.size())      return nullptr;
+
+    return reinterpret_cast<const T*>(f.ptr(i));
+  }
+
+  // ---- SoA getter (mutable) ----
+  template<typename T>
+  T* getSoA(const std::string& key, size_t i, int expectedComps) {
+    auto it = soa.find(key);
+    if (it == soa.end()) return nullptr;
+
+    SoAField& f = it->second;
+    if (f.type != toDataType<T>()) return nullptr;
+    if (f.comps != expectedComps)  return nullptr;
+    if (i >= particles.size())     return nullptr;
+
+    return reinterpret_cast<T*>(f.ptr(i));
+  }
+
+  // ---- Bfield helpers ----
+  const float* getBfield(size_t i) const { return getSoA<float>(kBfieldKey, i, 3); }
+  float*       getBfield(size_t i)       { return getSoA<float>(kBfieldKey, i, 3); }
+
+    // ---- Bfield existence check ----
+  bool hasBfield() const {
+    auto it = soa.find(kBfieldKey);
+    if (it == soa.end()) return false;
+
+    const SoAField& f = it->second;
+    if (f.type  != DataType::Float) return false;
+    if (f.comps != 3)               return false;
+
+    // サイズ整合性チェック（任意だが安全）
+    const size_t expectBytes = particles.size() * 3 * sizeof(float);
+    if (f.bytes.size() < expectBytes) return false;
+
+    return true;
+  }
+};
+
+
 //-----------------------------------------------------------
 // HaloData : haloの情報を保持する構造体 (ID, 質量, 中心座標, 半径など)
 //-----------------------------------------------------------
@@ -224,7 +371,7 @@ class ParticleArray {
 private:
   bool showWindowHaloes = false;
   CameraContext& camCtx;  
-  int particles_index; //current index in batch file list
+  int particleBlock_index; //current index in batch file list
   
 public:
   ParticleArray(CameraContext& cam):
@@ -242,8 +389,6 @@ public:
   std::array<std::array<float, 6>, 4> particleValueMin;
   std::array<std::array<float, 6>, 4> particleValueMax;
 
-  HeaderInfo Header;
-  
   double UnitLength_in_pc = 1.;
   double UnitMass_in_msolar = 1.;
   double Hubble = 1.;
@@ -264,12 +409,12 @@ public:
   static constexpr double kpc_in_cm = 3.085678e21;
   static constexpr double Mpc_in_cm = 3.085678e24;
   static constexpr double GravConst = 6.6743e-8;
-  
-  TrackingVector<ParticleData> particles;
+
+  ParticleBlock particleBlock;
+    
   TrackingVector<uint8_t> flag_mask;
   
   TrackingVector<HaloData> Haloes;
-
   TrackingVector<ClumpData> Clumps;
   std::string fname_clump_file;
   bool flag_follow_clump_center = false;
@@ -285,7 +430,7 @@ public:
     if (originalMax > 0) {
       float scale = desiredMax / originalMax;
       
-      for (ParticleData &p : particles) {
+      for (ParticleData &p : particleBlock.particles) {
 	p.pos[0] = p.original_pos[0] * scale;
 	p.pos[1] = p.original_pos[1] * scale;
 	p.pos[2] = p.original_pos[2] * scale;
@@ -300,7 +445,7 @@ public:
     particlesDirty = true;  // グローバルなフラグをtrueに設定
   };
   
-  void swap_particles(TrackingVector<TrackingVector<ParticleData>>& batchP, int ibatch, HeaderInfo header, int flag_reset);
+  void swap_particles(TrackingVector<ParticleBlock>& batchP, int ibatch, int flag_reset);
   void computeStellarDensity(int type, bool flag_overwirte_hsml);
 
   void ShowHaloesUI();

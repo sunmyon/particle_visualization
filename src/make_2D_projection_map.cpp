@@ -200,7 +200,7 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
 
   if (ImGui::Button("set axis from angular momentum")){
     glm::vec3 normal(0.f, 0.f, 1.f);
-    planeNormal = glm::normalize(calc_angular_momentum_axis(P->particles, center, xlen));
+    planeNormal = glm::normalize(calc_angular_momentum_axis(P->particleBlock.particles, center, xlen));
 
     printf("planeNormal = %g %g %g\n", planeNormal.x, planeNormal.y, planeNormal.z);
     
@@ -501,8 +501,8 @@ glm::vec3 ProjectionMapGenerator::calc_angular_momentum_axis(const TrackingVecto
 
 void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
 
-  TrackingVector<ParticleData>& originalParticles = P->particles;
-  Header = P->Header;
+  TrackingVector<ParticleData>& originalParticles = P->particleBlock.particles;
+  Header = P->particleBlock.header;
   
   if(flagSpecifyZoomRegionByMass){
     //construct xmin, xmax, center here

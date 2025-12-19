@@ -33,7 +33,7 @@ class StreamlineComputer {
   void setRegionByHand(float *center, float *len);
   void setSeeds(TrackingVector<ParticleData>& particles, int lines_per_particle);
   
-  void build(TrackingVector<ParticleData>& particles, double theta);
+  void build(ParticleBlock& particles, double theta);
   const StreamlineMeshData& meshData() const { return m_mesh; }
 
   void disableRegion(void){
@@ -78,7 +78,7 @@ class StreamlineComputer {
   std::unique_ptr<KDTreeType>  m_kdTree;
   
   // CPU上のパイプライン
-  void estimate_gradB(TrackingVector<ParticleData> &particle);
+  void estimate_gradB(ParticleBlock &particle);
 
   void evalFieldAt(const float x[3], float outB[3], float &hsml);
   std::vector<Vec3> integrateBiStreamline(const Vec3& seed, float h, int maxstep);

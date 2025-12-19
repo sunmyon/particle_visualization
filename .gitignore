@@ -20,3 +20,4 @@ particle_vis.exe
 
 jupyter_work/*
 !jupyter_work/shm_reader.py
+imgui.ini
