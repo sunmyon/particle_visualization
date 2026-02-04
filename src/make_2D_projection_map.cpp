@@ -30,14 +30,6 @@
 #include "stb_truetype.h"
 
 namespace{
-  struct pos_val {
-    float pos[3];
-    float val;
-    float density;
-    float mass;
-    float hsml;
-  };
-
   // nanoflann用のデータコンテナ
   struct VoronoiParticleCloud {
     TrackingVector<pos_val> particles;
@@ -244,18 +236,34 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
   g_selectedAxis = selectedAxis;
 
   const char* typeLabels[] = { "0", "1", "2", "3", "4", "5"};
-  ImGui::Combo("SelectedParticleType", &selectedType, typeLabels, IM_ARRAYSIZE(typeLabels));
-  type_ = selectedType;
+  bool typeChanged = ImGui::Combo("SelectedParticleType", &selectedType, typeLabels, IM_ARRAYSIZE(typeLabels));
+
+  if (typeChanged) {
+    type_ = selectedType;
+
+    // type -> dataSource を一回だけ自動同期
+    if (type_ == 0) {
+      dataSource_ = DataSource::Gas;
+    } else if (type_ == 1 || type_ == 2) {
+      dataSource_ = DataSource::DM;
+    } else { // 3,4,5
+      dataSource_ = DataSource::Stars;
+    }
+  } else {
+    // type_ を毎フレーム更新したいならここで。不要なら消してOK。
+    type_ = selectedType;
+  }
+  
+  int src = static_cast<int>(dataSource_);
+  const char* items[] = {"Gas", "DM", "Stars"};
+  
+  if (ImGui::Combo("DataSource", &src, items, IM_ARRAYSIZE(items))) {
+    dataSource_ = static_cast<DataSource>(src);
+  }
   
   // cuboidTransform（四元数）を適用して回転後の法線を計算
   planeNormal = glm::normalize(cuboidTransform * normal);
- 
-  const char* quantities[] = {"Density", "Temperature", "val", "val2", "Hsml", "Mass" };
-  // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-  static int selectedVar = 0;
-  ImGui::Combo("Quantity", &selectedVar, quantities, IM_ARRAYSIZE(quantities));
-  var = quantities[selectedVar];
-  
+   
   const char* availableColormapNames[] = { "Jet", "Viridis", "Plasma" };
 
   std::string comboLabel = "Colormap##";
@@ -268,14 +276,49 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
   default: colorMap = jetMap, countColorMap = 9; break;
   }
 
-  ImGui::Checkbox("Density Weighting", &flagDensityWeight);
-  ImGui::Checkbox("Use Voronoi tesselation", &flagVoronoi);
+  if(dataSource_ == DataSource::Gas){
+    if (ImGui::BeginCombo("Quantity", QuantityLabel(selectedVarGas_))) {
+      for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
+	QuantityId cand = P->particleBlock.uiQ[q];
+	bool is_selected = (cand == selectedVarGas_);
+	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVarGas_ = cand;
+	if (is_selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+    
+    ImGui::Checkbox("Density Weighting", &flagDensityWeight);
+    ImGui::Checkbox("Use Voronoi tesselation", &flagVoronoi);
 
-  if(flagVoronoi){
-    ImGui::SetNextItemWidth(200.0f);
-    ImGui::SameLine();
-    ImGui::InputInt("nz", &step_z, 10, 1000);
+    if(flagVoronoi){
+      ImGui::SetNextItemWidth(200.0f);
+      ImGui::SameLine();
+      ImGui::InputInt("nz", &step_z, 10, 1000);
+    }
   }
+
+  if(dataSource_ == DataSource::Stars){
+    flagDensityWeight = false;
+    flagVoronoi = false;
+    
+    const char* quantities[] = {"Density", "Metallicity", "Mass", "Flux"};
+    int q = static_cast<int>(starQuantity_);
+    if (ImGui::Combo("Quantity", &q, quantities, IM_ARRAYSIZE(quantities))) {
+      starQuantity_ = static_cast<StarQuantity>(q);
+    }
+
+    if (starQuantity_ == StarQuantity::Flux) {
+      ImGui::SeparatorText("Flux Settings");
+
+      // ここはメンバ flux_ を直接編集
+      ImGui::InputFloat("Band center (nm)", &flux_.band_center_nm, 10.0f, 100.0f, "%.1f");
+      ImGui::InputFloat("Band width  (nm)", &flux_.band_width_nm,  10.0f, 100.0f, "%.1f");
+      flux_.band_width_nm = std::max(flux_.band_width_nm, 1.0f);
+    }
+    
+    ImGui::SliderFloat("Gaussian sigma (pixels)", &psf_sigma_pix_, 0.3f, 10.0f, "%.2f");    
+  }
+  
   
   ImGui::Checkbox("Use Log color scale", &flagLogScale);
   ImGui::Checkbox("Auto Range", &autoRange);
@@ -338,29 +381,30 @@ void ProjectionMapGenerator::RenderProjectionUI(ParticleArray *P, CameraContext&
     
     ImGui::Unindent();
   }
-  
-  
-  ImGui::Checkbox("draw star particle", &flagShowStarParticles);
 
-#ifdef USE_LUA
-  if(flag_init_lua == false){
-    gLua = luaL_newstate();
-    luaL_openlibs(gLua);
-    flag_init_lua = true;
-  }
-#endif
-  
   if (ImGui::Button("Select font")){
     showWindowSelectFont = true;
   }
   ShowFontSelectionWindow();
-  
-  if(flagShowStarParticles){
-    ImGui::InputText("Filter Expression", filterExpr, IM_ARRAYSIZE(filterExpr));
-    ImGui::InputText("Point Size Expression", pointSizeExpr, IM_ARRAYSIZE(pointSizeExpr));
-    ImGui::InputText("Point Color Expression", pointColorExpr, IM_ARRAYSIZE(pointColorExpr));
-    ImGui::InputText("Min Value Expression", minValueExpr, IM_ARRAYSIZE(minValueExpr));
-    ImGui::InputText("Max Value Expression", maxValueExpr, IM_ARRAYSIZE(maxValueExpr));
+
+  if(dataSource_ == DataSource::Gas){  
+    ImGui::Checkbox("draw star particle", &flagShowStarParticles);
+
+#ifdef USE_LUA
+    if(flag_init_lua == false){
+      gLua = luaL_newstate();
+      luaL_openlibs(gLua);
+      flag_init_lua = true;
+    }
+#endif
+    
+    if(flagShowStarParticles){
+      ImGui::InputText("Filter Expression", filterExpr, IM_ARRAYSIZE(filterExpr));
+      ImGui::InputText("Point Size Expression", pointSizeExpr, IM_ARRAYSIZE(pointSizeExpr));
+      ImGui::InputText("Point Color Expression", pointColorExpr, IM_ARRAYSIZE(pointColorExpr));
+      ImGui::InputText("Min Value Expression", minValueExpr, IM_ARRAYSIZE(minValueExpr));
+      ImGui::InputText("Max Value Expression", maxValueExpr, IM_ARRAYSIZE(maxValueExpr));
+    }
   }
   
   if(ImGui::Button("render 2D projection map"))
@@ -500,7 +544,6 @@ glm::vec3 ProjectionMapGenerator::calc_angular_momentum_axis(const TrackingVecto
 
 
 void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
-
   TrackingVector<ParticleData>& originalParticles = P->particleBlock.particles;
   Header = P->particleBlock.header;
   
@@ -574,25 +617,59 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   xmax_cut[1] = center.y + xlen[1];
   xmax_cut[2] = center.z + xlen[2];  
   
-  TrackingVector<ParticleData> insideParticles;
-  
-  for (const auto& p : originalParticles) {
-    if(p.type != type_)
-      continue;
-    
+  TrackingVector<pos_val> insideParticles;
+
+  for (int idx = 0; idx < (int)originalParticles.size(); ++idx) {
+    const auto& p = originalParticles[idx];
+    if (p.type != type_) continue;
+
+    bool inside = false;
     glm::vec4 localPos = glm::inverse(cuboidTransform) * glm::vec4(glm::vec3(p.pos[0] - center.x, p.pos[1] - center.y, p.pos[2] - center.z), 1.0f) + glm::vec4(center.x, center.y, center.z, 0.);
     if (localPos.x >= xmin_cut[0] && localPos.x <= xmax_cut[0] &&
 	localPos.y >= xmin_cut[1] && localPos.y <= xmax_cut[1] &&
 	localPos.z >= xmin_cut[2] && localPos.z <= xmax_cut[2]) {
-      insideParticles.push_back(p);
+      inside = true;
     }
+    if (!inside) continue;
+
+    pos_val pp;
+    pp.pos[0] = p.pos[0]; pp.pos[1] = p.pos[1]; pp.pos[2] = p.pos[2];
+
+    if (dataSource_ == DataSource::Gas) {    
+      pp.val = getScalarValue(P->particleBlock, p, idx, selectedVarGas_);
+      pp.density = p.density;
+    }
+    
+    if (dataSource_ == DataSource::Stars) {
+      if(p.Hsml < 0.00101)
+	continue;
+      
+      if (starQuantity_ == StarQuantity::Metallicity) {
+	float zmet = 0.0f;
+	const float* Z = P->particleBlock.getMetallicity((size_t)idx);
+	if (Z) zmet = Z[0];
+	
+	pp.val = zmet;
+      } else if (starQuantity_ == StarQuantity::Mass) {
+	pp.val = p.mass;
+      } else if (starQuantity_ == StarQuantity::Density) {
+	pp.val = p.density;
+      } else if (starQuantity_ == StarQuantity::Flux) {
+	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->UnitMass_in_msolar, flux_);
+      } else {
+	pp.val = 1.0f;
+      }
+    }
+
+    insideParticles.push_back(pp);
   }
 
-  if(insideParticles.size() < 0.1 * npixel * npixel){
-    printf("too few particles inside specified region... npart=%ld while there are %dx%d pixels.\n",
-	   insideParticles.size(), npixel, npixel);
-    return;
-  }
+  if (dataSource_ == DataSource::Gas) 
+    if(insideParticles.size() < 0.1 * npixel * npixel){
+      printf("too few particles inside specified region... npart=%ld while there are %dx%d pixels.\n",
+	     insideParticles.size(), npixel, npixel);
+      return;
+    }
     
   ProjectionMap map;
   for(int k=0;k<3;k++){
@@ -655,11 +732,15 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   using namespace std::chrono;
   auto start = high_resolution_clock::now();
   
-  if(flagVoronoi == true)
-    createVoronoiSliceMap(map, insideParticles);
-  else    
-    createProjectionMap(map, insideParticles);
-
+  if (dataSource_ == DataSource::Gas) {
+    if (flagVoronoi) createVoronoiSliceMap(map, insideParticles);
+    else             createProjectionMap(map, insideParticles);
+  }
+  else if (dataSource_ == DataSource::Stars) {
+    bool normalize = (starQuantity_ != StarQuantity::Flux); 
+    createStarMap(map, insideParticles, psf_sigma_pix_, normalize);
+  }
+   
   auto end = high_resolution_clock::now();    
   std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
   
@@ -702,8 +783,9 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     map.image.push_back(bC);
   }
 
-  if(flagShowStarParticles)
-    overlayStarParticles(map, originalParticles);
+  if (dataSource_ == DataSource::Gas) 
+    if(flagShowStarParticles)
+      overlayStarParticles(map, originalParticles);
   
   outW = map.npixel_x;
   outH = map.npixel_y;
@@ -767,7 +849,7 @@ float ProjectionMapGenerator::kernel(float u) {
     return 0.;
 }
   
-void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const TrackingVector<ParticleData>& particles)
+void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const TrackingVector<pos_val>& particles)
 {
   float xmin_local[3];
   xmin_local[0] = map.xmin[0] - map.center.x;
@@ -775,7 +857,7 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const Track
   xmin_local[2] = map.xmin[2] - map.center.z;
 
   for (const auto& p : particles) {    
-    float hsml = p.Hsml;
+    float hsml = p.hsml;
     float hsml2 = hsml * hsml;
 
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
@@ -818,7 +900,7 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const Track
 	  if(map.flagDensityWeight == true)
 	    weight *= p.density;	    
 	  
-	  float property = p.getValue(var);
+	  float property = p.val;
 	  map.values[j * map.npixel_x + i] += property * weight;
 	  map.weights[j * map.npixel_x + i] += weight;
 	}
@@ -833,23 +915,18 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const Track
 }
 
 
-void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<ParticleData>& particles)
+void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles)
 {  
   TrackingVector<pos_val> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
-      const ParticleData& p = particles[i];
+      const pos_val& p = particles[i];
       pos_val sp;
       
       glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
       sp.pos[0] = glm::dot(diff, map.uAxis);
       sp.pos[1] = glm::dot(diff, map.vAxis);
       sp.pos[2] = glm::dot(diff, map.wAxis);      
-
-      sp.val = p.getValue(var);
-      sp.density = p.density;
-      sp.mass = p.mass;
-      sp.hsml = p.Hsml;
 
       filtered.push_back(sp);      
     }
@@ -911,12 +988,105 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const Tra
   }
 
   for (size_t i = 0; i < map.values.size(); i++){
-    printf("[%d] value=%g weights=%g\n", i, map.values[i], map.weights[i]);
+    printf("[%zu] value=%g weights=%g\n", i, map.values[i], map.weights[i]);
     if(map.weights[i])
       map.values[i] /= map.weights[i];       
   }
 }
 
+
+static inline double gaussian2d_weight(double r2, double sigma2, double pixel_area)
+{
+  const double norm = 1.0 / (2.0 * M_PI * sigma2);
+  return norm * std::exp(-0.5 * r2 / sigma2) * pixel_area;
+}
+
+void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
+                                           const TrackingVector<pos_val>& particles,
+                                           float sigma_pix,
+                                           bool normalize)
+{
+  // map.xmin is in world coords; map.center is world center
+  float xmin_local[3];
+  xmin_local[0] = map.xmin[0] - map.center.x;
+  xmin_local[1] = map.xmin[1] - map.center.y;
+  xmin_local[2] = map.xmin[2] - map.center.z;
+
+  // Convert sigma from pixels to length units
+  const float sigma_len_min = 0.5f * map.dx; // avoid too sharp kernels
+  float sigma_len = std::max(sigma_pix * map.dx, sigma_len_min);
+  const float sigma2 = sigma_len * sigma_len;
+
+  // cutoff radius
+  const float rcut  = 4.0f * sigma_len;
+  const float rcut2 = rcut * rcut;
+
+  const double pixel_area = (double)map.dx * (double)map.dy;
+
+  // If user set sigma_pix very small, fall back to nearest-pixel deposit
+  const bool point_deposit = (sigma_pix <= 0.0f);
+
+  for (const auto& p : particles) {
+
+    // 2D coordinates in the projection plane
+    glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
+    float cx = glm::dot(diff, map.uAxis);
+    float cy = glm::dot(diff, map.vAxis);
+
+    const float val = p.val;
+    if (!std::isfinite(val)) continue;
+
+    if (point_deposit) {
+      // nearest pixel deposit
+      int i = (int)std::floor((cx - xmin_local[0]) / map.dx);
+      int j = (int)std::floor((cy - xmin_local[1]) / map.dy);
+      if (i < 0 || i >= map.npixel_x || j < 0 || j >= map.npixel_y) continue;
+
+      const int idx = j * map.npixel_x + i;
+      map.values[idx] += val;
+      if (normalize) map.weights[idx] += 1.0f;
+      continue;
+    }
+
+    // y pixel range within rcut
+    int j_min = std::max(0, (int)std::floor((cy - rcut - xmin_local[1]) / map.dy));
+    int j_max = std::min(map.npixel_y - 1, (int)std::ceil ((cy + rcut - xmin_local[1]) / map.dy) - 1);
+
+    for (int j = j_min; j <= j_max; j++) {
+      float cell_y = xmin_local[1] + (j + 0.5f) * map.dy;
+      float dy = cell_y - cy;
+      float dy2 = dy * dy;
+      if (dy2 > rcut2) continue;
+
+      // x range from circle cutoff
+      float horiz = std::sqrt(std::max(0.0f, rcut2 - dy2));
+      float x_lower = cx - horiz;
+      float x_upper = cx + horiz;
+
+      int i_min = std::max(0, (int)std::floor((x_lower - xmin_local[0]) / map.dx));
+      int i_max = std::min(map.npixel_x - 1, (int)std::ceil ((x_upper - xmin_local[0]) / map.dx) - 1);
+
+      for (int i = i_min; i <= i_max; i++) {
+        float cell_x = xmin_local[0] + (i + 0.5f) * map.dx;
+        float dx = cell_x - cx;
+        float r2 = dx*dx + dy2;
+        if (r2 > rcut2) continue;
+
+        const double w = gaussian2d_weight((double)r2, (double)sigma2, pixel_area);
+        const int idx = j * map.npixel_x + i;
+
+        map.values[idx] += (float)(val * w);
+        if (normalize) map.weights[idx] += (float)w;
+      }
+    }
+  }
+
+  if (normalize) {
+    for (size_t i = 0; i < map.values.size(); i++){
+      if (map.weights[i] > 0.0f) map.values[i] /= map.weights[i];
+    }
+  }
+}
 
 #ifdef USE_LUA
   // ---------------------------

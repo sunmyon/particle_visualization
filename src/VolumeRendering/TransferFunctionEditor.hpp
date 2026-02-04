@@ -1,4 +1,5 @@
 #pragma once
+#include "quantity.h"
 #include "imgui.h"
 #include <vector>
 #include <functional>
@@ -173,7 +174,7 @@ public:
     showWindow_ = true;
   }
 
-  void set_minmax(const std::string &var, float val_min, float val_max){
+  void set_minmax(QuantityId& var, float val_min, float val_max){
     if(flag_show == false || var != var_show_){
       rhoMin_ = val_min;
       rhoMax_ = val_max;
@@ -211,7 +212,7 @@ private:
   bool showAxes_ = true;
 
   bool flag_show = false;
-  std::string var_show_;
+  QuantityId var_show_;
 
   std::vector<TFComponent> comps_;
 

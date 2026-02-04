@@ -373,7 +373,7 @@ struct RecordLayout {
 };
 
 static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& tokens,
-                                             const IOPlan& plan, bool flag_hdf5=false) {
+                                             const IOPlan& plan) {
   RecordLayout rl;
   rl.fields.reserve(tokens.size());
 
@@ -393,11 +393,6 @@ static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& token
       if (it->second.dest == DestKind::SoA) fl.soaKey = &it->second.soaKey;
     } else {
       fl.dest = DestKind::Ignore;
-    }
-    
-    if(flag_hdf5){
-      if(tok.label == "type")
-	fl.dest = DestKind::Ignore;
     }
 
     auto itft = labelToField.find(tok.label);
@@ -980,8 +975,6 @@ public:
       (void)readAttributeScalar(hg, "Time", time);
       header.time = (float)time;
 
-      printf("time is %g\n", header.time);
-      
       // MassTable double[6]
       double mt[6]{};
       if (readAttributeArray(hg, "MassTable", mt)) {
@@ -1015,7 +1008,7 @@ public:
 
     bool hasParam = false;
     try {
-      H5::Group param = file_.openGroup("/Parameters");
+      H5::Group hg = file_.openGroup("/Parameters");
       hasParam = true;
 
       double UnitLength_in_cm;
@@ -1037,8 +1030,11 @@ public:
       bool flag_comoving;
       (void)readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
       header.flag_comoving = flag_comoving;
+      
     } catch (...) {
       hasParam = false;
+      header.time = 0.0f;
+      for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
     }
 
     // /Header から count が取れていない場合のフォールバック
@@ -1086,7 +1082,7 @@ bool readRange(ParticleBlock& out,
 {
   if (begin + count > npart_) return false;
 
-  RecordLayout layout = buildRecordLayout(fields, plan, true);
+  RecordLayout layout = buildRecordLayout(fields, plan);
 
   // ---------------------------
   // helper: /PartTypeX/Coordinates を chunk で読み keep を作る
@@ -1299,8 +1295,6 @@ bool readRange(ParticleBlock& out,
 
       const std::string dsName = fl.spec.displayName.empty() ? fl.spec.label : fl.spec.displayName;
       try {
-	H5SilenceErrors quiet(ptype >= 1);
-	
 	H5::DataSet ds = openDataSetWithDAPL(partPath_(ptype, dsName)); // ← DAPL版推奨
 	update_layout_from_hdf5(fl, ds);                                // ← ここで確定
 	OpenedField of;

@@ -18,56 +18,66 @@
 ///   - 第二要素：軸2（var2）の各ビンの中心座標（サイズ bins2 の vector<float>）
 ///   - 第三要素：各ビンの値（質量の和が格納された bins1×bins2 の 2D vector）
 std::tuple<TrackingVector<float>, TrackingVector<float>, TrackingVector<TrackingVector<float>>>
-histogram2D::compute2DHistogram(const TrackingVector<ParticleData>& particles,
-				const std::string &var1,
-				const std::string &var2,
+histogram2D::compute2DHistogram(const ParticleBlock& partblock,
+			        QuantityId var1,
+				QuantityId var2,
 				int bins1, int bins2,
 				bool autoRange,
 				float &range1_min, float &range1_max,
 				float &range2_min, float &range2_max,
 				std::function<bool(const ParticleData&)> condition)
 {
-  float min1=0., max1=0., min2=0., max2=0.;
+  float min1=1.e30, max1=1.e30, min2=-1.e30, max2=-1.e30;
   if (autoRange) {
     bool first = true;
-    for (const ParticleData &p : particles) {
+    for (size_t ipart=0;ipart<partblock.particles.size();ipart++) {
+      const ParticleData &p = partblock.particles[ipart];
       if(p.type != 0)
 	continue;
 
       if (!condition(p))
 	continue;
 
-      float v1, v2;
-      if(var1 == "r"){
-	glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
-	v1 = glm::length(pos - this->camCenter) ;
-      }else{
-	v1 = p.getValue(var1);
+      const float* centerPtr = &camCenter.x;
+      float v1 = getScalarValue(partblock, p, ipart, var1, centerPtr);
+      float v2 = getScalarValue(partblock, p, ipart, var2, centerPtr);
+      
+      bool flag_skipx = false;      
+      if(histogram2DLogScaleX){
+	if(v1 > 0.)
+	  v1 = log10(v1);
+	else
+	  flag_skipx = true;
       }
 
-      if(var2 == "r"){
-	glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
-	v2 = glm::length(pos - this->camCenter) ;
-      }else{	
-	v2 = p.getValue(var2);
+      bool flag_skipy = false;      
+      if(histogram2DLogScaleY){
+	if(v2 > 0.)
+	  v2 = log10(v2);
+	else
+	  flag_skipy = true;
       }
-
-      if(histogram2DLogScaleX) v1 = log10(v1);
-      if(histogram2DLogScaleY) v2 = log10(v2);
       
       if (first) {
-	min1 = max1 = v1;
-	min2 = max2 = v2;
+	if(flag_skipx == false)
+	  min1 = max1 = v1;
+	if(flag_skipy == false)
+	  min2 = max2 = v2;
 	first = false;
       } else {
-	if (v1 < min1) min1 = v1;
-	if (v1 > max1) max1 = v1;
-	if (v2 < min2) min2 = v2;
-	if (v2 > max2) max2 = v2;
+	if(flag_skipx == false){
+	  if (v1 < min1) min1 = v1;
+	  if (v1 > max1) max1 = v1;
+	}
+
+	if(flag_skipy == false){
+	  if (v2 < min2) min2 = v2;
+	  if (v2 > max2) max2 = v2;
+	}
       }
     }
 
-    if (particles.empty()) {
+    if (partblock.particles.empty()) {
       min1 = range1_min; max1 = range1_max;
       min2 = range2_min; max2 = range2_max;
     }
@@ -81,18 +91,31 @@ histogram2D::compute2DHistogram(const TrackingVector<ParticleData>& particles,
   float binSize1 = (max1 - min1) / bins1;
   float binSize2 = (max2 - min2) / bins2;
   
-  for (const ParticleData &p : particles) {
+  for (size_t ipart=0;ipart<partblock.particles.size();ipart++) {
+    const ParticleData &p = partblock.particles[ipart];
     if(p.type != 0)
-	continue;
+      continue;
 
     if (!condition(p))
       continue;
-    
-    float v1 = p.getValue(var1);
-    float v2 = p.getValue(var2);
 
-    if(histogram2DLogScaleX) v1 = log10(v1);
-    if(histogram2DLogScaleY) v2 = log10(v2);
+    const float* centerPtr = &camCenter.x;
+    float v1 = getScalarValue(partblock, p, ipart, var1, centerPtr);
+    float v2 = getScalarValue(partblock, p, ipart, var2, centerPtr);
+    
+    if(histogram2DLogScaleX){
+      if(v1 > 0.)
+	v1 = log10(v1);
+      else
+	continue;
+    }
+
+    if(histogram2DLogScaleY){
+      if(v2 > 0.)
+	v2 = log10(v2);
+      else
+	continue;
+    }
     
     if (v1 < min1 || v1 >= max1 || v2 < min2 || v2 >= max2)
       continue;
@@ -147,22 +170,35 @@ histogram2D::compute2DHistogram(const TrackingVector<ParticleData>& particles,
 
 // 2Dヒストグラム用 GUI 表示関数
 // compute2DHistogram() 関数および originalParticles（粒子データ配列）は既に実装済みである前提です。
-void histogram2D::Show2DHistogramUI(TrackingVector<ParticleData>& particles)
+void histogram2D::Show2DHistogramUI(ParticleBlock& partblock)
 {
   if (!showWindow2Dhistogram) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
   ImGui::Begin("histogram 2D", &showWindow2Dhistogram, ImGuiWindowFlags_None);
   
-  const char* quantities[] = { "x", "y", "z", "r", "Density", "Temperature", "val", "val2", "Hsml" };
-  // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-  static int selectedVar1 = 4;
-  static int selectedVar2 = 5;
-  ImGui::Combo("X Axis Quantity", &selectedVar1, quantities, IM_ARRAYSIZE(quantities));
-  ImGui::Combo("Y Axis Quantity", &selectedVar2, quantities, IM_ARRAYSIZE(quantities));
+  static QuantityId selectedVar1 = QuantityId::Density;
+  static QuantityId selectedVar2 = QuantityId::Temperature;
 
-  std::string var1 = quantities[selectedVar1];
-  std::string var2 = quantities[selectedVar2];
+  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(selectedVar1))) {
+    for (int q = 0; q < partblock.nAllQ; ++q) {
+      QuantityId cand = partblock.allQ[q];
+      bool is_selected = (cand == selectedVar1);
+      if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar1 = cand;
+      if (is_selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(selectedVar2))) {
+    for (int q = 0; q < partblock.nAllQ; ++q) {
+      QuantityId cand = partblock.allQ[q];
+      bool is_selected = (cand == selectedVar2);
+      if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar2 = cand;
+      if (is_selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
   
   // ビン数の入力
   static int bins1 = 50;
@@ -262,13 +298,13 @@ void histogram2D::Show2DHistogramUI(TrackingVector<ParticleData>& particles)
       if (autoRange)
 	{
 	  std::tie(centers1, centers2, hist2D) =
-	    compute2DHistogram(particles, std::string(var1), std::string(var2),
+	    compute2DHistogram(partblock, selectedVar1, selectedVar2,
 			       bins1, bins2, true, range1_min, range1_max, range2_min, range2_max, func);
 	}
       else
 	{
 	  std::tie(centers1, centers2, hist2D) =
-	    compute2DHistogram(particles, std::string(var1), std::string(var2),
+	    compute2DHistogram(partblock, selectedVar1, selectedVar2,
 			       bins1, bins2, false, range1_min, range1_max, range2_min, range2_max, func);
 	}
       histogramComputed = true;
@@ -292,7 +328,7 @@ void histogram2D::Show2DHistogramUI(TrackingVector<ParticleData>& particles)
       if (ImPlot::BeginPlot("2D Histogram", ImVec2(-1, 300)))
 	{
 	  // 軸ラベルやスケールの設定は必要に応じて
-	  ImPlot::SetupAxes(var1.c_str(), var2.c_str());
+	  ImPlot::SetupAxes(QuantityLabel(selectedVar1), QuantityLabel(selectedVar2));
 
 	  // 手動レンジの場合、X 軸と Y 軸のリミットを設定
 	  ImPlot::SetupAxisLimits(ImAxis_X1, range1_min, range1_max, ImGuiCond_Always);

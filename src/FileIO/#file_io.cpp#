@@ -514,7 +514,7 @@ void FileInfo::DrawFormatDialog() {
     ImGui::End();
     return;
   }
-
+  
   const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "Metallicity", "type", "ID", "dummy"};
     
   for (size_t i = 0; i < formatTokensEdit.size(); i++) {

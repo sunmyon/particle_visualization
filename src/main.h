@@ -8,6 +8,7 @@
 #define M_PI 3.141592653589793
 #endif
 
+#include "quantity.h"
 #include <vector>
 #include <mutex>
 #include <array>
@@ -98,6 +99,8 @@ struct HeaderInfo
 // Particle 構造体に、original_pos[3] を追加
 class ParticleData {
 public:
+  ParticleData() noexcept {}
+  
   float pos[3];          // 正規化後の座標（描画用）
   float original_pos[3]; // ファイルから読み込んだ元の座標（normalize の基準）
   float vel[3];
@@ -107,9 +110,7 @@ public:
   float temperature;
   float val;             // 物理量（0～1）
   float val2;             // 物理量（0～1）
-#ifdef SAVE_GPU_MEMORY
   float val_show;
-#endif
   float mass;            // mass
   uint8_t   type;            // 粒子タイプ (0～5)
   uint8_t   flag_stress;
@@ -181,6 +182,7 @@ template<> inline DataType toDataType<int32_t>(){ return DataType::Int32; }
 template<> inline DataType toDataType<int64_t>(){ return DataType::Int64; }
 
 static constexpr const char* kBfieldKey = "Bfield";
+static constexpr const char* kMetallicityKey = "Metallicity";
 
 struct ParticleBlock {
   // ---- AoS core ----
@@ -243,24 +245,64 @@ struct ParticleBlock {
     return reinterpret_cast<T*>(f.ptr(i));
   }
 
-  // ---- Bfield helpers ----
-  const float* getBfield(size_t i) const { return getSoA<float>(kBfieldKey, i, 3); }
-  float*       getBfield(size_t i)       { return getSoA<float>(kBfieldKey, i, 3); }
-
-    // ---- Bfield existence check ----
-  bool hasBfield() const {
-    auto it = soa.find(kBfieldKey);
+  template<typename T>
+  bool hasSoA(const std::string& key, int expectedComps) const {
+    auto it = soa.find(key);
     if (it == soa.end()) return false;
 
     const SoAField& f = it->second;
-    if (f.type  != DataType::Float) return false;
-    if (f.comps != 3)               return false;
+    if (f.type  != toDataType<T>()) return false;
+    if (f.comps != expectedComps)   return false;
 
-    // サイズ整合性チェック（任意だが安全）
-    const size_t expectBytes = particles.size() * 3 * sizeof(float);
-    if (f.bytes.size() < expectBytes) return false;
+    // サイズ整合（「==」を推奨。余剰を許す設計なら「>=」でもOK）
+    const size_t expectBytes = particles.size() * size_t(expectedComps) * sizeof(T);
+    if (f.bytes.size() != expectBytes) return false;
 
     return true;
+  }
+  
+  // ---- Bfield helpers ----
+  const float* getBfield(size_t i) const { return getSoA<float>(kBfieldKey, i, 3); }
+  float*       getBfield(size_t i)       { return getSoA<float>(kBfieldKey, i, 3); }
+  bool hasBfield() const       { return hasSoA<float>(kBfieldKey, 3); }
+  
+  // ---- Metallicity helpers ----
+  const float* getMetallicity(size_t i) const { return getSoA<float>(kMetallicityKey, i, 1); }
+  float*       getMetallicity(size_t i)       { return getSoA<float>(kMetallicityKey, i, 1); }
+  bool hasMetallicity() const  { return hasSoA<float>(kMetallicityKey, 1); }
+
+  int nAllQ = 0;
+  int nUIQ  = 0;
+  std::array<QuantityId, kMaxQ> allQ;
+  std::array<QuantityId, kMaxQ> uiQ;
+
+  void rebuildQuantities() {
+    nAllQ = 0; nUIQ = 0;
+
+    auto pushAll = [&](QuantityId q){ allQ[nAllQ++] = q; };
+    auto pushUI  = [&](QuantityId q){ uiQ[nUIQ++]  = q; };
+
+    // --- 基本（常にある）---
+    for (auto q : {QuantityId::Density, QuantityId::Temperature, QuantityId::Val,
+                   QuantityId::Val2, QuantityId::Mass, QuantityId::Hsml}) {
+      pushAll(q);
+      pushUI(q);
+    }
+
+    // --- 内部用（UIに出さないが all には入れる）---
+    for (auto q : {QuantityId::PosX, QuantityId::PosY, QuantityId::PosZ, QuantityId::Radius, QuantityId::VRad}) {
+      pushAll(q);
+    }
+
+    // --- 拡張（存在するときだけ）---
+    if (hasBfield()) {
+      pushAll(QuantityId::B);
+      pushUI(QuantityId::B);
+    }
+    if (hasMetallicity()) {
+      pushAll(QuantityId::Metallicity);
+      pushUI(QuantityId::Metallicity);
+    }
   }
 };
 
@@ -366,6 +408,70 @@ public:
 };
 
 
+inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
+  switch (q) {
+    case QuantityId::Density:     return p.density;
+    case QuantityId::Temperature: return p.temperature;
+    case QuantityId::Val:         return p.val;
+    case QuantityId::Val2:        return p.val2;
+
+    case QuantityId::Mass:
+      return p.mass;  // ←あなたの ParticleData に合わせて修正
+
+    case QuantityId::Hsml:
+      return p.Hsml;
+
+    case QuantityId::PosX:        return p.original_pos[0]; // or p.original_pos[0]
+    case QuantityId::PosY:        return p.original_pos[1];
+    case QuantityId::PosZ:        return p.original_pos[2];
+
+    case QuantityId::Radius: {
+      const float cx = center ? center[0] : 0.0f;
+      const float cy = center ? center[1] : 0.0f;
+      const float cz = center ? center[2] : 0.0f;
+
+      const float dx = p.original_pos[0] - cx;   // 必要なら original_pos に
+      const float dy = p.original_pos[1] - cy;
+      const float dz = p.original_pos[2] - cz;
+      return std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    case QuantityId::VRad: {
+      const float cx = center ? center[0] : 0.0f;
+      const float cy = center ? center[1] : 0.0f;
+      const float cz = center ? center[2] : 0.0f;
+
+      const float vcx = vcenter ? vcenter[0] : 0.0f;
+      const float vcy = vcenter ? vcenter[1] : 0.0f;
+      const float vcz = vcenter ? vcenter[2] : 0.0f;
+
+      const float dx = p.original_pos[0] - cx;
+      const float dy = p.original_pos[1] - cy;
+      const float dz = p.original_pos[2] - cz;
+      
+      const float dvx = (p.original_pos[0] - cx) * (p.vel[0] - vcx);
+      const float dvy = (p.original_pos[1] - cy) * (p.vel[1] - vcy);
+      const float dvz = (p.original_pos[2] - cz) * (p.vel[2] - vcz);
+      return (dvx + dvy + dvz)/sqrt(dx*dx + dy*dy + dz*dz);
+    }
+      
+    case QuantityId::B: {
+      const float* B = blk.getBfield((size_t)ipart);
+      if (!B) return 0.0f;
+      return std::sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]); // 例: |B|
+    }
+
+    case QuantityId::Metallicity: {
+      const float* Z = blk.getMetallicity((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+  }
+  return 0.0f;
+}
+
+static constexpr int kNumTypes = 6;
+extern QuantityId selectedQuantity[6];
 
 class ParticleArray {
 private:
@@ -385,9 +491,9 @@ public:
   bool particlesDirty = true;
   bool velocityDirty = true;
   bool flagParticleIndexDirty = true;
-  
-  std::array<std::array<float, 6>, 4> particleValueMin;
-  std::array<std::array<float, 6>, 4> particleValueMax;
+
+  std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMin;
+  std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMax;
 
   double UnitLength_in_pc = 1.;
   double UnitMass_in_msolar = 1.;

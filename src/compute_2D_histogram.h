@@ -33,9 +33,9 @@ public:
 #endif
   
   std::tuple<TrackingVector<float>, TrackingVector<float>, TrackingVector<TrackingVector<float>>>
-  compute2DHistogram(const TrackingVector<ParticleData>& particles,
-		     const std::string &var1,
-		     const std::string &var2,
+  compute2DHistogram(const ParticleBlock& particles,
+		     QuantityId var1,
+		     QuantityId var2,
 		     int bins1, int bins2,
 		     bool autoRange,
 		     float &range1_min, float &range1_max,
@@ -46,5 +46,5 @@ public:
     showWindow2Dhistogram = true;
   }  
   
-  void Show2DHistogramUI(TrackingVector<ParticleData>& originalParticles);
+  void Show2DHistogramUI(ParticleBlock& originalParticles);
 };

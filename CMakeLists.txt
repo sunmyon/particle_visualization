@@ -6,9 +6,22 @@ project(particle_vis LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ビルド型未指定時の既定
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+if(NOT MSVC)
+  # Release: -O3 -march=native -flto
+  string(APPEND CMAKE_C_FLAGS_RELEASE " -O3 -march=native -flto")
+  string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O3 -march=native -flto")
+
+  # RelWithDebInfo も同じ最適化にしたいなら（任意）
+  string(APPEND CMAKE_C_FLAGS_RELWITHDEBINFO " -O3 -march=native -flto")
+  string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " -O3 -march=native -flto")
+
+  # MinSizeRel までO3にしたいなら（任意）
+  # string(APPEND CMAKE_C_FLAGS_MINSIZEREL " -march=native -flto")
+  # string(APPEND CMAKE_CXX_FLAGS_MINSIZEREL " -march=native -flto")
 endif()
 
 # ===== オプション（MakefileのOPTION相当） =====
@@ -28,11 +41,11 @@ option(NONATIVEFILEDIALOG  "Disable native file dialog"          OFF)
 option(PYTHON_BRIDGE       "Bridge the main code to python"      ON)
 option(CLOUDY              "Bridge the main code to CLOUDY"      OFF)
 
-set(USE_MMPA_DEFAULT ON)
+set(USE_MMAP_DEFAULT ON)
 if(WIN32)
-  set(USE_MMPA_DEFAULT OFF)
+  set(USE_MMAP_DEFAULT OFF)
 endif()
-option(USE_MMPA "Use POSIX mmap for file IO" {USE_MMAP_DEFAULT})
+option(USE_MMAP "Use POSIX mmap for file IO" {USE_MMAP_DEFAULT})
 
 # グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)

@@ -123,9 +123,6 @@ bool useLogScale[6];
 bool flagHideParticles[6] = {false, false, false, false, false, false};
 size_t g_filteredParticleCount = 0;
 
-const char* quantities_to_show[] = { "Density", "Temperature", "val", "val2", "Mass", "Hsml"};
-int selectedColorMode[6];
-
 // 粒子タイプごとに使うカラーマップ（6タイプ分）
 GLuint colormapForType[6];
 
@@ -220,6 +217,8 @@ RhoSigmaLUT g_rho2sigma;
 
 bool flagCubesDirty = true;
 bool flagShowCoordinates = true;
+
+QuantityId selectedQuantity[6];
 
 // ------------------------------
 // config ファイル読み込み／保存
@@ -594,14 +593,9 @@ void processInput(GLFWwindow *window)
 // ------------------------------
 // シェーダー関連ヘルパー関数
 // ------------------------------
-#ifdef SAVE_GPU_MEMORY
-static const char* shaderHeader = 
-  "#version 330 core\n"
-  "#define SAVE_GPU_MEMORY\n";
-#else
 static const char* shaderHeader = 
   "#version 330 core\n";
-#endif
+
 static const char* shaderHeader410 =
   "#version 410 core\n";
 
@@ -671,14 +665,7 @@ layout (location = 0) in vec3 aPos;
 layout (location=1) in uint aType;
 layout (location=2) in uint aFlag;
 layout (location = 3) in float aHsml;
-#ifdef SAVE_GPU_MEMORY
 layout (location = 4) in float aValShow;
-#else
-layout (location = 4) in float aDensity;      // 追加：密度
-layout (location = 5) in float aTemperature;  // 追加：温度
-layout (location = 6) in float aVal;
-layout (location = 7) in float aVal2;
-#endif
 
 uniform mat4 model;
 uniform mat4 view;
@@ -686,14 +673,7 @@ uniform mat4 projection;
 uniform float pointSizes[6];
 
 out float vHsml;
-#ifdef SAVE_GPU_MEMORY
 out float val_show;
-#else
-out float temperature;
-out float density;
-out float val;
-out float val2;
-#endif
 
 flat out int nodeFlag;
 flat out int vType;
@@ -704,14 +684,7 @@ void main()
     gl_PointSize = pointSizes[int(aType)];
 
     vHsml = aHsml;
-#ifdef SAVE_GPU_MEMORY
     val_show = aValShow;
-#else
-    val = aVal;
-    val2 = aVal2;
-    density = aDensity;
-    temperature = aTemperature;
-#endif
 
     vType = int(aType);
     nodeFlag = int(aFlag);
@@ -720,22 +693,11 @@ void main()
 
 const char* particleFragmentShaderSource = R"(
 in float vHsml;
-#ifdef SAVE_GPU_MEMORY
 in float val_show;
-#else
-in float density;
-in float temperature;
-in float val;
-in float val2;
-#endif
 
 flat in int vType;
 flat in int nodeFlag;
 out vec4 FragColor;
-
-#ifndef SAVE_GPU_MEMORY
-uniform int colorMode[6];
-#endif
 
 uniform float valueMin[6];
 uniform float valueMax[6];
@@ -750,21 +712,7 @@ void main()
 {
   float varValue;
 
-#ifdef SAVE_GPU_MEMORY
   varValue = val_show;
-#else
-  int colormode = colorMode[vType];
-  if(colormode == 0)
-    varValue = density;
-  else if(colormode == 1)
-    varValue = temperature;
-  else if(colormode == 2)
-    varValue = val;
-  else if(colormode == 3)
-    varValue = val2;
-  else
-    varValue = density; // デフォルトは val
-#endif
 
   float normVal = (varValue - valueMin[vType]) / (valueMax[vType] - valueMin[vType]);
   if (useLog[vType] == 1) 
@@ -2182,23 +2130,8 @@ void InitBuffers() {
   glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, Hsml));
   glEnableVertexAttribArray(3);
   
-#ifdef SAVE_GPU_MEMORY
   glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, val_show));
   glEnableVertexAttribArray(4);
-#else
-  // attribute 4: density
-  glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, density));
-  glEnableVertexAttribArray(4);
-  // attribute 5: temperature
-  glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, temperature));
-  glEnableVertexAttribArray(5);
-  // attribute 6: value
-  glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, val));
-  glEnableVertexAttribArray(6);
-  // attribute 7: value2
-  glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, val2));
-  glEnableVertexAttribArray(7);
-#endif
     
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
@@ -2803,21 +2736,34 @@ void ShowSettingsUI() {
 	  ImGui::Checkbox(hideLabel.c_str(), &flagHideParticles[i]);
 	  if(flagHideParticles_prev != flagHideParticles[i])
 	    P->particlesDirty = true;
-	    
-#ifdef SAVE_GPU_MEMORY
-	  int icolor_prev = selectedColorMode[i];
-#endif
+	  
+	  QuantityId icolor_prev = selectedQuantity[i];
+	  QuantityId& sel = selectedQuantity[i];
 
-	  ImGui::Combo("Quantity", selectedColorMode + i, quantities_to_show, IM_ARRAYSIZE(quantities_to_show));  
-	  std::string var = quantities_to_show[selectedColorMode[i]];	  
-	  ImGui::Text("Current particle %s range: [%g, %g]"
-		      , var.c_str(), P->particleValueMin[selectedColorMode[i]][i], P->particleValueMax[selectedColorMode[i]][i]);
+	  if (ImGui::BeginCombo("Quantity", QuantityLabel(sel))) {
+	    for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
+	      QuantityId cand = P->particleBlock.uiQ[q];
+	      bool is_selected = (cand == sel);
+	      if (ImGui::Selectable(QuantityLabel(cand), is_selected)) sel = cand;
+	      if (is_selected) ImGui::SetItemDefaultFocus();
+	    }
+	    ImGui::EndCombo();
+	  }
 
-#ifdef SAVE_GPU_MEMORY
-	  if(icolor_prev != selectedColorMode[i]){
+	  auto findIndex = [&](QuantityId q)->int{
+	    for (int k = 0; k < P->particleBlock.nUIQ; ++k) if (P->particleBlock.uiQ[k] == q) return k;
+	    return 0; // fallback
+	  };
+
+	  int qidx = findIndex(sel);
+	  ImGui::Text("Current particle %s range: [%g, %g]",
+		      QuantityLabel(sel),
+		      P->particleValueMin[qidx][i],
+		      P->particleValueMax[qidx][i]);
+
+	  if(icolor_prev != selectedQuantity[i]){
 	    P->particlesDirty = true;  // グローバルなフラグをtrueに設定
 	  }
-#endif
 	  
 	  ImGui::TreePop();
 	}
@@ -3811,19 +3757,26 @@ void ShowSettingsUI() {
     static int max_treelevel = 15;
     ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
 
-    const char* quantities_iso[] = { "Density", "Temperature", "val", "val2", "Mass" };
-    // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-    static int selectedVar_iso = 0;
-    ImGui::Combo("Quantity for Iso-Contour", &selectedVar_iso, quantities_iso, IM_ARRAYSIZE(quantities_iso));
-    std::string var_iso = quantities_iso[selectedVar_iso];
-    
+    static QuantityId selectedVar_iso = QuantityId::Density;
+    if (ImGui::BeginCombo("Quantity for Iso-Contour", QuantityLabel(selectedVar_iso))) {
+      for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
+	QuantityId cand = P->particleBlock.uiQ[q];
+	bool is_selected = (cand == selectedVar_iso);
+	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_iso = cand;
+	if (is_selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+        
     if (ImGui::Button("Build OctTree & Mesh")) {
       showIsocontour = true;
 
       TrackingVector<ParticleDataForTree> particles;
       particles.reserve(P->particleBlock.particles.size());
-      for (const auto& pd : P->particleBlock.particles) {
-	float val = pd.getValue(var_iso);
+
+      for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
+	const auto &pd = P->particleBlock.particles[ipart];
+	float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_iso);
 	particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
       }
 
@@ -3896,23 +3849,30 @@ void ShowSettingsUI() {
       ImGui::SliderFloat("upscaling factor", &rtDownscale, 1.0f, 10.0f);
     }
 
-    const char* quantities_volume[] = { "Density", "Temperature", "val", "val2", "Mass" };
-    // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-    static int selectedVar_volume = 0;
-    ImGui::Combo("Quantity for Volume rendering", &selectedVar_volume, quantities_volume, IM_ARRAYSIZE(quantities_volume));
-    std::string var_volume = quantities_volume[selectedVar_volume];
+    static QuantityId selectedVar_volume = QuantityId::Density;
+    if (ImGui::BeginCombo("Quantity for Volume rendering", QuantityLabel(selectedVar_volume))) {
+      for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
+	QuantityId cand = P->particleBlock.uiQ[q];
+	bool is_selected = (cand == selectedVar_volume);
+	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_volume = cand;
+	if (is_selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
     
     if(ImGui::Button("set Render Opacitiy")){
-
       float val_max = -1.e30, val_min = 1.e30;
-      for (const auto& pd : P->particleBlock.particles) {
-	if(pd.type != 0) continue;	  
-	float val = pd.getValue(var_volume);
+      for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
+	const auto &pd = P->particleBlock.particles[ipart];
+	if(pd.type != 0)
+	  continue;
+
+	float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_volume);
 	if(val > val_max) val_max = val;
 	if(val < val_min) val_min = val;
       }
-
-      gTF->set_minmax(var_volume, val_min, val_max);      
+      
+      gTF->set_minmax(selectedVar_volume, val_min, val_max);      
       gTF->set_window();
     }
     
@@ -3925,14 +3885,16 @@ void ShowSettingsUI() {
       if(flagRT == 2){
 	TrackingVector<ParticleDataForTree> particles;
 	particles.reserve(P->particleBlock.particles.size());
-	for (const auto& pd : P->particleBlock.particles) {
+
+	for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
+	  const auto &pd = P->particleBlock.particles[ipart];
 	  if(pd.type != 0)
 	    continue;
-	  
-	  float val = pd.getValue(var_volume);
+
+	  float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_volume);
 	  particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
 	}
-
+	
 	BoundingBox worldBox;
 	worldBox.min = glm::vec3( FLT_MAX );
 	worldBox.max = glm::vec3( -FLT_MAX );
@@ -5059,8 +5021,8 @@ void UpdateUI() {
   ShowSettingsUI();          // 設定 UI
   ShowCameraSettingsUI();
 
-  gRadialProfile->ShowRadialProfileUI(P->particleBlock.particles, P->UnitMass_in_g, P->UnitLength_in_cm, P->UnitTime_in_s);     // Radial Profile の UI
-  gHistogram2D->Show2DHistogramUI(P->particleBlock.particles);
+  gRadialProfile->ShowRadialProfileUI(P->particleBlock, P->UnitMass_in_g, P->UnitLength_in_cm, P->UnitTime_in_s);     // Radial Profile の UI
+  gHistogram2D->Show2DHistogramUI(P->particleBlock);
   gClumpFind->ShowFindClumpsUI(P->particleBlock.particles, P->particleBlock.header);
 
 #ifdef CLUMP_DATA_READ
@@ -5262,18 +5224,16 @@ void RenderScene() {
   if (P->particlesDirty) {
     glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
 
-#ifdef SAVE_GPU_MEMORY
     for(int i=0;i<6;i++){
-      const auto& var = quantities_to_show[selectedColorMode[i]];
-      for (auto& p : P->particleBlock.particles) {
+      for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
+	auto &p = P->particleBlock.particles[ipart];	
 	int itype = p.type;
 	if(itype != i)
 	  continue;
 	
-	p.val_show = p.getValue(var);
+	p.val_show = getScalarValue(P->particleBlock, p, ipart, selectedQuantity[i]);
       }
     }
-#endif
 
     TrackingVector<ParticleData> filtered;
     filtered.reserve(P->particleBlock.particles.size());
@@ -5336,10 +5296,6 @@ void RenderScene() {
     intUseLog[i] = useLogScale[i] ? 1 : 0;	
   glUniform1iv(glGetUniformLocation(particleProgram, "useLog"), 6, intUseLog);
 
-#ifndef SAVE_GPU_MEMORY
-  glUniform1iv(glGetUniformLocation(particleProgram, "colorMode"), 6, selectedColorMode);
-#endif
-  
   // パーティクルシェーダーを使う前に各カラーマップをバインド
   for (int i = 0; i < 6; i++) {
     glActiveTexture(GL_TEXTURE0 + i);
