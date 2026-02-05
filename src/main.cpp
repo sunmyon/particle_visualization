@@ -4040,7 +4040,7 @@ void ShowSettingsUI() {
     if(ImGui::CollapsingHeader("Units")){
       unitChanged |= ImGui::InputDouble("UnitLength_in_cm"   , &P->UnitLength_in_cm   , 0.,0., "%g");
       unitChanged |= ImGui::InputDouble("UnitMass_in_msun"   , &P->UnitMass_in_g      , 0.,0., "%g");
-      unitChanged |= ImGui::InputDouble("UnitVelocity_in_cgs", &P->UnitVelocity_in_cgs, 0.,0., "%g");
+      unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s", &P->UnitVelocity_in_cm_per_s, 0.,0., "%g");
       unitChanged |= ImGui::InputDouble("Hubble"             , &P->Hubble, 0.,0., "%g");
       unitChanged |= ImGui::Checkbox("ComovingCorrdinate", &P->useComovingCorrdinate);
 
@@ -4774,12 +4774,12 @@ void ShowTopParticlesUI() {
   for (int i = 0; i < count; i++) {
     char label[256];
     std::snprintf(label, sizeof(label),
-		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g Hubble=%g",
+		  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
 		  filtered[i].ID, filtered[i].mass * (P->UnitMass_in_msolar/P->Hubble),
 		  filtered[i].pos[0], filtered[i].pos[1], filtered[i].pos[2],
 		  filtered[i].vel[0], filtered[i].vel[1], filtered[i].vel[2],
 		  filtered[i].originalHsml,
-		  filtered[i].density, filtered[i].temperature, P->Hubble);
+		  filtered[i].density, filtered[i].temperature);
     if (ImGui::Selectable(label)) {
       // 選択された粒子の位置をカメラの注視点に設定
       float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
@@ -4791,7 +4791,7 @@ void ShowTopParticlesUI() {
 
   ImGui::Text("Plot 1d histogram");
   
-  const char* quantities[] = { "x", "y", "z", "r", "Density", "Temperature", "val", "val2", "Hsml", "Mass" };
+  const char* quantities[] = { "x", "y", "z", "r", "Density", "Temperature", "Hsml", "Mass" };
   // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
   static int selectedVar = 4;
   ImGui::Combo("Quantity", &selectedVar, quantities, IM_ARRAYSIZE(quantities));

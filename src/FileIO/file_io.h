@@ -34,28 +34,36 @@ struct FieldSpec {
 
   inline static const char* candidatePosNames         = "Coordinates";
   inline static const char* candidateVelNames         = "Velocities";
+  inline static const char* candidateBfieldNames      = "MagneticField";
   inline static const char* candidateMassNames        = "Masses";
   inline static const char* candidateIDNames          = "ParticleIDs";
   inline static const char* candidateDensityNames     = "Density";
   inline static const char* candidateTemperatureNames = "Temperature";
   inline static const char* candidateElecNames        = "ElectronAbundance";
   inline static const char* candidateH2INames         = "H2IAbundance";
+  inline static const char* candidateHDINames         = "HDIAbundance";
+  inline static const char* candidateJ21Names         = "LymanWerner";
   inline static const char* candidateGammaNames       = "Gamma";
   inline static const char* candidateInternalEnergyNames = "InternalEnergy";
+  inline static const char* candidateMetallicityNames = "Metallicity";
   inline static const char* candidateValNames         = "Metallicity";
   inline static const char* candidateVal2Names        = "ElectronAbundance";
 
   static void SetDefaultDisplayName(FieldSpec& tok) {
     if      (tok.label == "position"        ) tok.displayName = candidatePosNames;
     else if (tok.label == "velocity"        ) tok.displayName = candidateVelNames;
+    else if (tok.label == "Bfield"          ) tok.displayName = candidateBfieldNames;
     else if (tok.label == "mass"            ) tok.displayName = candidateMassNames;
     else if (tok.label == "ID"              ) tok.displayName = candidateIDNames;
     else if (tok.label == "density"         ) tok.displayName = candidateDensityNames;
     else if (tok.label == "temperature"     ) tok.displayName = candidateTemperatureNames;
-    else if (tok.label == "H2fraction"      ) tok.displayName = candidateH2INames;    
-    else if (tok.label == "electronfraction") tok.displayName = candidateElecNames;
+    else if (tok.label == "H2Abundance"     ) tok.displayName = candidateH2INames;
+    else if (tok.label == "HDAbundance"     ) tok.displayName = candidateHDINames;    
+    else if (tok.label == "ElectronAbundance") tok.displayName = candidateElecNames;
+    else if (tok.label == "J21"             ) tok.displayName = candidateJ21Names;
     else if (tok.label == "Gamma"           ) tok.displayName = candidateGammaNames;    
     else if (tok.label == "internalenergy"  ) tok.displayName = candidateInternalEnergyNames;
+    else if (tok.label == "Metallicity"     ) tok.displayName = candidateMetallicityNames;
     else if (tok.label == "value"           ) tok.displayName = candidateValNames;
     else if (tok.label == "value2"          ) tok.displayName = candidateVal2Names;
     else    tok.displayName = tok.label;    
@@ -139,6 +147,30 @@ static IOPlan buildPlanFromToks(const std::vector<FieldSpec>& toks) {
       item.dest = DestKind::SoA;
       item.soaKey = "Metallicity";
     }
+    else if (fs.label == "ElectronAbundance") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "ElectronAbundance";
+    }
+    else if (fs.label == "H2Abundance") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "H2Abundance";
+    }
+    else if (fs.label == "HDAbundance") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "HDAbundance";
+    }
+    else if (fs.label == "J21") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "J21";
+    }
+    else if (fs.label == "value") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "Val1";
+    }
+    else if (fs.label == "value2") {
+      item.dest = DestKind::SoA;
+      item.soaKey = "Val2";
+    }
     // それ以外は AoSCore（ParticleData に入れる）か Ignore
     else if (isAoSCoreLabel(fs.label)) {
       item.dest = DestKind::AoSCore;
@@ -168,10 +200,6 @@ static inline void assignCore(ParticleData& p, const std::string& label, const T
     p.density=float(v[0]);
   } else if(label=="temperature"){
     p.temperature=float(v[0]);
-  } else if(label=="value"){
-    p.val=float(v[0]);
-  } else if(label=="value2"){
-    p.val2=float(v[0]);
   } else if(label=="Hsml"){
     p.originalHsml=float(v[0]);
   } else if(label=="type"){
@@ -220,12 +248,6 @@ static inline void store_density_f64(ParticleData& p, const uint8_t* src){ p.den
 static inline void store_temp_f32(ParticleData& p, const uint8_t* src){ p.temperature = *reinterpret_cast<const float*>(src); }
 static inline void store_temp_f64(ParticleData& p, const uint8_t* src){ p.temperature = (float)load_f64(src); }
 
-static inline void store_val_f32(ParticleData& p, const uint8_t* src){ p.val = *reinterpret_cast<const float*>(src); }
-static inline void store_val_f64(ParticleData& p, const uint8_t* src){ p.val = (float)load_f64(src); }
-
-static inline void store_val2_f32(ParticleData& p, const uint8_t* src){ p.val2 = *reinterpret_cast<const float*>(src); }
-static inline void store_val2_f64(ParticleData& p, const uint8_t* src){ p.val2 = (float)load_f64(src); }
-
 static inline void store_hsml_f32(ParticleData& p, const uint8_t* src){ p.originalHsml = *reinterpret_cast<const float*>(src); }
 static inline void store_hsml_f64(ParticleData& p, const uint8_t* src){ p.originalHsml = (float)load_f64(src); }
 
@@ -243,8 +265,6 @@ static inline void assignCoreFT(ParticleData& p, FieldType ft, const T* v){
     case FieldType::Mass:      p.mass=float(v[0]); break;
     case FieldType::Density:   p.density=float(v[0]); break;
     case FieldType::Temperature: p.temperature=float(v[0]); break;
-    case FieldType::Value:     p.val=float(v[0]); break;
-    case FieldType::Value2:    p.val2=float(v[0]); break;
     case FieldType::Hsml:      p.originalHsml=float(v[0]); break;
     case FieldType::Type:      p.type=int(v[0]); break;
     case FieldType::ID:        p.ID=int(v[0]); break;
@@ -394,7 +414,6 @@ static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& token
     } else {
       fl.dest = DestKind::Ignore;
     }
-    
     if(flag_hdf5){
       if(tok.label == "type")
 	fl.dest = DestKind::Ignore;
@@ -424,12 +443,6 @@ static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& token
 	break;
       case FieldType::Temperature:
 	fl.store = isF32 ? &store_temp_f32 : (isF64 ? &store_temp_f64 : nullptr);
-	break;
-      case FieldType::Value:
-	fl.store = isF32 ? &store_val_f32 : (isF64 ? &store_val_f64 : nullptr);
-	break;
-      case FieldType::Value2:
-	fl.store = isF32 ? &store_val2_f32 : (isF64 ? &store_val2_f64 : nullptr);
 	break;
       case FieldType::Hsml:
 	fl.store = isF32 ? &store_hsml_f32 : (isF64 ? &store_hsml_f64 : nullptr);
@@ -751,49 +764,55 @@ public:
       return false;
     }
 
-    out.aosExt.stride = plan.aosExtStride;
-    out.resize(count);
+    {
+      TIME_SCOPE("resize + SoA prealloc");
 
-    // SoA 事前確保
-    for(const auto& fs : fields){
-      auto it = plan.plan.find(fs.label);
-      if(it!=plan.plan.end() && it->second.dest==DestKind::SoA){
-        auto &f = out.soa[it->second.soaKey];
-        f.type = fs.type;
-        f.comps = fs.count;
-        f.resize(count);
+      out.aosExt.stride = plan.aosExtStride;
+      out.resize(count);
+
+      // SoA 事前確保
+      for(const auto& fs : fields){
+	auto it = plan.plan.find(fs.label);
+	if(it!=plan.plan.end() && it->second.dest==DestKind::SoA){
+	  auto &f = out.soa[it->second.soaKey];
+	  f.type = fs.type;
+	  f.comps = fs.count;
+	  f.resize(count);
+	}
       }
     }
     
-    
-    const uint8_t* base = data_ + data_offset_ + begin * layout.recordSize;
-    const uint8_t* end = base + count * layout.recordSize;
-    if(end > data_ + size_) return false;
+    {
+      TIME_SCOPE("dispatch loop");
+      const uint8_t* base = data_ + data_offset_ + begin * layout.recordSize;
+      const uint8_t* end = base + count * layout.recordSize;
+      if(end > data_ + size_) return false;
 
-    for(size_t i=0;i<count;i++){
-      const uint8_t* rec = base + i * layout.recordSize;
+      for(size_t i=0;i<count;i++){
+	const uint8_t* rec = base + i * layout.recordSize;
 
-      for(const auto& fl : layout.fields){
-        const uint8_t* src = rec + fl.offset;
-        const auto& fs = fl.spec;
+	for(const auto& fl : layout.fields){
+	  const uint8_t* src = rec + fl.offset;
+	  const auto& fs = fl.spec;
 
-        switch(fs.type){
-	case DataType::Float:
-	  writeToDest(out, i, fs, plan, reinterpret_cast<const float*>(src));
-	  break;
-	case DataType::Double:
-	  writeToDest(out, i, fs, plan, reinterpret_cast<const double*>(src));
-	  break;
-	case DataType::Int32:
-	  writeToDest(out, i, fs, plan, reinterpret_cast<const int32_t*>(src));
-	  break;
-	case DataType::Int64:
-	  writeToDest(out, i, fs, plan, reinterpret_cast<const int64_t*>(src));
-	  break;
-        }
+	  switch(fs.type){
+	  case DataType::Float:
+	    writeToDest(out, i, fs, plan, reinterpret_cast<const float*>(src));
+	    break;
+	  case DataType::Double:
+	    writeToDest(out, i, fs, plan, reinterpret_cast<const double*>(src));
+	    break;
+	  case DataType::Int32:
+	    writeToDest(out, i, fs, plan, reinterpret_cast<const int32_t*>(src));
+	    break;
+	  case DataType::Int64:
+	    writeToDest(out, i, fs, plan, reinterpret_cast<const int64_t*>(src));
+	    break;
+	  }
+	}
       }
     }
-    
+    }
     return true;
   }
 };
@@ -918,8 +937,6 @@ static void resetStoreFromSpec(FieldLayout& fl)
     case FieldType::Hsml:       fl.store = isF32 ? &store_hsml_f32 : (isF64 ? &store_hsml_f64 : nullptr); break;
     case FieldType::Type:       fl.store = isI32 ? &store_type_i32 : (isI64 ? &store_type_i64 : nullptr); break;
     case FieldType::ID:         fl.store = isI32 ? &store_id_i32 : (isI64 ? &store_id_i64 : nullptr); break;
-    case FieldType::Value:      fl.store = isF32 ? &store_val_f32 : (isF64 ? &store_val_f64 : nullptr); break;
-    case FieldType::Value2:     fl.store = isF32 ? &store_val2_f32 : (isF64 ? &store_val2_f64 : nullptr); break;
     default: fl.store = nullptr; break;
   }
 }
@@ -1556,7 +1573,7 @@ public:
   void setUnit(ParticleArray *P){
     UnitLength_in_cm = P->UnitLength_in_cm;
     UnitMass_in_g = P->UnitMass_in_g;
-    UnitVelocity_in_cm_per_s = P->UnitVelocity_in_cgs;
+    UnitVelocity_in_cm_per_s = P->UnitVelocity_in_cm_per_s;
     Hubble = P->Hubble;
   }
   

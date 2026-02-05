@@ -515,7 +515,8 @@ void FileInfo::DrawFormatDialog() {
     return;
   }
 
-  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "Metallicity", "type", "ID", "dummy"};
+  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "Metallicity", "type", "ID", "dummy",
+				   "ElectronAbundance", "H2Abundance", "HDAbundance", "J21"};
     
   for (size_t i = 0; i < formatTokensEdit.size(); i++) {
     ImGui::PushID(i);
@@ -719,7 +720,8 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     if (tok.displayName.empty()) 
       FieldSpec::SetDefaultDisplayName(tok);
   
-  const char* availableLabels[] = {"position", "velocity", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy", "electronfraction", "H2fraction", "Gamma"};
+  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy",
+				   "ElectronAbundance", "H2Abundance", "HDAbundance", "J21", "Gamma", "Metallicity"};
 
   // テーブルを使って列をそろえる
   if (ImGui::BeginTable("FieldTable", 6,
@@ -1040,8 +1042,9 @@ void ParticleArray::swap_particles(TrackingVector<ParticleBlock>& batchP, int ib
 
   // 8) 以降あなたのユニット・フラグ更新はそのまま
   if (particleBlock.header.flag_hdf5 == true) {
-    UnitLength_in_pc   = particleBlock.header.UnitLength_in_cm / 3.08e18;
-    UnitMass_in_msolar = particleBlock.header.UnitMass_in_g / 1.998e33;
+    UnitLength_in_cm   = particleBlock.header.UnitLength_in_cm;
+    UnitMass_in_g      = particleBlock.header.UnitMass_in_g;
+    UnitVelocity_in_cm_per_s = particleBlock.header.UnitVelocity_in_cm_per_s;
     Hubble             = particleBlock.header.HubbleParam;
     useComovingCorrdinate = particleBlock.header.flag_comoving;
     setUnits();
@@ -1257,10 +1260,6 @@ float ParticleData::getValue(const std::string &var) const{
     return density;
   else if (var == "Temperature")
     return temperature;
-  else if (var == "val")
-    return val;
-  else if (var == "val2")
-    return val2;
   else if (var == "Hsml")
     return Hsml;
   else if (var == "Mass")

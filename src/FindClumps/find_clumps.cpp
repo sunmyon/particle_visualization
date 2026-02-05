@@ -735,7 +735,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
   ImGui::Begin("clump finder", &showWindowClumpFinder, ImGuiWindowFlags_None);
 
-  const char* quantities[] = { "Density", "Temperature", "val", "val2", "Hsml" };
+  const char* quantities[] = { "Density", "Temperature", "Hsml" };
   // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
   static int selectedVar = 0;
   

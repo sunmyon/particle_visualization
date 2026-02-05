@@ -55,7 +55,7 @@ private:
   glm::vec3 v_center = glm::vec3(0);
 
   // --- Units ---
-  double UnitVelocity_in_cgs = 1.e5; // km/s
+  double UnitVelocity_in_cm_per_s = 1.e5; // km/s
   double UnitLength_in_cm    = 3.08e18; // pc
   double UnitLength_in_pc    = 1.; // pc
   double UnitMass_in_g       = 1.98e33; // Msun
@@ -104,7 +104,7 @@ public:
 
     UnitLength_in_pc   = UnitLength_in_cm / pc_in_cm;
     UnitMass_in_msolar = UnitMass_in_g / msolar_in_g;
-    UnitTime_in_s      = UnitLength_in_cm / UnitVelocity_in_cgs;
+    UnitTime_in_s      = UnitLength_in_cm / UnitVelocity_in_cm_per_s;
     UnitTime_in_yr     = UnitTime_in_s / yr_in_sec;
   }
 };

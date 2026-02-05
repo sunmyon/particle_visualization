@@ -108,8 +108,6 @@ public:
   float Hsml;
   float density;
   float temperature;
-  float val;             // 物理量（0～1）
-  float val2;             // 物理量（0～1）
   float val_show;
   float mass;            // mass
   uint8_t   type;            // 粒子タイプ (0～5)
@@ -183,6 +181,12 @@ template<> inline DataType toDataType<int64_t>(){ return DataType::Int64; }
 
 static constexpr const char* kBfieldKey = "Bfield";
 static constexpr const char* kMetallicityKey = "Metallicity";
+static constexpr const char* kElectronAbundanceKey = "ElectronAbundance";
+static constexpr const char* kH2AbundanceKey = "H2Abundance";
+static constexpr const char* kHDAbundanceKey = "HDAbundance";
+static constexpr const char* kJ21Key = "J21";
+static constexpr const char* kVal1Key = "Val1";
+static constexpr const char* kVal2Key = "Val2";
 
 struct ParticleBlock {
   // ---- AoS core ----
@@ -246,6 +250,32 @@ struct ParticleBlock {
   }
 
   template<typename T>
+  bool setSoA(const std::string& key, size_t i, int expectedComps, const T* src) {
+    T* dst = getSoA<T>(key, i, expectedComps);
+    if (!dst) return false;
+    std::memcpy(dst, src, sizeof(T) * expectedComps);
+    return true;
+  }
+
+  // ---- SoA setter (scalar) ----
+  template<typename T>
+  bool setSoA1(const std::string& key, size_t i, const T& x) {
+    return setSoA<T>(key, i, /*expectedComps=*/1, &x);
+  }
+
+  // ---- SoA setter (3-vector) ----
+  template<typename T>
+  bool setSoA3(const std::string& key, size_t i, const T x[3]) {
+    return setSoA<T>(key, i, /*expectedComps=*/3, x);
+  }
+
+  // convenience: std::array
+  template<typename T, size_t N>
+  bool setSoA(const std::string& key, size_t i, const std::array<T, N>& a) {
+    return setSoA<T>(key, i, (int)N, a.data());
+  }
+  
+  template<typename T>
   bool hasSoA(const std::string& key, int expectedComps) const {
     auto it = soa.find(key);
     if (it == soa.end()) return false;
@@ -264,12 +294,50 @@ struct ParticleBlock {
   // ---- Bfield helpers ----
   const float* getBfield(size_t i) const { return getSoA<float>(kBfieldKey, i, 3); }
   float*       getBfield(size_t i)       { return getSoA<float>(kBfieldKey, i, 3); }
+  bool setBfield(size_t i, const float *x) { return setSoA3<float>(kBfieldKey, i, x); }
   bool hasBfield() const       { return hasSoA<float>(kBfieldKey, 3); }
   
   // ---- Metallicity helpers ----
   const float* getMetallicity(size_t i) const { return getSoA<float>(kMetallicityKey, i, 1); }
   float*       getMetallicity(size_t i)       { return getSoA<float>(kMetallicityKey, i, 1); }
+  bool setMetallicity(size_t i, float x) { return setSoA1<float>(kMetallicityKey, i, x); }
   bool hasMetallicity() const  { return hasSoA<float>(kMetallicityKey, 1); }
+
+  // ---- ElectronAbundance helpers ----
+  const float* getElectronAbundance(size_t i) const { return getSoA<float>(kElectronAbundanceKey, i, 1); }
+  float*       getElectronAbundance(size_t i)       { return getSoA<float>(kElectronAbundanceKey, i, 1); }
+  bool setElectronAbundance(size_t i, float x) { return setSoA1<float>(kElectronAbundanceKey, i, x); }
+  bool hasElectronAbundance() const  { return hasSoA<float>(kElectronAbundanceKey, 1); }
+
+  // ---- H2Abundance helpers ----
+  const float* getH2Abundance(size_t i) const { return getSoA<float>(kH2AbundanceKey, i, 1); }
+  float*       getH2Abundance(size_t i)       { return getSoA<float>(kH2AbundanceKey, i, 1); }
+  bool setH2Abundance(size_t i, float x) { return setSoA1<float>(kH2AbundanceKey, i, x); }
+  bool hasH2Abundance() const  { return hasSoA<float>(kH2AbundanceKey, 1); }
+  
+  // ---- HDAbundance helpers ----
+  const float* getHDAbundance(size_t i) const { return getSoA<float>(kHDAbundanceKey, i, 1); }
+  float*       getHDAbundance(size_t i)       { return getSoA<float>(kHDAbundanceKey, i, 1); }
+  bool setHDAbundance(size_t i, float x) { return setSoA1<float>(kHDAbundanceKey, i, x); }
+  bool hasHDAbundance() const  { return hasSoA<float>(kHDAbundanceKey, 1); }
+
+  // ---- J21 helpers ----
+  const float* getJ21(size_t i) const { return getSoA<float>(kJ21Key, i, 1); }
+  float*       getJ21(size_t i)       { return getSoA<float>(kJ21Key, i, 1); }
+  bool setJ21(size_t i, float x) { return setSoA1<float>(kJ21Key, i, x); }
+  bool hasJ21() const  { return hasSoA<float>(kJ21Key, 1); }
+
+  // ---- val1 helpers ----
+  const float* getVal1(size_t i) const { return getSoA<float>(kVal1Key, i, 1); }
+  float*       getVal1(size_t i)       { return getSoA<float>(kVal1Key, i, 1); }
+  bool setVal1(size_t i, float x) { return setSoA1<float>(kVal1Key, i, x); }
+  bool hasVal1() const  { return hasSoA<float>(kVal1Key, 1); }
+
+  // ---- val2 helpers ----
+  const float* getVal2(size_t i) const { return getSoA<float>(kVal2Key, i, 1); }
+  float*       getVal2(size_t i)       { return getSoA<float>(kVal2Key, i, 1); }
+  bool setVal2(size_t i, float x) { return setSoA1<float>(kVal2Key, i, x); }
+  bool hasVal2() const  { return hasSoA<float>(kVal2Key, 1); }
 
   int nAllQ = 0;
   int nUIQ  = 0;
@@ -282,9 +350,8 @@ struct ParticleBlock {
     auto pushAll = [&](QuantityId q){ allQ[nAllQ++] = q; };
     auto pushUI  = [&](QuantityId q){ uiQ[nUIQ++]  = q; };
 
-    // --- 基本（常にある）---
-    for (auto q : {QuantityId::Density, QuantityId::Temperature, QuantityId::Val,
-                   QuantityId::Val2, QuantityId::Mass, QuantityId::Hsml}) {
+    for (auto q : {QuantityId::Density, QuantityId::Temperature,
+                   QuantityId::Mass, QuantityId::Hsml}) {
       pushAll(q);
       pushUI(q);
     }
@@ -302,6 +369,30 @@ struct ParticleBlock {
     if (hasMetallicity()) {
       pushAll(QuantityId::Metallicity);
       pushUI(QuantityId::Metallicity);
+    }
+    if (hasElectronAbundance()) {
+      pushAll(QuantityId::ElectronAbundance);
+      pushUI(QuantityId::ElectronAbundance);
+    }
+    if (hasH2Abundance()) {
+      pushAll(QuantityId::H2Abundance);
+      pushUI(QuantityId::H2Abundance);
+    }
+    if (hasHDAbundance()) {
+      pushAll(QuantityId::HDAbundance);
+      pushUI(QuantityId::HDAbundance);
+    }
+    if (hasJ21()) {
+      pushAll(QuantityId::J21);
+      pushUI(QuantityId::J21);
+    }
+    if (hasVal1()) {
+      pushAll(QuantityId::Val);
+      pushUI(QuantityId::Val);
+    }
+    if (hasVal2()) {
+      pushAll(QuantityId::Val2);
+      pushUI(QuantityId::Val2);
     }
   }
 };
@@ -408,13 +499,47 @@ public:
 };
 
 
+inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size_t ipart, VectorId v, float out[3]) {
+  switch (v) {
+    case VectorId::OriginalPos: {
+      out[0]=p.original_pos[0]; out[1]=p.original_pos[1]; out[2]=p.original_pos[2]; return true;
+    }
+    case VectorId::Pos: {
+      out[0]=p.pos[0]; out[1]=p.pos[1]; out[2]=p.pos[2]; return true;
+    }
+    case VectorId::Vel: {
+      out[0]=p.vel[0]; out[1]=p.vel[1]; out[2]=p.vel[2]; return true;
+    }
+    case VectorId::Bfield: {
+      const float* B = blk.getBfield((size_t)ipart);
+      if (!B){ out[0] = out[1] = out[2] = 0.;}
+      else{ out[0]=B[0];out[1]=B[1];out[2]=B[2];}
+    }
+  }
+  return false;
+}
+
+inline void setVectorValue(ParticleBlock& blk, ParticleData& p, size_t ipart, VectorId v, const float in[3]) {
+  switch (v) {
+    case VectorId::OriginalPos:
+      p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2]; 
+      return;
+    case VectorId::Pos:
+      p.pos[0]=in[0]; p.pos[1]=in[1]; p.pos[2]=in[2]; 
+      return;
+    case VectorId::Vel:
+      p.vel[0]=in[0]; p.vel[1]=in[1]; p.vel[2]=in[2];
+      return;
+    case VectorId::Bfield:
+      if (blk.hasBfield()) blk.setBfield(ipart, in);
+      return;
+  }
+}
+
 inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
   switch (q) {
     case QuantityId::Density:     return p.density;
     case QuantityId::Temperature: return p.temperature;
-    case QuantityId::Val:         return p.val;
-    case QuantityId::Val2:        return p.val2;
-
     case QuantityId::Mass:
       return p.mass;  // ←あなたの ParticleData に合わせて修正
 
@@ -466,8 +591,70 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
       if (!Z) return 0.0f;
       return Z[0];
     }
+
+    case QuantityId::ElectronAbundance: {
+      const float* Z = blk.getElectronAbundance((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+
+    case QuantityId::H2Abundance: {
+      const float* Z = blk.getH2Abundance((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+
+    case QuantityId::HDAbundance: {
+      const float* Z = blk.getHDAbundance((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+
+    case QuantityId::J21: {
+      const float* Z = blk.getJ21((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+
+    case QuantityId::Val: {
+      const float* Z = blk.getVal1((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }
+      
+    case QuantityId::Val2: {
+      const float* Z = blk.getVal2((size_t)ipart);
+      if (!Z) return 0.0f;
+      return Z[0];
+    }      
   }
   return 0.0f;
+}
+
+inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, QuantityId q, float x) {
+  switch (q) {
+    case QuantityId::Density:
+      p.density = x;
+      return;
+    case QuantityId::Temperature:
+      p.temperature = x;
+      return;
+    case QuantityId::Mass:
+      p.mass = x;
+      return;
+    case QuantityId::Hsml:
+      p.Hsml = x;
+      return;
+    case QuantityId::Val:
+      if (blk.hasVal1()) blk.setVal1(ipart, x);
+      return;
+    case QuantityId::Val2:
+      if (blk.hasVal2()) blk.setVal2(ipart, x);
+      return;
+    default:
+      // Radius/VRad/B など “派生量” は set 不可でOK（Bridgeでdirty対象にしない）
+      return;
+  }
 }
 
 static constexpr int kNumTypes = 6;
@@ -502,7 +689,7 @@ public:
   double GravConst_internal = 6.6743e-8;
   bool useComovingCorrdinate = true;
 
-  double UnitVelocity_in_cgs = 1.e5; // km/s
+  double UnitVelocity_in_cm_per_s = 1.e5; // km/s
   double UnitLength_in_cm = 3.08e18; //pc
   double UnitMass_in_g = 1.98e33; //Msun
   double UnitTime_in_s = 3.08e13;
@@ -564,7 +751,7 @@ public:
   void setUnits(){
     UnitLength_in_pc = UnitLength_in_cm / pc_in_cm;
     UnitMass_in_msolar = UnitMass_in_g / msolar_in_g;    
-    UnitTime_in_s = UnitLength_in_cm / UnitVelocity_in_cgs;
+    UnitTime_in_s = UnitLength_in_cm / UnitVelocity_in_cm_per_s;
     UnitTime_in_yr = UnitTime_in_s / yr_in_sec;
     
     GravConst_internal = GravConst / std::pow(UnitLength_in_cm, 3) * UnitMass_in_g * std::pow(UnitTime_in_s, 2);

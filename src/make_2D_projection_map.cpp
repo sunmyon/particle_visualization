@@ -1192,8 +1192,6 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
       lua_setglobal(gLua, "m");
       lua_pushnumber(gLua, p.Hsml);
       lua_setglobal(gLua, "Hsml");
-      lua_pushnumber(gLua, p.val);
-      lua_setglobal(gLua, "val");
       lua_pushnumber(gLua, p.type);
       lua_setglobal(gLua, "ptype");
 
