@@ -50,6 +50,7 @@ class StreamlineComputer {
   struct particle_stream{
     float pos[3];
     float vect[3];
+    float cell_size;
   };
 
   struct StreamParticleCloud {

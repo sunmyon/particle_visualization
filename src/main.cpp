@@ -3945,11 +3945,11 @@ void ShowSettingsUI() {
   
 #ifdef STREAM_LINE
   if (ImGui::CollapsingHeader("Render stream line")) {
-    static int n_seeds=0;
+    static int n_seeds=1;
     ImGui::Text("Seed setup");
     ImGui::InputInt("number of seed points", &n_seeds);
 
-    static float seed_center[3] = {0.,0.,0.}, seed_len[3] = {0.,0.,0.}, seed_opacity = 0.5;
+    static float seed_center[3] = {0.,0.,0.}, seed_len[3] = {100.,100.,100.}, seed_opacity = 0.1;
     bool seedRegionDirty = false;
     
     if (ImGui::InputFloat3("Center of the region to place seed points", seed_center, "%.3f")){

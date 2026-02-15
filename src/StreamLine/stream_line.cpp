@@ -143,9 +143,11 @@ void StreamlineComputer::build(ParticleBlock& particles,
     printf("stream size:%zu\n", stream.size());
     
     std::vector<Vec3> sampled;
-    sampled = sampleByCurvature(stream, theta_max);
-    m_lines.push_back(sampled);
-    //m_lines.push_back(stream);
+
+    //sampled = sampleByCurvature(stream, theta_max);
+    //m_lines.push_back(sampled);
+
+    m_lines.push_back(stream);
 
     printf("stream size sampled:%zu\n", sampled.size());
   }
@@ -183,6 +185,8 @@ void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock){
       for(int k=0;k<3;k++)
 	ps.vect[k] = p.vel[k];
     }
+
+    ps.cell_size = p.Hsml;
 
     p_stream.push_back(ps);
   }
@@ -240,8 +244,72 @@ void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock){
   }  
 }
 
+void StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float &hsml)
+{
+  const double dxr = (double)x[0] - x_ref[0];
+  const double dyr = (double)x[1] - x_ref[1];
+  const double dzr = (double)x[2] - x_ref[2];
+  const double dist_ref = std::sqrt(dxr*dxr + dyr*dyr + dzr*dzr);
 
+  const double refresh_frac = 0.2;   // radius_list の何倍動いたら更新するか
+  const float  eps_sumw = 1e-20f;
 
+  bool need_refresh = false;
+  if (radius_list <= 0.0) {
+    need_refresh = true;
+  } else if (dist_ref > refresh_frac * radius_list) {
+    need_refresh = true;
+  }
+
+  if (need_refresh) {
+    m_kdTree->knnSearch(x, N_neighbours, indices_list, distances_list2);
+    radius_list       = std::sqrt((double)distances_list2[N_neighbours - 1]);
+
+    x_ref[0] = x[0];
+    x_ref[1] = x[1];
+    x_ref[2] = x[2];
+  }
+
+  // 4) hsml：局所スケールとして radius_list を返す（安定）
+  hsml = (float)radius_list;
+
+  // 6) “物理寄り”改善の核心：最近傍1点をやめ、N近傍で重み平均（0次補間）
+  //    これで近傍リスト更新時のジャンプもかなり小さくなる（overlapが効く）
+  float sumw = 0.0f;
+  float Bacc[3] = {0.0f, 0.0f, 0.0f};
+
+  for (int n = 0; n < N_neighbours; ++n) {
+    const int id = indices_list[n];
+    const auto &p = cloud.particles[id];
+
+    const float dx = x[0] - (float)p.pos[0];
+    const float dy = x[1] - (float)p.pos[1];
+    const float dz = x[2] - (float)p.pos[2];
+    const float r2 = dx*dx + dy*dy + dz*dz;
+    const float hsml2 = (float)(p.cell_size * p.cell_size);
+    
+    // 最小改造の簡易重み（ガウス）。必要なら SPH カーネルへ置換可。
+    //const float w = std::exp(-r2 / hsml2);
+    const float w = std::exp(-r2 / hsml/ hsml);
+
+    sumw += w;
+    Bacc[0] += w * (float)p.vect[0];
+    Bacc[1] += w * (float)p.vect[1];
+    Bacc[2] += w * (float)p.vect[2];
+  }
+
+  if (sumw < eps_sumw) {
+    outB[0] = outB[1] = outB[2] = 0.0f;
+    return;
+  }
+
+  const float invw = 1.0f / sumw;
+  outB[0] = Bacc[0] * invw;
+  outB[1] = Bacc[1] * invw;
+  outB[2] = Bacc[2] * invw;
+}
+
+/*
 void StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float &hsml){
   double dist2 = (x[0]-x_ref[0])*(x[0]-x_ref[0]) + (x[1]-x_ref[1])*(x[1]-x_ref[1]) + (x[2]-x_ref[2])*(x[2]-x_ref[2]);
   double dist_to_border = radius_list - sqrt(dist2);
@@ -251,8 +319,7 @@ void StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float &hsm
   if(dist_to_border < dist_nearest)
     flag_find_neighbours = true;
 
-  int idx;
-  
+  int idx; 
   if(flag_find_neighbours){
     m_kdTree->knnSearch(x, N_neighbours, indices_list, distances_list2);
 
@@ -286,10 +353,6 @@ void StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float &hsm
     dist_nearest = sqrt(dist_min2);
     dist_nearest_next = sqrt(dist_min_next2);
   }
-
-  printf("flag=%d dist=%g neearest_next=%g\n", flag_find_neighbours, dist_nearest, dist_nearest_next);
-  
-  hsml = dist_nearest_next;
   
   auto &p  = cloud.particles[idx];
   auto &g  = gradB[idx];
@@ -299,10 +362,8 @@ void StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float &hsm
   float d2 = x[2] - p.pos[2];
   for(int k=0;k<3;++k)
     outB[k] = p.vect[k] + g[0][k]*d0 + g[1][k]*d1 + g[2][k]*d2;
-
-  //printf("idx=%d vec=%g %g %g out=%g %g %g\n", idx, p.vect[0], p.vect[1], p.vect[2], outB[0], outB[1], outB[2]);
 }
-
+*/
 
 
 
@@ -310,21 +371,23 @@ std::vector<Vec3> StreamlineComputer::integrateBiStreamline(const Vec3 &seed, fl
 {
   // 1) seed から正方向の流線
   auto forward = integrateStreamline(seed,  h, maxSteps);
+
+  std::vector<Vec3> fullLine;
+  fullLine.reserve(forward.size());
+  fullLine.insert(fullLine.end(),   forward.begin(),   forward.end());
   
   // 2) seed から逆方向の流線
-  auto backward = integrateStreamline(seed, -h, maxSteps);
-  
-  // 3) backward は seed→逆方向へ進んでいるので、順序反転して seed を末尾に
-  std::reverse(backward.begin(), backward.end());
-  
-  // 4) seed が両方に含まれて重複するので、どちらか一方の seed を外す
-  backward.pop_back();  // これで seed は forward の先頭だけに
+  /*
+  auto backward = integrateStreamline(seed, -h, maxSteps);  
+  std::reverse(backward.begin(), backward.end());  
+  backward.pop_back();
   
   // 5) backward＋forward で１本につなげる
   std::vector<Vec3> fullLine;
   fullLine.reserve(backward.size() + forward.size());
   fullLine.insert(fullLine.end(),   backward.begin(), backward.end());
   fullLine.insert(fullLine.end(),   forward.begin(),   forward.end());
+  */
   
   return fullLine;
 }
@@ -371,7 +434,6 @@ std::vector<Vec3> StreamlineComputer::sampleByCurvature(const std::vector<Vec3>&
   out.push_back(fullLine[0]);
 
   for(size_t i=1; i+1<N; ++i){
-    // 前後のベクトル
     Vec3 v1 = fullLine[i]   - out[out.size()-1];
     Vec3 v2 = fullLine[i+1] - fullLine[i];
     float l1 = len(v1), l2 = len(v2);
@@ -474,7 +536,7 @@ Vec3 StreamlineComputer::RK45stepAdaptive(const Vec3 &x, float &h, float tol) {
     eval(x5, k7, h_nearest);
 
     // compute 4th-order result:
-    Vec3 x4 = x + (k1*b1s + k3*b2s + k3*b3s + k4*b4s + k5*b5s + k6*b6s + k7*b7s)*h;
+    Vec3 x4 = x + (k1*b1s + k2*b2s + k3*b3s + k4*b4s + k5*b5s + k6*b6s + k7*b7s)*h;
 
     // estimate the local error:
     Vec3 e = x5 - x4;
@@ -492,7 +554,7 @@ Vec3 StreamlineComputer::RK45stepAdaptive(const Vec3 &x, float &h, float tol) {
   
     // if error too large, reject step and retry with smaller h:
     h = h_new;
-    if (err < tol) 
+    if (err < tol * fabs(h))
       break;  
   }
   

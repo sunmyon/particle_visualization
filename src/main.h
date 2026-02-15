@@ -89,6 +89,8 @@ struct HeaderInfo
   double UnitMass_in_g;
 
   bool   flag_comoving;
+  bool   flag_density_in_cgs;
+  bool   flag_B_in_cgs;
   bool   flag_hdf5;
 };
 
@@ -365,6 +367,9 @@ struct ParticleBlock {
     if (hasBfield()) {
       pushAll(QuantityId::B);
       pushUI(QuantityId::B);
+
+      pushAll(QuantityId::Beta);
+      pushUI(QuantityId::Beta);
     }
     if (hasMetallicity()) {
       pushAll(QuantityId::Metallicity);
@@ -584,6 +589,28 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
       const float* B = blk.getBfield((size_t)ipart);
       if (!B) return 0.0f;
       return std::sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]); // 例: |B|
+    }
+
+    case QuantityId::Beta: {
+      const float* B = blk.getBfield((size_t)ipart);
+      if (!B) return 0.0f;
+      
+      float felec = 0.0f;
+      if (blk.hasElectronAbundance()) {
+	const float* p = blk.getElectronAbundance((size_t)ipart);
+	if (p) felec = *p;  // getH2Abundance が nullptr を返す可能性があるなら保険
+      }
+      
+      float fH2 = 0.0f;
+      if (blk.hasElectronAbundance()) {
+	const float* p = blk.getH2Abundance((size_t)ipart);
+	if (p) fH2 = *p;  // getH2Abundance が nullptr を返す可能性があるなら保険
+      }
+            
+      double mu = 1. / (1 + XHe + felec - fH2);
+      float beta = (float) (8 * M_PI * BOLTZMANN * p.temperature * p.density * mu / (B[0]*B[0] + B[1]*B[1] + B[2]*B[2])); 
+
+      return beta;
     }
 
     case QuantityId::Metallicity: {

@@ -3,8 +3,8 @@
 static constexpr int kMaxV = 4;
 enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
 
-static constexpr int kMaxQ = 17;
-enum class QuantityId : int { Density, Temperature, Val, Val2, Mass, Hsml, PosX, PosY, PosZ, Radius, VRad, B, Metallicity, ElectronAbundance, H2Abundance, HDAbundance, J21};
+static constexpr int kMaxQ = 18;
+enum class QuantityId : int { Density, Temperature, Val, Val2, Mass, Hsml, PosX, PosY, PosZ, Radius, VRad, B, Beta, Metallicity, ElectronAbundance, H2Abundance, HDAbundance, J21};
 
 inline const char* QuantityLabel(QuantityId q) {
   switch (q) {
@@ -20,6 +20,7 @@ inline const char* QuantityLabel(QuantityId q) {
     case QuantityId::Radius:      return "r";
     case QuantityId::VRad:        return "vrad";      
     case QuantityId::B:           return "B";
+    case QuantityId::Beta:        return "Beta";
     case QuantityId::Metallicity: return "Metallicity";
     case QuantityId::ElectronAbundance: return "felec";
     case QuantityId::H2Abundance: return "fH2";

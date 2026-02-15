@@ -86,6 +86,7 @@ static inline bool isAoSCoreLabel(const std::string& lbl){
 enum class FieldType {
   Position,
   Velocity,
+  Bfield,
   Hsml,
   Mass,
   Density,
@@ -370,6 +371,7 @@ public:
 static const std::unordered_map<std::string,FieldType> labelToField = {
   {"position",         FieldType::Position},
   {"velocity",         FieldType::Velocity},
+  {"Bfield",           FieldType::Bfield},
   {"Hsml",             FieldType::Hsml},
   {"mass",             FieldType::Mass},
   {"density",          FieldType::Density},
@@ -835,7 +837,7 @@ class HDF5Reader final : public IParticleReader {
   size_t IndexStart_[7]{};  // prefix sum
 
   bool   flag_skip_DM_ = false;            // 必要なら
-
+  
   static std::string partPath_(int ptype, const std::string& dsName) {
     return "/PartType" + std::to_string(ptype) + "/" + dsName;
   }
@@ -884,6 +886,7 @@ private:
   bool flag_position_mask_ = false;
   double mask_center_[3] = {0.,0.,0.}, mask_radius_ = 1.e10;
   double factor_density_ = 1.0;
+  double factor_Bfield_ = 1.0;
   hid_t dapl_;
   
 H5::DataSet openDataSetWithDAPL(const std::string& fullPath) {
@@ -1051,11 +1054,22 @@ public:
       (void)readAttributeScalar(param, "HubbleParam", HubbleParam);
       header.HubbleParam = HubbleParam;
 
-      bool flag_comoving;
+      bool flag_comoving = false;
       (void)readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
       header.flag_comoving = flag_comoving;
+
+      bool flag_density_in_cgs = false;
+      (void)readAttributeScalar(param, "FlagDensityInCgs", flag_density_in_cgs);
+      header.flag_density_in_cgs = flag_density_in_cgs;
+
+      bool flag_B_in_cgs = false;
+      (void)readAttributeScalar(param, "FlagBfieldInCgs", flag_B_in_cgs);
+      header.flag_B_in_cgs = flag_B_in_cgs;
     } catch (...) {
       hasParam = false;
+      header.flag_comoving = false;
+      header.flag_density_in_cgs = false;
+      header.flag_B_in_cgs = false;
     }
 
     // /Header から count が取れていない場合のフォールバック
@@ -1079,8 +1093,21 @@ public:
     header.npart     = (int)npart_;
     header.flag_hdf5 = true;
     
-    //factor_density_ = 
+    factor_density_ = 1.;
+    if(header.flag_density_in_cgs == false){
+      const double proton_mass = 1.67e-24;
+      factor_density_ = header.HubbleParam * header.HubbleParam * header.UnitMass_in_g / pow(header.UnitLength_in_cm, 3) / proton_mass;
+      if(header.flag_comoving)
+	factor_density_ /= pow(header.time, 3);
+    }
 
+    factor_Bfield_ = 1.;
+    if(header.flag_B_in_cgs == false){
+      factor_Bfield_ = sqrt(header.UnitMass_in_g / header.UnitLength_in_cm) / (header.UnitLength_in_cm / header.UnitVelocity_in_cm_per_s / header.HubbleParam);
+      if(header.flag_comoving)
+	factor_Bfield_ /= pow(header.time, 2);
+    }
+    
     return true;
   }
 
@@ -1457,7 +1484,27 @@ bool readRange(ParticleBlock& out,
 	  }else if(hasG && of.fl->ftype == FieldType::Gamma){
 	    fill_chunk_scalar(tmp_g, of.buf, n, of.elemSz, masked, keepPtr, of.fl->spec.type);
 	  }
-	}	  
+	}
+
+	if (of.fl->ftype == FieldType::Bfield && factor_Bfield_ != 1.0){
+	  if (of.fl->dest == DestKind::SoA) {
+	    auto &f = out.soa[*of.fl->soaKey];          // "Bfield"
+	    const int comps = of.comps;                  // たぶん 3
+	    const size_t start = outBase;                // このchunkの先頭
+	    const size_t nscale = nwrite;                // このchunkで書いた粒子数
+	    
+	    if (f.type == DataType::Float) {
+	      float* p = reinterpret_cast<float*>(f.bytes.data()) + start * comps;
+	      const float fac = (float)factor_Bfield_;
+	      for (size_t i = 0; i < nscale * (size_t)comps; ++i) p[i] *= fac;
+	      
+	    } else if (f.type == DataType::Double) {
+	      double* p = reinterpret_cast<double*>(f.bytes.data()) + start * comps;
+	      const double fac = factor_Bfield_;
+	      for (size_t i = 0; i < nscale * (size_t)comps; ++i) p[i] *= fac;	      
+	    }	    
+	  }
+	}	
       } // for field
 
       if(needSynth){
@@ -1482,10 +1529,10 @@ bool readRange(ParticleBlock& out,
       if (factor_density_ != 1.0) 
 	for(size_t kk=0; kk<nwrite; ++kk)
 	  out.particles[outBase + kk].density = (float)((double)out.particles[outBase + kk].density * factor_density_);	
-   
+      
       done += n;
-    }      
-  }    
+    }
+  }  
 
   return true;
 }
