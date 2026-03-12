@@ -224,197 +224,6 @@ void FileInfo::loadBatch(int targetFile, int batchSize, int skipStep, ParticleAr
 }
 
 
-void ParticleArray::ShowHaloesUI() {
-  if (!showWindowHaloes) return;
-
-  ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
-  ImGui::Begin("Halo lists", &showWindowHaloes, ImGuiWindowFlags_None);
-  
-  // 粒子の種類と表示件数 m をユーザーが入力できるようにする
-  static int m = 10;             // デフォルトは上位 10 件
-
-  // ユーザーが入力できるウィジェット
-  ImGui::InputInt("Number of Halo list (out of %zu halos)", &m, Haloes.size());
-
-  // 入力値の検証（例：粒子タイプは 0～5 の間）
-  if (m < 1) m = 1;
-
-  // 表示件数は m 件（件数が足りなければ全件表示）
-  int count = std::min(m, static_cast<int>(Haloes.size()));
-
-  ImGui::Text("Showing top %d haloes", count);
-  for (int i = 0; i < count; i++) {
-    char label[200];
-    std::snprintf(label, sizeof(label),
-		  "ID %d: mass = %.3g (gas=%g stars=%g), pos = (%.2g, %.2g, %.2g), metallicity=%g %g"
-		  , i
-		  , Haloes[i].GroupMass
-		  , Haloes[i].GroupMassType[0]
-		  , Haloes[i].GroupMassType[3] + Haloes[i].GroupMassType[4] + Haloes[i].GroupMassType[5]
-		  , Haloes[i].GroupPos[0], Haloes[i].GroupPos[1], Haloes[i].GroupPos[2]
-		  , Haloes[i].GroupMetallicity[0], Haloes[i].GroupMetallicity[1]);
-    
-    if (ImGui::Selectable(label)) {
-      // 選択された粒子の位置をカメラの注視点に設定
-      float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-
-      float pos[3];
-      pos[0] = Haloes[i].GroupPos[0] * desiredMax / originalMax;
-      pos[1] = Haloes[i].GroupPos[1] * desiredMax / originalMax;
-      pos[2] = Haloes[i].GroupPos[2] * desiredMax / originalMax;
-      
-      camCtx.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
-      camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
-    }
-  }
-
-  ImGui::Text("Plot halo histogram");
-  
-  const char* quantities[] = { "Mass", "GasMass", "StellarMass", "GasMetallicity", "StellarMetallicity"};
-  // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-  static int selectedVar = 0;
-  ImGui::Combo("Quantity", &selectedVar, quantities, IM_ARRAYSIZE(quantities));
-  std::string var = quantities[selectedVar];
-  
-  // ビン数の入力
-  static int bins = 20;
-  ImGui::InputInt("Number of bins", &bins);
-
-  static bool histogramLogScaleX = true;
-  static bool histogramLogScaleY = true;  
-  ImGui::Checkbox("Use Log scale X", &histogramLogScaleX);
-  ImGui::Checkbox("Use Log scale Y", &histogramLogScaleY);
-
-  // 自動レンジを使うかどうかのチェックボックス
-  static bool autoRange = true;
-  ImGui::Checkbox("Auto Range", &autoRange);
-  
-  // 手動レンジ入力用（autoRange==false の場合）
-  static float range1_min = 0.0f, range1_max = 1.0f;
-  static float range2_min = 0.0f, range2_max = 1.0f;
-  if (!autoRange)
-    {
-      ImGui::InputFloat("X Axis Min", &range1_min, 0.0f, 0.0f, "%g");
-      ImGui::InputFloat("X Axis Max", &range1_max, 0.0f, 0.0f, "%g");
-      ImGui::InputFloat("Y Axis Min", &range2_min, 0.0f, 0.0f, "%g");
-      ImGui::InputFloat("Y Axis Max", &range2_max, 0.0f, 0.0f, "%g");
-    }
-
-  static bool histogramComputed = false;
-  static TrackingVector<float> histBins(bins);
-  static TrackingVector<float> binCenters(bins);
-  static float vmin, vmax, binSize;
-  
-  // ④ ヒストグラム作成（対象全粒子、ここでは質量を例とする）
-  if (ImGui::Button("Compute 1D Histogram")) {
-    
-    float massMin = std::numeric_limits<float>::max();
-    float massMax = std::numeric_limits<float>::lowest();
-    for (const auto &p : Haloes) {
-      float mass = p.getHaloValue(var);      
-      if(histogramLogScaleX)
-	mass = log10(mass);
-      
-      massMin = std::min(massMin, mass);
-      massMax = std::max(massMax, mass);
-    }
-    
-    if (massMin == massMax)
-      massMax = massMin + 1.0f;
-
-    if (autoRange){
-      range1_min = massMin;
-      range1_max = massMax;
-    }
-    
-    // ヒストグラムの各ビンのカウント
-    TrackingVector<int> binCounts(bins, 0);
-    binSize = (range1_max - range1_min) / bins;
-    for (const auto &p : Haloes) {
-      float mass = p.getHaloValue(var);      
-      if(histogramLogScaleX)
-	mass = log10(mass);
-      
-      int bin = static_cast<int>((mass - range1_min) / binSize);
-
-      printf("mass=%g min=%g bin=%d\n", mass, range1_min, bin);
-      
-      if (bin < 0) bin = 0;
-      if (bin >= bins) bin = bins - 1;
-      binCounts[bin]++;
-    }
-
-    vmin = std::numeric_limits<float>::max();
-    vmax = std::numeric_limits<float>::lowest();    
-
-    // ImPlot用にfloat配列に変換
-    for (int i = 0; i < bins; i++) {      
-      histBins[i] = static_cast<float>(binCounts[i]);
-      
-      float value = histBins[i];
-      if(histogramLogScaleY){
-	if(value == 0.)
-	  continue;
-	
-	value = log10(value);
-      }
-      
-      vmin = std::min(vmin, value);
-      vmax = std::max(vmax, value);	      
-    }
-
-    if(histogramLogScaleY){
-      vmin = std::floor(vmin);
-      vmax = std::ceil(vmax);
-
-      vmin = 0.8*std::pow(10., vmin);
-      vmax = std::pow(10., vmax);
-    }else{
-      vmin = 0.;
-
-      int digits = static_cast<int>(log10(vmax));
-      double scale = std::pow(10., digits);
-      vmax = std::ceil(vmax / scale) * scale;
-    }
-
-    if (autoRange){
-      range2_min = vmin;
-      range2_max = vmax;
-    }
-    
-    // X軸（ビン中心）の値
-    for (int i = 0; i < bins; i++) 
-      binCenters[i] = range1_min + (i + 0.5f) * binSize;    
-
-    histogramComputed = true;
-  }
-
-  if(histogramComputed){
-    // ヒストグラム描画（ImPlotを利用）
-    if (ImPlot::BeginPlot("Mass Histogram", ImVec2(-1,300))) {
-      // PlotHistogram expects an array of counts and optionally bin centers;
-      // ここではカウントのみプロットします。
-
-      if (histogramLogScaleY)
-	ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-      else
-	ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Linear);
-      
-      ImPlot::SetupAxisLimits(ImAxis_X1, range1_min, range1_max, ImGuiCond_Always);
-      ImPlot::SetupAxisLimits(ImAxis_Y1, range2_min, range2_max, ImGuiCond_Always);
-            
-      //ImPlot::PlotHistogram("Mass", histBins.data(), bins, bins, 1., ImPlotRange(range1_min, range1_max));
-      ImPlot::PlotBars("Mass", binCenters.data(), histBins.data(), bins, binSize);
-      ImPlot::EndPlot();
-    }
-  }
-
-    
-  ImGui::End();
-}
-
-
 #ifdef CLUMP_DATA_READ
 #include "FindClumps/find_clumps_IO.h"
 int ParticleArray::readClumpData(int snapshotIndex){
@@ -720,7 +529,7 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     if (tok.displayName.empty()) 
       FieldSpec::SetDefaultDisplayName(tok);
   
-  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy",
+  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "Volume", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy",
 				   "ElectronAbundance", "H2Abundance", "HDAbundance", "J21", "Gamma", "Metallicity"};
 
   // テーブルを使って列をそろえる
@@ -916,7 +725,23 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   IOPlan plan = buildPlanFromToks(formatTokens);
   {
     TIME_SCOPE("parse header");
-    bool ok = reader->readAll(outBlock, formatTokens, plan);
+
+    bool ok = false;
+    if (enableMask) {
+      ParticleMask pmask{currentMaskConfig};
+      ok = reader->readRangeMasked(outBlock, 0, reader->particleCount(),
+				   formatTokens, plan, pmask);
+    }
+
+    if (!ok) {
+      ok = reader->readAll(outBlock, formatTokens, plan);
+    }
+    
+    if (!ok) {
+      std::cerr << "Failed to read particle data: " << fullPath << "\n";
+      reader->close();
+      return false;
+    }
   }
   reader->close();
   	
@@ -1096,23 +921,6 @@ namespace{
 }
 
 
-bool ParticleArray::findParticleID(int ID, float *pos){
-  bool flag = false;
-  for (size_t i=0;i<particleBlock.particles.size();i++)
-    {
-      const ParticleData& p = particleBlock.particles[i];
-      int ID0 = p.ID;
-      if(ID == ID0){
-	flag = true;
-	pos[0] = p.pos[0];
-	pos[1] = p.pos[1];
-	pos[2] = p.pos[2];
-      }
-    }
-
-  return flag;
-}
-
 static inline double cubic_spline_W(double r, double h) {
   const double q = r / h;
   const double sigma = 1.0 / (M_PI * h * h * h);
@@ -1129,12 +937,12 @@ static inline double cubic_spline_W(double r, double h) {
 
   // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
   // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
-void ParticleArray::computeStellarDensity(int type, bool flag_overwrite_hsml)
+void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml)
 {
   const int N_neighbours = 32;
 
   bool flag_star = false;
-  if(type >= 3)
+  if(selType[3] == true || selType[4] == true || selType[5] == true)
     flag_star = true;
 
   TrackingVector<ParticleData> & particles = particleBlock.particles;
@@ -1144,14 +952,10 @@ void ParticleArray::computeStellarDensity(int type, bool flag_overwrite_hsml)
   for (size_t i=0;i<particles.size();i++)
     {
       const ParticleData& p = particles[i];
-      if(flag_star){
-	if(p.type < 3)
-	  continue;
-      }else{
-	if(p.type != type)
-	  continue;
-      }
 
+      const int t = (int)p.type;
+      if (t < 0 || t >= 6) continue;
+      if (!selType[t]) continue;
 
       struct starParticle sp;
       sp.type = p.type;

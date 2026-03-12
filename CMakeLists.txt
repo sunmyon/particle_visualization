@@ -64,6 +64,7 @@ set(EXTERNAL_DIR ${CMAKE_SOURCE_DIR}/external)
 # ===== ソース一覧 =====
 set(SOURCES_CPP
   ${SRC_DIR}/main.cpp
+  ${SRC_DIR}/UI.cpp
   ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
@@ -85,7 +86,7 @@ if(USE_CONVEX_HULL)
 endif()
 
 if(STREAM_LINE)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/StreamLine/stream_line.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/StreamLine/stream_line_new.cpp)
 endif()
 
 if(VOLUME_RENDERING)

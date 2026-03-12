@@ -48,7 +48,8 @@ struct FieldSpec {
   inline static const char* candidateMetallicityNames = "Metallicity";
   inline static const char* candidateValNames         = "Metallicity";
   inline static const char* candidateVal2Names        = "ElectronAbundance";
-
+  inline static const char* candidateVolumeNames      = "Volume";
+  
   static void SetDefaultDisplayName(FieldSpec& tok) {
     if      (tok.label == "position"        ) tok.displayName = candidatePosNames;
     else if (tok.label == "velocity"        ) tok.displayName = candidateVelNames;
@@ -66,6 +67,7 @@ struct FieldSpec {
     else if (tok.label == "Metallicity"     ) tok.displayName = candidateMetallicityNames;
     else if (tok.label == "value"           ) tok.displayName = candidateValNames;
     else if (tok.label == "value2"          ) tok.displayName = candidateVal2Names;
+    else if (tok.label == "Volume"          ) tok.displayName = candidateVolumeNames;
     else    tok.displayName = tok.label;    
   }
 };
@@ -76,9 +78,8 @@ static inline bool isAoSCoreLabel(const std::string& lbl){
           lbl == "mass" ||
           lbl == "density" ||
           lbl == "temperature" ||
-          lbl == "value" ||
-          lbl == "value2" ||
           lbl == "Hsml" ||
+	  lbl == "Volume" ||
           lbl == "type" ||
           lbl == "ID");
 }
@@ -88,6 +89,7 @@ enum class FieldType {
   Velocity,
   Bfield,
   Hsml,
+  Volume,
   Mass,
   Density,
   Temperature,
@@ -114,6 +116,8 @@ struct FieldLayout{
   size_t aosExtOffset = 0;
   const std::string* soaKey = nullptr;
 
+  bool present = false;
+  
   FieldType ftype = FieldType::Unknown;
   void (*store)(ParticleData& p, const uint8_t* src) = nullptr;
 };
@@ -203,6 +207,8 @@ static inline void assignCore(ParticleData& p, const std::string& label, const T
     p.temperature=float(v[0]);
   } else if(label=="Hsml"){
     p.originalHsml=float(v[0]);
+  }else if(label=="Volume"){
+    p.originalHsml=float(cbrtf(v[0]));
   } else if(label=="type"){
     p.type=int(v[0]);
   } else if(label=="ID"){
@@ -211,6 +217,7 @@ static inline void assignCore(ParticleData& p, const std::string& label, const T
 }
 
 // ---- helpers (safe load for double/int64 if alignment is uncertain) ----
+static inline float load_f32(const uint8_t* p) { float v; std::memcpy(&v, p, sizeof(v)); return v; }
 static inline double load_f64(const uint8_t* p) { double v; std::memcpy(&v, p, sizeof(v)); return v; }
 static inline int64_t load_i64(const uint8_t* p) { int64_t v; std::memcpy(&v, p, sizeof(v)); return v; }
 
@@ -252,6 +259,18 @@ static inline void store_temp_f64(ParticleData& p, const uint8_t* src){ p.temper
 static inline void store_hsml_f32(ParticleData& p, const uint8_t* src){ p.originalHsml = *reinterpret_cast<const float*>(src); }
 static inline void store_hsml_f64(ParticleData& p, const uint8_t* src){ p.originalHsml = (float)load_f64(src); }
 
+static inline void store_volume_f32(ParticleData& p, const uint8_t* src)
+{
+  const float vol = load_f32(src);      // src から float を読む
+  p.originalHsml = cbrtf(vol);          // 3乗根
+}
+
+static inline void store_volume_f64(ParticleData& p, const uint8_t* src)
+{
+  const double vol = load_f64(src);     // src から double を読む
+  p.originalHsml = (float)cbrt(vol);    // double版cbrt
+}
+
 static inline void store_type_i32(ParticleData& p, const uint8_t* src){ p.type = *reinterpret_cast<const int32_t*>(src); }
 static inline void store_type_i64(ParticleData& p, const uint8_t* src){ p.type = (int)load_i64(src); }
 
@@ -267,11 +286,138 @@ static inline void assignCoreFT(ParticleData& p, FieldType ft, const T* v){
     case FieldType::Density:   p.density=float(v[0]); break;
     case FieldType::Temperature: p.temperature=float(v[0]); break;
     case FieldType::Hsml:      p.originalHsml=float(v[0]); break;
+    case FieldType::Volume:    p.originalHsml=float(cbrtf(v[0])); break;
     case FieldType::Type:      p.type=int(v[0]); break;
     case FieldType::ID:        p.ID=int(v[0]); break;
     default: break;
   }
 }
+
+
+struct MaskConfig {
+  // sphere
+  bool   enableSphere = false;
+  double center[3] = {0,0,0};
+  double radius = 0.0;
+
+  enum class OutsideMode { Drop, Thin, KeepAll };
+  OutsideMode outsideMode = OutsideMode::Drop;
+  uint64_t outsideStride = 10;
+
+  // type policy
+  enum class ThinPolicy : uint8_t { ReadOff, ReadOn_NoThin, ReadOn_ThinOK };
+  ThinPolicy typePolicy[6] = {
+    ThinPolicy::ReadOn_ThinOK,
+    ThinPolicy::ReadOn_ThinOK,
+    ThinPolicy::ReadOn_NoThin,
+    ThinPolicy::ReadOn_NoThin,
+    ThinPolicy::ReadOn_NoThin,
+    ThinPolicy::ReadOn_NoThin
+  };
+
+  // max particles (ID thinning)
+  bool   enableMaxParticles = false;
+  size_t maxParticles = 0;
+};
+
+struct CoreSample {
+  double   pos[3];
+  uint64_t id;
+  int      type; // 0..5 (HDF5なら ptype)
+};
+
+class ParticleMask {
+public:
+  explicit ParticleMask(MaskConfig cfg): cfg_(cfg){ rebuildNeeds_(); }
+
+  bool needPos() const { return need_pos_; }
+  bool needID()  const { return need_id_; }
+
+  bool typeEnabled(int t) const {
+    return cfg_.typePolicy[t] != MaskConfig::ThinPolicy::ReadOff;
+  }
+  bool typeThinOK(int t) const {
+    return cfg_.typePolicy[t] == MaskConfig::ThinPolicy::ReadOn_ThinOK;
+  }
+
+  // thin 候補数（= ThinOK の粒子数）から stride を決める
+  void prepare(size_t thinCandidates){
+    id_stride_ = 1;
+    if(cfg_.enableMaxParticles && cfg_.maxParticles>0 && thinCandidates>cfg_.maxParticles){
+      id_stride_ = (uint64_t)((thinCandidates + cfg_.maxParticles - 1) / cfg_.maxParticles);
+    }
+  }
+
+  bool pass(const CoreSample& c) const {
+    const int t = c.type;
+    if(t<0 || t>5) return false;
+
+    // 完全 on/off
+    if(!typeEnabled(t)) return false;
+
+    // sphere
+    if(cfg_.enableSphere){
+      const double dx = c.pos[0]-cfg_.center[0];
+      const double dy = c.pos[1]-cfg_.center[1];
+      const double dz = c.pos[2]-cfg_.center[2];
+      const double r2 = cfg_.radius*cfg_.radius;
+      const bool inside = (dx*dx+dy*dy+dz*dz) <= r2;
+
+      if(!inside){
+        if(cfg_.outsideMode == MaskConfig::OutsideMode::Drop) return false;
+        if(cfg_.outsideMode == MaskConfig::OutsideMode::Thin){
+          if(!keep_by_stride_(c.id, cfg_.outsideStride)) return false;
+        }
+      }
+    }
+
+    // maxParticles thin（ThinOK の type だけ対象）
+    if(cfg_.enableMaxParticles && id_stride_>1 && typeThinOK(t)){
+      if(!keep_by_stride_(c.id, id_stride_)) return false;
+    }
+
+    return true;
+  }
+
+  bool active() const {
+    if (cfg_.enableSphere) return true;
+    if (cfg_.enableMaxParticles && cfg_.maxParticles > 0) return true;
+    // type off が一つでもあれば active
+    for (int t=0; t<6; ++t) {
+      if (cfg_.typePolicy[t] == MaskConfig::ThinPolicy::ReadOff) return true;
+    }
+    // sphereがONのときのみoutsideModeが意味を持つのでここでは見ない
+    return false;
+  }
+  
+  uint64_t idStride() const { return id_stride_; }
+  const MaskConfig& config() const { return cfg_; }
+
+private:
+  MaskConfig cfg_;
+  uint64_t id_stride_ = 1;
+
+  bool need_pos_ = false;
+  bool need_id_  = false;
+
+  void rebuildNeeds_(){
+    need_pos_ = cfg_.enableSphere;
+    const bool need_id_for_outside = (cfg_.enableSphere && cfg_.outsideMode==MaskConfig::OutsideMode::Thin);
+    const bool need_id_for_limit   = (cfg_.enableMaxParticles && cfg_.maxParticles>0);
+    need_id_ = need_id_for_outside || need_id_for_limit;
+  }
+
+  static inline uint64_t splitmix64_(uint64_t x){
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+  }
+  static inline bool keep_by_stride_(uint64_t id, uint64_t stride){
+    if(stride<=1) return true;
+    return (splitmix64_(id) % stride) == 0;
+  }
+};
 
 class IParticleReader {
 public:
@@ -287,6 +433,17 @@ public:
                          const std::vector<FieldSpec>& fields,
                          const IOPlan& plan) = 0;
 
+  // ★追加：mask付き読み込み（デフォルトは未対応）
+  virtual bool readRangeMasked(ParticleBlock& out,
+                               size_t begin, size_t count,
+                               const std::vector<FieldSpec>& fields,
+                               const IOPlan& plan,
+                               ParticleMask& mask)
+  {
+    (void)out; (void)begin; (void)count; (void)fields; (void)plan; (void)mask;
+    return false;
+  }
+  
   virtual bool is_binary() { return false; };
   
   // 便利関数：全読み
@@ -364,6 +521,7 @@ public:
     close();
     return ok;
   }
+
 };
 
 
@@ -373,6 +531,7 @@ static const std::unordered_map<std::string,FieldType> labelToField = {
   {"velocity",         FieldType::Velocity},
   {"Bfield",           FieldType::Bfield},
   {"Hsml",             FieldType::Hsml},
+  {"Volume",           FieldType::Volume},
   {"mass",             FieldType::Mass},
   {"density",          FieldType::Density},
   {"temperature",      FieldType::Temperature},
@@ -448,6 +607,9 @@ static inline RecordLayout buildRecordLayout(const std::vector<FieldSpec>& token
 	break;
       case FieldType::Hsml:
 	fl.store = isF32 ? &store_hsml_f32 : (isF64 ? &store_hsml_f64 : nullptr);
+	break;
+      case FieldType::Volume:
+	fl.store = isF32 ? &store_volume_f32 : (isF64 ? &store_volume_f64 : nullptr);
 	break;
       case FieldType::Type:
 	fl.store = isI32 ? &store_type_i32 : (isI64 ? &store_type_i64 : nullptr);
@@ -887,6 +1049,7 @@ private:
   double mask_center_[3] = {0.,0.,0.}, mask_radius_ = 1.e10;
   double factor_density_ = 1.0;
   double factor_Bfield_ = 1.0;
+  double factor_IntEnergy_ = 1.0;
   hid_t dapl_;
   
 H5::DataSet openDataSetWithDAPL(const std::string& fullPath) {
@@ -938,6 +1101,7 @@ static void resetStoreFromSpec(FieldLayout& fl)
     case FieldType::Density:    fl.store = isF32 ? &store_density_f32 : (isF64 ? &store_density_f64 : nullptr); break;
     case FieldType::Temperature:fl.store = isF32 ? &store_temp_f32 : (isF64 ? &store_temp_f64 : nullptr); break;
     case FieldType::Hsml:       fl.store = isF32 ? &store_hsml_f32 : (isF64 ? &store_hsml_f64 : nullptr); break;
+    case FieldType::Volume:     fl.store = isF32 ? &store_volume_f32 : (isF64 ? &store_volume_f64 : nullptr); break;
     case FieldType::Type:       fl.store = isI32 ? &store_type_i32 : (isI64 ? &store_type_i64 : nullptr); break;
     case FieldType::ID:         fl.store = isI32 ? &store_id_i32 : (isI64 ? &store_id_i64 : nullptr); break;
     default: fl.store = nullptr; break;
@@ -1107,6 +1271,8 @@ public:
       if(header.flag_comoving)
 	factor_Bfield_ /= pow(header.time, 2);
     }
+
+    factor_IntEnergy_ = header.UnitVelocity_in_cm_per_s*header.UnitVelocity_in_cm_per_s * PROTONMASS / BOLTZMANN;    
     
     return true;
   }
@@ -1519,7 +1685,7 @@ bool readRange(ParticleBlock& out,
 	  if(hasE  && tmp_e[kk]  > 0.0) denom += tmp_e[kk];
 	  if(hasH2 && tmp_h2[kk] > 0.0) denom -= tmp_h2[kk];
 
-	  const double T = (gamma - 1.0) * u / denom;
+	  const double T = (gamma - 1.0) * u / denom * factor_IntEnergy_;
 	  if(T > 0.0){
 	    out.particles[outBase + kk].temperature = (float)T;
 	  }
@@ -1536,6 +1702,481 @@ bool readRange(ParticleBlock& out,
 
   return true;
 }
+
+bool readRangeMasked(ParticleBlock& out,
+                     size_t begin, size_t count,
+                     const std::vector<FieldSpec>& fields,
+                     const IOPlan& plan,
+                     ParticleMask& mask) override
+{
+  if (begin + count > npart_) return false;
+
+  RecordLayout layout = buildRecordLayout(fields, plan, true);
+
+  if(!mask.active()){
+    return readRange(out, begin, count, fields, plan);
+  }
+ 
+  const size_t globalBegin = begin;
+  const size_t globalEnd   = begin + count;
+
+  // ---------------------------
+  // pass0: Thin候補数（maxParticles用）
+  // ---------------------------
+  if(mask.config().enableMaxParticles && mask.config().maxParticles>0){
+    size_t thinCandidates = 0;
+    for(int ptype=0; ptype<6; ++ptype){
+      if(!mask.typeEnabled(ptype)) continue;
+      if(!mask.typeThinOK(ptype)) continue; // ThinOKのみ候補
+
+      const size_t pBeg = IndexStart_[ptype];
+      const size_t pEnd = IndexStart_[ptype+1];
+      if (pEnd <= globalBegin || globalEnd <= pBeg) continue;
+      const size_t subBegG  = std::max(globalBegin, pBeg);
+      const size_t subEndG  = std::min(globalEnd,   pEnd);
+      thinCandidates += (subEndG - subBegG);
+    }
+    mask.prepare(thinCandidates);
+  }else{
+    mask.prepare(0);
+  }
+
+  // ---------------------------
+  // pass1: totalKept を数える（keepはchunkごと）
+  // ---------------------------
+  size_t totalKept = 0;
+  {
+    std::vector<uint32_t> keep;
+    for(int ptype=0; ptype<6; ++ptype){
+      if(!mask.typeEnabled(ptype)) continue;
+
+      const size_t pBeg = IndexStart_[ptype];
+      const size_t pEnd = IndexStart_[ptype+1];
+      if (pEnd <= globalBegin || globalEnd <= pBeg) continue;
+
+      const size_t subBegG  = std::max(globalBegin, pBeg);
+      const size_t subEndG  = std::min(globalEnd,   pEnd);
+      const size_t subCount = subEndG - subBegG;
+
+      const size_t localStart0 = subBegG - pBeg;
+
+      size_t done = 0;
+      while(done < subCount){
+        const size_t n = std::min(blockSize_, subCount - done);
+        if(!build_keep_chunk_(ptype, localStart0 + done, n, mask, keep)) return false;
+        totalKept += keep.size();
+        done += n;
+      }
+    }
+  }
+  
+  out.clear();
+  out.resize(totalKept);  
+
+  for (auto& fl : layout.fields) {
+    if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
+    
+    const std::string dsName = fl.spec.displayName.empty() ? fl.spec.label : fl.spec.displayName;
+    
+    // find first ptype that has this dataset
+    bool found = false;
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      if (flag_skip_DM_ && ptype == 1) continue;
+      try {
+	H5SilenceErrors quiet(ptype >= 1);
+	H5::DataSet ds = openDataSetWithDAPL(partPath_(ptype, dsName));
+	update_layout_from_hdf5(fl, ds);   // <-- finalize fl.spec.type/count here
+	found = true;
+	break;                             // dataset found -> done
+      } catch (...) {
+	// try next ptype
+      }
+    }
+
+    fl.present = found;   // ★ FieldLayout に bool present を1個足すのが簡単
+  }
+  
+  for (const auto& fl : layout.fields) {
+    if (fl.dest != DestKind::SoA) continue;
+    if (!fl.present) continue; 
+    
+    auto &f = out.soa[*fl.soaKey];
+    f.type  = fl.spec.type;
+    f.comps = fl.spec.count;
+    f.resize(out.particles.size());
+  }
+
+  /**************** needed to calculate temperature ***********************/
+  bool wantTemp = false, wantU = false, wantE = false, wantH2 = false, wantG = false;
+  for(const auto& fl : layout.fields){
+    if(fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
+
+    switch(fl.ftype){
+    case FieldType::Temperature:     wantTemp = true; break;
+    case FieldType::InternalEnergy:  wantU    = true; break;
+    case FieldType::ElectronFraction: wantE   = true; break;
+    case FieldType::H2Fraction:      wantH2   = true; break;
+    case FieldType::Gamma:           wantG    = true; break;
+    default: break;
+    }
+  }
+  /************************************************************************/
+
+  auto findDSName = [&](FieldType ft)->std::string {
+    for (const auto& fl : layout.fields) {
+      if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
+
+      if (fl.ftype != ft) continue;
+      const auto& fs = fl.spec;
+      return fs.displayName.empty() ? fs.label : fs.displayName;
+    }
+    return std::string(); // 無ければ空
+  };
+
+  auto fill_chunk_scalar =
+    [&](std::vector<double>& dst,        // サイズ = nwrite
+	const std::vector<uint8_t>& buf, // サイズ = n * elemSz
+	size_t nread, size_t elemSz,
+	const std::vector<uint32_t>* keepPtr,
+	DataType srcType)
+    {
+      auto get_double = [&](const uint8_t* p)->double{
+	switch(srcType){
+	case DataType::Float:  { float v;  std::memcpy(&v, p, sizeof(v)); return (double)v; }
+	case DataType::Double: { double v; std::memcpy(&v, p, sizeof(v)); return v; }
+	case DataType::Int32:  { int32_t v; std::memcpy(&v, p, sizeof(v)); return (double)v; }
+	case DataType::Int64:  { int64_t v; std::memcpy(&v, p, sizeof(v)); return (double)v; }
+	}
+	return -1.0;
+      };
+
+      for(size_t kk=0; kk<keepPtr->size(); ++kk){
+	const uint32_t j = (*keepPtr)[kk];
+	dst[kk] = get_double(buf.data() + (size_t)j*elemSz);
+      }      
+    };
+
+
+  size_t outWriteCursor = 0;
+
+  struct OpenedField {
+    FieldLayout* fl;
+    H5::DataSet  ds;
+    size_t elemSz;
+    int comps;
+    size_t bpp;
+    std::vector<uint8_t> buf;   // ★ここに置く（再利用）
+  };
+  
+  for (int ptype=0; ptype<6; ++ptype) {
+    if (flag_skip_DM_ && ptype==1) continue;
+
+    /**************** needed to calculate temperature ***********************/
+    bool hasTemp=false, hasU=false, hasG=false, hasE=false, hasH2=false;
+    if(ptype==0){
+      auto tryOpen = [&](const std::string& dsName)->bool{
+	if(dsName.empty()) return false;
+	try { (void)openDataSetWithDAPL(partPath_(0, dsName)); return true; }
+	catch (...) { return false; }
+      };
+
+      if(wantTemp) hasTemp = tryOpen(findDSName(FieldType::Temperature));
+      if(wantU)    hasU    = tryOpen(findDSName(FieldType::InternalEnergy));
+      if(wantE)    hasE    = tryOpen(findDSName(FieldType::ElectronFraction));
+      if(wantH2)   hasH2   = tryOpen(findDSName(FieldType::H2Fraction));
+      if(wantG)    hasG    = tryOpen(findDSName(FieldType::Gamma));
+    }
+
+    const bool needSynth = (ptype==0 && !hasTemp && hasU);
+    if(ptype == 0){
+      printf("ptype=%d wantT=%d wantU=%d hasT=%d hasU=%d needS=%d\n", ptype, wantTemp, wantU, hasTemp, hasU, needSynth);
+      fflush(stdout);
+    }
+    /************************************************************************/
+      
+    const size_t pBeg = IndexStart_[ptype];
+    const size_t pEnd = IndexStart_[ptype+1];
+    if (pEnd <= globalBegin || globalEnd <= pBeg) continue;
+
+    const size_t subBegG  = std::max(globalBegin, pBeg);
+    const size_t subEndG  = std::min(globalEnd,   pEnd);
+    const size_t subCount = subEndG - subBegG;
+
+    const size_t localStart = subBegG - pBeg;
+    const size_t outStart   = subBegG - globalBegin;
+
+    size_t done = 0;      
+    std::vector<uint32_t> keep;
+
+    std::vector<OpenedField> opened;
+    opened.reserve(layout.fields.size());
+
+    for (auto& fl : layout.fields) {
+      if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
+
+      const std::string dsName = fl.spec.displayName.empty() ? fl.spec.label : fl.spec.displayName;
+      try {
+	H5SilenceErrors quiet(ptype >= 1);
+	
+	H5::DataSet ds = openDataSetWithDAPL(partPath_(ptype, dsName)); // ← DAPL版推奨
+	update_layout_from_hdf5(fl, ds); 
+	
+	OpenedField of;
+	of.fl = &fl;
+	of.ds = std::move(ds);
+	of.elemSz  = dataTypeSize(fl.spec.type);
+	of.comps   = fl.spec.count;
+	of.bpp     = of.elemSz * (size_t)of.comps;
+	opened.push_back(std::move(of));
+      } catch (...) {
+	// dataset無いならスキップ
+      }
+    }
+      
+    while (done < subCount) {
+      const size_t n = std::min(blockSize_, subCount - done);
+
+      const std::vector<uint32_t>* keepPtr = nullptr;
+
+      size_t outBase = 0; // この chunk の書き込み先先頭
+
+      if (!build_keep_chunk_(ptype, localStart + done, n, mask, keep))
+	return false;
+      keepPtr = &keep;
+      outBase = outWriteCursor;        // compaction 書き込み先
+      outWriteCursor += keep.size();
+
+      if (keep.empty()) {
+	done += n;
+	continue;
+      }
+      
+			
+      const size_t nwrite = keep.size();
+      for (size_t kk=0; kk<nwrite; ++kk) {
+	ParticleData& p = out.particles[outBase + kk];
+	p.type = ptype;
+	if (mass_type_[ptype] > 0.0) p.mass = (float)mass_type_[ptype];
+      }	  
+
+      std::vector<double> tmp_u, tmp_e, tmp_h2, tmp_g;
+      if(needSynth){
+	tmp_u.assign(nwrite, -1.0);
+	if(hasE)  tmp_e.assign(nwrite, -1.0);   // hasE は wantE のときだけ true になり得る
+	if(hasH2) tmp_h2.assign(nwrite, -1.0);
+	if(hasG)  tmp_g.assign(nwrite, -1.0);
+      }
+
+      // ------------------------
+      // field-first: 各 field を読む
+      // ------------------------
+      for (auto& of : opened) {
+	of.buf.resize(n * of.bpp);
+	const H5::PredType memType = h5_memtype_from_source(of.fl->spec.type);
+	
+	readHyperslabBytes(of.ds, memType,
+			   (hsize_t)(localStart + done),
+			   (hsize_t)n,
+			   of.comps, of.buf, of.elemSz);
+
+	// ------------------------
+	// ここが「mask と共存」する本体
+	// ------------------------
+	if (of.fl->dest == DestKind::AoSCore) {
+	  for (size_t kk=0; kk<keepPtr->size(); ++kk) {
+	    const uint32_t j = (*keepPtr)[kk];
+	    ParticleData& p = out.particles[outBase + kk];
+	    const uint8_t* src = of.buf.data() + (size_t)j*of.bpp;
+	    of.fl->store(p, src);
+	  }	  
+	}
+	else if (of.fl->dest == DestKind::SoA) {
+	  auto &f = out.soa[*of.fl->soaKey];
+	  // f は上で確保済み想定（そうでない設計ならここで遅延確保でもOK）
+	  uint8_t* dst0 = f.bytes.data() + outBase * of.bpp;
+	  for (size_t kk=0; kk<keepPtr->size(); ++kk) {
+	    const uint32_t j = (*keepPtr)[kk];
+	    std::memcpy(dst0 + kk*of.bpp,
+			of.buf.data() + (size_t)j*of.bpp,
+			of.bpp);
+	  }	  
+	}
+	else {
+	  // AoSExt など：maskあり/なしで oi と src を変えるだけ
+	  for (size_t kk=0; kk<keepPtr->size(); ++kk) {
+	    const uint32_t j = (*keepPtr)[kk];
+	    const size_t oi = outBase + kk;
+	    const uint8_t* src = of.buf.data() + (size_t)j*of.bpp;
+	    switch (of.fl->spec.type) {
+	    case DataType::Float:  writeToDestFast(out, oi, *of.fl, reinterpret_cast<const float*>(src));  break;
+	    case DataType::Double: writeToDestFast(out, oi, *of.fl, reinterpret_cast<const double*>(src)); break;
+	    case DataType::Int32:  writeToDestFast(out, oi, *of.fl, reinterpret_cast<const int32_t*>(src)); break;
+	    case DataType::Int64:  writeToDestFast(out, oi, *of.fl, reinterpret_cast<const int64_t*>(src)); break;
+	    }
+	  }	  
+	}
+	  
+	if(needSynth){
+	  if(of.fl->ftype == FieldType::InternalEnergy){
+	    fill_chunk_scalar(tmp_u, of.buf, n, of.elemSz, keepPtr, of.fl->spec.type);
+	  }else if(hasE && of.fl->ftype == FieldType::ElectronFraction){
+	    fill_chunk_scalar(tmp_e, of.buf, n, of.elemSz, keepPtr, of.fl->spec.type);
+	  }else if(hasH2 && of.fl->ftype == FieldType::H2Fraction){
+	    fill_chunk_scalar(tmp_h2, of.buf, n, of.elemSz, keepPtr, of.fl->spec.type);
+	  }else if(hasG && of.fl->ftype == FieldType::Gamma){
+	    fill_chunk_scalar(tmp_g, of.buf, n, of.elemSz, keepPtr, of.fl->spec.type);
+	  }
+	}
+
+	if (of.fl->ftype == FieldType::Bfield && factor_Bfield_ != 1.0){
+	  if (of.fl->dest == DestKind::SoA) {
+	    auto &f = out.soa[*of.fl->soaKey];          // "Bfield"
+	    const int comps = of.comps;                  // たぶん 3
+	    const size_t start = outBase;                // このchunkの先頭
+	    const size_t nscale = nwrite;                // このchunkで書いた粒子数
+	    
+	    if (f.type == DataType::Float) {
+	      float* p = reinterpret_cast<float*>(f.bytes.data()) + start * comps;
+	      const float fac = (float)factor_Bfield_;
+	      for (size_t i = 0; i < nscale * (size_t)comps; ++i) p[i] *= fac;
+	      
+	    } else if (f.type == DataType::Double) {
+	      double* p = reinterpret_cast<double*>(f.bytes.data()) + start * comps;
+	      const double fac = factor_Bfield_;
+	      for (size_t i = 0; i < nscale * (size_t)comps; ++i) p[i] *= fac;	      
+	    }	    
+	  }
+	}	
+      } // for field
+      
+      if(needSynth){
+	for(size_t kk=0; kk<nwrite; ++kk){
+	  const double u = tmp_u[kk];
+	  if(!(u > 0.0)) continue;
+
+	  double gamma = 5.0/3.0;
+	  if(hasG && tmp_g[kk] > 0.0) gamma = tmp_g[kk];
+
+	  double denom = 1.2;
+	  if(hasE  && tmp_e[kk]  > 0.0) denom += tmp_e[kk];
+	  if(hasH2 && tmp_h2[kk] > 0.0) denom -= tmp_h2[kk];
+
+	  const double T = (gamma - 1.0) * u / denom * factor_IntEnergy_;
+	  if(T > 0.0){
+	    out.particles[outBase + kk].temperature = (float)T;
+	  }
+	}
+      }
+
+      if (factor_density_ != 1.0) 
+	for(size_t kk=0; kk<nwrite; ++kk)
+	  out.particles[outBase + kk].density = (float)((double)out.particles[outBase + kk].density * factor_density_);	
+      
+      done += n;
+    }
+  }
+
+  if (outWriteCursor != totalKept) {
+    fprintf(stderr, "BUG: outWriteCursor(%zu) != totalKept(%zu)\n", outWriteCursor, totalKept);
+    return false;
+  }
+  
+  return true;
+}
+
+private:
+bool read_coords_chunk_(int ptype, size_t localStart, size_t n,
+                        std::vector<uint8_t>& buf)
+{
+  try{
+    H5::DataSet ds = openDataSetWithDAPL(partPath_(ptype, "Coordinates"));
+    const H5::PredType memType = H5::PredType::NATIVE_FLOAT;
+    const size_t elemSz = sizeof(float);
+    const int comps = 3;
+    readHyperslabBytes(ds, memType, (hsize_t)localStart, (hsize_t)n, comps, buf, elemSz);
+    return true;
+  }catch(...){
+    return false;
+  }
+}
+
+bool read_ids_chunk_u64_(int ptype, size_t localStart, size_t n,
+                         std::vector<uint64_t>& ids)
+{
+  ids.resize(n);
+  try{
+    H5::DataSet ds = openDataSetWithDAPL(partPath_(ptype, "ParticleIDs"));
+
+    H5::DataSpace fsp = ds.getSpace();
+    hsize_t start[1] = { (hsize_t)localStart };
+    hsize_t cnt[1]   = { (hsize_t)n };
+    fsp.selectHyperslab(H5S_SELECT_SET, cnt, start);
+
+    H5::DataSpace msp(1, cnt);
+    ds.read(ids.data(), H5::PredType::NATIVE_ULLONG, msp, fsp);
+    return true;
+  }catch(...){
+    // fallback（最悪時）
+    for(size_t j=0;j<n;++j){
+      ids[j] = (uint64_t)(IndexStart_[ptype] + localStart + j + 1);
+    }
+    return true;
+  }
+}
+
+bool build_keep_chunk_(int ptype, size_t localStart, size_t n,
+                       ParticleMask& mask,
+                       std::vector<uint32_t>& keep)
+{
+  keep.clear();
+  keep.reserve(n);
+
+  std::vector<uint8_t> coordBuf;
+  std::vector<uint64_t> ids;
+
+  const bool needPos = mask.needPos();
+  const bool needID  = mask.needID();
+
+  const float* xyz = nullptr;
+  if(needPos){
+    if(!read_coords_chunk_(ptype, localStart, n, coordBuf)) return false;
+    xyz = reinterpret_cast<const float*>(coordBuf.data());
+  }
+  if(needID){
+    if(!read_ids_chunk_u64_(ptype, localStart, n, ids)) return false;
+  }
+
+  for(uint32_t j=0; j<(uint32_t)n; ++j){
+    CoreSample c;
+    c.type = ptype;
+
+    if(needPos){
+      c.pos[0] = xyz[3*(size_t)j + 0];
+      c.pos[1] = xyz[3*(size_t)j + 1];
+      c.pos[2] = xyz[3*(size_t)j + 2];
+    }else{
+      c.pos[0]=c.pos[1]=c.pos[2]=0.0;
+    }
+
+    c.id = needID ? ids[j] : (uint64_t)(IndexStart_[ptype] + localStart + j + 1);
+
+    if(mask.pass(c)) keep.push_back(j);
+  }
+  return true;
+}
+
+static inline bool isTempSynthField(FieldType ft){
+  switch(ft){
+    case FieldType::InternalEnergy:
+    case FieldType::ElectronFraction:
+    case FieldType::H2Fraction:
+    case FieldType::Gamma:
+      return true;
+    default:
+      return false;
+  }
+}
+
 };
 
 
@@ -1609,6 +2250,10 @@ private:
   double UnitMass_in_g;
   double UnitVelocity_in_cm_per_s;
   double Hubble;
+
+  MaskConfig currentMaskConfig;
+  uint64_t   currentMaskRevision = 0;
+  bool       enableMask = false; // mask を使うか（UIでON/OFF）
   
 public:
   FileInfo(CameraContext& cam):
@@ -1643,7 +2288,7 @@ public:
   };
 
 #ifdef HAVE_HDF5
-  TrackingVector<HaloData> readHaloFromHDF5(char *fbuf, int snapshotNumber);
+  HaloCatalog readHaloCatalogFromHDF5(char *fname, bool loadIDs /*=true*/);
   
   bool groupExists(const H5::H5File &file, const std::string &groupPath)
   {
@@ -1654,6 +2299,12 @@ public:
   };
 #endif
 
+  void setMaskConfig(const MaskConfig& cfg, uint64_t rev){
+    currentMaskConfig = cfg;
+    currentMaskRevision = rev;
+    enableMask = true;
+  } 
+  
   TrackingVector<int> getStarParticleID(int indexFile);
 };
 

@@ -158,7 +158,7 @@ void StreamlineComputer::build(ParticleBlock& particles,
 void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock){
   TrackingVector<struct particle_stream> p_stream;
 
-  bool flag_Bfield = particleBlock.hasBfield();
+  bool flag_Bfield = particleBlock.hasSoAAs(soa_views::Bfield);
   
   for(size_t i=0; i< particleBlock.particles.size();i++){
     ParticleData& p = particleBlock.particles[i];
@@ -177,10 +177,12 @@ void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock){
       ps.pos[k] = p.pos[k];
 
     if(flag_Bfield){
-      const float *bf = particleBlock.getBfield(i);
-      ps.vect[0] = bf[0];
-      ps.vect[1] = bf[1];
-      ps.vect[2] = bf[2];
+      float bf[3];
+      if (particleBlock.readSoAAs(soa_views::Bfield, i, bf)) {
+	ps.vect[0] = bf[0];
+	ps.vect[1] = bf[1];
+	ps.vect[2] = bf[2];
+      }
     }else{
       for(int k=0;k<3;k++)
 	ps.vect[k] = p.vel[k];

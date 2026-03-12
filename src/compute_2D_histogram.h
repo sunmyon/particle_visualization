@@ -1,50 +1,71 @@
 #pragma once
-#include <glm/glm.hpp>
 
+#include <glm/glm.hpp>
 #include <functional>
-#ifdef USE_CONVEX_HULL  
+
+#include "main.h"
+#include "quantity.h"
+
+#ifdef USE_CONVEX_HULL
 #include <memory>
 #endif
 
-class histogram2D{
+struct Histogram2DParams {
+  QuantityId var1 = QuantityId::Density;
+  QuantityId var2 = QuantityId::Temperature;
+
+  int bins1 = 50;
+  int bins2 = 50;
+
+  bool autoRange = true;
+  float range1_min = 0.0f;
+  float range1_max = 1.0f;
+  float range2_min = 0.0f;
+  float range2_max = 1.0f;
+
+  bool logScaleX = true;
+  bool logScaleY = true;
+  bool logScaleColor = true;
+
+  bool useCameraCenter = false;
+  float cameraRadius = 10.0f;
+
+#ifdef USE_CONVEX_HULL
+  bool useConvexHull = false;
+#endif
+};
+
+struct Histogram2DResult {
+  TrackingVector<float> centers1;
+  TrackingVector<float> centers2;
+  TrackingVector<TrackingVector<float>> values;
+
+  float range1_min = 0.0f;
+  float range1_max = 1.0f;
+  float range2_min = 0.0f;
+  float range2_max = 1.0f;
+
+  bool valid = false;
+};
+
+class Histogram2DComputer {
 public:
-  const glm::vec3 &camCenter; // ここではカメラの注視点を中心とする例
-  
-  bool showWindow2Dhistogram = false;
-  bool histogram2DLogScaleX = true;
-  bool histogram2DLogScaleY = true;
-  bool histogram2DLogScaleCB = true;
+  explicit Histogram2DComputer(const glm::vec3& center)
+    : camCenter(center) {}
 
-  histogram2D(const glm::vec3 &center = glm::vec3(0.0f, 0.0f, 0.0f),
-	      bool logScaleX = true, bool logScaleY = true, bool logScaleCB = true)
-    : camCenter(center),
-      showWindow2Dhistogram(false),
-      histogram2DLogScaleX(logScaleX),
-      histogram2DLogScaleY(logScaleY),
-      histogram2DLogScaleCB(logScaleCB)
-  {
-  }
-
-#ifdef USE_CONVEX_HULL  
-  TrackingVector<std::shared_ptr<IConvexHull>> convexHullCache;
+#ifdef USE_CONVEX_HULL
   void setConvexHulls(const TrackingVector<std::shared_ptr<IConvexHull>>& convexHulls) {
     convexHullCache = convexHulls;
   }
 #endif
-  
-  std::tuple<TrackingVector<float>, TrackingVector<float>, TrackingVector<TrackingVector<float>>>
-  compute2DHistogram(const ParticleBlock& particles,
-		     QuantityId var1,
-		     QuantityId var2,
-		     int bins1, int bins2,
-		     bool autoRange,
-		     float &range1_min, float &range1_max,
-		     float &range2_min, float &range2_max,
-		     std::function<bool(const ParticleData&)> condition);
 
-  void showWindow(void){
-    showWindow2Dhistogram = true;
-  }  
-  
-  void Show2DHistogramUI(ParticleBlock& originalParticles);
+  Histogram2DResult compute(const ParticleBlock& partblock,
+                            const Histogram2DParams& params);
+
+private:
+  const glm::vec3& camCenter;
+
+#ifdef USE_CONVEX_HULL
+  TrackingVector<std::shared_ptr<IConvexHull>> convexHullCache;
+#endif
 };

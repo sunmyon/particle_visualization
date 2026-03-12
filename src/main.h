@@ -190,6 +190,22 @@ static constexpr const char* kJ21Key = "J21";
 static constexpr const char* kVal1Key = "Val1";
 static constexpr const char* kVal2Key = "Val2";
 
+template<typename T, int N>
+struct SoAView {
+  const char* key;
+};
+
+namespace soa_views {
+  inline constexpr SoAView<float,3> Bfield{ kBfieldKey };
+  inline constexpr SoAView<float,1> Metallicity{ kMetallicityKey };
+  inline constexpr SoAView<float,1> ElectronAbundance{ kElectronAbundanceKey };
+  inline constexpr SoAView<float,1> H2Abundance{ kH2AbundanceKey };
+  inline constexpr SoAView<float,1> HDAbundance{ kHDAbundanceKey };
+  inline constexpr SoAView<float,1> J21{ kJ21Key };
+  inline constexpr SoAView<float,1> Val1{ kVal1Key };
+  inline constexpr SoAView<float,1> Val2{ kVal2Key };
+}
+
 struct ParticleBlock {
   // ---- AoS core ----
   TrackingVector<ParticleData> particles;
@@ -202,6 +218,9 @@ struct ParticleBlock {
   std::unordered_map<std::string, SoAField> soa;
 
   HeaderInfo header;
+
+  std::unordered_map<uint64_t, size_t> id2index;
+  bool id2indexDirty = true;
   
   void resize(size_t n) {
     particles.resize(n);
@@ -211,6 +230,8 @@ struct ParticleBlock {
 
     for (auto &kv : soa)
       kv.second.resize(n);
+
+    id2indexDirty = true;
   }
  
   size_t size() const {
@@ -221,126 +242,159 @@ struct ParticleBlock {
     particles.clear();
     aosExt.bytes.clear();
     soa.clear();
+    id2index.clear();
+    id2indexDirty = true;
   }
 
-  // ---- SoA getter (const) ----
-  template<typename T>
-  const T* getSoA(const std::string& key, size_t i, int expectedComps) const {
-    auto it = soa.find(key);
-    if (it == soa.end()) return nullptr;
-
-    const SoAField& f = it->second;
-    if (f.type != toDataType<T>()) return nullptr;
-    if (f.comps != expectedComps)   return nullptr;
-    if (i >= particles.size())      return nullptr;
-
-    return reinterpret_cast<const T*>(f.ptr(i));
+  void rebuildIdIndex()
+  {
+    id2index.clear();
+    id2index.reserve(particles.size() * 13 / 10);
+    for (size_t i=0;i<particles.size();++i) {
+      // ParticleData::ID は int なので uint64 化
+      id2index[(uint64_t)(int64_t)particles[i].ID] = i;
+    }
+    id2indexDirty = false;
   }
 
-  // ---- SoA getter (mutable) ----
-  template<typename T>
-  T* getSoA(const std::string& key, size_t i, int expectedComps) {
-    auto it = soa.find(key);
-    if (it == soa.end()) return nullptr;
-
-    SoAField& f = it->second;
-    if (f.type != toDataType<T>()) return nullptr;
-    if (f.comps != expectedComps)  return nullptr;
-    if (i >= particles.size())     return nullptr;
-
-    return reinterpret_cast<T*>(f.ptr(i));
+  inline size_t findIndexByID(uint64_t id) {
+    if (id2indexDirty) rebuildIdIndex();
+    auto it = id2index.find(id);
+    if (it == id2index.end()) return (size_t)-1;
+    return it->second;
   }
 
   template<typename T>
-  bool setSoA(const std::string& key, size_t i, int expectedComps, const T* src) {
-    T* dst = getSoA<T>(key, i, expectedComps);
-    if (!dst) return false;
-    std::memcpy(dst, src, sizeof(T) * expectedComps);
-    return true;
-  }
-
-  // ---- SoA setter (scalar) ----
-  template<typename T>
-  bool setSoA1(const std::string& key, size_t i, const T& x) {
-    return setSoA<T>(key, i, /*expectedComps=*/1, &x);
-  }
-
-  // ---- SoA setter (3-vector) ----
-  template<typename T>
-  bool setSoA3(const std::string& key, size_t i, const T x[3]) {
-    return setSoA<T>(key, i, /*expectedComps=*/3, x);
-  }
-
-  // convenience: std::array
-  template<typename T, size_t N>
-  bool setSoA(const std::string& key, size_t i, const std::array<T, N>& a) {
-    return setSoA<T>(key, i, (int)N, a.data());
-  }
-  
-  template<typename T>
-  bool hasSoA(const std::string& key, int expectedComps) const {
+  bool hasSoAAs(const std::string& key, int expectedComps) const {
     auto it = soa.find(key);
     if (it == soa.end()) return false;
 
     const SoAField& f = it->second;
-    if (f.type  != toDataType<T>()) return false;
-    if (f.comps != expectedComps)   return false;
+    if (f.comps != expectedComps) return false;
 
-    // サイズ整合（「==」を推奨。余剰を許す設計なら「>=」でもOK）
-    const size_t expectBytes = particles.size() * size_t(expectedComps) * sizeof(T);
+    const size_t elemSz = dataTypeSize(f.type);
+    const size_t expectBytes = particles.size() * size_t(expectedComps) * elemSz;
     if (f.bytes.size() != expectBytes) return false;
 
+    switch (f.type) {
+    case DataType::Float:
+    case DataType::Double:
+    case DataType::Int32:
+    case DataType::Int64:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  template<typename T, int N>
+  bool readSoAAs(const std::string& key, size_t i, T (&out)[N]) const {
+    auto it = soa.find(key);
+    if (it == soa.end()) return false;
+
+    const SoAField& f = it->second;
+    if (f.comps != N) return false;
+    if (i >= particles.size()) return false;
+
+    switch (f.type) {
+    case DataType::Float: {
+      const float* p = reinterpret_cast<const float*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) out[k] = static_cast<T>(p[k]);
+      return true;
+    }
+    case DataType::Double: {
+      const double* p = reinterpret_cast<const double*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) out[k] = static_cast<T>(p[k]);
+      return true;
+    }
+    case DataType::Int32: {
+      const int32_t* p = reinterpret_cast<const int32_t*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) out[k] = static_cast<T>(p[k]);
+      return true;
+    }
+    case DataType::Int64: {
+      const int64_t* p = reinterpret_cast<const int64_t*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) out[k] = static_cast<T>(p[k]);
+      return true;
+    }
+    default:
+      return false;
+    }
+  }
+
+  template<typename T>
+  bool readSoAAs(const std::string& key, size_t i, T& out) const {
+    T tmp[1];
+    if (!readSoAAs<T,1>(key, i, tmp)) return false;
+    out = tmp[0];
     return true;
   }
+
+  template<typename T, int N>
+  bool writeSoAAs(const std::string& key, size_t i, const T (&in)[N]) {
+    auto it = soa.find(key);
+    if (it == soa.end()) return false;
+
+    SoAField& f = it->second;
+    if (f.comps != N) return false;
+    if (i >= particles.size()) return false;
+
+    switch (f.type) {
+    case DataType::Float: {
+      float* p = reinterpret_cast<float*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) p[k] = static_cast<float>(in[k]);
+      return true;
+    }
+    case DataType::Double: {
+      double* p = reinterpret_cast<double*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) p[k] = static_cast<double>(in[k]);
+      return true;
+    }    case DataType::Int32: {
+      int32_t* p = reinterpret_cast<int32_t*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) p[k] = static_cast<int32_t>(in[k]);
+      return true;
+    }
+    case DataType::Int64: {
+      int64_t* p = reinterpret_cast<int64_t*>(f.ptr(i));
+      for (int k = 0; k < N; ++k) p[k] = static_cast<int64_t>(in[k]);
+      return true;
+    }
+    default:
+      return false;
+    }
+  }
+
+  template<typename T>
+  bool writeSoAAs(const std::string& key, size_t i, T in) {
+    T tmp[1] = {in};
+    return writeSoAAs<T,1>(key, i, tmp);
+  }
+
+  template<typename T, int N>
+  bool hasSoAAs(const SoAView<T,N>& view) const {
+    return hasSoAAs<T>(view.key, N);
+  }
+
+  template<typename T, int N>
+  bool readSoAAs(const SoAView<T,N>& view, size_t i, T (&out)[N]) const {
+    return readSoAAs<T>(view.key, i, out);
+  }
+
+  template<typename T>
+  bool readSoAAs(const SoAView<T,1>& view, size_t i, T& out) const {
+    return readSoAAs<T>(view.key, i, out);
+  }
+
+  template<typename T, int N>
+  bool writeSoAAs(const SoAView<T,N>& view, size_t i, const T (&in)[N]) {
+    return writeSoAAs<T>(view.key, i, in);
+  }
+
+  template<typename T>
+  bool writeSoAAs(const SoAView<T,1>& view, size_t i, T in) {
+    return writeSoAAs<T>(view.key, i, in);
+  }
   
-  // ---- Bfield helpers ----
-  const float* getBfield(size_t i) const { return getSoA<float>(kBfieldKey, i, 3); }
-  float*       getBfield(size_t i)       { return getSoA<float>(kBfieldKey, i, 3); }
-  bool setBfield(size_t i, const float *x) { return setSoA3<float>(kBfieldKey, i, x); }
-  bool hasBfield() const       { return hasSoA<float>(kBfieldKey, 3); }
-  
-  // ---- Metallicity helpers ----
-  const float* getMetallicity(size_t i) const { return getSoA<float>(kMetallicityKey, i, 1); }
-  float*       getMetallicity(size_t i)       { return getSoA<float>(kMetallicityKey, i, 1); }
-  bool setMetallicity(size_t i, float x) { return setSoA1<float>(kMetallicityKey, i, x); }
-  bool hasMetallicity() const  { return hasSoA<float>(kMetallicityKey, 1); }
-
-  // ---- ElectronAbundance helpers ----
-  const float* getElectronAbundance(size_t i) const { return getSoA<float>(kElectronAbundanceKey, i, 1); }
-  float*       getElectronAbundance(size_t i)       { return getSoA<float>(kElectronAbundanceKey, i, 1); }
-  bool setElectronAbundance(size_t i, float x) { return setSoA1<float>(kElectronAbundanceKey, i, x); }
-  bool hasElectronAbundance() const  { return hasSoA<float>(kElectronAbundanceKey, 1); }
-
-  // ---- H2Abundance helpers ----
-  const float* getH2Abundance(size_t i) const { return getSoA<float>(kH2AbundanceKey, i, 1); }
-  float*       getH2Abundance(size_t i)       { return getSoA<float>(kH2AbundanceKey, i, 1); }
-  bool setH2Abundance(size_t i, float x) { return setSoA1<float>(kH2AbundanceKey, i, x); }
-  bool hasH2Abundance() const  { return hasSoA<float>(kH2AbundanceKey, 1); }
-  
-  // ---- HDAbundance helpers ----
-  const float* getHDAbundance(size_t i) const { return getSoA<float>(kHDAbundanceKey, i, 1); }
-  float*       getHDAbundance(size_t i)       { return getSoA<float>(kHDAbundanceKey, i, 1); }
-  bool setHDAbundance(size_t i, float x) { return setSoA1<float>(kHDAbundanceKey, i, x); }
-  bool hasHDAbundance() const  { return hasSoA<float>(kHDAbundanceKey, 1); }
-
-  // ---- J21 helpers ----
-  const float* getJ21(size_t i) const { return getSoA<float>(kJ21Key, i, 1); }
-  float*       getJ21(size_t i)       { return getSoA<float>(kJ21Key, i, 1); }
-  bool setJ21(size_t i, float x) { return setSoA1<float>(kJ21Key, i, x); }
-  bool hasJ21() const  { return hasSoA<float>(kJ21Key, 1); }
-
-  // ---- val1 helpers ----
-  const float* getVal1(size_t i) const { return getSoA<float>(kVal1Key, i, 1); }
-  float*       getVal1(size_t i)       { return getSoA<float>(kVal1Key, i, 1); }
-  bool setVal1(size_t i, float x) { return setSoA1<float>(kVal1Key, i, x); }
-  bool hasVal1() const  { return hasSoA<float>(kVal1Key, 1); }
-
-  // ---- val2 helpers ----
-  const float* getVal2(size_t i) const { return getSoA<float>(kVal2Key, i, 1); }
-  float*       getVal2(size_t i)       { return getSoA<float>(kVal2Key, i, 1); }
-  bool setVal2(size_t i, float x) { return setSoA1<float>(kVal2Key, i, x); }
-  bool hasVal2() const  { return hasSoA<float>(kVal2Key, 1); }
-
   int nAllQ = 0;
   int nUIQ  = 0;
   std::array<QuantityId, kMaxQ> allQ;
@@ -363,42 +417,22 @@ struct ParticleBlock {
       pushAll(q);
     }
 
-    // --- 拡張（存在するときだけ）---
-    if (hasBfield()) {
-      pushAll(QuantityId::B);
-      pushUI(QuantityId::B);
+    auto push_if_has = [&](const auto& view, QuantityId q) {
+      if (hasSoAAs(view)) {
+	pushAll(q);
+	pushUI(q);
+      }
+    };
 
-      pushAll(QuantityId::Beta);
-      pushUI(QuantityId::Beta);
-    }
-    if (hasMetallicity()) {
-      pushAll(QuantityId::Metallicity);
-      pushUI(QuantityId::Metallicity);
-    }
-    if (hasElectronAbundance()) {
-      pushAll(QuantityId::ElectronAbundance);
-      pushUI(QuantityId::ElectronAbundance);
-    }
-    if (hasH2Abundance()) {
-      pushAll(QuantityId::H2Abundance);
-      pushUI(QuantityId::H2Abundance);
-    }
-    if (hasHDAbundance()) {
-      pushAll(QuantityId::HDAbundance);
-      pushUI(QuantityId::HDAbundance);
-    }
-    if (hasJ21()) {
-      pushAll(QuantityId::J21);
-      pushUI(QuantityId::J21);
-    }
-    if (hasVal1()) {
-      pushAll(QuantityId::Val);
-      pushUI(QuantityId::Val);
-    }
-    if (hasVal2()) {
-      pushAll(QuantityId::Val2);
-      pushUI(QuantityId::Val2);
-    }
+    push_if_has(soa_views::Bfield,            QuantityId::B);
+    push_if_has(soa_views::Bfield,            QuantityId::Beta);
+    push_if_has(soa_views::Metallicity,       QuantityId::Metallicity);
+    push_if_has(soa_views::ElectronAbundance, QuantityId::ElectronAbundance);
+    push_if_has(soa_views::H2Abundance,       QuantityId::H2Abundance);
+    push_if_has(soa_views::HDAbundance,       QuantityId::HDAbundance);
+    push_if_has(soa_views::J21,               QuantityId::J21);
+    push_if_has(soa_views::Val1,              QuantityId::Val);
+    push_if_has(soa_views::Val2,              QuantityId::Val2);    
   }
 };
 
@@ -424,6 +458,10 @@ public:
   float getHaloValue(const std::string &var) const;
 };
 
+struct HaloCatalog {
+  TrackingVector<HaloData> haloes;
+  std::vector<std::vector<uint64_t>> haloIDs;   // haloes.size() と同じ
+};
 
 class ClumpData {
 public:
@@ -516,9 +554,12 @@ inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size
       out[0]=p.vel[0]; out[1]=p.vel[1]; out[2]=p.vel[2]; return true;
     }
     case VectorId::Bfield: {
-      const float* B = blk.getBfield((size_t)ipart);
-      if (!B){ out[0] = out[1] = out[2] = 0.;}
-      else{ out[0]=B[0];out[1]=B[1];out[2]=B[2];}
+      float B[3];
+      out[0] = out[1] = out[2] = 0.;
+      if(blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)){
+	out[0]=B[0];out[1]=B[1];out[2]=B[2];
+      }
+      return true;
     }
   }
   return false;
@@ -526,134 +567,127 @@ inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size
 
 inline void setVectorValue(ParticleBlock& blk, ParticleData& p, size_t ipart, VectorId v, const float in[3]) {
   switch (v) {
-    case VectorId::OriginalPos:
-      p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2]; 
-      return;
-    case VectorId::Pos:
-      p.pos[0]=in[0]; p.pos[1]=in[1]; p.pos[2]=in[2]; 
-      return;
-    case VectorId::Vel:
-      p.vel[0]=in[0]; p.vel[1]=in[1]; p.vel[2]=in[2];
-      return;
-    case VectorId::Bfield:
-      if (blk.hasBfield()) blk.setBfield(ipart, in);
-      return;
+  case VectorId::OriginalPos:
+    p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2]; 
+    return;
+  case VectorId::Pos:
+    p.pos[0]=in[0]; p.pos[1]=in[1]; p.pos[2]=in[2]; 
+    return;
+  case VectorId::Vel:
+    p.vel[0]=in[0]; p.vel[1]=in[1]; p.vel[2]=in[2];
+    return;
+  case VectorId::Bfield: {
+    float tmp[3] = {in[0], in[1], in[2]};
+    blk.writeSoAAs(soa_views::Bfield, ipart, tmp);
+    return;
+  }
   }
 }
 
 inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
   switch (q) {
-    case QuantityId::Density:     return p.density;
-    case QuantityId::Temperature: return p.temperature;
-    case QuantityId::Mass:
-      return p.mass;  // ←あなたの ParticleData に合わせて修正
+  case QuantityId::Density:     return p.density;
+  case QuantityId::Temperature: return p.temperature;
+  case QuantityId::Mass:
+    return p.mass;  // ←あなたの ParticleData に合わせて修正
 
-    case QuantityId::Hsml:
-      return p.Hsml;
+  case QuantityId::Hsml:
+    return p.Hsml;
 
-    case QuantityId::PosX:        return p.original_pos[0]; // or p.original_pos[0]
-    case QuantityId::PosY:        return p.original_pos[1];
-    case QuantityId::PosZ:        return p.original_pos[2];
+  case QuantityId::PosX:        return p.original_pos[0]; // or p.original_pos[0]
+  case QuantityId::PosY:        return p.original_pos[1];
+  case QuantityId::PosZ:        return p.original_pos[2];
 
-    case QuantityId::Radius: {
-      const float cx = center ? center[0] : 0.0f;
-      const float cy = center ? center[1] : 0.0f;
-      const float cz = center ? center[2] : 0.0f;
+  case QuantityId::Radius: {
+    const float cx = center ? center[0] : 0.0f;
+    const float cy = center ? center[1] : 0.0f;
+    const float cz = center ? center[2] : 0.0f;
 
-      const float dx = p.original_pos[0] - cx;   // 必要なら original_pos に
-      const float dy = p.original_pos[1] - cy;
-      const float dz = p.original_pos[2] - cz;
-      return std::sqrt(dx*dx + dy*dy + dz*dz);
-    }
+    const float dx = p.original_pos[0] - cx;   // 必要なら original_pos に
+    const float dy = p.original_pos[1] - cy;
+    const float dz = p.original_pos[2] - cz;
+    return std::sqrt(dx*dx + dy*dy + dz*dz);
+  }
 
-    case QuantityId::VRad: {
-      const float cx = center ? center[0] : 0.0f;
-      const float cy = center ? center[1] : 0.0f;
-      const float cz = center ? center[2] : 0.0f;
+  case QuantityId::VRad: {
+    const float cx = center ? center[0] : 0.0f;
+    const float cy = center ? center[1] : 0.0f;
+    const float cz = center ? center[2] : 0.0f;
 
-      const float vcx = vcenter ? vcenter[0] : 0.0f;
-      const float vcy = vcenter ? vcenter[1] : 0.0f;
-      const float vcz = vcenter ? vcenter[2] : 0.0f;
+    const float vcx = vcenter ? vcenter[0] : 0.0f;
+    const float vcy = vcenter ? vcenter[1] : 0.0f;
+    const float vcz = vcenter ? vcenter[2] : 0.0f;
 
-      const float dx = p.original_pos[0] - cx;
-      const float dy = p.original_pos[1] - cy;
-      const float dz = p.original_pos[2] - cz;
+    const float dx = p.original_pos[0] - cx;
+    const float dy = p.original_pos[1] - cy;
+    const float dz = p.original_pos[2] - cz;
       
-      const float dvx = (p.original_pos[0] - cx) * (p.vel[0] - vcx);
-      const float dvy = (p.original_pos[1] - cy) * (p.vel[1] - vcy);
-      const float dvz = (p.original_pos[2] - cz) * (p.vel[2] - vcz);
-      return (dvx + dvy + dvz)/sqrt(dx*dx + dy*dy + dz*dz);
-    }
+    const float dvx = (p.original_pos[0] - cx) * (p.vel[0] - vcx);
+    const float dvy = (p.original_pos[1] - cy) * (p.vel[1] - vcy);
+    const float dvz = (p.original_pos[2] - cz) * (p.vel[2] - vcz);
+    return (dvx + dvy + dvz)/sqrt(dx*dx + dy*dy + dz*dz);
+  }
+
+  case QuantityId::B: {
+    float B[3];
+    if (!blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)) return 0.0f;
+    return std::sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
+  }
+  case QuantityId::Beta: {
+    float B[3];
+    if (!blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)) return 0.0f;
+
+    const float B2 = B[0]*B[0] + B[1]*B[1] + B[2]*B[2];
+    if (B2 <= 0.0f) return 0.0f;
+
+    float felec = 0.0f;
+    blk.readSoAAs(soa_views::ElectronAbundance, (size_t)ipart, felec);
+
+    float fH2 = 0.0f;
+    blk.readSoAAs(soa_views::H2Abundance, (size_t)ipart, fH2);
+
+    const double mu = 1.0 / (1.0 + XHe + felec - fH2);
+    const float beta = (float)(
+			       8.0 * M_PI * BOLTZMANN * p.temperature * p.density * mu / B2
+			       );
+    return beta;
+  }
+  case QuantityId::Metallicity: {
+    float z;
+    if (!blk.readSoAAs(soa_views::Metallicity, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::ElectronAbundance: {
+    float z;
+    if (!blk.readSoAAs(soa_views::ElectronAbundance, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::H2Abundance: {
+    float z;
+    if (!blk.readSoAAs(soa_views::H2Abundance, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::HDAbundance: {
+    float z;
+    if (!blk.readSoAAs(soa_views::HDAbundance, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::J21: {
+    float z;
+    if (!blk.readSoAAs(soa_views::J21, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::Val: {
+    float z;
+    if (!blk.readSoAAs(soa_views::Val1, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
+  case QuantityId::Val2: {
+    float z;
+    if (!blk.readSoAAs(soa_views::Val2, (size_t)ipart, z)) return 0.0f;
+    return z;
+  }
       
-    case QuantityId::B: {
-      const float* B = blk.getBfield((size_t)ipart);
-      if (!B) return 0.0f;
-      return std::sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]); // 例: |B|
-    }
-
-    case QuantityId::Beta: {
-      const float* B = blk.getBfield((size_t)ipart);
-      if (!B) return 0.0f;
-      
-      float felec = 0.0f;
-      if (blk.hasElectronAbundance()) {
-	const float* p = blk.getElectronAbundance((size_t)ipart);
-	if (p) felec = *p;  // getH2Abundance が nullptr を返す可能性があるなら保険
-      }
-      
-      float fH2 = 0.0f;
-      if (blk.hasElectronAbundance()) {
-	const float* p = blk.getH2Abundance((size_t)ipart);
-	if (p) fH2 = *p;  // getH2Abundance が nullptr を返す可能性があるなら保険
-      }
-            
-      double mu = 1. / (1 + XHe + felec - fH2);
-      float beta = (float) (8 * M_PI * BOLTZMANN * p.temperature * p.density * mu / (B[0]*B[0] + B[1]*B[1] + B[2]*B[2])); 
-
-      return beta;
-    }
-
-    case QuantityId::Metallicity: {
-      const float* Z = blk.getMetallicity((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-
-    case QuantityId::ElectronAbundance: {
-      const float* Z = blk.getElectronAbundance((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-
-    case QuantityId::H2Abundance: {
-      const float* Z = blk.getH2Abundance((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-
-    case QuantityId::HDAbundance: {
-      const float* Z = blk.getHDAbundance((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-
-    case QuantityId::J21: {
-      const float* Z = blk.getJ21((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-
-    case QuantityId::Val: {
-      const float* Z = blk.getVal1((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }
-      
-    case QuantityId::Val2: {
-      const float* Z = blk.getVal2((size_t)ipart);
-      if (!Z) return 0.0f;
-      return Z[0];
-    }      
   }
   return 0.0f;
 }
@@ -673,10 +707,10 @@ inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, Qu
       p.Hsml = x;
       return;
     case QuantityId::Val:
-      if (blk.hasVal1()) blk.setVal1(ipart, x);
+      blk.writeSoAAs(soa_views::Val1, ipart, x);
       return;
     case QuantityId::Val2:
-      if (blk.hasVal2()) blk.setVal2(ipart, x);
+      blk.writeSoAAs(soa_views::Val2, ipart, x);
       return;
     default:
       // Radius/VRad/B など “派生量” は set 不可でOK（Bridgeでdirty対象にしない）
@@ -689,7 +723,6 @@ extern QuantityId selectedQuantity[6];
 
 class ParticleArray {
 private:
-  bool showWindowHaloes = false;
   CameraContext& camCtx;  
   int particleBlock_index; //current index in batch file list
   
@@ -735,6 +768,27 @@ public:
   TrackingVector<uint8_t> flag_mask;
   
   TrackingVector<HaloData> Haloes;
+  std::vector<std::vector<uint64_t>> haloIDs;   // size = Haloes.size() or empty
+  std::vector<uint8_t> haloChecked;            // 0/1
+  bool haloIDsLoaded = false;
+
+  void ApplyHaloStress(int iHalo, bool on)
+  {
+    if (!haloIDsLoaded) return;
+    if (iHalo < 0 || iHalo >= (int)haloIDs.size()) return;
+    
+    const uint8_t v = on ? 1 : 0;
+    
+    for (uint64_t pid : haloIDs[iHalo]) {
+      size_t ip = particleBlock.findIndexByID(pid);
+      if (ip == (size_t)-1) continue;
+      particleBlock.particles[ip].flag_stress = v;
+    }
+    particlesDirty = true;
+  }
+
+  void recomputeHaloPositionsFromParticles(bool useMassWeight, bool useOriginalPos, int  minParticles);
+    
   TrackingVector<ClumpData> Clumps;
   std::string fname_clump_file;
   bool flag_follow_clump_center = false;
@@ -744,7 +798,15 @@ public:
   bool flag_follow_particle_ID = false;
   int TargetParticleID;
 
-  bool findParticleID(int ID, float *pos);
+  bool findParticleID(int ID, float *pos)
+  {
+    size_t ip = particleBlock.findIndexByID((uint64_t)(int64_t)ID);
+    if (ip == (size_t)-1) return false;
+    
+    const auto &p = particleBlock.particles[ip];
+    pos[0] = p.pos[0]; pos[1] = p.pos[1]; pos[2] = p.pos[2];
+    return true;
+  }
   
   void rescalePositions(){
     if (originalMax > 0) {
@@ -766,12 +828,7 @@ public:
   };
   
   void swap_particles(TrackingVector<ParticleBlock>& batchP, int ibatch, int flag_reset);
-  void computeStellarDensity(int type, bool flag_overwirte_hsml);
-
-  void ShowHaloesUI();
-  void showWindowHaloList(){
-    showWindowHaloes = true;
-  };
+  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml);
 
   int readClumpData(int snapshotIndex);
 
@@ -792,5 +849,30 @@ public:
     virtual ~IConvexHull() = default;
     // 3次元の点が凸包内部にあるかどうかを判定するメソッド
     virtual bool isInside(const std::array<double, 3>& pt) const = 0;
+};
+
+
+struct MaskUIState {
+  bool showWindow = false;   // ★追加：表示/非表示
+
+  // sphere
+  bool  enableSphere = false;
+  float center[3] = {0,0,0};
+  float radius = 0.0f;
+
+  enum class OutsideMode : int { Drop=0, Thin=1, KeepAll=2 };
+  OutsideMode outsideMode = OutsideMode::Drop;
+  int outsideStride = 10;
+
+  enum class TypeMode : int { Off=0, On_NoThin=1, On_ThinOK=2 };
+  TypeMode typeMode[6] = { TypeMode::On_ThinOK, TypeMode::On_ThinOK,
+                           TypeMode::On_NoThin, TypeMode::On_NoThin,
+                           TypeMode::On_NoThin, TypeMode::On_NoThin };
+
+  bool enableMaxParticles = false;
+  int  maxParticles = 2'000'000;
+
+  bool autoApply = true;
+  uint64_t revision = 0;
 };
 #endif

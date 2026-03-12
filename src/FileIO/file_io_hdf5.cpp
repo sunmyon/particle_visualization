@@ -50,177 +50,167 @@ void readDatasetHdf5(H5::Group &group,
   }
 };
 
-
-//-----------------------------------------------------------
-// readHaloFromHDF5():
-//   - snapshot番号を受け取り、"fof_tab_%03d.hdf5" を開く
-//   - 指定した halo ID の行を検索し、mass / center / radius などを取得して outData に格納
-//   - ファイル構造は実際のHDF5のデータセットに合わせて書き換えてください
-//-----------------------------------------------------------
-TrackingVector<HaloData> FileInfo::readHaloFromHDF5(char *fbuf, int snapshotNumber)
+static void readIDDatasetAsU64(H5::DataSet& ds, std::vector<uint64_t>& out)
 {
-  // 1) ファイル名を組み立て
-  char fname[128];
-  std::snprintf(fname, sizeof(fname), "%s/fof_tab_%03d.hdf5", fbuf, snapshotNumber);
+  H5::DataSpace sp = ds.getSpace();
+  hsize_t dims[1]; sp.getSimpleExtentDims(dims, nullptr);
+  out.resize((size_t)dims[0]);
+
+  H5::DataType dt = ds.getDataType();
+  if (dt.getClass() != H5T_INTEGER)
+    throw std::runtime_error("ID dataset is not integer");
+
+  H5::IntType it(dt.getId());
+  const size_t nbytes = it.getSize();          // 4 or 8
+  const bool isSigned = (it.getSign() == H5T_SGN_2);
+
+  if (nbytes == 4 && isSigned) {
+    std::vector<int32_t> tmp(out.size());
+    ds.read(tmp.data(), H5::PredType::NATIVE_INT32);
+    for (size_t i=0;i<tmp.size();++i) out[i] = (uint64_t)(int64_t)tmp[i];
+  } else if (nbytes == 4 && !isSigned) {
+    std::vector<uint32_t> tmp(out.size());
+    ds.read(tmp.data(), H5::PredType::NATIVE_UINT32);
+    for (size_t i=0;i<tmp.size();++i) out[i] = (uint64_t)tmp[i];
+  } else if (nbytes == 8 && isSigned) {
+    std::vector<int64_t> tmp(out.size());
+    ds.read(tmp.data(), H5::PredType::NATIVE_INT64);
+    for (size_t i=0;i<tmp.size();++i) out[i] = (uint64_t)tmp[i];
+  } else if (nbytes == 8 && !isSigned) {
+    ds.read(out.data(), H5::PredType::NATIVE_UINT64);
+  } else {
+    throw std::runtime_error("Unsupported integer size for ID dataset");
+  }
+}
+
+
+HaloCatalog FileInfo::readHaloCatalogFromHDF5(char *fname, bool loadIDs /*=true*/)
+{
+  HaloCatalog out;
 
   try {
-    // 2) HDF5ファイルを開く
     H5::H5File file(fname, H5F_ACC_RDONLY);
 
-    char buf[255];
-    snprintf(buf, sizeof(buf), "/Group");   
-
-    if(!groupExists(file, buf)){
-      std::cout << buf << " does not exist. Skipping.\n";
+    const char* gpath = "/Group";
+    if(!groupExists(file, gpath)){
+      std::cout << gpath << " does not exist. Skipping.\n";
+      return out;
     }
-    
-    // ファイルを開く
-    // PartType0グループ
-    H5::Group grp = file.openGroup(buf);    
-      
-    //-----------------------------
-    // (a) 粒子数 N を決める
-    //     例として Coordinates の shape=(N,3) から取得
-    //-----------------------------
-    // まず、halo 数を決めるため、たとえば "GroupPos" の shape を参照（(N,3) と仮定）
+    H5::Group grp = file.openGroup(gpath);
+
+    // --- halo数（例: GroupPos から）
     H5::DataSet posDS = grp.openDataSet("GroupPos");
     H5::DataSpace posSpace = posDS.getSpace();
-    hsize_t posDims[2];
-    posSpace.getSimpleExtentDims(posDims, nullptr);
-    size_t nHalos = posDims[0];
-    
-    // HaloData 配列を確保
-    TrackingVector<HaloData> haloes(nHalos);
+    hsize_t posDims[2]; posSpace.getSimpleExtentDims(posDims, nullptr);
+    const size_t nHalos = (size_t)posDims[0];
 
-    //-----------------------------
-    // (b) Coordinates → p[i].pos
-    //-----------------------------
+    out.haloes = TrackingVector<HaloData>(nHalos);
+
+    // --- まず GroupLen を読む（IDs切り出しに必要）
+    std::vector<int> groupLen(nHalos, 0);
     {
-      // 先に readVector3 でバッファを読み込み
-      // setter(lambda) 内で pos[] にコピー
-      readDatasetHdf5<HaloData, float, 3>(
-					  grp, "GroupPos", haloes,
-					  [](HaloData &p, const float xyz[3]){
-					    p.GroupPos[0] = xyz[0];
-					    p.GroupPos[1] = xyz[1];
-					    p.GroupPos[2] = xyz[2];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
-    }
-    
-    //-----------------------------
-    // (c) Velocities → p[i].vel
-    //-----------------------------
-    {
-      readDatasetHdf5<HaloData, float, 3>(
-					  grp, "GroupVel", haloes,
-					  [](HaloData &p, const float v[3]){
-					    p.GroupVel[0] = v[0];
-					    p.GroupVel[1] = v[1];
-					    p.GroupVel[2] = v[2];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
+      // 既存のテンプレ readDatasetHdf5 を使って haloes[i].GroupLen に入れても良いが、
+      // ID切り出し用に vector<int> も欲しいので、ここは直接読むのが便利
+      H5::DataSet lenDS = grp.openDataSet("GroupLen");
+      lenDS.read(groupLen.data(), H5::PredType::NATIVE_INT);
+
+      for (size_t i=0;i<nHalos;i++) out.haloes[i].GroupLen = groupLen[i];
     }
 
-    //-----------------------------
-    // (g) Mass → p[i].mass
-    //-----------------------------
-    {
-      readDatasetHdf5<HaloData, float, 1>(
-					  grp, "GroupMass", haloes,
-					  [](HaloData &p, const float m[1]){
-					    p.GroupMass = m[0];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
-    }
+    // --- GroupPos
+    readDatasetHdf5<HaloData, float, 3>(
+      grp, "GroupPos", out.haloes,
+      [](HaloData &p, const float xyz[3]){
+        p.GroupPos[0]=xyz[0]; p.GroupPos[1]=xyz[1]; p.GroupPos[2]=xyz[2];
+      },
+      H5::PredType::NATIVE_FLOAT
+    );
 
-    
-    //-----------------------------
-    // (g) Mass → p[i].mass
-    //-----------------------------
-    {
-      readDatasetHdf5<HaloData, float, 6>(
-					  grp, "GroupMassType", haloes,
-					  [](HaloData &p, const float m[6]){
-					    p.GroupMassType[0] = m[0];
-					    p.GroupMassType[1] = m[1];
-					    p.GroupMassType[2] = m[2];
-					    p.GroupMassType[3] = m[3];
-					    p.GroupMassType[4] = m[4];
-					    p.GroupMassType[5] = m[5];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
-    }
+    // --- GroupVel
+    readDatasetHdf5<HaloData, float, 3>(
+      grp, "GroupVel", out.haloes,
+      [](HaloData &p, const float v[3]){
+        p.GroupVel[0]=v[0]; p.GroupVel[1]=v[1]; p.GroupVel[2]=v[2];
+      },
+      H5::PredType::NATIVE_FLOAT
+    );
 
-    //-----------------------------
-    // (g) Mass → p[i].mass
-    //-----------------------------
-    {
-      readDatasetHdf5<HaloData, int, 1>(
-					  grp, "GroupLen", haloes,
-					  [](HaloData &p, const int m[1]){
-					    p.GroupLen = m[0];
-					  },
-					  H5::PredType::NATIVE_INT
-					  );	
-    }
+    // --- GroupMass
+    readDatasetHdf5<HaloData, float, 1>(
+      grp, "GroupMass", out.haloes,
+      [](HaloData &p, const float m[1]){ p.GroupMass = m[0]; },
+      H5::PredType::NATIVE_FLOAT
+    );
 
-    
-    //-----------------------------
-    // (g) Len → p[i].mass
-    //-----------------------------
-    {
+    // --- GroupMassType
+    readDatasetHdf5<HaloData, float, 6>(
+      grp, "GroupMassType", out.haloes,
+      [](HaloData &p, const float m[6]){
+        for(int k=0;k<6;k++) p.GroupMassType[k]=m[k];
+      },
+      H5::PredType::NATIVE_FLOAT
+    );
+
+    // --- GroupLenType
+    if (H5Lexists(grp.getId(), "GroupLenType", H5P_DEFAULT) > 0) {
       readDatasetHdf5<HaloData, int, 6>(
-					  grp, "GroupLenType", haloes,
-					  [](HaloData &p, const int m[6]){
-					    p.GroupLenType[0] = m[0];
-					    p.GroupLenType[1] = m[1];
-					    p.GroupLenType[2] = m[2];
-					    p.GroupLenType[3] = m[3];
-					    p.GroupLenType[4] = m[4];
-					    p.GroupLenType[5] = m[5];
-					  },
-					  H5::PredType::NATIVE_INT
-					  );	
+        grp, "GroupLenType", out.haloes,
+        [](HaloData &p, const int m[6]){
+          for(int k=0;k<6;k++) p.GroupLenType[k]=m[k];
+        },
+        H5::PredType::NATIVE_INT
+      );
     }
 
-    //-----------------------------
-    // (g) Mass → p[i]GroupMetallicity
-    //-----------------------------
-    {
+    // --- metallicity 2本
+    if (H5Lexists(grp.getId(), "GroupGasMetallicity", H5P_DEFAULT) > 0) {
       readDatasetHdf5<HaloData, float, 1>(
-					  grp, "GroupGasMetallicity", haloes,
-					  [](HaloData &p, const float m[1]){
-					    p.GroupMetallicity[0] = m[0];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
+        grp, "GroupGasMetallicity", out.haloes,
+        [](HaloData &p, const float z[1]){ p.GroupMetallicity[0]=z[0]; },
+        H5::PredType::NATIVE_FLOAT
+      );
+    }
+    if (H5Lexists(grp.getId(), "GroupStarMetallicity", H5P_DEFAULT) > 0) {
+      readDatasetHdf5<HaloData, float, 1>(
+        grp, "GroupStarMetallicity", out.haloes,
+        [](HaloData &p, const float z[1]){ p.GroupMetallicity[1]=z[0]; },
+        H5::PredType::NATIVE_FLOAT
+      );
     }
 
-        //-----------------------------
-    // (g) Mass → [i]GroupStellarMetallicity
-    //-----------------------------
-    {
-      readDatasetHdf5<HaloData, float, 1>(
-					  grp, "GroupStarMetallicity", haloes,
-					  [](HaloData &p, const float m[1]){
-					    p.GroupMetallicity[1] = m[0];
-					  },
-					  H5::PredType::NATIVE_FLOAT
-					  );	
+    // --- IDs も同じ関数内で読む（必要な時だけ）
+    if (loadIDs) {
+      if (H5Lexists(grp.getId(), "ID", H5P_DEFAULT) <= 0)
+        throw std::runtime_error("Dataset /Group/ID not found");
+
+      H5::DataSet idDS = grp.openDataSet("ID");
+      std::vector<uint64_t> allIDs;
+      readIDDatasetAsU64(idDS, allIDs);
+
+      // prefix-sum offsets
+      std::vector<uint64_t> offset(nHalos+1, 0);
+      for (size_t i=0;i<nHalos;i++) offset[i+1] = offset[i] + (uint64_t)groupLen[i];
+
+      if (offset.back() != (uint64_t)allIDs.size())
+        throw std::runtime_error("ID size mismatch: sum(GroupLen) != ID.size()");
+
+      out.haloIDs.resize(nHalos);
+      for (size_t i=0;i<nHalos;i++) {
+        uint64_t a = offset[i], b = offset[i+1];
+        out.haloIDs[i].assign(allIDs.begin()+a, allIDs.begin()+b);
+      }
     }
-    
 
     file.close();
-    return haloes;
+    return out;
   }
   catch(const H5::Exception &err) {
-    std::fprintf(stderr, "HDF5 Error in readHaloFromHDF5: %s\n", err.getCDetailMsg());
-    return TrackingVector<HaloData>();
+    std::fprintf(stderr, "HDF5 Error in readHaloCatalogFromHDF5: %s\n", err.getCDetailMsg());
+    return HaloCatalog{};
+  }
+  catch(const std::exception &e) {
+    std::fprintf(stderr, "Error in readHaloCatalogFromHDF5: %s\n", e.what());
+    return HaloCatalog{};
   }
 }
 #endif

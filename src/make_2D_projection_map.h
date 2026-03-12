@@ -12,6 +12,19 @@
 #include <omp.h>
 #endif
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <imgui.h>
+
 // GLM 関連
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -20,19 +33,78 @@
 struct ProjectionImage {
   int width = 0;
   int height = 0;
-  uint64_t version = 0; 
+  uint64_t version = 0;
   TrackingVector<uint8_t> rgb; // size = width*height*3, RGB8
 };
 
-// もし外部で定義されるカラーマップがあれば、宣言しておく（例: jetMap, viridisMap, plasmaMap）
-extern const float jetMap[];
-extern const float viridisMap[];
-extern const float plasmaMap[];
+enum class DataSource : int { Gas = 0, DM = 1, Stars = 2 };
+enum class StarQuantity : int { Density=0, Metallicity=1, Mass=2, Flux=3 };
 
 struct FluxSettings {
   float band_center_nm = 1500.0f;
   float band_width_nm  = 200.0f;
 };
+
+struct ProjectionMapParams {
+  int npixel = 200;
+
+  float xlen[3] = {2.f, 2.f, 1.f};
+  float xoffset[3] = {0.f, 0.f, 0.f};
+  float tilt[3] = {0.f, 0.f, 0.f};
+
+  bool flagDensityWeight = true;
+  bool flagVoronoi = true;
+  int step_z = 200;
+
+  bool flagLogScale = true;
+  bool autoRange = true;
+  float range_min = 0.0f;
+  float range_max = 1.0f;
+
+  bool flagShowStarParticles = true;
+  bool flagShowCuboid = false;
+
+  bool flagSpecifyZoomRegionByMass = false;
+  bool flagScaleOriginalCoordinateZoomRegion = true;
+  float criticalGasMassForZoomRegion = 0.0f;
+  float lenZoomRegion = 0.0f;
+
+  bool flagPlaceScale = false;
+  bool flagScaleOriginalCoordinate = true;
+  float arrowLenX = 100.0f;
+  char arrowLabelStr[255] = "100 au";
+
+  bool flagTimeLabel = true;
+  bool flagUseRedshift = false;
+  char timeFormatBuf[255] = "t=%.3f";
+
+  char fileFormat[255] = "image_%04d.png";
+  char folderPath[255] = "./output";
+
+  std::string var;
+
+  int selectedAxis = 2;
+  int selectedType = 0;
+  int colormapindex = 0;
+
+  float factorShownTimeInUnitTime = 1.0f;
+
+  DataSource dataSource = DataSource::Gas;
+  StarQuantity starQuantity = StarQuantity::Density;
+  FluxSettings flux;
+  float psf_sigma_pix = 1.5f;
+  QuantityId selectedVarGas = QuantityId::Density;
+
+  char filterExpr[256] = "return m > 10.0";
+  char pointSizeExpr[256] = "return m / 10.0";
+  char pointColorExpr[256] = "return { r = m/100.0, g = 0.5, b = 0.2, a = 1.0 }";
+  char minValueExpr[32] = "return 0.0";
+  char maxValueExpr[32] = "return 1.0";
+};
+
+extern const float jetMap[];
+extern const float viridisMap[];
+extern const float plasmaMap[];
 
 struct pos_val {
   float pos[3];
@@ -43,10 +115,6 @@ struct pos_val {
 };
 
 class ProjectionMapGenerator {
-public:
-  enum class DataSource : int { Gas = 0, DM = 1, Stars = 2 };
-  enum class StarQuantity : int { Density=0, Metallicity=1, Mass=2, Flux=3 };
-  
 private:
   ProjectionImage image_;
   bool flag_image_ = false;
@@ -54,23 +122,18 @@ private:
   uint64_t nextVersion_ = 1;
   char type_ = 0;
 
-  DataSource dataSource_ = DataSource::Gas;
-  StarQuantity starQuantity_ = StarQuantity::Density;
-  FluxSettings flux_;
-  float psf_sigma_pix_ = 1.5f;
-
-  struct ProjectionMap {    
-    int npixel, npixel_x, npixel_y, npixel_z;
-    float xlen[3], xmin[3];
-    float dx, dy, dz;
-    float cell_size;
-    float minVal, maxVal;
-    bool flagDensityWeight;
-    bool flagLogScale;
-    glm::vec3 center;
-    glm::vec3 uAxis, vAxis, wAxis;
-    TrackingVector<double> values; // row-major order, size = width * height
-    TrackingVector<double> weights; // row-major order, size = width * height
+  struct ProjectionMap {
+    int npixel = 0, npixel_x = 0, npixel_y = 0, npixel_z = 0;
+    float xlen[3] = {0.f, 0.f, 0.f}, xmin[3] = {0.f, 0.f, 0.f};
+    float dx = 0.f, dy = 0.f, dz = 0.f;
+    float cell_size = 0.f;
+    float minVal = 0.f, maxVal = 0.f;
+    bool flagDensityWeight = false;
+    bool flagLogScale = false;
+    glm::vec3 center = glm::vec3(0.f);
+    glm::vec3 uAxis = glm::vec3(1.f,0.f,0.f), vAxis = glm::vec3(0.f,1.f,0.f), wAxis = glm::vec3(0.f,0.f,1.f);
+    TrackingVector<double> values;
+    TrackingVector<double> weights;
     TrackingVector<unsigned char> image;
   };
 
@@ -78,87 +141,36 @@ private:
   void createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles);
   void createStarMap(ProjectionMap &map, const TrackingVector<pos_val>& particles, float sigma_pix, bool normalize);
 
-  QuantityId selectedVarGas_ = QuantityId::Density;
-  
 public:
-  int npixel = 200;
-  float xlen[3] = {2.,2.,1.};
-  float xoffset[3] = {0.,0.,0.};
-  float tilt[3] = {0.,0.,0.};
+  ProjectionMapParams params;
 
-  HeaderInfo Header;  
-  
-  bool flagDensityWeight = true;
-  bool flagVoronoi = true;
-  int step_z = 200;
-  bool flagLogScale = true;
-  bool autoRange = true;
-  float range_min = 0.0f;
-  float range_max = 1.0f;
-  bool flagShowStarParticles = true;  
-  bool flagShowCuboid = false;
+  HeaderInfo Header;
   bool flagFontLoaded = false;
-  bool showWindowProjection = false;
   bool showWindowSelectFont = false;
-
-  bool flagSpecifyZoomRegionByMass = false;
-  bool flagScaleOriginalCoordinateZoomRegion = true;
-  float criticalGasMassForZoomRegion;
-  float lenZoomRegion;
-  
-  bool flagPlaceScale = false;
-  bool flagScaleOriginalCoordinate = true;
-  float arrowLenX=100.;
-  char arrowLabelStr[255]="100 au";
-
-  bool flagTimeLabel = true;
-  bool flagUseRedshift = false;
-  char timeFormatBuf[255] = "t=%.3f";
-  
-  double originalMax;
-  double desiredMax;
-
-  // ファイル名のフォーマットとフォルダパス
-  char fileFormat[255] = "image_%04d.png";  // ファイル名のフォーマット（例: image_0001.png）
-  char folderPath[255] = "./output";        // 出力フォルダ
-  
-  std::string var;
-  
-  int selectedAxis = 2;
-  int selectedType = 0;
-  glm::quat cuboidTransform;
-  glm::vec3 center;
-  glm::vec3 planeNormal;
-
-  int colormapindex = 0;  
+  double originalMax = 1.0;
+  double desiredMax = 1.0;
+  glm::quat cuboidTransform = glm::quat(1.f,0.f,0.f,0.f);
+  glm::vec3 center = glm::vec3(0.f);
+  glm::vec3 planeNormal = glm::vec3(0.f,0.f,1.f);
   int countColorMap = 9;
-  const float *colorMap;
-
+  const float *colorMap = jetMap;
   TrackingVector<unsigned char> outImage;
-  int outW, outH;     
+  int outW = 0, outH = 0;
   bool flag2DprojectionComputed = false;
 
-  float factorShownTimeInUnitTime = 1.;
-  
 #ifdef USE_LUA
   lua_State* gLua = nullptr;
   bool flag_init_lua = false;
 #endif
-  
-  // ---------------------------
-  // ImGui 入力用のバッファ
-  char filterExpr[256]      = "return m > 10.0";   // 例: 質量が 10 より大きい粒子のみ描画
-  char pointSizeExpr[256]   = "return m / 10.0";     // 例: 点サイズは質量の 1/10
-  char pointColorExpr[256]  = "return { r = m/100.0, g = 0.5, b = 0.2, a = 1.0 }"; // 例: 点の色（テーブルを返す）
-  char minValueExpr[32]     = "return 0.0";
-  char maxValueExpr[32]     = "return 1.0";
-
-  // 2D projection map の定義
 
   stbtt_fontinfo fontCharacter;
   std::vector<unsigned char> ttf_buffer;
   std::vector<std::string> availableFonts = {};
   std::vector<ImFont*> loadedFonts = {};
+
+  int getFontCount() const;
+  const std::string& getFontPath(int index) const;
+  bool selectFontFileByIndex(int index);
   
   ProjectionMapGenerator();
 
@@ -171,48 +183,49 @@ public:
     image_.width = width;
     image_.height = height;
     image_.rgb = rgb;
-
     flag_image_ = true;
     dirty_ = true;
     image_.version = nextVersion_++;
   }
 
-  const ProjectionImage &getImage() const noexcept{
-    return image_;
+  const ProjectionImage &getImage() const noexcept{ return image_; }
+  bool getImageFlag() const { return flag_image_; }
+
+  void syncStateFromParams() {
+    type_ = static_cast<char>(params.selectedType);
+    center.x = params.xoffset[0];
+    center.y = params.xoffset[1];
+    center.z = params.xoffset[2];
+    cuboidTransform = UpdateTransformFromEuler(params.tilt);
+    planeNormal = glm::normalize(cuboidTransform * glm::vec3(0.f, 0.f, 1.f));
+    switch (params.colormapindex) {
+      case 0: colorMap = jetMap;     countColorMap = 9;  break;
+      case 1: colorMap = viridisMap; countColorMap = 11; break;
+      case 2: colorMap = plasmaMap;  countColorMap = 11; break;
+      default: colorMap = jetMap;    countColorMap = 9;  break;
+    }
   }
 
-  bool getImageFlag(){
-    return flag_image_;
-  }
-  
   glm::vec3 calc_angular_momentum_axis(const TrackingVector<ParticleData>& originalParticles, glm::vec3 &center, float *xlen);
-  
-  void RenderProjectionUI(ParticleArray *P, CameraContext& camCtx, int fileindex);
   void make_density_map(ParticleArray *P, char *filename);
-  
-  // 直方体の8頂点（ローカル座標）を計算し、g_cuboidTransformを適用してワールド座標に変換する関数
-  TrackingVector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);  
+  TrackingVector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);
   glm::quat UpdateTransformFromEuler(float *eulerAngles);
-  
-  float kernel(float u);  
+  float kernel(float u);
 
 #ifdef USE_LUA
   bool EvaluateLuaExpressionNumber(const char* expr, double& outValue);
   bool EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a);
-  bool EvaluateLuaExpressionBool(const char* expr, bool& outValue);  
+  bool EvaluateLuaExpressionBool(const char* expr, bool& outValue);
 #endif
-  
-  void overlayStarParticles(ProjectionMap& map, const TrackingVector<ParticleData>& particles);
-  void showWindow();
-  
-  static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);
 
+  void overlayStarParticles(ProjectionMap& map, const TrackingVector<ParticleData>& particles);
+  static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);
   void addColorBarToMap(const ProjectionMap& map,
-			float minVal, float maxVal,
-			int colorBarWidth,
-			const float *colormap, int countcolormap,
-			TrackingVector<unsigned char>& outImage,
-			int& outW, int& outH, const char *barLabel);
+                        float minVal, float maxVal,
+                        int colorBarWidth,
+                        const float *colormap, int countcolormap,
+                        TrackingVector<unsigned char>& outImage,
+                        int& outW, int& outH, const char *barLabel);
 
   void ShowFontSelectionWindow();
   void initFonts();
@@ -224,207 +237,93 @@ public:
   float stbtt_CalcTextWidth(const stbtt_fontinfo* font, float scale, const char* text);
   void measure_text(const char* text, stbtt_fontinfo* font, float pixelSize, int& outWidth, int& outHeight);
   void measure_text_bbox(const char* text, stbtt_fontinfo* font, float scale, int& outWidth, int& outHeight, float& outMinX, float& outMinY);
-  
   void draw_value_on_image(TrackingVector<unsigned char>& image, int img_width, int img_height,
-			   int pos_x, int pos_y, double value,
-			   stbtt_fontinfo *font, float scale, const char *format);
-
+                           int pos_x, int pos_y, double value,
+                           stbtt_fontinfo *font, float scale, const char *format);
   void draw_text_label_centered(TrackingVector<unsigned char>& image,
-				int img_width, int img_height,
-				int pos_x, int pos_y,
-				const char* text,
-				stbtt_fontinfo* font,
-				float charpixelsize);
-  
+                                int img_width, int img_height,
+                                int pos_x, int pos_y,
+                                const char* text,
+                                stbtt_fontinfo* font,
+                                float charpixelsize);
   void draw_text_rotated_on_image(TrackingVector<unsigned char>& image,
-				  int img_width, int img_height,
-				  int center_x, int center_y,
-				  const char* text,
-				  stbtt_fontinfo *font, float charpixelsize);
-  
+                                  int img_width, int img_height,
+                                  int center_x, int center_y,
+                                  const char* text,
+                                  stbtt_fontinfo *font, float charpixelsize);
   void draw_char(TrackingVector<unsigned char>& image, int img_width, int img_height,
                  int pos_x, int pos_y, int codepoint,
-		 stbtt_fontinfo *font, float scale);
-
+                 stbtt_fontinfo *font, float scale);
   void draw_rotated_char(TrackingVector<unsigned char>& image,
-			 int img_width, int img_height,
-			 int pos_x, int pos_y, int codepoint,
-			 stbtt_fontinfo *font, float scale);
-
+                         int img_width, int img_height,
+                         int pos_x, int pos_y, int codepoint,
+                         stbtt_fontinfo *font, float scale);
   void drawTextBaselineAndRotate90(TrackingVector<unsigned char>& image,
-				  int img_width, int img_height,
-				  int center_x, int center_y,
-				  const char* text,
-				  stbtt_fontinfo *font, float charpixelsize);
-  
-  void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis, 
-				 const float* pos_center, const float len, const float val_min, const float val_max,
-				 const int npixel_input, const int nslices, std::string var);
+                                   int img_width, int img_height,
+                                   int center_x, int center_y,
+                                   const char* text,
+                                   stbtt_fontinfo *font, float charpixelsize);
+  void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis,
+                                 const float* pos_center, const float len, const float val_min, const float val_max,
+                                 const int npixel_input, const int nslices, std::string var);
 };
 
-
-// Eddington luminosity (H-rich, electron scattering) as Lsun per Msun (approx).
-// You can keep this fixed (no UI knob), consistent with “it’s a star”.
-static inline double Ledd_Lsun(double M_Msun){
-  // ~3.8e4 (M/Msun) Lsun for X~0.7 (order-of-magnitude standard)
-  return 3.8e4 * M_Msun;
-}
-
-// Eker+2018 “very high mass” segment 7–31 Msun: log L = 2.865 log M + 1.105
+static inline double Ledd_Lsun(double M_Msun){ return 3.8e4 * M_Msun; }
 static inline double L_Eker2018_7to31_Lsun(double M_Msun){
-  const double a = 2.865;
-  const double b = 1.105;
-  const double x = std::log10(M_Msun);
+  const double a = 2.865; const double b = 1.105; const double x = std::log10(M_Msun);
   return std::pow(10.0, a*x + b);
 }
-
-// Gräfener+2011 VMS fit (one commonly used coefficient set for H-rich case)
-// log L = (F1+F2 XH) + (F3+F4 XH) x + (F5+F6 XH) x^2, x=log M
 static inline double L_Graefener2011_VMS_Lsun(double M_Msun, double XH=0.7){
   const double x = std::log10(M_Msun);
   const double F1=3.862, F2=-2.486, F3=1.527, F4=1.247, F5=-0.076, F6=-0.183;
   const double y = (F1+F2*XH) + (F3+F4*XH)*x + (F5+F6*XH)*x*x;
   return std::pow(10.0, y);
 }
-
-// Your desired piecewise for SINGLE stars:
-// 10–300: “massive-end realistic” with smooth bridging
-// 300–1e6: Eddington (linear in M)
 static inline double Lbol_single_massive_Lsun(double M_Msun){
   double L;
-  if (M_Msun <= 31.0){
-    L = L_Eker2018_7to31_Lsun(M_Msun);
-  } else if (M_Msun < 60.0){
-    // smooth bridge in log-log between 31 and 60
-    const double M1=31.0, M2=60.0;
-    const double logM = std::log10(M_Msun);
+  if (M_Msun <= 31.0) L = L_Eker2018_7to31_Lsun(M_Msun);
+  else if (M_Msun < 60.0){
+    const double M1=31.0, M2=60.0; const double logM = std::log10(M_Msun);
     const double logL1 = std::log10(L_Eker2018_7to31_Lsun(M1));
     const double logL2 = std::log10(L_Graefener2011_VMS_Lsun(M2, 0.7));
     const double t = (logM-std::log10(M1)) / (std::log10(M2)-std::log10(M1));
     L = std::pow(10.0, logL1 + t*(logL2-logL1));
-  } else if (M_Msun <= 300.0){
-    L = L_Graefener2011_VMS_Lsun(M_Msun, 0.7);
-  } else {
-    L = Ledd_Lsun(M_Msun);
-  }
-
-  // Fixed Eddington cap everywhere (no knob)
-  L = std::min(L, Ledd_Lsun(M_Msun));
-  return L;
+  } else if (M_Msun <= 300.0) L = L_Graefener2011_VMS_Lsun(M_Msun, 0.7);
+  else L = Ledd_Lsun(M_Msun);
+  return std::min(L, Ledd_Lsun(M_Msun));
 }
-
-static inline double Teff_massive_K(double M_Msun)
-{
+static inline double Teff_massive_K(double M_Msun){
   if (M_Msun < 10.0) M_Msun = 10.0;
-
-  // --- 10–300 Msun: 元の上昇モデル ---
-  const double T10  = 25000.0;
-  const double T60  = 45000.0;
-  const double T300 = 55000.0;
-
+  const double T10=25000.0, T60=45000.0, T300=55000.0;
   double T_10_300;
-  if (M_Msun <= 60.0) {
-    const double t = (M_Msun - 10.0) / (60.0 - 10.0);
-    T_10_300 = T10 + t * (T60 - T10);
-  } else {
-    const double m = std::min(M_Msun, 300.0);
-    const double t = (m - 60.0) / (300.0 - 60.0);
-    T_10_300 = T60 + t * (T300 - T60);
-  }
-
-  // --- 300–1000 Msun: とりあえず一定（必要ならここも落としてOK） ---
-  const double Mdrop = 1.0e3;     // ★ここから落とす
-  double T_at_drop;
-  if (M_Msun <= 300.0) {
-    T_at_drop = T_10_300;
-  } else if (M_Msun < Mdrop) {
-    T_at_drop = T300;            // 300–1000は55000Kのまま
-  } else {
-    T_at_drop = T300;            // M=1000での接続温度
-  }
-
-  // --- >=1000 Msun: 6000Kに漸近（logMで指数緩和） ---
-  const double Tinf = 6000.0;
-  const double dex  = 0.30;       // ★減衰の速さ（小さいほど早く6000Kへ）
-                                 // dex=0.30 だと 1e4 Msun で ~7700K 程度
-
-  if (M_Msun <= Mdrop) return T_at_drop;
-
-  const double s = (std::log10(M_Msun) - std::log10(Mdrop)) / dex; // >=0
-  const double T = Tinf + (T_at_drop - Tinf) * std::exp(-s);
-  return T;
+  if (M_Msun <= 60.0) { const double t = (M_Msun - 10.0) / 50.0; T_10_300 = T10 + t * (T60 - T10); }
+  else { const double m = std::min(M_Msun, 300.0); const double t = (m - 60.0) / 240.0; T_10_300 = T60 + t * (T300 - T60); }
+  const double Mdrop = 1.0e3; const double T_at_drop = T300; const double Tinf = 6000.0; const double dex = 0.30;
+  if (M_Msun <= Mdrop) return (M_Msun <= 300.0) ? T_10_300 : T_at_drop;
+  const double s = (std::log10(M_Msun) - std::log10(Mdrop)) / dex;
+  return Tinf + (T_at_drop - Tinf) * std::exp(-s);
 }
-
-static inline double planck_Blambda(double lambda_m, double T_K)
-{
-  // B_lambda [W m^-3 sr^-1]（比だけ使うので絶対値でなくてOK）
-  constexpr double h  = 6.62607015e-34;
-  constexpr double c  = 299792458.0;
-  constexpr double kB = 1.380649e-23;
-
-  const double x = (h*c) / (lambda_m * kB * T_K);
-  if (x > 700.0) return 0.0; // exp overflow guard
-
-  const double expx = std::exp(x);
-  const double denom = expx - 1.0;
-  if (denom <= 0.0) return 0.0;
-
-  const double pref = (2.0*h*c*c) / std::pow(lambda_m, 5);
-  return pref / denom;
+static inline double planck_Blambda(double lambda_m, double T_K){
+  constexpr double h=6.62607015e-34, c=299792458.0, kB=1.380649e-23;
+  const double x = (h*c) / (lambda_m * kB * T_K); if (x > 700.0) return 0.0;
+  const double expx = std::exp(x), denom = expx - 1.0; if (denom <= 0.0) return 0.0;
+  const double pref = (2.0*h*c*c) / std::pow(lambda_m, 5); return pref / denom;
 }
-
-static inline double band_fraction_rect_lambda(double T_K, double lambda0_m, double dlambda_m)
-{
-  // Rectangular band in wavelength: [λ0-Δλ/2, λ0+Δλ/2]
-  constexpr double sigmaSB = 5.670374419e-8;
-  const double sigma_over_pi = sigmaSB / M_PI;
-
-  const double l1 = std::max(1e-12, lambda0_m - 0.5*dlambda_m);
-  const double l2 = lambda0_m + 0.5*dlambda_m;
-  if (l2 <= l1) return 0.0;
-
-  // Simpson integration
-  const int N = 40;                 // 偶数。軽くしたければ 20 でもOK
-  const double hstep = (l2 - l1) / N;
-
-  double sum = 0.0;
-  for (int i = 0; i <= N; i++) {
-    const double l = l1 + i*hstep;
-    const double f = planck_Blambda(l, T_K);
-    const double coeff = (i==0 || i==N) ? 1.0 : (i%2==0 ? 2.0 : 4.0);
-    sum += coeff * f;
-  }
-  const double integral = (hstep/3.0) * sum;
-
-  // ∫ Bλ dλ normalized by (σ/π) T^4  -> fraction of bolometric (for a blackbody)
-  const double norm = sigma_over_pi * std::pow(T_K, 4);
-  if (norm <= 0.0) return 0.0;
-
-  double frac = integral / norm;
-  if (frac < 0.0) frac = 0.0;
-  if (frac > 1.0) frac = 1.0;
-  return frac;
+static inline double band_fraction_rect_lambda(double T_K, double lambda0_m, double dlambda_m){
+  constexpr double sigmaSB = 5.670374419e-8; const double sigma_over_pi = sigmaSB / M_PI;
+  const double l1 = std::max(1e-12, lambda0_m - 0.5*dlambda_m), l2 = lambda0_m + 0.5*dlambda_m; if (l2 <= l1) return 0.0;
+  const int N = 40; const double hstep = (l2 - l1) / N; double sum = 0.0;
+  for (int i = 0; i <= N; i++) { const double l = l1 + i*hstep; const double f = planck_Blambda(l, T_K); const double coeff = (i==0 || i==N) ? 1.0 : (i%2==0 ? 2.0 : 4.0); sum += coeff * f; }
+  const double integral = (hstep/3.0) * sum; const double norm = sigma_over_pi * std::pow(T_K, 4); if (norm <= 0.0) return 0.0;
+  double frac = integral / norm; if (frac < 0.0) frac = 0.0; if (frac > 1.0) frac = 1.0; return frac;
 }
-
-// ---- これが欲しかったやつ ----
-static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs)
-{
-  // Lbol [Lsun]
-  const double Lbol = Lbol_single_massive_Lsun(M_Msun);
-  if (!(Lbol > 0.0) || !std::isfinite(Lbol)) return 0.0;
-
-  // Teff [K]
-  const double Teff = Teff_massive_K(M_Msun);
-  if (!(Teff > 0.0) || !std::isfinite(Teff)) return 0.0;
-
-  // Band definition (nm -> m)
+static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs){
+  const double Lbol = Lbol_single_massive_Lsun(M_Msun); if (!(Lbol > 0.0) || !std::isfinite(Lbol)) return 0.0;
+  const double Teff = Teff_massive_K(M_Msun); if (!(Teff > 0.0) || !std::isfinite(Teff)) return 0.0;
   const double lambda0_m = std::max(1.0, (double)fs.band_center_nm) * 1e-9;
   const double dlambda_m = std::max(1.0, (double)fs.band_width_nm ) * 1e-9;
-
-  // Blackbody rectangular band fraction
   const double frac = band_fraction_rect_lambda(Teff, lambda0_m, dlambda_m);
-
-  return Lbol * frac; // [Lsun]
+  return Lbol * frac;
 }
 
 #endif

@@ -10,6 +10,8 @@
 // GLM 関連
 //#include <glm/gtc/matrix_transform.hpp>
 
+#include <imgui.h>
+
 #include"make_2D_projection_map.h"
 
 #ifdef USE_LUA
@@ -95,28 +97,28 @@ void ProjectionMapGenerator::set_projection_parameters(const TrackingVector<Part
   }
 
   if(len > 0.){
-    params.xlen[0] = len;
-    params.xlen[1] = len;
-    params.xlen[2] = len;
+    xlen[0] = len;
+    xlen[1] = len;
+    xlen[2] = len;
   }
 
   if (!std::isnan(val_min)) {
-    params.range_min = val_min;
-    params.autoRange = false;
+    range_min = val_min;
+    autoRange = false;
   }
   if (!std::isnan(val_max)) {
-    params.range_max = val_max;
-    params.autoRange  = false;
+    range_max = val_max;
+    autoRange  = false;
   }
   
   if (npixel_input > 0) 
-    params.npixel = npixel_input;
+    npixel = npixel_input;
 
   if (nslices > 0) 
-    params.step_z = nslices;
+    step_z = nslices;
   
   if (!var_new.empty())
-    params.var = var_new;
+    var = var_new;
   
   //flagShowStarParticles = true;
   //flagDensityWeight = true;
@@ -125,7 +127,7 @@ void ProjectionMapGenerator::set_projection_parameters(const TrackingVector<Part
   
   if(useAngularMomentumAxis){
     glm::vec3 normal(0.f, 0.f, 1.f);
-    planeNormal = glm::normalize(calc_angular_momentum_axis(originalParticles, center, params.xlen));
+    planeNormal = glm::normalize(calc_angular_momentum_axis(originalParticles, center, xlen));
 
     glm::vec3 v = glm::cross(normal, planeNormal);
     float w = 1.0f + glm::dot(normal, planeNormal);
@@ -215,11 +217,10 @@ glm::vec3 ProjectionMapGenerator::calc_angular_momentum_axis(const TrackingVecto
 
 
 void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
-  syncStateFromParams();
   TrackingVector<ParticleData>& originalParticles = P->particleBlock.particles;
   Header = P->particleBlock.header;
   
-  if(params.flagSpecifyZoomRegionByMass){
+  if(flagSpecifyZoomRegionByMass){
     //construct xmin, xmax, center here
     double xmax_zoom[3] = {-1.e30, -1.e30, -1.e30};
     double xmin_zoom[3] = {1.e30, 1.e30, 1.e30};
@@ -231,7 +232,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
       if(p.type != type_)
 	continue;
       
-      if(p.mass > params.criticalGasMassForZoomRegion)
+      if(p.mass > criticalGasMassForZoomRegion)
 	continue;
       
       for(int k=0;k<3;k++){
@@ -258,8 +259,8 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
 	   );
     
     if(count > 0){
-      float len_zoom = params.lenZoomRegion;
-      if(params.flagScaleOriginalCoordinateZoomRegion)
+      float len_zoom = lenZoomRegion;
+      if(flagScaleOriginalCoordinateZoomRegion)
 	len_zoom *= (desiredMax /originalMax);      
       
       //center.x = 0.5 * (xmax_zoom[0] + xmin_zoom[0]);
@@ -270,24 +271,24 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
       center.y = xsum_zoom[1];
       center.z = xsum_zoom[2];
       
-      params.xlen[0] = params.xlen[1] = params.xlen[2] = len_zoom;
+      xlen[0] = xlen[1] = xlen[2] = len_zoom;
     }else
       printf("no particles have been found...\n");
   }
 
   float xmin[3], xmin_cut[3], xmax_cut[3];
-  xmin[0] = center.x - 0.5 * params.xlen[0];
-  xmin[1] = center.y - 0.5 * params.xlen[1];
-  xmin[2] = center.z - 0.5 * params.xlen[2];
+  xmin[0] = center.x - 0.5 * xlen[0];
+  xmin[1] = center.y - 0.5 * xlen[1];
+  xmin[2] = center.z - 0.5 * xlen[2];
 
   /*we temporally define here, xmin_cut and xmax_cut should be removed... */
-  xmin_cut[0] = center.x - params.xlen[0];
-  xmin_cut[1] = center.y - params.xlen[1];
-  xmin_cut[2] = center.z - params.xlen[2];
+  xmin_cut[0] = center.x - xlen[0];
+  xmin_cut[1] = center.y - xlen[1];
+  xmin_cut[2] = center.z - xlen[2];
 
-  xmax_cut[0] = center.x + params.xlen[0];
-  xmax_cut[1] = center.y + params.xlen[1];
-  xmax_cut[2] = center.z + params.xlen[2];  
+  xmax_cut[0] = center.x + xlen[0];
+  xmax_cut[1] = center.y + xlen[1];
+  xmax_cut[2] = center.z + xlen[2];  
   
   TrackingVector<pos_val> insideParticles;
 
@@ -309,22 +310,22 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     pp.hsml = p.Hsml;
     pp.mass = p.mass;
     
-    if (params.dataSource == DataSource::Gas) {    
-      pp.val = getScalarValue(P->particleBlock, p, idx, params.selectedVarGas);
+    if (dataSource_ == DataSource::Gas) {    
+      pp.val = getScalarValue(P->particleBlock, p, idx, selectedVarGas_);
       pp.density = p.density;
     }
     
-    if (params.dataSource == DataSource::Stars) {
-      if (params.starQuantity == StarQuantity::Metallicity) {
+    if (dataSource_ == DataSource::Stars) {
+      if (starQuantity_ == StarQuantity::Metallicity) {
 	float zmet = 0.0f;
 	P->particleBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);	
 	pp.val = zmet;
-      } else if (params.starQuantity == StarQuantity::Mass) {
+      } else if (starQuantity_ == StarQuantity::Mass) {
 	pp.val = p.mass;
-      } else if (params.starQuantity == StarQuantity::Density) {
+      } else if (starQuantity_ == StarQuantity::Density) {
 	pp.val = p.density;
-      } else if (params.starQuantity == StarQuantity::Flux) {
-	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->UnitMass_in_msolar, params.flux);
+      } else if (starQuantity_ == StarQuantity::Flux) {
+	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->UnitMass_in_msolar, flux_);
       } else {
 	pp.val = 1.0f;
       }
@@ -333,43 +334,43 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     insideParticles.push_back(pp);
   }
 
-  if (params.dataSource == DataSource::Gas) 
-    if(insideParticles.size() < 0.1 * params.npixel * params.npixel){
+  if (dataSource_ == DataSource::Gas) 
+    if(insideParticles.size() < 0.1 * npixel * npixel){
       printf("too few particles inside specified region... npart=%ld while there are %dx%d pixels.\n",
-	     insideParticles.size(), params.npixel, params.npixel);
+	     insideParticles.size(), npixel, npixel);
       return;
     }
     
   ProjectionMap map;
   for(int k=0;k<3;k++){
-    map.xlen[k] = params.xlen[k];
+    map.xlen[k] = xlen[k];
     map.xmin[k] = xmin[k];
   }
 
-  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n", params.xlen[0], params.xlen[1], params.xlen[2], xmin[0], xmin[1], xmin[2], center.x, center.y, center.z);
+  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n", xlen[0], xlen[1], xlen[2], xmin[0], xmin[1], xmin[2], center.x, center.y, center.z);
   
-  map.npixel = params.npixel;
-  map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);  
+  map.npixel = npixel;
+  map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(npixel);  
   map.dx = map.cell_size;
   map.dy = map.cell_size;   
     
-  map.npixel_x = static_cast<int>(params.xlen[0] / map.cell_size);
-  map.npixel_y = static_cast<int>(params.xlen[1] / map.cell_size);   
+  map.npixel_x = static_cast<int>(xlen[0] / map.cell_size);
+  map.npixel_y = static_cast<int>(xlen[1] / map.cell_size);   
   map.values.resize(map.npixel_x * map.npixel_y, 0.0f);
   map.weights.resize(map.npixel_x * map.npixel_y, 0.0f);
         
-  if(params.flagVoronoi){
-    map.npixel_z = params.step_z;
-    if(params.step_z % 2 == 0)
-      map.npixel_z = params.step_z - 1;
+  if(flagVoronoi){
+    map.npixel_z = step_z;
+    if(step_z % 2 == 0)
+      map.npixel_z = step_z - 1;
       
     map.dz = 0.;
-    if(params.step_z > 1)
+    if(step_z > 1)
       map.dz = (map.xlen[2]) / static_cast<float>(map.npixel_z);
   }
 
-  map.flagDensityWeight = params.flagDensityWeight;
-  map.flagLogScale = params.flagLogScale;
+  map.flagDensityWeight = flagDensityWeight;
+  map.flagLogScale = flagLogScale;
     
   // 平面の基底を計算
   glm::vec3 axisX = glm::normalize(cuboidTransform * glm::vec3(1,0,0));
@@ -377,13 +378,13 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   glm::vec3 axisZ = glm::normalize(cuboidTransform * glm::vec3(0,0,1));
 
   // selectedAxis: 0=X, 1=Y, 2=Z から見ている
-  if (params.selectedAxis == 0) {
+  if (g_selectedAxis == 0) {
     // X 軸方向から見る: 画面奥(w)が axisX、画面 x が axisY、画面 y が axisZ
     map.wAxis = axisX;
     map.uAxis = axisY;
     map.vAxis = axisZ;
   }
-  else if (params.selectedAxis == 1) {
+  else if (g_selectedAxis == 1) {
     // Y 軸方向から見る
     map.wAxis = axisY;
     map.uAxis = axisZ;
@@ -401,13 +402,13 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   using namespace std::chrono;
   auto start = high_resolution_clock::now();
   
-  if (params.dataSource == DataSource::Gas) {
-    if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
+  if (dataSource_ == DataSource::Gas) {
+    if (flagVoronoi) createVoronoiSliceMap(map, insideParticles);
     else             createProjectionMap(map, insideParticles);
   }
-  else if (params.dataSource == DataSource::Stars) {
-    bool normalize = (params.starQuantity != StarQuantity::Flux); 
-    createStarMap(map, insideParticles, params.psf_sigma_pix, normalize);
+  else if (dataSource_ == DataSource::Stars) {
+    bool normalize = (starQuantity_ != StarQuantity::Flux); 
+    createStarMap(map, insideParticles, psf_sigma_pix_, normalize);
   }
    
   auto end = high_resolution_clock::now();    
@@ -434,13 +435,13 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   map.minVal = *std::min_element(map.values.begin(), map.values.end());
   map.maxVal = *std::max_element(map.values.begin(), map.values.end());
 
-  if(params.autoRange){
-    params.range_min = map.minVal;
-    params.range_max = map.maxVal;
+  if(autoRange){
+    range_min = map.minVal;
+    range_max = map.maxVal;
   }
     
   for (int i = 0; i < map.npixel_x * map.npixel_y; i++) {
-    float norm = (map.values[i] - params.range_min) / (params.range_max - params.range_min  + 1.e-6);
+    float norm = (map.values[i] - range_min) / (range_max - range_min  + 1.e-6);
     float rF,gF,bF;
     colormapLookup(norm, rF, gF, bF, colorMap, countColorMap);
     unsigned char rC=(unsigned char)(rF*255);
@@ -452,7 +453,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     map.image.push_back(bC);
   }
 
-  if(params.flagShowStarParticles)
+  if(flagShowStarParticles)
     overlayStarParticles(map, originalParticles);
   
   outW = map.npixel_x;
@@ -460,7 +461,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
 
   int colorBarWidth = static_cast<int>(0.07 * outW);
   outImage = map.image;
-  addColorBarToMap(map, params.range_min, params.range_max, colorBarWidth, colorMap, countColorMap, outImage, outW, outH, params.var.c_str());
+  addColorBarToMap(map, range_min, range_max, colorBarWidth, colorMap, countColorMap, outImage, outW, outH, var.c_str());
   
   //output PNG file
   stbi_write_png(filename, outW, outH, 3, outImage.data(), outW*3);
@@ -843,10 +844,10 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
 #ifdef USE_LUA
   if(flag_init_lua){
     double minVal = 0.0, maxVal = 1.0;
-    if(!EvaluateLuaExpressionNumber(params.minValueExpr, minVal)) {
+    if(!EvaluateLuaExpressionNumber(minValueExpr, minVal)) {
       std::cerr << "Error evaluating min value expression\n";
     }
-    if(!EvaluateLuaExpressionNumber(params.maxValueExpr, maxVal)) {
+    if(!EvaluateLuaExpressionNumber(maxValueExpr, maxVal)) {
       std::cerr << "Error evaluating max value expression\n";
     }
     lua_pushnumber(gLua, minVal);
@@ -860,7 +861,7 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
     if(p.type < 3 || p.type > 5)
       continue;
 
-    if (params.dataSource == DataSource::Stars)
+    if (dataSource_ == DataSource::Stars)
       if(p.type == type_)
 	continue;
     
@@ -879,7 +880,7 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
 
       // 1. フィルタ条件の評価
       bool pass = false;
-      if (!EvaluateLuaExpressionBool(params.filterExpr, pass)) {
+      if (!EvaluateLuaExpressionBool(filterExpr, pass)) {
 	std::cerr << "Error evaluating filter expression\n";
 	continue;
       }
@@ -889,13 +890,13 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
       }
 
       // 2. 点サイズの評価
-      if (!EvaluateLuaExpressionNumber(params.pointSizeExpr, pointSize)) {
+      if (!EvaluateLuaExpressionNumber(pointSizeExpr, pointSize)) {
 	std::cerr << "Error evaluating point size expression\n";
 	pointSize = 1.0;
       }
 
       // 3. 点の色の評価
-      if (!EvaluateLuaExpressionColor(params.pointColorExpr, r, g, b, a)) {
+      if (!EvaluateLuaExpressionColor(pointColorExpr, r, g, b, a)) {
 	std::cerr << "Error evaluating point color expression\n";
 	r = g = b = 1.0f; a = 1.0f;
       }
@@ -996,34 +997,6 @@ bool ProjectionMapGenerator::containsIgnoreCase(const std::string& str, const st
     return (it != str.end());
 }
 
-int ProjectionMapGenerator::getFontCount() const
-{
-  return (int)availableFonts.size();
-}
-
-const std::string& ProjectionMapGenerator::getFontPath(int index) const
-{
-  return availableFonts[index];
-}
-
-bool ProjectionMapGenerator::selectFontFileByIndex(int index)
-{
-  if (index < 0 || index >= (int)availableFonts.size())
-    return false;
-
-  if (!loadFontFile(availableFonts[index].c_str(), ttf_buffer)) {
-    printf("Can't read font file %s\n", availableFonts[index].c_str());
-    return false;
-  }
-
-  if (!stbtt_InitFont(&fontCharacter, ttf_buffer.data(), 0)) {
-    std::cerr << "Failed to initialize font." << std::endl;
-    return false;
-  }
-
-  return true;
-}
-
 void ProjectionMapGenerator::getAvailableFonts(const std::vector<std::string>& fontDirectories)
 {
   for (const auto& dir : fontDirectories)
@@ -1044,14 +1017,9 @@ void ProjectionMapGenerator::getAvailableFonts(const std::vector<std::string>& f
 
 	    if (ext == ".ttf" || ext == ".otf")
 	      {
-		// .ttf または .otf の場合は追加
-		
 		std::string pathStr = entry.path().string();
 		std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(),
 			       [](unsigned char c){ return std::tolower(c); });
-		
-		//if(containsIgnoreCase(pathStr, "zapfdingbats") || containsIgnoreCase(pathStr, "marlett")|| containsIgnoreCase(pathStr, "symbol")|| containsIgnoreCase(pathStr, "webdings")|| containsIgnoreCase(pathStr, "wingding"))
-		//continue;
 		
 		bool flag = false;
 		if(pathStr.find("arial") != std::string::npos ||
@@ -1074,6 +1042,8 @@ void ProjectionMapGenerator::getAvailableFonts(const std::vector<std::string>& f
   }
 
   if(availableFonts.size() > 0){
+    initFonts();
+    
     if (!loadFontFile(availableFonts[0].c_str(), ttf_buffer)) {
       printf("Can't read font file %s\n", availableFonts[0].c_str());
       return;
@@ -1084,6 +1054,69 @@ void ProjectionMapGenerator::getAvailableFonts(const std::vector<std::string>& f
       return;    
     }
   }
+}
+
+void ProjectionMapGenerator::initFonts() {
+  // availableFonts にすでに検索済みのフォントパスが入っている前提
+  loadedFonts.clear();
+  ImGui::GetIO().Fonts->AddFontDefault();
+
+  for (const auto& fontPath : availableFonts) {
+    ImFont* font = ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath.c_str(), 24.0f);
+    if (font) {
+      loadedFonts.push_back(font);
+    }
+  }
+  // フォントアトラスをビルドする
+  ImGui::GetIO().Fonts->Build();
+}
+
+
+void ProjectionMapGenerator::ShowFontSelectionWindow()
+{
+  if (!showWindowSelectFont) return;
+
+  static int currentFontIndex = 0;
+  // previewFont は loadedFonts[currentFontIndex] を指すだけ
+  ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Appearing);
+  ImGui::Begin("Font Selection Preview", &showWindowSelectFont, ImGuiWindowFlags_None);
+
+  // コンボボックスでフォント一覧を表示
+  if (ImGui::BeginCombo("Select Font", availableFonts[currentFontIndex].c_str()))
+    {
+      for (size_t i = 0; i < availableFonts.size(); i++)
+        {
+	  bool isSelected = (currentFontIndex == static_cast<int>(i));
+	  if (ImGui::Selectable(availableFonts[i].c_str(), isSelected))
+            {
+	      currentFontIndex = i;
+            }
+	  if (isSelected)
+	    ImGui::SetItemDefaultFocus();
+        }
+      ImGui::EndCombo();
+    }
+
+  ImGui::Text("Selected Font: %s", availableFonts[currentFontIndex].c_str());
+  // プレビュー用テキストを表示
+  if (!loadedFonts.empty() && loadedFonts[currentFontIndex])
+    {
+      ImGui::PushFont(loadedFonts[currentFontIndex]);
+      ImGui::Text("The quick brown fox jumps over the lazy dog.");
+      ImGui::PopFont();
+    }
+
+  if (!loadFontFile(availableFonts[currentFontIndex].c_str(), ttf_buffer)) {
+    printf("Can't read font file %s\n", availableFonts[currentFontIndex].c_str());
+    return;
+  }
+
+  if (!stbtt_InitFont(&fontCharacter, ttf_buffer.data(), 0)) {
+    std::cerr << "Failed to initialize font." << std::endl;
+    return;    
+  }
+    
+  ImGui::End();
 }
  
 bool ProjectionMapGenerator::loadFontFile(const std::string& fontFilename, std::vector<unsigned char>& buffer)
@@ -1291,13 +1324,13 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
     drawTextBaselineAndRotate90(outImage, outW, outH, center_x, center_y, barLabel, &fontCharacter, static_cast<float>(charPixelSizeLabel));
   }
 
-  if(params.flagTimeLabel){
+  if(flagTimeLabel){
     char timeStr[64];
-    double t = Header.time * params.factorShownTimeInUnitTime; // 適切な時間値
-    if(params.flagUseRedshift)
+    double t = Header.time * factorShownTimeInUnitTime; // 適切な時間値
+    if(flagUseRedshift)
       t = 1./Header.time - 1.;
     
-    snprintf(timeStr, sizeof(timeStr), params.timeFormatBuf, t);
+    snprintf(timeStr, sizeof(timeStr), timeFormatBuf, t);
 
     // 1) テキストの実際の表示サイズを先に計測する
     int textW = 0, textH = 0;
@@ -1336,15 +1369,15 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
     //    中心を (baseX + textW/2, baseY + textH/2) で呼び出す
    
     draw_value_on_image(outImage, outW, outH, baseX + textW/2, baseY - min_y,
-                        t, &fontCharacter, static_cast<float>(charPixelSizeLabel), params.timeFormatBuf);
+                        t, &fontCharacter, static_cast<float>(charPixelSizeLabel), timeFormatBuf);
   }
 
 
   // (9) 空間スケールの矢印の描画（例：左下に 100px のスケール表示）
-  if(params.flagPlaceScale)
+  if(flagPlaceScale)
     {
-      double arrowLenX_scaled = params.arrowLenX;
-      if(params.flagScaleOriginalCoordinate)
+      double arrowLenX_scaled = arrowLenX;
+      if(flagScaleOriginalCoordinate)
 	arrowLenX_scaled *= (desiredMax /originalMax);
 
       int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / map.cell_size);
@@ -1361,7 +1394,7 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
       drawLine(arrowEndX, arrowEndY, arrowEndX - 10, arrowEndY - 5, 255, 255, 255);
       drawLine(arrowEndX, arrowEndY, arrowEndX - 10, arrowEndY + 5, 255, 255, 255);
       // ラベル（例："100 px"）の描画
-      draw_text_label_centered(outImage, outW, outH, arrowCenterX, arrowStartY - 10, params.arrowLabelStr
+      draw_text_label_centered(outImage, outW, outH, arrowCenterX, arrowStartY - 10, arrowLabelStr
 			       , &fontCharacter, static_cast<float>(charPixelSizeLabel));
     }
 
