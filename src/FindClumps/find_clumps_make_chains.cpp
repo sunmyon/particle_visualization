@@ -1,5 +1,6 @@
 #include "main.h"
 
+#include "colormap_defs.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_IO.h"
 #include "make_2D_projection_map.h"

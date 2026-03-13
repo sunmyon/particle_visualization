@@ -10,6 +10,7 @@
 // GLM 関連
 //#include <glm/gtc/matrix_transform.hpp>
 
+#include "colormap_defs.h"
 #include"make_2D_projection_map.h"
 
 #ifdef USE_LUA
@@ -131,8 +132,6 @@ void ProjectionMapGenerator::set_projection_parameters(const TrackingVector<Part
     float w = 1.0f + glm::dot(normal, planeNormal);
     cuboidTransform = glm::normalize(glm::quat(w, v.x, v.y, v.z));
   }
-
-  colorMap = jetMap, countColorMap = 9;
 }
 
 

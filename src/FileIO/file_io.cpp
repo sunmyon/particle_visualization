@@ -308,6 +308,8 @@ void FileInfo::initDefaultFormatTokens() {
     formatTokens.push_back(token);
     token.label = "mass"; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
+
+    formatTokens_hdf5 = formatTokens;
 } 
 
 
@@ -622,7 +624,7 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
   ImGui::SameLine();
   // 確定・キャンセル
   if (ImGui::Button("OK")) {
-    formatTokens = formatTokensEdit;
+    formatTokens_hdf5 = formatTokensEdit;
     showHDF5MappingDialog = false;
   }
   ImGui::SameLine();
@@ -661,6 +663,7 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   }
 
   std::unique_ptr<IParticleReader> reader;  
+  std::vector<FieldSpec> format;
   
   switch (readFileFormat) {
   case FileFormat::Auto:  
@@ -668,6 +671,7 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
 #ifdef HAVE_HDF5
     if (ext == ".h5" || ext == ".hdf5") {
       reader = std::make_unique<HDF5Reader>();
+      format = formatTokens_hdf5;
     }
 #endif
     
@@ -677,12 +681,14 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
 #else
       reader = std::make_unique<BinaryReader>();
 #endif
+      format = formatTokens;
     }    
     break;
   
 #ifdef HAVE_HDF5
   case FileFormat::HDF5: {
     reader = std::make_unique<HDF5Reader>();
+    format = formatTokens_hdf5;
     break;
   }
 #endif
@@ -693,16 +699,19 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
 #else
     reader = std::make_unique<BinaryReader>();
 #endif
+    format = formatTokens;
     break;
   }
 
   case FileFormat::Gadget: {
     //reader = std::make_unique<BlockwiseReader>();    
+    //format = formatToken;
     break;
   }
 
   case FileFormat::Framed: {
     //reader = std::make_unique<FramedBinaryReader>();
+    //format = formatToken;
     break;
   }
   default: {
@@ -712,7 +721,7 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   }
 
   // npart を reader が知るなら outBlock.resize(npart) を呼ぶ必要はなく、readAll 内で確保でもOK
-  if(!reader->tryFixAndCheckBinary(fullPath, outBlock.header, formatTokens)){
+  if(!reader->tryFixAndCheckBinary(fullPath, outBlock.header, format)){
     std::cerr<<"the format is incorrect\n";
     return false;
   }
@@ -722,7 +731,7 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
     return false;
   }
   
-  IOPlan plan = buildPlanFromToks(formatTokens);
+  IOPlan plan = buildPlanFromToks(format);
   {
     TIME_SCOPE("parse header");
 
@@ -730,11 +739,11 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
     if (enableMask) {
       ParticleMask pmask{currentMaskConfig};
       ok = reader->readRangeMasked(outBlock, 0, reader->particleCount(),
-				   formatTokens, plan, pmask);
+				   format, plan, pmask);
     }
 
     if (!ok) {
-      ok = reader->readAll(outBlock, formatTokens, plan);
+      ok = reader->readAll(outBlock, format, plan);
     }
     
     if (!ok) {

@@ -2209,6 +2209,7 @@ public:
   bool useHDF5 = false;
 #endif
   std::vector<FieldSpec> formatTokens;
+  std::vector<FieldSpec> formatTokens_hdf5;
 
   void setFormatMode(FileFormat form){
     readFileFormat = form;
@@ -2252,7 +2253,6 @@ private:
   double Hubble;
 
   MaskConfig currentMaskConfig;
-  uint64_t   currentMaskRevision = 0;
   bool       enableMask = false; // mask を使うか（UIでON/OFF）
   
 public:
@@ -2277,7 +2277,7 @@ public:
   void ShowHDF5FieldMappingDialog();
   void showHDF5Dialog(void){    
     showHDF5MappingDialog = true;
-    formatTokensEdit = formatTokens;
+    formatTokensEdit = formatTokens_hdf5;
   };
 #endif
   
@@ -2299,9 +2299,8 @@ public:
   };
 #endif
 
-  void setMaskConfig(const MaskConfig& cfg, uint64_t rev){
+  void setMaskConfig(const MaskConfig& cfg){
     currentMaskConfig = cfg;
-    currentMaskRevision = rev;
     enableMask = true;
   } 
   

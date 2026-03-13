@@ -1,5 +1,6 @@
 #include <unordered_set>
 
+#include "colormap_defs.h"
 #include "UI.h"
 #include <imgui.h>
 #include "implot.h"
@@ -8,6 +9,7 @@
 #include "object.h"
 #include "main.h"
 #include "FileIO/file_io.h"
+#include "colormap_defs.h"
 
 extern void UpdateCuboidTransformArcball(glm::vec3& center,
                                          glm::quat& cuboidTransform,
@@ -26,6 +28,7 @@ namespace {
   ProjectionMapUIState gProjectionMapUIState;
   TopParticlesUIState gTopParticlesUIState;
   HaloesUIState gHaloesUIState;
+  MaskUIState gMaskUIState;
 }
 
 void OpenRadialProfileUI() {
@@ -516,31 +519,24 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   // -----------------------------
   // colormap
   // -----------------------------
-  const char* availableColormapNames[] = { "Jet", "Viridis", "Plasma" };
-  ImGui::Combo("Colormap##projection",
-               &params.colormapindex,
-               availableColormapNames,
-               IM_ARRAYSIZE(availableColormapNames));
-
-  switch (params.colormapindex) {
-  case 0:
-    generator.colorMap = jetMap;
-    generator.countColorMap = 9;
-    break;
-  case 1:
-    generator.colorMap = viridisMap;
-    generator.countColorMap = 11;
-    break;
-  case 2:
-    generator.colorMap = plasmaMap;
-    generator.countColorMap = 11;
-    break;
-  default:
-    generator.colorMap = jetMap;
-    generator.countColorMap = 9;
-    break;
+  if (params.colormapindex < 0) params.colormapindex = 0;
+  if (params.colormapindex >= gNumColormaps) params.colormapindex = gNumColormaps - 1;
+  
+  const char* previewName = gColormapDefs[params.colormapindex].name;
+  if (ImGui::BeginCombo("Colormap##projection", previewName)) {
+    for (int i = 0; i < gNumColormaps; ++i) {
+      bool selected = (params.colormapindex == i);
+      if (ImGui::Selectable(gColormapDefs[i].name, selected)) {
+	params.colormapindex = i;
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
   }
   
+  generator.colorMap      = gColormapDefs[params.colormapindex].data;
+  generator.countColorMap = gColormapDefs[params.colormapindex].count;
+    
   // -----------------------------
   // data source specific UI
   // -----------------------------
@@ -1365,4 +1361,176 @@ void DrawHaloesUI(ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo)
 
   ImGui::End();
 #endif
+}
+
+void OpenMaskUI() {
+  gMaskUIState.open = true;
+}
+
+bool DrawMaskWindow() {
+  if (!gMaskUIState.open) return false;
+
+  bool changed = false;
+  bool apply = false;
+
+  // ★第二引数に &ui.showWindow を渡すと × で閉じられる
+  if (!ImGui::Begin("Mask Settings", &gMaskUIState.open)) {
+    ImGui::End();
+    return false;
+  }
+
+  changed |= ImGui::Checkbox("Enable Sphere", &gMaskUIState.enableSphere);
+  changed |= ImGui::DragFloat3("Center", gMaskUIState.center, 0.1f);
+  changed |= ImGui::DragFloat("Radius", &gMaskUIState.radius, 0.1f, 0.0f, 1e30f);
+
+  int om = (int)gMaskUIState.outsideMode;
+  changed |= ImGui::Combo("Outside Mode", &om, "Drop\0Thin\0KeepAll\0");
+  gMaskUIState.outsideMode = (MaskUIState::OutsideMode)om;
+
+  if (gMaskUIState.outsideMode == MaskUIState::OutsideMode::Thin) {
+    changed |= ImGui::DragInt("Outside Stride", &gMaskUIState.outsideStride, 1.0f, 1, 1000000);
+  }
+
+  ImGui::Separator();
+  ImGui::Text("Particle Type Policy");
+  const char* typeNames[6] = {"Gas(0)","DM(1)","Type2","Type3","Star(4)","BH(5)"};
+  for (int t=0; t<6; ++t) {
+    int tm = (int)gMaskUIState.typeMode[t];
+    ImGui::PushID(t);
+    changed |= ImGui::Combo(typeNames[t], &tm, "Off\0On (NoThin)\0On (ThinOK)\0");
+    gMaskUIState.typeMode[t] = (MaskUIState::TypeMode)tm;
+    ImGui::PopID();
+  }
+
+  ImGui::Separator();
+  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &gMaskUIState.enableMaxParticles);
+  if (gMaskUIState.enableMaxParticles) {
+    changed |= ImGui::DragInt("Max Particles", &gMaskUIState.maxParticles, 1000.0f, 1, 1000000000);
+  }
+
+  ImGui::Separator();
+  changed |= ImGui::Checkbox("Auto Apply", &gMaskUIState.autoApply);
+
+  // Apply/Close ボタン
+  if (ImGui::Button("Apply")) {
+    gMaskUIState.revision++;
+    apply = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Close")) {
+    gMaskUIState.open = false; // 明示的に閉じる
+  }
+
+  ImGui::End();
+
+  if (!apply && changed && gMaskUIState.autoApply) {
+    gMaskUIState.revision++;
+    apply = true;
+  }
+  return apply; // ★「設定が反映された」トリガとして true
+}
+
+MaskConfig MakeMaskConfigFromUI(){
+  MaskConfig cfg;
+  cfg.enableSphere = gMaskUIState.enableSphere;
+  cfg.center[0] = gMaskUIState.center[0];
+  cfg.center[1] = gMaskUIState.center[1];
+  cfg.center[2] = gMaskUIState.center[2];
+  cfg.radius = (double)gMaskUIState.radius;
+
+  cfg.outsideStride = (uint64_t)std::max(1, gMaskUIState.outsideStride);
+  switch(gMaskUIState.outsideMode){
+    case MaskUIState::OutsideMode::Drop:    cfg.outsideMode = MaskConfig::OutsideMode::Drop; break;
+    case MaskUIState::OutsideMode::Thin:    cfg.outsideMode = MaskConfig::OutsideMode::Thin; break;
+    case MaskUIState::OutsideMode::KeepAll: cfg.outsideMode = MaskConfig::OutsideMode::KeepAll; break;
+  }
+
+  for(int t=0;t<6;t++){
+    switch(gMaskUIState.typeMode[t]){
+      case MaskUIState::TypeMode::Off:      cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOff; break;
+      case MaskUIState::TypeMode::On_NoThin:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_NoThin; break;
+      case MaskUIState::TypeMode::On_ThinOK:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_ThinOK; break;
+    }
+  }
+
+  cfg.enableMaxParticles = gMaskUIState.enableMaxParticles;
+  cfg.maxParticles = (gMaskUIState.enableMaxParticles && gMaskUIState.maxParticles>0) ? (size_t)gMaskUIState.maxParticles : 0;
+
+  return cfg;
+}
+
+void ExportMaskConfigState(ConfigMaskState& outState)
+{
+  outState = ConfigMaskState{};
+  outState.valid = true;
+
+  outState.enableSphere = gMaskUIState.enableSphere;
+  outState.center[0] = gMaskUIState.center[0];
+  outState.center[1] = gMaskUIState.center[1];
+  outState.center[2] = gMaskUIState.center[2];
+  outState.radius = gMaskUIState.radius;
+
+  switch (gMaskUIState.outsideMode) {
+    case MaskUIState::OutsideMode::Drop:
+      outState.outsideMode = ConfigMaskState::OutsideMode::Drop; break;
+    case MaskUIState::OutsideMode::Thin:
+      outState.outsideMode = ConfigMaskState::OutsideMode::Thin; break;
+    case MaskUIState::OutsideMode::KeepAll:
+      outState.outsideMode = ConfigMaskState::OutsideMode::KeepAll; break;
+  }
+
+  outState.outsideStride = (unsigned long long)std::max(1, gMaskUIState.outsideStride);
+
+  for (int t = 0; t < 6; ++t) {
+    switch (gMaskUIState.typeMode[t]) {
+      case MaskUIState::TypeMode::Off:
+        outState.typeMode[t] = ConfigMaskState::TypeMode::Off; break;
+      case MaskUIState::TypeMode::On_NoThin:
+        outState.typeMode[t] = ConfigMaskState::TypeMode::On_NoThin; break;
+      case MaskUIState::TypeMode::On_ThinOK:
+        outState.typeMode[t] = ConfigMaskState::TypeMode::On_ThinOK; break;
+    }
+  }
+
+  outState.enableMaxParticles = gMaskUIState.enableMaxParticles;
+  outState.maxParticles = gMaskUIState.maxParticles;
+}
+
+void ApplyMaskConfigState(const ConfigMaskState& state)
+{
+  if (!state.valid) return;
+
+  gMaskUIState.enableSphere = state.enableSphere;
+  gMaskUIState.center[0] = (float)state.center[0];
+  gMaskUIState.center[1] = (float)state.center[1];
+  gMaskUIState.center[2] = (float)state.center[2];
+  gMaskUIState.radius = (float)state.radius;
+
+  switch (state.outsideMode) {
+    case ConfigMaskState::OutsideMode::Drop:
+      gMaskUIState.outsideMode = MaskUIState::OutsideMode::Drop; break;
+    case ConfigMaskState::OutsideMode::Thin:
+      gMaskUIState.outsideMode = MaskUIState::OutsideMode::Thin; break;
+    case ConfigMaskState::OutsideMode::KeepAll:
+      gMaskUIState.outsideMode = MaskUIState::OutsideMode::KeepAll; break;
+  }
+
+  gMaskUIState.outsideStride = (int)std::max<unsigned long long>(1, state.outsideStride);
+
+  for (int t = 0; t < 6; ++t) {
+    switch (state.typeMode[t]) {
+      case ConfigMaskState::TypeMode::Off:
+        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::Off; break;
+      case ConfigMaskState::TypeMode::On_NoThin:
+        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::On_NoThin; break;
+      case ConfigMaskState::TypeMode::On_ThinOK:
+        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::On_ThinOK; break;
+    }
+  }
+
+  gMaskUIState.enableMaxParticles = state.enableMaxParticles;
+  gMaskUIState.maxParticles = state.maxParticles;
+
+  // 読み込み後に自動反映したいなら
+  gMaskUIState.revision++;
 }

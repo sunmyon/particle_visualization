@@ -152,8 +152,8 @@ public:
   glm::quat cuboidTransform = glm::quat(1.f,0.f,0.f,0.f);
   glm::vec3 center = glm::vec3(0.f);
   glm::vec3 planeNormal = glm::vec3(0.f,0.f,1.f);
-  int countColorMap = 9;
-  const float *colorMap = jetMap;
+  int countColorMap = gColormapDefs[0].count;
+  const float* colorMap = gColormapDefs[0].data;
   TrackingVector<unsigned char> outImage;
   int outW = 0, outH = 0;
   bool flag2DprojectionComputed = false;
@@ -198,12 +198,12 @@ public:
     center.z = params.xoffset[2];
     cuboidTransform = UpdateTransformFromEuler(params.tilt);
     planeNormal = glm::normalize(cuboidTransform * glm::vec3(0.f, 0.f, 1.f));
-    switch (params.colormapindex) {
-      case 0: colorMap = jetMap;     countColorMap = 9;  break;
-      case 1: colorMap = viridisMap; countColorMap = 11; break;
-      case 2: colorMap = plasmaMap;  countColorMap = 11; break;
-      default: colorMap = jetMap;    countColorMap = 9;  break;
-    }
+
+    if (params.colormapindex < 0) params.colormapindex = 0;
+    if (params.colormapindex >= gNumColormaps) params.colormapindex = gNumColormaps - 1;
+
+    colorMap = gColormapDefs[params.colormapindex].data;
+    countColorMap = gColormapDefs[params.colormapindex].count;
   }
 
   glm::vec3 calc_angular_momentum_axis(const TrackingVector<ParticleData>& originalParticles, glm::vec3 &center, float *xlen);

@@ -1,4 +1,4 @@
-// main.cpp
+ // main.cpp
 // -------------
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -37,6 +37,7 @@
 #include <mutex>
 
 #include "main.h"
+#include "colormap_defs.h"
 #include "UI.h"
 #include "camera.h"
 #include "object.h"
@@ -97,8 +98,6 @@ std::mutex g_mutex;
 
 struct CameraContext camCtx;
 
-static MaskUIState gMaskUI;
-
 FileInfo *gFileInfo;
 std::unique_ptr<RadialProfileComputer> gRadialProfileComputer;
 std::unique_ptr<Histogram2DComputer> gHistogram2DComputer;
@@ -120,18 +119,11 @@ bool showVelocityVectors = false;
 bool useVelocityArrowLogScale = true;
 float arrowScale = 1.;
 
-float typePointSizes[6];
-float typeColorMax[6];
-float typeColorMin[6];
-bool useLogScale[6];
-bool flagHideParticles[6] = {false, false, false, false, false, false};
+#include "particle_visual_config.h"
+ParticleVisualConfig gParticleVisualConfig;
+GLuint colormapTextures[50] = {0};
+
 size_t g_filteredParticleCount = 0;
-
-// 粒子タイプごとに使うカラーマップ（6タイプ分）
-GLuint colormapForType[6];
-
-// 周期モードのフラグ（デフォルトはオフ）
-bool periodicColorBar[6];
 
 std::vector<size_t> g_labelIndices;  // 毎回 ImGui 描画に使う
 glm::vec3 g_lastCameraPos = camCtx.cameraPos;
@@ -222,120 +214,6 @@ RhoSigmaLUT g_rho2sigma;
 bool flagCubesDirty = true;
 bool flagShowCoordinates = true;
 
-QuantityId selectedQuantity[6];
-
-// ------------------------------
-// config ファイル読み込み／保存
-// ------------------------------
-void loadConfig() {
-  std::ifstream infile("config.txt");
-  if (!infile.is_open()) return;
-  std::string line;
-  while (std::getline(infile, line)) {
-    if (line.find("FileFormat=") == 0) {
-      std::string val = line.substr(strlen("FileFormat="));
-      std::strncpy(gFileInfo->fileFormat, val.c_str(), sizeof(gFileInfo->fileFormat)-1);
-    } else if (line.find("FolderPath=") == 0) {  // フォルダパスを読み込む
-      std::string val = line.substr(strlen("FolderPath="));
-      std::strncpy(gFileInfo->folderPath, val.c_str(), sizeof(gFileInfo->folderPath)-1);
-    } else if (line.find("TokenCount=") == 0) {
-      int tokenCount = std::stoi(line.substr(strlen("TokenCount=")));
-      gFileInfo->formatTokens.clear();
-      for (int i = 0; i < tokenCount; i++) {
-	if (!std::getline(infile, line)) break;
-	std::istringstream iss(line);
-	std::string tokenLabel, tokenType, tokenCountStr;
-	if (!std::getline(iss, tokenLabel, ',')) continue;
-	if (!std::getline(iss, tokenType, ',')) continue;
-	if (!std::getline(iss, tokenCountStr)) continue;
-	FieldSpec ft;
-	ft.label = tokenLabel;
-
-	ft.type = (tokenType == "float") ? DataType::Float :
-	  (tokenType == "int32")  ? DataType::Int32 :(tokenType == "int") ? DataType::Int32 :
-	  (tokenType == "int64") ? DataType::Int64 : (tokenType == "long long") ? DataType::Int64 :
-	  DataType::Double;
-	
-	ft.count = std::stoi(tokenCountStr);
-	FieldSpec::SetDefaultDisplayName(ft);
-	gFileInfo->formatTokens.push_back(ft);
-      }
-    }  else if (line.find("ParticleType") == 0) {
-      // 例: "ParticleType0_Size=" の形式
-      size_t pos = line.find("_");
-      if (pos != std::string::npos) {
-	std::string typeStr = line.substr(12, pos - 12);  // "0" の部分
-	int type = std::stoi(typeStr);
-	std::string key = line.substr(pos+1); // 例: "Size=2.5"
-
-	printf("key=%s\n", key.c_str());
-	
-	if (key.find("Size=") == 0) {
-	  typePointSizes[type] = std::stof(key.substr(5));
-	} else if (key.find("Min=") == 0) {
-	  typeColorMin[type] = std::stof(key.substr(4));
-	} else if (key.find("Max=") == 0) {
-	  typeColorMax[type] = std::stof(key.substr(4));
-	} else if (key.find("Periodic=") == 0) {
-	  periodicColorBar[type] = (std::stoi(key.substr(9)) == 1);
-	} else if (key.find("UseLog=") == 0) {
-	  useLogScale[type] = (std::stoi(key.substr(7)) == 1);
-	}
-      }
-    } else if (line.find("NormalizationFactor=") == 0) {	    
-      P->desiredMax = std::stof(line.substr(strlen("NormalizationFactor=")));
-    } else if (line.find("skipStep=") == 0) {
-      gFileInfo->skipStep = std::stoi(line.substr(strlen("skipStep=")));
-    } else if (line.find("currentStep=") == 0) {
-      gFileInfo->currentStep = std::stoi(line.substr(strlen("currentStep=")));    
-    } else if (line.find("UnitMass_in_msolar") == 0){
-      P->UnitMass_in_msolar = std::stof(line.substr(strlen("UnitMass_in_msolar=")));
-    } else if (line.find("UnitLength_in_pc") == 0){
-      P->UnitLength_in_pc = std::stof(line.substr(strlen("UnitLength_in_pc=")));
-    } else if (line.find("Hubble") == 0){
-      P->Hubble = std::stof(line.substr(strlen("Hubble=")));
-    } else if (line.find("useComovingCorrdinate") == 0){
-      P->useComovingCorrdinate = std::stof(line.substr(strlen("useComovingCorrdinate=")));
-    }
-
-  }
-  infile.close();
-}
-
-void saveConfig() {
-    std::ofstream outfile("config.txt");
-    if (!outfile.is_open()) return;
-    outfile << "FileFormat=" << gFileInfo->fileFormat << "\n";
-    outfile << "FolderPath=" << gFileInfo->folderPath << "\n";  // フォルダパスを保存
-    outfile << "TokenCount=" << gFileInfo->formatTokens.size() << "\n";
-    for (size_t i = 0; i < gFileInfo->formatTokens.size(); i++) {
-        outfile << gFileInfo->formatTokens[i].label << "," 
-                << ((gFileInfo->formatTokens[i].type==DataType::Float)?"float":(gFileInfo->formatTokens[i].type==DataType::Int32)?"int32":(gFileInfo->formatTokens[i].type==DataType::Int64)?"int64":"double") << ","
-                << gFileInfo->formatTokens[i].count << "\n";
-    }
-    // ここから粒子タイプごとの設定を保存
-    const int numTypes = 6;
-    for (int i = 0; i < numTypes; i++) {
-        outfile << "ParticleType" << i << "_Size=" << typePointSizes[i] << "\n";
-        outfile << "ParticleType" << i << "_Min=" << typeColorMin[i] << "\n";
-        outfile << "ParticleType" << i << "_Max=" << typeColorMax[i] << "\n";
-        outfile << "ParticleType" << i << "_Periodic=" << (periodicColorBar[i] ? 1 : 0) << "\n";
-        outfile << "ParticleType" << i << "_UseLog=" << (useLogScale[i] ? 1 : 0) << "\n";
-    }
-    
-    // もし normalizationFactor もタイプ非依存で保存するなら
-    outfile << "NormalizationFactor=" << P->desiredMax << "\n";
-    outfile << "skipStep=" << gFileInfo->skipStep << "\n";
-    outfile << "currentStep=" << gFileInfo->currentStep << "\n";
-    outfile << "UnitMass_in_msolar=" << P->UnitMass_in_msolar << "\n";
-    outfile << "UnitLength_in_pc=" << P->UnitLength_in_pc << "\n";
-    outfile << "Hubble=" << P->Hubble << "\n";
-    outfile << "useComovingCorrdinate=" << P->useComovingCorrdinate << "\n";
-    
-    outfile.close();
-}
-
-
 // ------------------------------
 // マウス操作用
 // ------------------------------
@@ -351,7 +229,6 @@ float lastFrame = 0.0f;
 // **ズーム範囲の最小・最大値（デフォルト値を設定）**
 static float minZoom = 0.1f;  
 static float maxZoom = 500.0f;  
-
 
 // 仮想球面へのマッピング関数
 glm::vec3 mapToSphere(float x, float y) {
@@ -2469,88 +2346,30 @@ void uploadOctTree_TBO(OctTreeState& state){
 
   state.gpuTree = G;
 }  
-
 #endif
 
+static GLuint CreateColormapTexture1D(const float* rgb, int nColors)
+{
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_1D, tex);
 
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-// Jet カラーマップ（9色例）
-// ここでは RGB の各成分が 0.0～1.0 の値になっているものを定義しています
-const float jetMap[] = {
-    0.0f,  0.0f,  0.5f,  // dark blue
-    0.0f,  0.0f,  1.0f,  // blue
-    0.0f,  0.5f,  1.0f,  // cyan
-    0.0f,  1.0f,  1.0f,  // light cyan
-    0.5f,  1.0f,  0.5f,  // greenish
-    1.0f,  1.0f,  0.0f,  // yellow
-    1.0f,  0.5f,  0.0f,  // orange
-    1.0f,  0.0f,  0.0f,  // red
-    0.5f,  0.0f,  0.0f   // dark red
-};
-
-// Viridis カラーマップ（11色例）  
-const float viridisMap[] = {
-    0.267f, 0.004f, 0.329f,
-    0.283f, 0.141f, 0.458f,
-    0.254f, 0.265f, 0.530f,
-    0.207f, 0.372f, 0.553f,
-    0.164f, 0.471f, 0.558f,
-    0.128f, 0.566f, 0.551f,
-    0.135f, 0.659f, 0.517f,
-    0.267f, 0.749f, 0.441f,
-    0.478f, 0.821f, 0.318f,
-    0.741f, 0.873f, 0.150f,
-    0.993f, 0.906f, 0.144f
-};
-
-// Plasma カラーマップ（11色例）
-const float plasmaMap[] = {
-    0.050f, 0.029f, 0.527f,
-    0.127f, 0.108f, 0.533f,
-    0.212f, 0.192f, 0.540f,
-    0.307f, 0.274f, 0.545f,
-    0.411f, 0.354f, 0.550f,
-    0.525f, 0.431f, 0.555f,
-    0.647f, 0.506f, 0.557f,
-    0.778f, 0.582f, 0.557f,
-    0.915f, 0.658f, 0.555f,
-    0.993f, 0.778f, 0.512f,
-    0.990f, 0.901f, 0.396f
-};
-
-
-// InitColorMaps() を呼び出すと各カラーマップ用の 1D テクスチャが生成される
-void InitColorMaps() {
-    // --- Jet カラーマップ ---
-    glGenTextures(1, &jetTex);
-    glBindTexture(GL_TEXTURE_1D, jetTex);
-    // jetMap の要素数は 9 (各要素は RGB の3値)
-    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB, 9, 0, GL_RGB, GL_FLOAT, jetMap);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // --- Viridis カラーマップ ---
-    glGenTextures(1, &viridisTex);
-    glBindTexture(GL_TEXTURE_1D, viridisTex);
-    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB, 11, 0, GL_RGB, GL_FLOAT, viridisMap);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // --- Plasma カラーマップ ---
-    glGenTextures(1, &plasmaTex);
-    glBindTexture(GL_TEXTURE_1D, plasmaTex);
-    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB, 11, 0, GL_RGB, GL_FLOAT, plasmaMap);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // 終了後、必ずテクスチャをバインド解除
-    glBindTexture(GL_TEXTURE_1D, 0);
-
-    // 初期状態として currentColorMapTex を jetTex に設定
-    currentColorMapTex = jetTex;
+  glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB32F, nColors, 0, GL_RGB, GL_FLOAT, rgb);
+  glBindTexture(GL_TEXTURE_1D, 0);
+  return tex;
 }
 
-
+void InitColorMaps()
+{
+  for (int i = 0; i < gNumColormaps; ++i) {
+    colormapTextures[i] =
+      CreateColormapTexture1D(gColormapDefs[i].data, gColormapDefs[i].count);
+  }
+}
 
 void InitColorBar() {
     // 画面右下に表示するカラーバーの頂点データ（NDC 座標）
@@ -2721,98 +2540,6 @@ std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::s
     return std::make_pair(newFormat, fileNumber);
 }
 
-static bool DrawMaskWindow(MaskUIState& ui) {
-  if (!ui.showWindow) return false;     // ★閉じてるなら何もしない
-
-  bool changed = false;
-  bool apply = false;
-
-  // ★第二引数に &ui.showWindow を渡すと × で閉じられる
-  if (!ImGui::Begin("Mask Settings", &ui.showWindow)) {
-    ImGui::End();
-    return false;
-  }
-
-  changed |= ImGui::Checkbox("Enable Sphere", &ui.enableSphere);
-  changed |= ImGui::DragFloat3("Center", ui.center, 0.1f);
-  changed |= ImGui::DragFloat("Radius", &ui.radius, 0.1f, 0.0f, 1e30f);
-
-  int om = (int)ui.outsideMode;
-  changed |= ImGui::Combo("Outside Mode", &om, "Drop\0Thin\0KeepAll\0");
-  ui.outsideMode = (MaskUIState::OutsideMode)om;
-
-  if (ui.outsideMode == MaskUIState::OutsideMode::Thin) {
-    changed |= ImGui::DragInt("Outside Stride", &ui.outsideStride, 1.0f, 1, 1000000);
-  }
-
-  ImGui::Separator();
-  ImGui::Text("Particle Type Policy");
-  const char* typeNames[6] = {"Gas(0)","DM(1)","Type2","Type3","Star(4)","BH(5)"};
-  for (int t=0; t<6; ++t) {
-    int tm = (int)ui.typeMode[t];
-    ImGui::PushID(t);
-    changed |= ImGui::Combo(typeNames[t], &tm, "Off\0On (NoThin)\0On (ThinOK)\0");
-    ui.typeMode[t] = (MaskUIState::TypeMode)tm;
-    ImGui::PopID();
-  }
-
-  ImGui::Separator();
-  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &ui.enableMaxParticles);
-  if (ui.enableMaxParticles) {
-    changed |= ImGui::DragInt("Max Particles", &ui.maxParticles, 1000.0f, 1, 1000000000);
-  }
-
-  ImGui::Separator();
-  changed |= ImGui::Checkbox("Auto Apply", &ui.autoApply);
-
-  // Apply/Close ボタン
-  if (ImGui::Button("Apply")) {
-    ui.revision++;
-    apply = true;
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Close")) {
-    ui.showWindow = false; // 明示的に閉じる
-  }
-
-  ImGui::End();
-
-  if (!apply && changed && ui.autoApply) {
-    ui.revision++;
-    apply = true;
-  }
-  return apply; // ★「設定が反映された」トリガとして true
-}
-
-static inline MaskConfig MakeMaskConfigFromUI(const MaskUIState& ui){
-  MaskConfig cfg;
-  cfg.enableSphere = ui.enableSphere;
-  cfg.center[0] = ui.center[0];
-  cfg.center[1] = ui.center[1];
-  cfg.center[2] = ui.center[2];
-  cfg.radius = (double)ui.radius;
-
-  cfg.outsideStride = (uint64_t)std::max(1, ui.outsideStride);
-  switch(ui.outsideMode){
-    case MaskUIState::OutsideMode::Drop:    cfg.outsideMode = MaskConfig::OutsideMode::Drop; break;
-    case MaskUIState::OutsideMode::Thin:    cfg.outsideMode = MaskConfig::OutsideMode::Thin; break;
-    case MaskUIState::OutsideMode::KeepAll: cfg.outsideMode = MaskConfig::OutsideMode::KeepAll; break;
-  }
-
-  for(int t=0;t<6;t++){
-    switch(ui.typeMode[t]){
-      case MaskUIState::TypeMode::Off:      cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOff; break;
-      case MaskUIState::TypeMode::On_NoThin:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_NoThin; break;
-      case MaskUIState::TypeMode::On_ThinOK:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_ThinOK; break;
-    }
-  }
-
-  cfg.enableMaxParticles = ui.enableMaxParticles;
-  cfg.maxParticles = (ui.enableMaxParticles && ui.maxParticles>0) ? (size_t)ui.maxParticles : 0;
-
-  return cfg;
-}
-
 void ParticleArray::recomputeHaloPositionsFromParticles(bool useMassWeight,
                                                         bool useOriginalPos,
                                                         int  minParticles)
@@ -2841,10 +2568,8 @@ void ParticleArray::recomputeHaloPositionsFromParticles(bool useMassWeight,
       const float* x = useOriginalPos ? p.original_pos : p.pos;
 
       double w = 1.0;
-      if (useMassWeight) {
-        // mass が未設定/ゼロの場合もあるので安全に
-        w = (p.mass > 0.0f) ? (double)p.mass : 1.0;
-      }
+      if (useMassWeight) 
+        w = (p.mass > 0.0f) ? (double)p.mass : 1.0;      
 
       sx += w * (double)x[0];
       sy += w * (double)x[1];
@@ -2858,13 +2583,9 @@ void ParticleArray::recomputeHaloPositionsFromParticles(bool useMassWeight,
     const float cy = (float)(sy / sw);
     const float cz = (float)(sz / sw);
 
-    // 上書き：ここでは GroupPos を更新（必要なら GroupCM も同値で更新）
     Haloes[ih].GroupPos[0] = cx;
     Haloes[ih].GroupPos[1] = cy;
     Haloes[ih].GroupPos[2] = cz;
-
-    // HaloData に GroupCM を追加しているなら、こちらも更新したい場合：
-    // Haloes[ih].GroupCM[0] = cx; Haloes[ih].GroupCM[1] = cy; Haloes[ih].GroupCM[2] = cz;
   }
 }
 
@@ -2887,39 +2608,40 @@ void ShowSettingsUI() {
       for (int i = 0; i < 6; i++) {
 	std::string header = "Type " + std::to_string(i);
 	if (ImGui::TreeNode(header.c_str())) {
-	  // すでにある Point Size, Color などの UI に加えてカラーマップ選択コンボを追加
-	  std::string comboLabel = "Colormap##" + std::to_string(i);
-	  if (ImGui::Combo(comboLabel.c_str(), &colormapIndex[i], availableColormapNames, IM_ARRAYSIZE(availableColormapNames))) {
-	    // ユーザーの選択に応じて colormapForType を更新
-	    switch (colormapIndex[i]) {
-	    case 0: colormapForType[i] = jetTex; break;
-	    case 1: colormapForType[i] = viridisTex; break;
-	    case 2: colormapForType[i] = plasmaTex; break;
-	    default: colormapForType[i] = jetTex; break;
-	    }
+	  auto& cfg = gParticleVisualConfig.types[i];
 
-	    if(i == 0)
-	      currentColorMapTex = colormapForType[i];
+	  std::string comboLabel = "Colormap##" + std::to_string(i);
+	  const char* preview = gColormapDefs[cfg.colormapIndex].name;
+	  if (ImGui::BeginCombo(comboLabel.c_str(), preview)) {
+	    for (int k = 0; k < gNumColormaps; ++k) {
+	      bool selected = (cfg.colormapIndex == k);
+	      if (ImGui::Selectable(gColormapDefs[k].name, selected)) {
+		cfg.colormapIndex = k;
+	      }
+	      if (selected) ImGui::SetItemDefaultFocus();
+	    }
+	    ImGui::EndCombo();
 	  }
-	  ImGui::Checkbox("Periodic Color Bar", &periodicColorBar[i]);
+	  
+	  ImGui::Checkbox("Periodic Color Bar", &cfg.periodicColorBar);
 	  
 	  std::string sliderLabel = "Point Size##" + std::to_string(i);
-	  ImGui::SliderFloat(sliderLabel.c_str(), &typePointSizes[i], 1.0f, 100.0f);
+	  ImGui::SliderFloat(sliderLabel.c_str(), &cfg.pointSize, 1.0f, 100.0f);
 	  std::string minLabel = "Value Min##" + std::to_string(i);
-	  ImGui::InputFloat(minLabel.c_str(), &typeColorMin[i], 0.01f, 0.1f, "%.3f");
+	  ImGui::InputFloat(minLabel.c_str(), &cfg.colorMin, 0.01f, 0.1f, "%.3f");
 	  std::string maxLabel = "Value Max##" + std::to_string(i);
-	  ImGui::InputFloat(maxLabel.c_str(), &typeColorMax[i], 0.01f, 0.1f, "%.3f");
+	  ImGui::InputFloat(maxLabel.c_str(), &cfg.colorMax, 0.01f, 0.1f, "%.3f");
 	  std::string logLabel = "Use Log Scale##" + std::to_string(i);
-	  ImGui::Checkbox(logLabel.c_str(), &useLogScale[i]);
+	  ImGui::Checkbox(logLabel.c_str(), &cfg.useLogScale);
 
-	  bool flagHideParticles_prev =  static_cast<bool>(flagHideParticles[i]);
+	  bool flagHideParticles_prev =  static_cast<bool>(cfg.hideParticles);
 	  std::string hideLabel = "Hide particle##" + std::to_string(i);
-	  ImGui::Checkbox(hideLabel.c_str(), &flagHideParticles[i]);
-	  if(flagHideParticles_prev != flagHideParticles[i])
+	  ImGui::Checkbox(hideLabel.c_str(), &cfg.hideParticles);
+	  if(flagHideParticles_prev != cfg.hideParticles)
 	    P->particlesDirty = true;
 	  
-	  QuantityId icolor_prev = selectedQuantity[i];
-	  QuantityId& sel = selectedQuantity[i];
+	  QuantityId icolor_prev = cfg.selectedQuantity;
+	  QuantityId& sel = cfg.selectedQuantity;
 
 	  if (ImGui::BeginCombo("Quantity", QuantityLabel(sel))) {
 	    for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
@@ -2942,7 +2664,7 @@ void ShowSettingsUI() {
 		      P->particleValueMin[qidx][i],
 		      P->particleValueMax[qidx][i]);
 
-	  if(icolor_prev != selectedQuantity[i]){
+	  if(icolor_prev != cfg.selectedQuantity){
 	    P->particlesDirty = true;  // グローバルなフラグをtrueに設定
 	  }
 	  
@@ -3153,7 +2875,7 @@ void ShowSettingsUI() {
     }
 
     if (ImGui::Button("Mask Settings...")) {
-      gMaskUI.showWindow = true;
+      OpenMaskUI();
     }
     
     if (ImGui::Button("Generate test data")) {
@@ -4899,10 +4621,10 @@ void UpdateUI() {
   gFileInfo->ShowHDF5FieldMappingDialog();
 #endif
 
-  const bool applied = DrawMaskWindow(gMaskUI);
+  const bool applied = DrawMaskWindow();
   if (applied) {
-    MaskConfig cfg = MakeMaskConfigFromUI(gMaskUI);
-    gFileInfo->setMaskConfig(cfg, gMaskUI.revision);
+    MaskConfig cfg = MakeMaskConfigFromUI();
+    gFileInfo->setMaskConfig(cfg);
   }
   
 #ifdef VOLUME_RENDERING
@@ -4955,7 +4677,7 @@ void RenderCross(const glm::mat4 &view, const glm::mat4 &projection){
 }
 
 
-void RenderColorBar() {
+void RenderColorBar(int colormapIndex) {
   // シーンとは別にオーバーレイ表示するため、深度テストを一時無効化
   glDisable(GL_DEPTH_TEST);
 
@@ -4963,7 +4685,7 @@ void RenderColorBar() {
 
   // テクスチャユニット 0 に現在のカラーマップテクスチャをバインド
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_1D, currentColorMapTex);
+  glBindTexture(GL_TEXTURE_1D, colormapTextures[colormapIndex]);
   // シェーダー内の uniform "colormap" をテクスチャユニット 0 に設定
   glUniform1i(glGetUniformLocation(colorbarProgram, "colormap"), 0);
 
@@ -5001,7 +4723,7 @@ void RenderColorBarLabels() {
   for (int i = 0; i < numTicks; i++) {
     // 色バーのテクスチャ座標 t に対応する値（例：colorBarMin〜colorBarMax）
     float t = float(i) / (numTicks - 1);
-    float value = 0.0f + t * (typeColorMax[0] - typeColorMin[0]);
+    float value = 0.0f + t * (gParticleVisualConfig.types[0].colorMax - gParticleVisualConfig.types[0].colorMin);
     
     // ① 物理ピクセルでのラベル座標
     float px_phys = left_pixel + t*(right_pixel - left_pixel);
@@ -5098,7 +4820,7 @@ void RenderScene() {
 	if(itype != i)
 	  continue;
 	
-	p.val_show = getScalarValue(P->particleBlock, p, ipart, selectedQuantity[i]);
+	p.val_show = getScalarValue(P->particleBlock, p, ipart, gParticleVisualConfig.types[i].selectedQuantity);
       }
     }
 
@@ -5106,7 +4828,7 @@ void RenderScene() {
     filtered.reserve(P->particleBlock.particles.size());
     for (size_t i=0;i<P->particleBlock.particles.size();i++){
       auto &p = P->particleBlock.particles[i];
-      if (P->flag_mask[i] == 0 && flagHideParticles[p.type] == false)
+      if (P->flag_mask[i] == 0 && gParticleVisualConfig.types[p.type].hideParticles == false)
 	filtered.push_back(p);
     }
       
@@ -5163,29 +4885,38 @@ void RenderScene() {
   glUniformMatrix4fv(glGetUniformLocation(particleProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
   glUniformMatrix4fv(glGetUniformLocation(particleProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
   glUniformMatrix4fv(glGetUniformLocation(particleProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-  glUniform1fv(glGetUniformLocation(particleProgram, "pointSizes"), 6, typePointSizes);
-  glUniform1fv(glGetUniformLocation(particleProgram, "valueMin"), 6, typeColorMin);
-  glUniform1fv(glGetUniformLocation(particleProgram, "valueMax"), 6, typeColorMax); 
-  
-  int intUseLog[6];
-  for (int i = 0; i < 6; i++) 
-    intUseLog[i] = useLogScale[i] ? 1 : 0;	
-  glUniform1iv(glGetUniformLocation(particleProgram, "useLog"), 6, intUseLog);
 
-  // パーティクルシェーダーを使う前に各カラーマップをバインド
-  for (int i = 0; i < 6; i++) {
-    glActiveTexture(GL_TEXTURE0 + i);
-    glBindTexture(GL_TEXTURE_1D, colormapForType[i]);
-  }
-  // uniform "colormaps" にテクスチャユニット番号をセットする
-  int samplers[6] = {0, 1, 2, 3, 4, 5};
-  glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"), 6, samplers);
-
+  float pointSizes[6];
+  float valueMin[6];
+  float valueMax[6];
+  int useLog[6];
+  int samplers[6];
   int periodicMapping[6];
-  for (int i = 0; i < 6; i++) {
-    periodicMapping[i] = periodicColorBar[i] ? 1 : 0;
+  
+  for (int i = 0; i < 6; ++i) {
+    const auto& cfg = gParticleVisualConfig.types[i];
+
+    pointSizes[i] = cfg.pointSize;
+    valueMin[i]   = cfg.colorMin;
+    valueMax[i]   = cfg.colorMax;
+    useLog[i]     = cfg.useLogScale ? 1 : 0;
+    periodicMapping[i] = cfg.periodicColorBar ? 1 : 0;
+    samplers[i]   = i;
+
+    int cmap = cfg.colormapIndex;
+    if (cmap < 0) cmap = 0;
+    if (cmap >= gNumColormaps) cmap = gNumColormaps - 1;
+
+    glActiveTexture(GL_TEXTURE0 + i);
+    glBindTexture(GL_TEXTURE_1D, colormapTextures[cmap]);
   }
-  glUniform1iv(glGetUniformLocation(particleProgram, "periodicMapping"), 6, periodicMapping);
+
+  glUniform1fv(glGetUniformLocation(particleProgram, "pointSizes"), 6, pointSizes);
+  glUniform1fv(glGetUniformLocation(particleProgram, "valueMin"), 6, valueMin);
+  glUniform1fv(glGetUniformLocation(particleProgram, "valueMax"), 6, valueMax); 
+  glUniform1iv(glGetUniformLocation(particleProgram, "useLog"), 6, useLog);
+  glUniform1iv(glGetUniformLocation(particleProgram, "periodicMapping"), 6, periodicMapping);  
+  glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"), 6, samplers);
   
   glBindVertexArray(particleVAO);
   if(flagHideAllParticles == false)
@@ -5721,7 +5452,7 @@ void RenderScene() {
   }
 #endif
     
-  RenderColorBar();
+  RenderColorBar(gParticleVisualConfig.types[0].colormapIndex);
   RenderColorBarLabels();
 }
 
@@ -5806,7 +5537,9 @@ void Cleanup() {
   glDeleteProgram(particleProgram);
   glDeleteProgram(lineProgram);
 
-  saveConfig();
+  ConfigMaskState maskState;
+  ExportMaskConfigState(maskState);
+  saveConfig("config.txt", P, gFileInfo, &gParticleVisualConfig, &maskState);
   
   // ImGui の終了処理
   ImGui_ImplOpenGL3_Shutdown();
@@ -5842,21 +5575,16 @@ int main() {
 #endif
   
   InitBuffers();     // OpenGL の VAO/VBO の初期化
-  loadConfig();
+  ConfigMaskState maskState;
+  if (loadConfig("config.txt", P, gFileInfo, &gParticleVisualConfig, &maskState)) {
+    ApplyMaskConfigState(maskState);
+  }
 
   gFileInfo->setUnit(P);
   
   int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
   gFileInfo->loadBatch(newFileIndex, gFileInfo->batchSize, gFileInfo->skipStep, P);      
   
-  // InitColorMaps() 内、または InitParticles() の後などで
-  colormapForType[0] = jetTex;
-  colormapForType[1] = viridisTex;
-  colormapForType[2] = plasmaTex;
-  colormapForType[3] = jetTex;
-  colormapForType[4] = viridisTex;
-  colormapForType[5] = plasmaTex;
-
 #ifdef USE_CONVEX_HULL
   gConvexHullGenerator = new ConvexHullGenerator();
 #endif
