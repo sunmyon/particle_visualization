@@ -13,13 +13,6 @@
 #include "main.h"
 #include <glm/glm.hpp>
 
-struct Ellipsoid {
-  double a{0}, b{0}, c{0};          // 半長軸・半中軸・半短軸
-  Eigen::Vector3d center{0,0,0};    // 質量中心
-  Eigen::Matrix3d axes = Eigen::Matrix3d::Identity(); // 列ベクトルが主軸 (右手系)
-};
-
-
 class EllipseFitter {
   public:
   EllipseFitter() = default;

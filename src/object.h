@@ -14,6 +14,12 @@ void UpdateCuboidTransformArcball(glm::vec3 &center, glm::quat &cuboidTransform
 				  , float lastX, float lastY, float xpos, float ypos
 				  , const glm::mat4 &view, const glm::vec3 &pivotWorld);
 
+struct Ellipsoid {
+  double a{0}, b{0}, c{0};          // 半長軸・半中軸・半短軸
+  Eigen::Vector3d center{0,0,0};    // 質量中心
+  Eigen::Matrix3d axes = Eigen::Matrix3d::Identity(); // 列ベクトルが主軸 (右手系)
+};
+
 struct Cube {
   glm::vec3 position;       // Center position of the cube
   glm::vec3 size;           // Half-extents along each axis (width/2, height/2, depth/2)

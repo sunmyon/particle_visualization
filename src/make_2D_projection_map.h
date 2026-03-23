@@ -30,6 +30,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "colormap_defs.h"
+
 struct ProjectionImage {
   int width = 0;
   int height = 0;

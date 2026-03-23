@@ -1534,3 +1534,65 @@ void ApplyMaskConfigState(const ConfigMaskState& state)
   // 読み込み後に自動反映したいなら
   gMaskUIState.revision++;
 }
+
+void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
+                             const ProjectionPreviewUIState& st)
+{
+  if (!gen.getImageFlag()) return;
+
+  ImGui::Begin("2D Projection Map");
+  if (st.valid) {
+    ImGui::Image((ImTextureID)st.textureId, ImVec2((float)st.width, (float)st.height));
+  }
+  ImGui::End();
+}
+
+void DrawColorBarLabelsUI(const ColorBarLabelLayout& layout,
+                          float valueMin,
+                          float valueMax)
+{
+  ImGuiIO& io = ImGui::GetIO();
+  float scaleX = io.DisplayFramebufferScale.x;
+  float scaleY = io.DisplayFramebufferScale.y;
+
+  int numTicks = 5;
+  ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+
+  for (int i = 0; i < numTicks; i++) {
+    float t = float(i) / (numTicks - 1);
+    float value = valueMin + t * (valueMax - valueMin);
+
+    float px_phys = layout.left_pixel + t * (layout.right_pixel - layout.left_pixel);
+    float py_phys = layout.bottom_pixel + 5.0f * scaleY;
+
+    float sx = (px_phys + layout.offsetX) / scaleX;
+    float sy = (py_phys + layout.offsetY) / scaleY;
+
+    float draw_x = std::floor(sx + 0.5f);
+    float draw_y = std::floor(sy + 0.5f);
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.2f", value);
+    draw_list->AddText(ImVec2(draw_x, draw_y), IM_COL32(255,255,255,255), buf);
+  }
+}
+
+void ShowTime(double time){
+    // 画面の左上（ピクセル座標 (10,10)）にウィンドウを固定する
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    // 背景を透明にしたい場合
+    ImGui::SetNextWindowBgAlpha(0.3f);
+    // ウィンドウフラグでタイトルバーや枠、スクロールバーを非表示にする
+    ImGui::Begin("Time Overlay", nullptr,
+                 ImGuiWindowFlags_NoTitleBar |
+                 ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoSavedSettings);
+    // glfwGetTime() を用いて経過時間を表示（必要に応じてフォーマットを変更してください）
+    ImGui::Text("Time: %.4f", time);
+    ImGui::End();
+}
+
+void ShowCameraSettingsUI(){};

@@ -47,17 +47,23 @@
 #include "make_2D_projection_map.h"
 #include "FileIO/file_io.h"
 
+#ifdef STREAM_LINE
+#include "StreamLine/stream_line_new.h"
+#endif
+
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/ellipse_fitter.h"
 #include "GeometricAnalysis/DiskRadius.hpp"
 #endif
 
+#include "app_services.h"
+AppServices gAppServices;
+
+#include "ui_state.h"
+SettingsRuntimeState gSettingsRuntimeState;
+RenderRuntimeState gRenderRuntimeState;
+
 // tinyfiledialogs（フォルダ選択用）
-#ifndef NONATIVEFILEDIALOG
-#include "nfd.h"
-#else
-#include "ImGuiFileDialog.h" // インクルードパスを合わせる
-#endif
 
 #define USE_LETTERBOX 1
 
@@ -77,14 +83,6 @@ static std::unordered_map<int, HullGpuEntry> s_hull;
 #include "PythonBridge/BridgeAdapter.h"
 #include "PythonBridge/PythonBridge.h"
 #include "PythonBridge/ShmLayout.h"
-
-struct PyBridgeState {
-  std::unique_ptr<PythonBridge> ptr;
-  bool launched = false;
-  bool needUploadPos = false;
-};
-
-static PyBridgeState g_py; 
 #endif
 
 // ------------------------------
@@ -99,25 +97,10 @@ std::mutex g_mutex;
 struct CameraContext camCtx;
 
 FileInfo *gFileInfo;
-std::unique_ptr<RadialProfileComputer> gRadialProfileComputer;
-std::unique_ptr<Histogram2DComputer> gHistogram2DComputer;
-std::unique_ptr<ProjectionMapGenerator> gProjectionMap2D;
-FindClump *gClumpFind;
-
 ParticleArray *P;
-
-#ifdef GEOMETRICAL_ANALYSIS
-EllipseFitter *gEllipsoid; 
-DiskRadiusFinder *gDiskFinder;
-#endif
 
 bool g_flagShowCuboid = false;
 TrackingVector<glm::vec3> g_cubicPoints;
-
-static int velocitySubtraction = 100;
-bool showVelocityVectors = false;
-bool useVelocityArrowLogScale = true;
-float arrowScale = 1.;
 
 #include "particle_visual_config.h"
 ParticleVisualConfig gParticleVisualConfig;
@@ -126,39 +109,19 @@ GLuint colormapTextures[50] = {0};
 size_t g_filteredParticleCount = 0;
 
 std::vector<size_t> g_labelIndices;  // 毎回 ImGui 描画に使う
-glm::vec3 g_lastCameraPos = camCtx.cameraPos;
-float g_queryRadius   = 0.5f;     // r
-float g_moveThreshold = 0.1f*g_queryRadius;
-int g_nqueryparticles = 50;
-bool g_flagShowSinkIDs = false;
+
+struct ProjectionPreviewGLState {
+  GLuint tex = 0;
+  int width = 0;
+  int height = 0;
+  uint64_t uploadedVersion = 0;
+};
+
+ProjectionPreviewGLState gProjectionPreviewGLState;
 
 #ifdef ISO_CONTOUR
 #include "IsoSurface/IsoSurfaceGenerator.h"
-
-IsoSurfaceGenerator * gIsoContour = nullptr;
-
-TrackingVector<float> vertsIsocontour;
-TrackingVector<unsigned> indsIsocontour;
 unsigned meshIsocontourVAO=0, meshIsocontourVBO=0, meshIsocontourEBO=0, meshIsocontourNBO=0;
-bool showIsocontour = false;
-float isoOpacity=0.5;
-#endif
-
-#ifdef GEOMETRICAL_ANALYSIS
-bool showEllipsoid = false;
-float isoOpacityEllipsoid=0.5;
-
-bool showDisks = false;
-float diskOpacity=0.5;
-#endif
-
-#ifdef STREAM_LINE
-bool showStreamLine = false;
-bool flagStreamDirty = true;
-float streamlineopacity = 0.9;
-
-#include "StreamLine/stream_line.h"
-StreamlineComputer *gStreamLine;
 #endif
 
 #ifdef VOLUME_RENDERING
@@ -167,51 +130,16 @@ StreamlineComputer *gStreamLine;
 #include "VolumeRendering/TransferFunctionEditor.hpp"
 #include "VolumeRendering/OpacityComputer.hpp"
 
-int flagRT = 2;
-bool flagHideAllParticles = false;
-bool showVolumeRendering = false;
-bool flagUpdateRendering = false;
-
-int   kernelMode = 0;  // 0=Gaussian, 1=Poly6
-float gaussNSigma = 2.5; // 2.5
-float enlargeKernel = 2.0; // 2.0
-
-int lodMode = 1;
-float pxThreshold = 2.;
-float tauMax = 1.;  
-float rtDownscale = 3.;
-
 struct TBO { GLuint buf=0, tex=0; };
-lbvh::MortonBuilder *gBVH;
-
 struct GpuOctree {
   TBO nodeMin, nodeMax;     // GL_RGBA32F
   TBO cornerLo, cornerHi;     // GL_RGBA32F
   TBO texChildA, texChildB;   // GL_RGBA32I (isamplerBuffer)
   int root;
   int nNodes;
-};
-
-struct OctTreeState {
-  std::unique_ptr<ParticleOctree> cpuTree;  
-  GpuOctree gpuTree;
-  
-  std::vector<const ParticleOctree::Node*> order;  // preorder: index→Node*
-  std::vector<NodeInfo>                    info;   // index -> attribute
-  std::unordered_map<const ParticleOctree::Node*, int> toIdx; // Node* -> index
-
-  uint64_t versionCPU = 0;   // ツリーを作り直したら ++
-  uint64_t versionGPU = 0;   // GPUへ反映したら =versionCPU
-  bool     dirtyCPU   = true; // order/info/toIdx が古いなら true
-  bool     dirtyGPU   = true; // TBO/SSBO が古いなら true
-} gOctTree;
-
-
-TransferFunctionEditor *gTF;
-RhoSigmaLUT g_rho2sigma;
+} gGPUOctTree;
 #endif
 
-bool flagCubesDirty = true;
 bool flagShowCoordinates = true;
 
 // ------------------------------
@@ -225,10 +153,6 @@ bool firstMouse = true;
 // メインループ用の時間計測変数
 // ------------------------------
 float lastFrame = 0.0f;
-
-// **ズーム範囲の最小・最大値（デフォルト値を設定）**
-static float minZoom = 0.1f;  
-static float maxZoom = 500.0f;  
 
 // 仮想球面へのマッピング関数
 glm::vec3 mapToSphere(float x, float y) {
@@ -394,8 +318,8 @@ void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffset)
   //if (distance < 1.0f)   distance = 1.0f;
   //if (distance > 100.0f) distance = 100.0f;
 
-  if (camCtx.distance < minZoom) camCtx.distance = minZoom;
-  if (camCtx.distance > maxZoom) camCtx.distance = maxZoom;
+  if (camCtx.distance < gSettingsRuntimeState.minZoom) camCtx.distance = gSettingsRuntimeState.minZoom;
+  if (camCtx.distance > gSettingsRuntimeState.maxZoom) camCtx.distance = gSettingsRuntimeState.maxZoom;
     
   glm::vec3 direction;
 #if defined(ROTATE_ARCBALL) || defined(ROTATE_QUATERNION)
@@ -1711,9 +1635,6 @@ void SetupQuad()
 GLuint jetTex, viridisTex, plasmaTex;
 // … 他にも必要なら追加
 
-float crossSize = 0.05f;
-
-
 void InitApplication() {
   // 設定のロード（前回の状態を復元）
 }
@@ -2305,19 +2226,19 @@ static BVHGpuPack uploadBVH_TBO(lbvh::BuildResult bvh){
     return G;
 }
 
-void uploadOctTree_TBO(OctTreeState& state){
-  if (!state.cpuTree || state.order.empty() || state.info.size() != state.order.size()) {
+void uploadOctTree_TBO(OctTreeCPUState& cpu, GpuOctree& gpu, const RhoSigmaLUT& rho2sigma){
+  if (!cpu.cpuTree || cpu.order.empty() || cpu.info.size() != cpu.order.size()) {
     return;
   }
 
-  const int N = (int)state.order.size();
+  const int N = (int)cpu.order.size();
   std::vector<glm::vec4> vMin(N), vMax(N);
   std::vector<glm::ivec4> vChA(N), vChB(N);
   std::vector<glm::vec4> vCornerLo(N), vCornerHi(N);
 
   for (int i=0;i<N;++i){
-    const auto* n = state.order[i];
-    const auto& ni= state.info[i];
+    const auto* n = cpu.order[i];
+    const auto& ni= cpu.info[i];
 
     vMin[i] = glm::vec4(n->box.min, ni.sigmaAvg);
     vMax[i] = glm::vec4(n->box.max, ni.sigmaMax);
@@ -2327,7 +2248,7 @@ void uploadOctTree_TBO(OctTreeState& state){
     float sig[8];
     for (int c=0;c<8;++c) {
       float rho = n->edgeValues[c];
-      sig[c] = g_rho2sigma(rho);
+      sig[c] = rho2sigma(rho);
     }
     vCornerLo[i] = glm::vec4(sig[0], sig[1], sig[2], sig[3]);
     vCornerHi[i] = glm::vec4(sig[4], sig[5], sig[6], sig[7]);
@@ -2344,8 +2265,9 @@ void uploadOctTree_TBO(OctTreeState& state){
   G.root = 0;
   G.nNodes = N;
 
-  state.gpuTree = G;
-}  
+  gpu = G;
+
+}
 #endif
 
 static GLuint CreateColormapTexture1D(const float* rgb, int nColors)
@@ -2482,24 +2404,6 @@ static void uploadMeshWithNormals(const TrackingVector<float>& verts, const Trac
 }
 #endif
 
-void ShowTime(){
-    // 画面の左上（ピクセル座標 (10,10)）にウィンドウを固定する
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-    // 背景を透明にしたい場合
-    ImGui::SetNextWindowBgAlpha(0.3f);
-    // ウィンドウフラグでタイトルバーや枠、スクロールバーを非表示にする
-    ImGui::Begin("Time Overlay", nullptr,
-                 ImGuiWindowFlags_NoTitleBar |
-                 ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_AlwaysAutoResize |
-                 ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoScrollbar |
-                 ImGuiWindowFlags_NoSavedSettings);
-    // glfwGetTime() を用いて経過時間を表示（必要に応じてフォーマットを変更してください）
-    ImGui::Text("Time: %.4f", P->particleBlock.header.time);
-    ImGui::End();
-}
-
 std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
 {
   size_t dotPos = filename.find_last_of('.');
@@ -2589,1556 +2493,21 @@ void ParticleArray::recomputeHaloPositionsFromParticles(bool useMassWeight,
   }
 }
 
-
-float radiusCullingSphere = 1.;
-
-void ShowSettingsUI() {
-  ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-  ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)", camCtx.cameraPos.x, camCtx.cameraPos.y, camCtx.cameraPos.z);
-  ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)", camCtx.cameraTarget.x, camCtx.cameraTarget.y, camCtx.cameraTarget.z);
-
-  // グローバル変数として、各タイプのカラーマップ選択インデックスを保持
-  static int colormapIndex[6] = { 0, 1, 2, 0, 1, 2 }; // 0:Jet, 1:Viridis, 2:Plasma
-  
-  // 利用可能なカラーマップ名
-  const char* availableColormapNames[] = { "Jet", "Viridis", "Plasma" };
-  
-  if (ImGui::CollapsingHeader("Particle Type Settings"))
-    {
-      for (int i = 0; i < 6; i++) {
-	std::string header = "Type " + std::to_string(i);
-	if (ImGui::TreeNode(header.c_str())) {
-	  auto& cfg = gParticleVisualConfig.types[i];
-
-	  std::string comboLabel = "Colormap##" + std::to_string(i);
-	  const char* preview = gColormapDefs[cfg.colormapIndex].name;
-	  if (ImGui::BeginCombo(comboLabel.c_str(), preview)) {
-	    for (int k = 0; k < gNumColormaps; ++k) {
-	      bool selected = (cfg.colormapIndex == k);
-	      if (ImGui::Selectable(gColormapDefs[k].name, selected)) {
-		cfg.colormapIndex = k;
-	      }
-	      if (selected) ImGui::SetItemDefaultFocus();
-	    }
-	    ImGui::EndCombo();
-	  }
-	  
-	  ImGui::Checkbox("Periodic Color Bar", &cfg.periodicColorBar);
-	  
-	  std::string sliderLabel = "Point Size##" + std::to_string(i);
-	  ImGui::SliderFloat(sliderLabel.c_str(), &cfg.pointSize, 1.0f, 100.0f);
-	  std::string minLabel = "Value Min##" + std::to_string(i);
-	  ImGui::InputFloat(minLabel.c_str(), &cfg.colorMin, 0.01f, 0.1f, "%.3f");
-	  std::string maxLabel = "Value Max##" + std::to_string(i);
-	  ImGui::InputFloat(maxLabel.c_str(), &cfg.colorMax, 0.01f, 0.1f, "%.3f");
-	  std::string logLabel = "Use Log Scale##" + std::to_string(i);
-	  ImGui::Checkbox(logLabel.c_str(), &cfg.useLogScale);
-
-	  bool flagHideParticles_prev =  static_cast<bool>(cfg.hideParticles);
-	  std::string hideLabel = "Hide particle##" + std::to_string(i);
-	  ImGui::Checkbox(hideLabel.c_str(), &cfg.hideParticles);
-	  if(flagHideParticles_prev != cfg.hideParticles)
-	    P->particlesDirty = true;
-	  
-	  QuantityId icolor_prev = cfg.selectedQuantity;
-	  QuantityId& sel = cfg.selectedQuantity;
-
-	  if (ImGui::BeginCombo("Quantity", QuantityLabel(sel))) {
-	    for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
-	      QuantityId cand = P->particleBlock.uiQ[q];
-	      bool is_selected = (cand == sel);
-	      if (ImGui::Selectable(QuantityLabel(cand), is_selected)) sel = cand;
-	      if (is_selected) ImGui::SetItemDefaultFocus();
-	    }
-	    ImGui::EndCombo();
-	  }
-
-	  auto findIndex = [&](QuantityId q)->int{
-	    for (int k = 0; k < P->particleBlock.nUIQ; ++k) if (P->particleBlock.uiQ[k] == q) return k;
-	    return 0; // fallback
-	  };
-
-	  int qidx = findIndex(sel);
-	  ImGui::Text("Current particle %s range: [%g, %g]",
-		      QuantityLabel(sel),
-		      P->particleValueMin[qidx][i],
-		      P->particleValueMax[qidx][i]);
-
-	  if(icolor_prev != cfg.selectedQuantity){
-	    P->particlesDirty = true;  // グローバルなフラグをtrueに設定
-	  }
-	  
-	  ImGui::TreePop();
-	}
-      }
-    }
-
-  if(ImGui::CollapsingHeader("File Navigation")){
-    ImGui::InputText("Folder", gFileInfo->folderPath, IM_ARRAYSIZE(gFileInfo->folderPath));
-    ImGui::InputText("File Format", gFileInfo->fileFormat, IM_ARRAYSIZE(gFileInfo->fileFormat));
-    ImGui::InputInt("initialIndex", &gFileInfo->initialIndex);
-
-    char fileNameOnly[255];
-    std::snprintf(fileNameOnly, sizeof(fileNameOnly), gFileInfo->fileFormat, gFileInfo->initialIndex);
-    std::snprintf(gFileInfo->filePath, sizeof(gFileInfo->filePath), "%s/%s", gFileInfo->folderPath, fileNameOnly);
-    
-    if (ImGui::Button("Browse Folder")) {
-#ifndef NONATIVEFILEDIALOG
-      char* outPath = nullptr;
-      // NFD_PickFolder は outPath に選択されたパスを malloc() で割り当てるので、後で free() が必要です。
-      nfdresult_t result = NFD_OpenDialog("", gFileInfo->folderPath, &outPath);
-      if (result == NFD_OKAY) {
-        // 選択されたパスを folderPath にコピー
-        std::strncpy(gFileInfo->filePath, outPath, IM_ARRAYSIZE(gFileInfo->folderPath));
-        free(outPath);
-
-        // 1. フォルダ部分を抽出
-        char* lastSlash = std::strrchr(gFileInfo->filePath, '/');
-        if (lastSlash) {
-	  size_t folderLen = lastSlash - gFileInfo->filePath + 1; // '/'を含む
-	  std::strncpy(gFileInfo->folderPath, gFileInfo->filePath, folderLen);
-	  gFileInfo->folderPath[folderLen] = '\0';	    
-	}
-
-	char *filename = gFileInfo->filePath;
-	if(lastSlash)
-	  filename = lastSlash + 1;
-
-#ifdef HAVE_HDF5
-        // 2. ファイル形式（拡張子）の抽出
-	gFileInfo->useHDF5 = false;
-        char* dot = std::strrchr(filename, '.');
-        if (dot) {
-	  std::string ext(dot);
-	  if (ext == ".hdf5") 
-	    gFileInfo->useHDF5 = true;	  
-        }
-#endif
-	
-	auto res = convertFilenameToFormatAndExtractNumber(filename);       
-	std::strncpy(gFileInfo->fileFormat, res.first.c_str(), IM_ARRAYSIZE(gFileInfo->fileFormat));
-	gFileInfo->fileFormat[IM_ARRAYSIZE(gFileInfo->fileFormat) - 1] = '\0'; 
-	gFileInfo->initialIndex = res.second;	
-      }
-      else if (result == NFD_CANCEL) {
-        // ユーザーがキャンセルした場合
-        // （特に処理を行わなくてもよい）
-      }
-      else {
-        // エラー発生時
-        std::cerr << "Error: " << NFD_GetError() << std::endl;
-      }
-#else
-      IGFD::FileDialogConfig config;
-      // 初期ディレクトリの設定（"path" メンバー）
-      //config.path = gFileInfo->filePath;
-      config.path = gFileInfo->folderPath;
-      // 必要なら初期のファイル名を設定（空の場合はユーザー入力待ち）
-      config.fileName = "output"; 
-      // その他、選択可能なファイル数などの設定はデフォルトのままでOK
-      ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", "**", config);
-#endif
-    }
-
-#ifdef NONATIVEFILEDIALOG
-    if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey"))
-      {
-	if (ImGuiFileDialog::Instance()->IsOk())
-	  {
-	    std::string selectedFile = ImGuiFileDialog::Instance()->GetFilePathName();
-	    std::string currentFolder = ImGuiFileDialog::Instance()->GetCurrentPath();
-	    std::strncpy(gFileInfo->filePath, selectedFile.c_str(), IM_ARRAYSIZE(gFileInfo->filePath));
-	    gFileInfo->filePath[IM_ARRAYSIZE(gFileInfo->filePath)-1] = '\0';
-	    	    
-	    // 1. フォルダ部分を抽出
-	    char* lastSlash = std::strrchr(gFileInfo->filePath, '/');
-	    if (lastSlash) {
-	      size_t folderLen = lastSlash - gFileInfo->filePath + 1; // '/'を含む
-	      std::strncpy(gFileInfo->folderPath, gFileInfo->filePath, folderLen);
-	      gFileInfo->folderPath[folderLen] = '\0';	    
-	    }
-	    
-	    char *filename = gFileInfo->filePath;
-	    if(lastSlash)
-	      filename = lastSlash + 1;
-
-#ifdef HAVE_HDF5
-	    // 2. ファイル形式（拡張子）の抽出
-	    gFileInfo->useHDF5 = false;
-	    char* dot = std::strrchr(filename, '.');
-	    if (dot) {
-	      std::string ext(dot);
-	      if (ext == ".hdf5") 
-		gFileInfo->useHDF5 = true;	  
-	    }
-#endif
-	    
-	    auto res = convertFilenameToFormatAndExtractNumber(filename);       
-	    std::strncpy(gFileInfo->fileFormat, res.first.c_str(), IM_ARRAYSIZE(gFileInfo->fileFormat));
-	    gFileInfo->fileFormat[IM_ARRAYSIZE(gFileInfo->fileFormat) - 1] = '\0'; 
-	    gFileInfo->initialIndex = res.second;	
-	  }
-	else
-	  {
-	    ImGui::Text("File Dialog Cancelled");
-	  }
-	ImGuiFileDialog::Instance()->Close();
-      }
-#endif
-    
-    gFileInfo->currentFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-    ImGui::Text("File: %s", gFileInfo->filePath);
-    ImGui::Text("Current File: %d", gFileInfo->currentFileIndex);
-
-    ImGui::BeginDisabled(gFileInfo->isLoading);
-    
-    // **skipStep の調整**
-    static int tempSkipStep = gFileInfo->skipStep;
-    if (ImGui::InputInt("Skip Step", &tempSkipStep, 1, 100)) {
-      int newStep = std::round((gFileInfo->currentFileIndex - gFileInfo->initialIndex) / static_cast<float>(tempSkipStep));
-      gFileInfo->currentStep = std::max(0, newStep);
-      gFileInfo->skipStep = tempSkipStep;
-
-      int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-      if (!gFileInfo->isLoading)
-	gFileInfo->loadBatch(newFileIndex, gFileInfo->batchSize, gFileInfo->skipStep, P);      
-
-      gFileInfo->currentFileIndex = newFileIndex;
-    }
-    
-    // **スライダーで `gFileInfo->currentFileIndex` を選択**
-    if (ImGui::InputInt("Select File Index", &gFileInfo->currentStep, 1, 10)) {
-      int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-      gFileInfo->loadNewSnapshot(newFileIndex, P);      
-    }
-    
-    // **前のファイル**
-    if (ImGui::Button("Previous File") && gFileInfo->currentStep > 0) {
-      gFileInfo->currentStep--;
-      
-      int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-      gFileInfo->loadNewSnapshot(newFileIndex, P);            
-    }
-
-    ImGui::SameLine();
-
-    // **次のファイル**
-    if (ImGui::Button("Next File")) {
-      gFileInfo->currentStep++;
-
-      int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-      gFileInfo->loadNewSnapshot(newFileIndex, P);            
-    }
-
-    if(ImGui::InputInt("Batch Size", &gFileInfo->batchSize)){
-      if (!gFileInfo->isLoading)
-	gFileInfo->loadBatch(gFileInfo->currentStep, gFileInfo->batchSize, gFileInfo->skipStep, P);      
-    }
-
-    ImGui::EndDisabled();
-    
-    // **ロード状況を表示**
-    if (gFileInfo->isLoading) {
-      ImGui::Text("Loading...");
-    }
-    
-    if (ImGui::Button("Reload")) {
-      if (!gFileInfo->isLoading) {
-	int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-	
-	gFileInfo->loadBatch(gFileInfo->currentStep, gFileInfo->batchSize, gFileInfo->skipStep, P);      
-        std::cout << "Reloaded files starting at file " << newFileIndex << std::endl;
-      }
-    }
-    
-    if (ImGui::Button("Edit Data Format")) {
-#ifdef HAVE_HDF5
-      if (gFileInfo->useHDF5 || gFileInfo->getFormatMode() == static_cast<int>(FileFormat::HDF5))
-	gFileInfo->showHDF5Dialog();
-      else
-#endif
-	gFileInfo->showDialog();      
-    }
-
-    static const char* FileFormatNames[] = {
-      "Auto", "HDF5", "Binary", "Gadget", "Framed"
-    };
-    // FileFormat::_Count と同じ長さにしておく
-    static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames), 
-		  "FileFormatNames needs to match FileFormat::_Count");
-    
-    int fmtIdx = gFileInfo->getFormatMode();
-    // シンプルに Combo で切り替え
-    if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
-      // ユーザーが選び直したら enum に戻す
-      gFileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
-    }
-
-    if (ImGui::Button("Mask Settings...")) {
-      OpenMaskUI();
-    }
-    
-    if (ImGui::Button("Generate test data")) {
-      gFileInfo->generateTestData(P);      
-    }    
-  }
-  
-  if (ImGui::CollapsingHeader("Normalization")) {
-    ImGui::InputFloat("Desired Maximum", &P->desiredMax, 0.f, 0.f, "%g");
-    if (ImGui::Button("Normalize Positions")) 
-      P->rescalePositions();
-    
-    ImGui::Text("Original max coordinate: %.3g", P->originalMax);
-    ImGui::Text("Max coordinate is normalized to: %.3f", P->desiredMax);
-  }
-  
-  if (ImGui::CollapsingHeader("set sink ID visualization")){
-    ImGui::InputFloat("radius", &g_queryRadius, 0.f, 0.f, "%g");
-    ImGui::InputInt("number of particles", &g_nqueryparticles);
-
-    g_moveThreshold = 0.1f*g_queryRadius;
-
-    if(ImGui::Button("show sink IDs")){
-      g_flagShowSinkIDs = true;
-      g_lastCameraPos = camCtx.cameraPos;
-    }
-
-    if(ImGui::Button("disable sink IDs")){
-      g_flagShowSinkIDs = false;
-    }
-  }
-
-  
-  
-  if (ImGui::CollapsingHeader("Set camera pos")) {
-    static float centerInput[3] = {0.0f, 0.0f, 0.0f};
-    static bool inputIsOriginal = true;
-    ImGui::InputFloat3("Center Coordinates", centerInput, "%.3f");
-    ImGui::Checkbox("Input in Original Coordinates", &inputIsOriginal);
-    if (ImGui::Button("Set Center")) {
-      float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-      
-      if (inputIsOriginal) {
-	// 入力された座標は original 座標なので、正規化に使用している倍率をかけて normalized 座標に変換
-	camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]) * P->normalizationFactor;
-      } else {
-	camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]);
-      }
-
-      camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
-    }
-
-    static int currentView = 0;
-    const char* viewDirections[] = {
-      "View from +X", "View from -X",
-      "View from +Y", "View from -Y",
-      "View from +Z", "View from -Z"
-    };
-    ImGui::Combo("Projection Direction", &currentView, viewDirections, IM_ARRAYSIZE(viewDirections));
-
-    static float rollAngle = 0.0f; // ロール角度（度単位）
-    ImGui::SliderFloat("Roll Angle (deg)", &rollAngle, -180.0f, 180.0f, "%.1f");
-    
-    if (ImGui::Button("Set Projection")) {
-      float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-    
-      switch (currentView) {
-      case 0: // +X
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(distance, 0.0f, 0.0f);
-	camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	break;
-      case 1: // -X
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(-distance, 0.0f, 0.0f);
-	camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	break;
-      case 2: // +Y
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, distance, 0.0f);
-	camCtx.cameraUp = glm::vec3(0.0f, 0.0f, -1.0f); // Z軸を上方向に
-	break;
-      case 3: // -Y
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, -distance, 0.0f);
-	camCtx.cameraUp = glm::vec3(0.0f, 0.0f, 1.0f); // 反対Z軸を上方向に
-	break;
-      case 4: // +Z
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, distance);
-	camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	break;
-      case 5: // -Z
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, -distance);
-	camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	break;
-      }
-
-      // 視線方向ベクトルを取得
-      glm::vec3 viewDir = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
-      // 回転クォータニオン生成（右手系、正の角度で反時計回り）
-      glm::quat rollQuat = glm::angleAxis(glm::radians(rollAngle), viewDir);
-      // Upベクトルに適用
-      camCtx.cameraUp = rollQuat * camCtx.cameraUp;
-
-      // ビュー行列を更新
-      glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
-    
-      // クォータニオンも更新（必要な場合）
-      camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
-    }
-
-    ImGui::InputFloat("Culling radius", &radiusCullingSphere);    
-    if(ImGui::Button("Culling sphere region")){
-      for(size_t i=0;i<P->particleBlock.particles.size();i++){
-	auto &p = P->particleBlock.particles[i];
-	uint8_t flag_mask = 0;
-	if(glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) > radiusCullingSphere)
-	  flag_mask = 1;
-	
-	P->flag_mask[i] = flag_mask;
-      }
-      
-      P->particlesDirty = true; 
-    }
-
-    if(ImGui::Button("disable Culling")){
-      for(size_t i=0;i<P->particleBlock.particles.size();i++)
-	P->flag_mask[i] = 0;            
-      P->particlesDirty = true; 
-    }
-  }
-
-#ifdef PYTHON_BRIDGE
-  if (ImGui::CollapsingHeader("Python:Jupyter notebook")) {
-    const bool isOpen = (g_py.ptr != nullptr);
-
-    if (ImGui::Button(isOpen ? "Close notebook" : "Open notebook")) {
-      if (!isOpen) {
-	// --- Open ---
-	g_py.ptr.reset(CreatePythonBridge());
-	if (!g_py.ptr) {
-	  ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge creation failed");
-	} else {
-	  // 共有メモリ準備
-	  const uint64_t N = static_cast<uint64_t>(P->particleBlock.particles.size());
-	  if (!g_py.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
-	    ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge init failed");
-	    g_py.ptr.reset();
-	  } else {
-	    bridge::loadInitialFromAoS(*g_py.ptr, *P, sizeof(ParticleData));	    
-	    // Notebook 起動（非同期でもOK／boolで可否だけ握る）
-	    g_py.launched = g_py.ptr->launchNotebook("./jupyter_work");
-	  }
-	}
-      } else {
-	// --- Close ---
-	g_py.ptr->shutdown();
-	g_py.ptr.reset();
-	g_py.launched = false;
-	g_py.needUploadPos = false;
-      }
-    }
-
-    // ステータス表示
-    if (g_py.ptr) {
-      ImGui::SameLine();
-      ImGui::TextColored(g_py.launched ? ImVec4(0.6f,1,0.6f,1) : ImVec4(1,0.8f,0.4f,1),
-			 g_py.launched ? "launched" : "launching...");
-    }
-
-    if (g_py.ptr && g_py.launched) {
-      const auto& info = g_py.ptr->notebookInfo();
-
-      ImGui::SeparatorText("Jupyter Notebook");
-      ImGui::Text("Port : %d", info.port);
-      ImGui::TextWrapped("URL  : %s", info.url.c_str());
-
-      // クリップボードにコピー
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Copy URL")) {
-	ImGui::SetClipboardText(info.url.c_str());
-      }
-
-      // 既に JupyterLauncher で open/xdg-open 済みでも、手動で開けるボタンを用意
-      if (ImGui::SmallButton("Open in Browser")) {
-#if defined(__APPLE__)
-	std::string cmd = "open \"" + info.url + "\"";
-	std::system(cmd.c_str());
-#elif defined(__linux__)
-	std::string cmd = "xdg-open \"" + info.url + "\"";
-	std::system(cmd.c_str());
-#elif defined(_WIN32)
-	// Windows: start はシェル内蔵。cmd /c 経由で。
-	std::string cmd = "cmd /c start \"\" \"" + info.url + "\"";
-	std::system(cmd.c_str());
-#endif
-      }
-
-      // 状態表示（任意）
-      ImGui::SameLine();
-      ImGui::TextDisabled("(token: %s)", info.token.c_str());
-    }
-  }
-#endif
-  
-  struct PullDownItem {
-    const char* label;
-    int mode;
-  };
-
-  if (ImGui::CollapsingHeader("Analysis")) {
-    enum AnalysisMode {
-      ANALYSIS_RADIAL_PROFILE,
-      ANALYSIS_2D_HISTOGRAM,
-      ANALYSIS_CLUMP_FIND,
-      ANALYSIS_STELLAR_DENSITY, 
-      ANALYSIS_HALO_CATALOGUE,
-      ANALYSIS_POWER_SPEC,
-      ANALYSIS_DISK,
-      ANALYSIS_ISO_DENSITY
-    };
-    
-    static PullDownItem analysisItems[] = {
-      { "radial profile", ANALYSIS_RADIAL_PROFILE },
-      { "2D histogram", ANALYSIS_2D_HISTOGRAM },
-      { "clump finder", ANALYSIS_CLUMP_FIND },
-      { "stellar density", ANALYSIS_STELLAR_DENSITY },
-      { "halo catalogue", ANALYSIS_HALO_CATALOGUE },
-#ifdef POWER_SPECTRUM
-      { "power spectrum", ANALYSIS_POWER_SPEC },
-#endif
-#ifdef GEOMETRICAL_ANALYSIS
-      { "extract disks", ANALYSIS_DISK },
-      { "extract iso density", ANALYSIS_ISO_DENSITY },
-#endif
-    };
-    
-    static int analysisMode = ANALYSIS_RADIAL_PROFILE;
-
-    // 現在選択中のラベルを探す
-    const char* currentLabel = "unknown";
-    for (const auto& item : analysisItems) {
-      if (item.mode == analysisMode) {
-	currentLabel = item.label;
-	break;
-      }
-    }
-
-    if (ImGui::BeginCombo("Analysis mode", currentLabel)) {
-      for (const auto& item : analysisItems) {
-	bool isSelected = (analysisMode == item.mode);
-	if (ImGui::Selectable(item.label, isSelected)) {
-	  analysisMode = item.mode;
-	}
-	if (isSelected)
-	  ImGui::SetItemDefaultFocus();
-      }
-      ImGui::EndCombo();
-    }
-
-    switch (analysisMode) {  
-    case ANALYSIS_RADIAL_PROFILE: {
-      if (ImGui::Button("Compute radial profile"))
-	OpenRadialProfileUI();
-      DrawRadialProfileUI(*gRadialProfileComputer, P->particleBlock, P->UnitMass_in_g, P->UnitLength_in_cm, P->UnitTime_in_s);       
-      break;
-    }
-    case ANALYSIS_2D_HISTOGRAM: {
-      if (ImGui::Button("Compute 2D histogram"))
-	OpenHistogram2DUI();
-      DrawHistogram2DUI(*gHistogram2DComputer, P->particleBlock);
-      break;
-    }
-    case ANALYSIS_CLUMP_FIND: {
-      if (ImGui::Button("Run Clumps finder")) 
-	gClumpFind->showWindow();
-
-#ifdef CLUMP_DATA_READ
-      ImGui::Text("create clump data for continuous snapshots");
-
-      static int method = 0;  
-    
-      // ラジオボタン
-      ImGui::RadioButton("FOF",       &method, 0);
-      ImGui::SameLine();
-      ImGui::RadioButton("Dendrogram",&method, 1);
-    
-      static int nsnapshots = 10;
-      static char outputFileName[255]="clump_data.hdf5";
-      static char outputFolderPath[255]="./output/";
-      ImGui::InputInt("number of snapshots##FOF", &nsnapshots);
-      ImGui::InputText("Output File Name##FOF", outputFileName, IM_ARRAYSIZE(outputFileName));
-      ImGui::InputText("Output Folder##FOF", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
-
-      char filename[512];
-      snprintf(filename, sizeof(filename), "%s/%s", outputFolderPath, outputFileName);
-    
-      ImGui::SameLine();
-      if (ImGui::Button("default path")) {
-	strcpy(outputFolderPath, gFileInfo->folderPath);
-      }
-
-      if(ImGui::Button("generate clump data")){
-	int savedStep = gFileInfo->currentStep;
-
-	gClumpFind->initialize_prev_nodes();      
-	for(int i=0;i<nsnapshots;i++){
-	  gFileInfo->currentStep = savedStep;
-	  if(i > 0) gFileInfo->currentStep += i;
-
-	  int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-	  gFileInfo->loadNewSnapshot(newFileIndex, P);            
-
-	  if(P->particleBlock.particles.size() == 0)
-	    continue;
-	
-	  gClumpFind->do_FOF_and_output_clump_data(method, P->particleBlock.particles, P->particleBlock.header, filename, newFileIndex);
-	}
-            
-	gFileInfo->currentStep = savedStep;
-	gFileInfo->currentFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-
-	int initstep = gFileInfo->currentFileIndex;
-	int dstep = gFileInfo->skipStep;
-	std::string fname(filename);
-	gClumpFind->give_stellar_id_to_clumps(initstep, nsnapshots, dstep, fname);
-      }
-
-      if(ImGui::Button("show clump list"))
-	gClumpFind->showClumpListWindow();
-
-      if(ImGui::Button("show clump chain list")){
-	std::string fname(filename);
-	gClumpFind->showWindowClumpChainList(gFileInfo->initialIndex, nsnapshots, gFileInfo->skipStep, fname);
-      }
-#endif
-      break;
-    }
-      
-    case ANALYSIS_STELLAR_DENSITY: {
-      static bool selType[6] = { false, false, false, true, true, true };
-      
-      ImGui::Text("Particle types to include:");
-      ImGui::Checkbox("Type 0##stellar_density", &selType[0]); ImGui::SameLine();
-      ImGui::Checkbox("Type 1##stellar_density", &selType[1]); ImGui::SameLine();
-      ImGui::Checkbox("Type 2##stellar_density", &selType[2]);
-      ImGui::Checkbox("Type 3##stellar_density", &selType[3]); ImGui::SameLine();
-      ImGui::Checkbox("Type 4##stellar_density", &selType[4]); ImGui::SameLine();
-      ImGui::Checkbox("Type 5##stellar_density", &selType[5]);
-
-      static bool flag_overwrite_hsml = false;
-      ImGui::Checkbox("overwrite hsml##stellar_density", &flag_overwrite_hsml);
-
-      if (ImGui::Button("Select 3,4,5##stellar_density")) {
-	for (int t = 0; t < 6; ++t) selType[t] = false;
-	selType[3] = selType[4] = selType[5] = true;
-      }
-    
-      if (ImGui::Button("Compute stellar density##stellar_density")) {
-	std::array<bool,6> sel{};
-	for (int t=0;t<6;++t) sel[t] = selType[t];
-      
-	P->computeStellarDensity(sel, flag_overwrite_hsml);
-	P->particlesDirty = true;  // グローバルなフラグをtrueに設定
-      }
-      break;
-    }
-
-      
-#ifdef HAVE_HDF5
-    case ANALYSIS_HALO_CATALOGUE: {
-      if(ImGui::Button("Load Halo"))
-	OpenHaloesUI();
-      DrawHaloesUI(P, camCtx, gFileInfo);
-      break;
-    }
-#endif
-      
-#ifdef POWER_SPECTRUM
-    case ANALYSIS_POWER_SPEC: {
-      break;
-    }
-#endif
-
-#ifdef GEOMETRICAL_ANALYSIS
-    case ANALYSIS_DISK: {
-      static int queryID_disk=0;
-      ImGui::InputInt("Particle ID1##disk", &queryID_disk);
-      ImGui::SliderFloat("Opacity##disk", &diskOpacity, 0.0f, 1.0f); 
-
-      DiskRadiusFinder::Params param_disk;
-    
-      if (ImGui::Button("Find a disk around the paritlce")) {
-	bool flag_found = false;
-	for(auto &p : P->particleBlock.particles){
-	  if(p.ID == queryID_disk){
-	    param_disk.mass = p.mass;
-	    for(int k=0;k<3;k++){
-	      param_disk.center[k] = p.pos[k];
-	      param_disk.v_center[k] = p.vel[k];
-	    }
-	    flag_found = true;
-	  }
-
-	  if(flag_found)
-	    break;
-	}
-      
-	if(flag_found){
-	  showDisks = true;
-	  param_disk.G = P->GravConst_internal;	
-	  param_disk.max_shell = 100;
-	  param_disk.scale_fac = P->originalMax / P->desiredMax;
-	
-	  gDiskFinder->compute(P->particleBlock.particles, param_disk);
-	}
-      }
-    
-      if (ImGui::Button("disable disks")) {
-	showDisks = false;
-      }
-
-      static char fname_input[255]="binary_fragmentation_ellipticity_all_w_mode.txt";
-      static char fname_output[255]="binary_fragmentation_disks.txt";
-      ImGui::InputText("Read target from text file##disk", fname_input, IM_ARRAYSIZE(fname_input));
-      ImGui::InputText("Output target from text file##disk", fname_output, IM_ARRAYSIZE(fname_output));
-
-      if(ImGui::Button("calc disk radius from text file")){
-	struct Row { int idx, idA, idB, snap; };      
-	std::vector<Row> rows;
-	{
-	  std::ifstream fin(fname_input);
-	  if (!fin) { std::cerr << "cannot open " << fname_input << '\n'; return; }
-
-	  std::string line;
-	  Row r;
-	  while (std::getline(fin, line))
-	    {
-	      if (line.empty() || line[0] == '#')      // ← # 行はスキップ
-		continue;
-	    
-	      std::istringstream iss(line);
-	      if (iss >> r.idx >> r.idA >> r.idB >> r.snap)
-		rows.push_back(r);                   // 正しく読めた行だけ追加
-	      else
-		std::cerr << "parse error: " << line << '\n';
-	    }
-	}
-
-	bool flag_first0 = true;
-	for (auto& r : rows){
-	  if(r.snap < 0)
-	    continue;
-
-	  FILE *fp_out;
-	  if(flag_first0){
-	    fp_out = std::fopen(fname_output, "w");
-	    fprintf(fp_out, "#index idA idB t_disk\n");	  
-	    flag_first0 = false; 
-	  }else{
-	    fp_out = std::fopen(fname_output, "a");
-	  }
-	
-	  double time_disk = -1., time_not_disk = -1.;
-	  char fname_evolution[255];
-	  snprintf(fname_evolution, sizeof(fname_evolution), "binary_evolution_%d.txt" ,r.idx);
-	
-	  bool flag_first = true;
-	  double dist_disk=0., r_disk1=0., r_disk2=0.;
-
-	  int snap_init = r.snap;
-	  snap_init = static_cast<int>(r.snap / gFileInfo->skipStep) * gFileInfo->skipStep;
-
-	  int snap_disk = -1, snap_not_disk = snap_init;
-	
-	  for (int i=0;i<100;i++) {
-	    int snap = snap_init + gFileInfo->skipStep * i;	  
-	    gFileInfo->loadNewSnapshot(snap, P);
-	    if(P->particleBlock.particles.size() == 0)
-	      continue;
-	  
-	    double r1, r2;
-	    float pos1[3], pos2[3];
-	    bool flag_found_binary = true;
-	    for(int i=0;i<2;i++){
-	      int id;
-	      float *pos;
-	      double *r_disk;
-	      if(i==0){
-		id = r.idA;
-		pos = pos1;
-		r_disk = &r1;
-	      }else{
-		id = r.idB;
-		pos = pos2;
-		r_disk = &r2;
-	      }
-
-	      DiskRadiusFinder::Params param_disk0;
-	      bool flag_found = false;
-	      for(auto &p : P->particleBlock.particles){
-		if(p.ID == id){
-		  if(p.type != 0){
-		    param_disk0.mass = p.mass;
-		    for(int k=0;k<3;k++){
-		      param_disk0.center[k] = pos[k] = p.pos[k];
-		      param_disk0.v_center[k] = p.vel[k];
-		    }
-		    flag_found = true;
-		  }else
-		    break;
-		}
-	    
-		if(flag_found)
-		  break;
-	      }
-
-	      if(flag_found){
-		param_disk0.G = P->GravConst_internal;	
-		param_disk0.max_shell = 100;
-		param_disk0.scale_fac = P->originalMax / P->desiredMax;
-	      
-		gDiskFinder->compute(P->particleBlock.particles, param_disk0);
-		*r_disk = gDiskFinder->getDiskRadius();
-	      }else
-		flag_found_binary = false;
-	    }
-
-	    if(flag_found_binary == false)
-	      continue;
-
-	    FILE *fp_evo;
-	    if(flag_first){
-	      fp_evo = std::fopen(fname_evolution, "w");
-	      flag_first = false;
-	      time_not_disk = P->particleBlock.header.time;
-	      snap_not_disk = snap;
-	    }else
-	      fp_evo = std::fopen(fname_evolution, "a");
-
-	    if (!fp_evo) { std::cerr << "cannot open " << fname_output << '\n'; return; }
-	
-	    if (flag_first) {                       /* ← ① ヘッダは最初だけ */
-	      std::fprintf(fp_out, "index ID1 ID2 snap n a b c\n");
-	      flag_first = false;
-	    }
-	  
-	    double dist2 = (pos1[0] - pos2[0])*(pos1[0] - pos2[0]) + (pos1[1] - pos2[1])*(pos1[1] - pos2[1]) + (pos1[2] - pos2[2])*(pos1[2] - pos2[2]);
-	    bool flag_disk = (sqrt(dist2) < r1 + r2?1:0);
-	    double scale_fac = P->originalMax / P->desiredMax;
-	  
-	    std::fprintf(fp_evo, "%d %g %g %g %g %d\n"
-			 , snap, P->particleBlock.header.time, sqrt(dist2)*scale_fac, r1*scale_fac, r2*scale_fac, static_cast<int>(flag_disk));
-	    std::fclose(fp_evo);
-
-	    if(flag_disk){
-	      time_disk = P->particleBlock.header.time;
-	      dist_disk = sqrt(dist2) * scale_fac;
-	      snap_disk = snap;
-	      r_disk1 = r1 * scale_fac;
-	      r_disk2 = r2 * scale_fac;	    
-	      break;
-	    }else{
-	      time_not_disk = P->particleBlock.header.time;
-	      snap_not_disk = snap;
-	    }
-	  }
-	
-	  std::fprintf(fp_out, "%d %d %d %g %d %g %g %g %g %d\n", r.idx, r.idA, r.idB, time_disk, snap_disk, dist_disk, r_disk1, r_disk2, time_not_disk, snap_not_disk);
-	  std::fclose(fp_out);
-	}
-      }
-      break;
-    }
-
-    case ANALYSIS_ISO_DENSITY: {
-      static int queryID1=0, queryID2=0;
-      ImGui::InputInt("Particle ID1", &queryID1);
-      ImGui::InputInt("Particle ID2", &queryID2); 
-      ImGui::SliderFloat("Opacity##contour_ellipse", &isoOpacityEllipsoid, 0.0f, 1.0f); 
-    
-      if (ImGui::Button("Fit Iso-density ellipsoid")) {
-	showEllipsoid = true;
-	gEllipsoid->computeEllipse(P->particleBlock.particles, queryID1, queryID2);
-      }
-    
-      if (ImGui::Button("disable Ellipsoid")) {
-	showEllipsoid = false;
-      }
-
-      static char fname_input[255]="binary_fragmentation.txt";
-      static char fname_output[255]="binary_fragmentation_output.txt";
-      ImGui::InputText("Read target from text file", fname_input, IM_ARRAYSIZE(fname_input));
-      ImGui::InputText("Output target from text file", fname_output, IM_ARRAYSIZE(fname_output));
-
-      if(ImGui::Button("ellipsoidal fit from text file")){
-	struct Row { int idx, idA, idB, snap; };      
-	std::vector<Row> rows;
-	{
-	  std::ifstream fin(fname_input);
-	  if (!fin) { std::cerr << "cannot open " << fname_input << '\n'; return; }
-
-	  std::string line;
-	  Row r;
-	  while (std::getline(fin, line))
-	    {
-	      if (line.empty() || line[0] == '#')      // ← # 行はスキップ
-		continue;
-	    
-	      std::istringstream iss(line);
-	      if (iss >> r.idx >> r.idA >> r.idB >> r.snap)
-		rows.push_back(r);                   // 正しく読めた行だけ追加
-	      else
-		std::cerr << "parse error: " << line << '\n';
-	    }
-	}
-
-	bool flag_first = true;
-	for (auto& r : rows){
-	  if(r.snap < 0)
-	    continue;
-	
-	  gFileInfo->loadNewSnapshot(r.snap, P);
-	  if(P->particleBlock.particles.size() == 0)
-	    continue;        
-	
-	  gEllipsoid->computeEllipse(P->particleBlock.particles, r.idA, r.idB);
-
-	  FILE *fp_out;
-	  if(flag_first)
-	    fp_out = std::fopen(fname_output, "a");
-	  else
-	    fp_out = std::fopen(fname_output, "a");
-
-	  if (!fp_out) { std::cerr << "cannot open " << fname_output << '\n'; return; }
-	
-	  if (flag_first) {                       /* ← ① ヘッダは最初だけ */
-	    std::fprintf(fp_out, "index ID1 ID2 snap n a b c\n");
-	    flag_first = false;
-	  }
-	
-	  double a, b, c, n;
-	  gEllipsoid->getEllipsoids(&a, &b, &c, &n);
-	  std::fprintf(fp_out, "%d %d %d %d %g %g %g %g\n", r.idx, r.idA, r.idB, r.snap, n, a, b, c);
-	  std::fclose(fp_out);
-	}
-     
-      }
-      break;
-    }
-#endif      
-    }
-  }
-
-  if (ImGui::CollapsingHeader("Rendering")) {
-    enum RenderingMode {
-      RENDER_PROJECTION_MAP,
-      RENDER_STREAM_LINE,
-      RENDER_ISO_CONTOUR,
-      RENDER_VOLUME_RENDERING,
-      RENDER_VELOCITY_FIELD
-    };
-    
-    static PullDownItem renderingItems[] = {
-      { "projection map", RENDER_PROJECTION_MAP },
-#ifdef STREAM_LINE
-      { "stream line", RENDER_STREAM_LINE },
-#endif
-#ifdef ISO_CONTOUR
-      { "iso-contour", RENDER_ISO_CONTOUR },
-#endif
-#ifdef VOLUME_RENDERING
-      { "volume rendering", RENDER_VOLUME_RENDERING },
-#endif
-      { "velocity field", RENDER_VELOCITY_FIELD},
-    };
-    
-    static int renderingMode = RENDER_PROJECTION_MAP;
-    
-    // 現在選択中のラベルを探す
-    const char* currentLabel = "unknown";
-    for (const auto& item : renderingItems) {
-      if (item.mode == renderingMode) {
-	currentLabel = item.label;
-	break;
-      }
-    }
-    
-    if (ImGui::BeginCombo("Rendering mode", currentLabel)) {
-      for (const auto& item : renderingItems) {
-	bool isSelected = (renderingMode == item.mode);
-	if (ImGui::Selectable(item.label, isSelected)) {
-	  renderingMode = item.mode;
-	}
-	if (isSelected)
-	  ImGui::SetItemDefaultFocus();
-      }
-      ImGui::EndCombo();
-    }
-    
-    switch (renderingMode) {
-    case RENDER_PROJECTION_MAP: {
-      if (ImGui::Button("make projection map"))
-	OpenProjectionMapUI();    
-
-      DrawProjectionMapUI(*gProjectionMap2D, P, camCtx, gFileInfo->currentFileIndex);
-      
-      ImGui::Text("create projection maps for continuous snapshots");
-
-      static int nsnapshots = 10;
-      static char outputFileFormat[255]="image_%04d.png";
-      static char outputFolderPath[255]="./output";
-      static char outputFileName[255]="output.mp4";
-      ImGui::InputInt("number of snapshots##render", &nsnapshots);
-      ImGui::InputText("Output File Format##render", outputFileFormat, IM_ARRAYSIZE(outputFileFormat));
-      ImGui::InputText("Output Folder##render", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
-      ImGui::InputText("Output Name of Movie##render", outputFileName, IM_ARRAYSIZE(outputFolderPath));
-
-      static bool flagFaceOn = false;
-      ImGui::Checkbox("show face-on view", &flagFaceOn);
-
-      static bool flagSinkCenter = false, flagSinkCenterMassive = false, flagMassCenter = false;
-      static int particleID_center = 0;
-      static float rcrit_for_MassCenter = 0., ncrit_for_MassCenter = 0.;
-      ImGui::Checkbox("follow the center around the particle", &flagSinkCenter);
-      if(flagSinkCenter){
-	ImGui::Checkbox("the most massive sink particle", &flagSinkCenterMassive);
-	if(flagSinkCenterMassive == false)
-	  ImGui::InputInt("particle ID", &particleID_center);	
-
-	ImGui::Checkbox("mass center around the particle", &flagMassCenter);
-	if(flagMassCenter){
-	  ImGui::InputFloat("distance from the particle", &rcrit_for_MassCenter);
-	  ImGui::InputFloat("the minimum density", &ncrit_for_MassCenter);
-	}
-      }
-    
-      if(ImGui::Button("generate maps")){
-	int savedStep = gFileInfo->currentStep;
-      
-	namespace fs = std::filesystem;
-	const fs::path dir = "ffmpeg_frames";
-      
-	try {
-	  auto ensure_dir = [](const fs::path& p) {
-	    if (fs::exists(p)) {
-	      if (!fs::is_directory(p)) {
-		throw fs::filesystem_error("Path exists but is not a directory", p,
-					   std::make_error_code(std::errc::not_a_directory));
-	      }
-	    } else {
-	      fs::create_directories(p);
-	    }
-	  };
-
-	  ensure_dir(dir);
-	  ensure_dir(outputFolderPath);
-	
-	  if (!fs::exists(dir)) {
-	    fs::create_directory(dir);
-	    std::cout << "Directory created: " << dir << std::endl;
-	  }
-	
-	  if (!fs::exists(outputFolderPath)) {
-	    fs::create_directory(outputFolderPath);
-	    std::cout << "Directory created: " << outputFolderPath << std::endl;
-	  }
-
-	  int count_i = 0;
-	  for(int i=0;i<nsnapshots;i++){
-	    gFileInfo->currentStep = savedStep;
-	    if(i > 0) gFileInfo->currentStep += i;
-
-	    int newFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;
-	    gFileInfo->loadNewSnapshot(newFileIndex, P);            
-	
-	    if(P->particleBlock.particles.size() == 0)
-	      continue;
-	
-	    char filename_format[512];
-	    snprintf(filename_format, sizeof(filename_format), "%s/%s", outputFolderPath, outputFileFormat);
-
-	    char filename[512];
-	    snprintf(filename, sizeof(filename), filename_format, newFileIndex);
-
-	    int flag_use_amvector = 0;
-	    if(i==0 && flagFaceOn)
-	      flag_use_amvector = 1;
-
-	    int flag_center = 0;
-#ifdef CLUMP_DATA_READ
-	    if(P->flag_follow_clump_center)
-	      flag_center = 1;
-#endif
-	    if(P->flag_follow_particle_ID)
-	      flag_center = 1;
-
-	    // まず、カメラターゲットを pos_center 配列に格納しておく
-	    float pos_center[3] = {
-	      camCtx.cameraTarget[0],
-	      camCtx.cameraTarget[1],
-	      camCtx.cameraTarget[2]
-	    };
-
-	    if(flagSinkCenter){
-	      double pos_init[3];
-	      bool flag_found = false;
-	      if(flagSinkCenterMassive == false){
-		for(auto &p : P->particleBlock.particles){
-		  if(p.ID == particleID_center){
-		    pos_init[0] = p.pos[0];
-		    pos_init[1] = p.pos[1];
-		    pos_init[2] = p.pos[2];
-		    flag_found = true;
-		  }
-		  if(flag_found)
-		    break;
-		}
-	      }
-
-	      if(flagSinkCenterMassive || (flag_found == false)){
-		double mass_max = 0.;
-		for(auto &p : P->particleBlock.particles){
-		  if(p.type < 3)
-		    continue;
-		
-		  if(mass_max < p.mass){
-		    pos_init[0] = p.pos[0];
-		    pos_init[1] = p.pos[1];
-		    pos_init[2] = p.pos[2];
-		    flag_found = true;
-		    mass_max = p.mass;
-		  }
-		}
-	      }
-
-	      if(flag_found){
-		pos_center[0] = pos_init[0];
-		pos_center[1] = pos_init[1];
-		pos_center[2] = pos_init[2];
-		flag_center = 1;
-	      }
-	      
-	      if(flag_found && flagMassCenter){
-		double pos_temp[3] = {0.,0.,0.}, weight = 0.;
-		for(auto &p : P->particleBlock.particles){
-		  if(p.type == 1 || p.type == 2)
-		    continue;
-
-		  if(p.type == 0 && p.density < ncrit_for_MassCenter)
-		    continue;
-
-		  double dist2 =
-		    (pos_init[0] - p.pos[0])*(pos_init[0] - p.pos[0])
-		    + (pos_init[1] - p.pos[1])*(pos_init[1] - p.pos[1])
-		    + (pos_init[2] - p.pos[2])*(pos_init[2] - p.pos[2]);
-		
-		  if(dist2 > rcrit_for_MassCenter * rcrit_for_MassCenter)
-		    continue;
-
-		  double mass = p.mass;
-		  pos_temp[0] += mass * p.pos[0];
-		  pos_temp[1] += mass * p.pos[1];
-		  pos_temp[2] += mass * p.pos[2];
-		  weight += mass;
-		}
-
-		pos_center[0] = pos_temp[0] / weight;
-		pos_center[1] = pos_temp[1] / weight;
-		pos_center[2] = pos_temp[2] / weight;
-		flag_center = 1;
-	      }
-	    }
-	  
-
-	    gProjectionMap2D->set_projection_parameters(P->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
-							std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
-       	
-	    gProjectionMap2D->make_density_map(P, filename);
-
-	    char linkname[512];
-	    snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i);
-	    count_i++;
-	  
-	    std::filesystem::remove(linkname);
-	    std::filesystem::create_symlink(std::filesystem::absolute(filename), linkname);
-	  }
-
-	  // ffmpeg を呼び出す（mp4 形式、30fps）
-	  std::string ffmpegCommand =
-	    "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png -vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p " + std::string(outputFolderPath) + "/" + std::string(outputFileName);
-	  std::system(ffmpegCommand.c_str());
-	  fs::remove_all("ffmpeg_frames");
-      
-	  gFileInfo->currentStep = savedStep;
-	  gFileInfo->currentFileIndex = gFileInfo->initialIndex + gFileInfo->currentStep * gFileInfo->skipStep;    	
-	} catch (const fs::filesystem_error& e) {
-	  std::cerr << "Error creating directory: " << e.what() << std::endl;
-	}
-      }
-      break;
-    }
-      
-#ifdef STREAM_LINE
-    case RENDER_STREAM_LINE: {
-      static int n_seeds=1;
-      ImGui::Text("Seed setup");
-      ImGui::InputInt("number of seed points", &n_seeds);
-
-      static float seed_center[3] = {0.,0.,0.}, seed_len[3] = {100.,100.,100.}, seed_opacity = 0.1;
-      bool seedRegionDirty = false;
-    
-      if (ImGui::InputFloat3("Center of the region to place seed points", seed_center, "%.3f")){
-	seedRegionDirty = true;
-      }
-
-      // 2) Side‐length: rebuild when changed
-      if (ImGui::InputFloat3("side len", seed_len, "%.3f")) {
-	seedRegionDirty = true;
-      }
-
-      // 3) Opacity: rebuild when changed
-      if (ImGui::SliderFloat("opacity##cubic", &seed_opacity, 0.f, 1.f, "%.2f")) {
-	seedRegionDirty = true;
-      }
-
-      // 4) If either length or opacity changed, re‐create exactly one cube
-      if (seedRegionDirty) {
-	// remove only the old seed region cubes
-	gCubeManager.clearGroup("seedRegion");
-
-	if (seed_len[0] > 0.f && seed_len[1] > 0.f && seed_len[2] > 0.f) {
-	  // add new cube with updated len & opacity
-	  gCubeManager.addCube(
-			       glm::vec3(seed_center[0], seed_center[1], seed_center[2]),
-			       glm::vec3(0.5f * seed_len[0], 0.5f * seed_len[1], 0.5f * seed_len[2]),
-			       glm::quat{1,0,0,0},       // no rotation
-			       seed_opacity,            // per‐instance opacity
-			       "seedRegion"             // tag
-			       );
-	  gStreamLine->setRegionByHand(seed_center, seed_len);
-	}
-	else {
-	  // zero‐size ⇒ disable region if you like
-	  gStreamLine->disableRegion();
-	}
-
-	flagCubesDirty = true;
-	seedRegionDirty = false;
-      }
-
-      static bool flag_limit_stream_region = false;
-      static float sl_center[3]={0.,0.,0.}, sl_len[3]={0.,0.,0.};
-    
-      ImGui::Text("Stream line setting");    
-      ImGui::Checkbox("limit stream lines in box", &flag_limit_stream_region);
-      if(flag_limit_stream_region){
-	bool flag_reset_region = false;
-	if(ImGui::InputFloat3("center of stream line region", sl_center, "%.3f")){
-	  flag_reset_region = true;
-	}
-
-	if(ImGui::InputFloat3("side len##stream line", sl_len, "%.3f")){
-	  flag_reset_region = true;
-	}
-
-	if(flag_reset_region){
-	  if(sl_len[0] > 0. && sl_len[1] > 0. && sl_len[2] > 0.){
-	    gStreamLine->setStreamRegionByHand(sl_center, sl_len);
-	  }else{
-	    gStreamLine->disableStreamRegion();
-	  }
-	}
-      }else
-	gStreamLine->disableStreamRegion();
-      
-      if (ImGui::Button("Build stream lines")) {
-	gStreamLine->setRegionFromParticleData(P->particleBlock.particles);
-	gStreamLine->setStreamRegionFromParticleData(P->particleBlock.particles);
-
-	gStreamLine->setSeeds(P->particleBlock.particles, n_seeds);
-	float degree = 10.;
-	gStreamLine->build(P->particleBlock, degree);
-      
-	showStreamLine = true;
-	flagStreamDirty = true;
-      }
-    
-      if (ImGui::Button("disable Grid & Mesh")) {
-	showStreamLine = false;
-      }    
-      break;
-    }
-#endif
-
-#ifdef ISO_CONTOUR
-    case RENDER_ISO_CONTOUR: {
-      static float isoLevel = 0.;
-    
-      ImGui::InputFloat("Threshold value for iso-contour", &isoLevel);
-      ImGui::SliderFloat("Opacity", &isoOpacity, 0.0f, 1.0f);
-
-      static int max_treelevel = 15;
-      ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
-
-      static QuantityId selectedVar_iso = QuantityId::Density;
-      if (ImGui::BeginCombo("Quantity for Iso-Contour", QuantityLabel(selectedVar_iso))) {
-	for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
-	  QuantityId cand = P->particleBlock.uiQ[q];
-	  bool is_selected = (cand == selectedVar_iso);
-	  if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_iso = cand;
-	  if (is_selected) ImGui::SetItemDefaultFocus();
-	}
-	ImGui::EndCombo();
-      }
-        
-      if (ImGui::Button("Build OctTree & Mesh")) {
-	showIsocontour = true;
-
-	TrackingVector<ParticleDataForTree> particles;
-	particles.reserve(P->particleBlock.particles.size());
-
-	for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
-	  const auto &pd = P->particleBlock.particles[ipart];
-	  float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_iso);
-	  particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
-	}
-
-	BoundingBox worldBox;
-	worldBox.min = glm::vec3( FLT_MAX );
-	worldBox.max = glm::vec3( -FLT_MAX );
-	for (const auto& p : particles) {
-	  worldBox.min = glm::min(worldBox.min, p.pos);
-	  worldBox.max = glm::max(worldBox.max, p.pos);
-	}
-
-	IsoSurfaceParams params;
-	params.particles   = std::move(particles);
-	params.worldBox    = worldBox;
-	params.isoLevel    = isoLevel;
-	params.minParticles = 8;
-	params.maxDepth     = max_treelevel;
-
-	auto mesh = IsoSurfaceGenerator::generateVTK(std::move(params));
-      
-      
-	vertsIsocontour = mesh.vertices;
-	indsIsocontour  = mesh.indices;
-
-	std::cout << "Verts: " << vertsIsocontour.size()
-		  << ", Indices: " << indsIsocontour.size() << std::endl;
-      
-	uploadMeshWithNormals(vertsIsocontour, indsIsocontour, meshIsocontourVAO, meshIsocontourVBO, meshIsocontourNBO, meshIsocontourEBO);
-      }
-
-    
-      if (ImGui::Button("disable Grid & Mesh")) {
-	showIsocontour = false;
-      }    
-      break;
-    }
-#endif
-  
-#ifdef VOLUME_RENDERING  
-    case RENDER_VOLUME_RENDERING: {
-      ImGui::Text("RayTracing?");
-      ImGui::RadioButton("Ray Tracing with BVH", &flagRT, 1);
-      ImGui::SameLine();
-      ImGui::RadioButton("Ray Marching with octtree", &flagRT, 2);
-      ImGui::SameLine();
-      ImGui::RadioButton("No, blending", &flagRT, 0);
-
-      if(flagRT == 0){
-	ImGui::Text("kernel");
-	ImGui::RadioButton("Gaussian", &kernelMode, 0);
-	ImGui::SameLine();
-	ImGui::RadioButton("SPH interpolation", &kernelMode, 1);
-
-	if(kernelMode == 0)
-	  ImGui::SliderFloat("Maximum size of the kernel", &gaussNSigma, 1.0f, 50.f);    	
-
-	if(kernelMode == 1)
-	  ImGui::SliderFloat("Enlarge factor for Kernel", &enlargeKernel, 0.5f, 50.f);    	      
-      }
-    
-      if(flagRT){
-	ImGui::Text("LOD");
-	ImGui::RadioButton("LEAF ONLY", &lodMode, 0);
-	ImGui::SameLine();
-	ImGui::RadioButton("Auto LOD", &lodMode, 1);
-
-	if(lodMode == 1)
-	  ImGui::SliderFloat("Pixel Threshold (px)", &pxThreshold, 0.5f, 6.0f, "%.2f");      
-
-	ImGui::SliderFloat("Maximum Tau for RT", &tauMax, 0.1f, 100.f);    
-	ImGui::SliderFloat("upscaling factor", &rtDownscale, 1.0f, 10.0f);
-      }
-
-      static QuantityId selectedVar_volume = QuantityId::Density;
-      if (ImGui::BeginCombo("Quantity for Volume rendering", QuantityLabel(selectedVar_volume))) {
-	for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
-	  QuantityId cand = P->particleBlock.uiQ[q];
-	  bool is_selected = (cand == selectedVar_volume);
-	  if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_volume = cand;
-	  if (is_selected) ImGui::SetItemDefaultFocus();
-	}
-	ImGui::EndCombo();
-      }
-    
-      if(ImGui::Button("set Render Opacitiy")){
-	float val_max = -1.e30, val_min = 1.e30;
-	for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
-	  const auto &pd = P->particleBlock.particles[ipart];
-	  if(pd.type != 0)
-	    continue;
-
-	  float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_volume);
-	  if(val > val_max) val_max = val;
-	  if(val < val_min) val_min = val;
-	}
-      
-	gTF->set_minmax(selectedVar_volume, val_min, val_max);      
-	gTF->set_window();
-      }
-    
-      if (ImGui::Button("do volume rendering")) {
-	if(flagRT == 1){
-	  gBVHresult = gBVH->build(P->particleBlock.particles);
-	  lbvh::computeSigma(gBVHresult, g_rho2sigma);
-	}
-
-	if(flagRT == 2){
-	  TrackingVector<ParticleDataForTree> particles;
-	  particles.reserve(P->particleBlock.particles.size());
-
-	  for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
-	    const auto &pd = P->particleBlock.particles[ipart];
-	    if(pd.type != 0)
-	      continue;
-
-	    float val = getScalarValue(P->particleBlock, pd, ipart, selectedVar_volume);
-	    particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
-	  }
-	
-	  BoundingBox worldBox;
-	  worldBox.min = glm::vec3( FLT_MAX );
-	  worldBox.max = glm::vec3( -FLT_MAX );
-	  for (const auto& p : particles) {
-	    worldBox.min = glm::min(worldBox.min, p.pos);
-	    worldBox.max = glm::max(worldBox.max, p.pos);
-	  }
-      
-	  gOctTree.cpuTree = std::make_unique<ParticleOctree>(std::move(particles),
-							      worldBox,
-							      /*minParticles*/4,
-							      /*maxDepth*/20);
-
-	  printf("Tree construction has finished!\n");	
-	  buildIndexAndSigma(*gOctTree.cpuTree, g_rho2sigma, gOctTree.order, gOctTree.info, gOctTree.toIdx);	
-	}
-      
-	showVolumeRendering = true;
-	flagUpdateRendering = true;
-      }
-
-      if(ImGui::Button("reload opacity")){
-	if(flagRT == 1){
-	  lbvh::computeSigma(gBVHresult, g_rho2sigma);
-	}
-
-	if(flagRT == 2){
-	  buildIndexAndSigma(*gOctTree.cpuTree, g_rho2sigma, gOctTree.order, gOctTree.info, gOctTree.toIdx);
-	}
-      
-	showVolumeRendering = true;      
-	flagUpdateRendering = true;
-      }
-    
-      if (ImGui::Button("disable Rendering image")) {
-	showVolumeRendering = false;
-      }
-
-      if(ImGui::Button("Hide particles")){
-	flagHideAllParticles = true;
-      }
-
-      if(ImGui::Button("Show particles")){
-	flagHideAllParticles = false;
-      }
-      break;
-    }
-#endif
-
-    case RENDER_VELOCITY_FIELD: {
-      ImGui::InputInt("show velocity field out of n particles", &velocitySubtraction);
-      ImGui::InputFloat("Arrow Scale", &arrowScale, 0.1f, 1.0f, "%.2f");
-      ImGui::Checkbox("Use Log Scale", &useVelocityArrowLogScale);
-      
-      if(ImGui::Checkbox("render velocity field", &showVelocityVectors)){
-	if(showVelocityVectors)
-	  P->velocityDirty = true;
-      }
-      break;
-    }
-    }
-  }
-      
-   
-  if(ImGui::CollapsingHeader("Other settings")){
-    bool unitChanged = false;
-    if(ImGui::CollapsingHeader("Units")){
-      unitChanged |= ImGui::InputDouble("UnitLength_in_cm"   , &P->UnitLength_in_cm   , 0.,0., "%g");
-      unitChanged |= ImGui::InputDouble("UnitMass_in_msun"   , &P->UnitMass_in_g      , 0.,0., "%g");
-      unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s", &P->UnitVelocity_in_cm_per_s, 0.,0., "%g");
-      unitChanged |= ImGui::InputDouble("Hubble"             , &P->Hubble, 0.,0., "%g");
-      unitChanged |= ImGui::Checkbox("ComovingCorrdinate", &P->useComovingCorrdinate);
-
-      ImGui::SeparatorText("Presets");      
-      if (ImGui::Button("AU"))   { P->UnitLength_in_cm = P->au_in_cm;      unitChanged = true; }
-      ImGui::SameLine();
-      if (ImGui::Button("pc"))   { P->UnitLength_in_cm = P->pc_in_cm;      unitChanged = true; }
-      ImGui::SameLine();
-      if (ImGui::Button("kpc"))  { P->UnitLength_in_cm = P->kpc_in_cm;     unitChanged = true; }
-      ImGui::SameLine();
-      if (ImGui::Button("Mpc"))  { P->UnitLength_in_cm = P->Mpc_in_cm;     unitChanged = true; }
-
-      if (ImGui::Button("Msun"))   { P->UnitMass_in_g   = P->msolar_in_g;    unitChanged = true; }
-      ImGui::SameLine();
-      if (ImGui::Button("1e10 Msun")){ P->UnitMass_in_g   = 1.e10*P->msolar_in_g; unitChanged = true; }
-    }
-
-    if(unitChanged){
-      P->setUnits();
-      gFileInfo->setUnit(P);
-    }
-    
-    if(ImGui::CollapsingHeader("Zoom Range")){
-      ImGui::InputFloat("Min Zoom", &minZoom, 0.0f, 0.0f, "%g");
-      ImGui::InputFloat("Max Zoom", &maxZoom, 0.0f, 0.0f, "%g");
-    }
-
-    if(ImGui::CollapsingHeader("Cross Marker"))
-      ImGui::SliderFloat("Cross Marker Size", &crossSize, 0.01f, 1.0f);
-  }
-  
-  ImGui::End();
-}
-
-void ShowCameraSettingsUI() {
-}
-
 void UpdateLabelIndicesIfNeeded()
 {
   if(P->flagParticleIndexDirty == false){
-    if (glm::distance(camCtx.cameraPos, g_lastCameraPos) < g_moveThreshold)
+    if (glm::distance(camCtx.cameraPos, gSettingsRuntimeState.lastCameraPos) < gSettingsRuntimeState.moveThreshold)
       return;                     // 動いていなければ何もしない
   }
   
-  g_lastCameraPos = camCtx.cameraPos;
+  gSettingsRuntimeState.lastCameraPos = camCtx.cameraPos;
   g_labelIndices.clear();
   
   float query_pt[3] = { camCtx.cameraPos.x,
 			camCtx.cameraPos.y,
 			camCtx.cameraPos.z };
 
-  const float radius2 = g_queryRadius * g_queryRadius;
+  const float radius2 = gSettingsRuntimeState.queryRadius * gSettingsRuntimeState.queryRadius;
 
   struct Hit { size_t idx; float dist2; };
   std::vector<Hit> hits;
@@ -4566,7 +2935,7 @@ void UpdateVelocityInstanceBuffer(const TrackingVector<ParticleData>& particles)
   TrackingVector<float> instanceData;
   instanceData.reserve(particles.size() * 6);
   for (size_t i=0;i<particles.size();i++) {
-    if(i % velocitySubtraction != 0)
+    if(i % gSettingsRuntimeState.velocitySubtraction != 0)
       continue;
 
     const ParticleData &p = particles[i];
@@ -4604,16 +2973,30 @@ void RenderVelocityVectors(const glm::mat4 &view, const glm::mat4 &projection, f
 void UpdateUI() {
   UpdateColorBarVertices();
 
-  ShowTime();
-   
-  ShowSettingsUI();          // 設定 UI
+  ShowTime(P->particleBlock.header.time);
+
+  SettingsUIContext settingsCtx;
+  settingsCtx.P = P;
+  settingsCtx.fileInfo = gFileInfo;
+  settingsCtx.camCtx = &camCtx;
+  settingsCtx.particleVisual = &gParticleVisualConfig;
+  settingsCtx.services = &gAppServices;
+  settingsCtx.render = &gRenderRuntimeState;
+  settingsCtx.cubeManager = &gCubeManager;
+  
+  ShowSettingsUI(settingsCtx, gSettingsRuntimeState);
+
+  uploadMeshWithNormals(gAppServices.isoContour.verts, gAppServices.isoContour.inds,
+                        meshIsocontourVAO, meshIsocontourVBO,
+                        meshIsocontourNBO, meshIsocontourEBO); /*temporally here*/
+  
   ShowCameraSettingsUI();
 
-  gClumpFind->ShowFindClumpsUI(P->particleBlock.particles, P->particleBlock.header);
+  gAppServices.clumpFind->ShowFindClumpsUI(P->particleBlock.particles, P->particleBlock.header);
 
 #ifdef CLUMP_DATA_READ
-  gClumpFind->ReadAndShowClumpsUI(P, gFileInfo->currentFileIndex);
-  gClumpFind->showClumpChainList(P, gProjectionMap2D.get());
+  gAppServices.clumpFind->ReadAndShowClumpsUI(P, gFileInfo->currentFileIndex);
+  gAppServices.clumpFind->showClumpChainList(P, gAppServices.projectionMap2D.get());
 #endif
   
   gFileInfo->DrawFormatDialog();
@@ -4628,8 +3011,8 @@ void UpdateUI() {
   }
   
 #ifdef VOLUME_RENDERING
-  gTF->showUI();
-  g_rho2sigma = gTF->bakeLUT(1024);
+  gAppServices.tf->showUI();
+  gAppServices.volume.rho2sigma = gAppServices.tf->bakeLUT(1024);
 #endif
   
   // 新たなウィンドウとしてトップ粒子リストを表示
@@ -4645,12 +3028,12 @@ void RenderCross(const glm::mat4 &view, const glm::mat4 &projection){
   glm::vec3 rightVec = glm::normalize(glm::cross(forward, camCtx.cameraUp));
   glm::vec3 upVec = glm::normalize(glm::cross(rightVec, camCtx.cameraUp));
   glm::vec3 upVec_new = glm::normalize(glm::cross(rightVec, forward));
-  glm::vec3 v1 = camCtx.cameraTarget - (rightVec + upVec) * crossSize;
-  glm::vec3 v2 = camCtx.cameraTarget + (rightVec + upVec) * crossSize;
-  glm::vec3 v3 = camCtx.cameraTarget - (rightVec - upVec) * crossSize;
-  glm::vec3 v4 = camCtx.cameraTarget + (rightVec - upVec) * crossSize;
-  glm::vec3 v5 = camCtx.cameraTarget - upVec_new * crossSize;
-  glm::vec3 v6 = camCtx.cameraTarget + upVec_new * crossSize;
+  glm::vec3 v1 = camCtx.cameraTarget - (rightVec + upVec) * gSettingsRuntimeState.crossSize;
+  glm::vec3 v2 = camCtx.cameraTarget + (rightVec + upVec) * gSettingsRuntimeState.crossSize;
+  glm::vec3 v3 = camCtx.cameraTarget - (rightVec - upVec) * gSettingsRuntimeState.crossSize;
+  glm::vec3 v4 = camCtx.cameraTarget + (rightVec - upVec) * gSettingsRuntimeState.crossSize;
+  glm::vec3 v5 = camCtx.cameraTarget - upVec_new * gSettingsRuntimeState.crossSize;
+  glm::vec3 v6 = camCtx.cameraTarget + upVec_new * gSettingsRuntimeState.crossSize;
 
   float crossVertices[6 * N_LINES_FOR_CROSS] = {
     v1.x, v1.y, v1.z,
@@ -4696,52 +3079,6 @@ void RenderColorBar(int colormapIndex) {
 
   // 描画後、必要に応じて深度テストを再有効化
   glEnable(GL_DEPTH_TEST);
-}
-
-
-void RenderColorBarLabels() {
-  ImGuiIO& io = ImGui::GetIO();
-  float scaleX = io.DisplayFramebufferScale.x;
-  float scaleY = io.DisplayFramebufferScale.y;
-  
-  // まず、色バーのピクセル座標を計算
-  float left_pixel, right_pixel, top_pixel, bottom_pixel;
-  ComputeColorBarPixelCoords(left_pixel, right_pixel, top_pixel, bottom_pixel);
-    
-#ifdef USE_LETTERBOX
-  float offsetX = static_cast<float>(g_viewportX);
-  float offsetY = static_cast<float>(g_viewportY);
-#else
-  float offsetX = 0.0f;
-  float offsetY = 0.0f;
-#endif
-
-  // ここでは色バーの下側に目盛りラベルを表示する例
-  int numTicks = 5;
-  ImDrawList* draw_list = ImGui::GetForegroundDrawList();
-    
-  for (int i = 0; i < numTicks; i++) {
-    // 色バーのテクスチャ座標 t に対応する値（例：colorBarMin〜colorBarMax）
-    float t = float(i) / (numTicks - 1);
-    float value = 0.0f + t * (gParticleVisualConfig.types[0].colorMax - gParticleVisualConfig.types[0].colorMin);
-    
-    // ① 物理ピクセルでのラベル座標
-    float px_phys = left_pixel + t*(right_pixel - left_pixel);
-    float py_phys = bottom_pixel + 5.0f * scaleY;
-    
-    // ② 物理ピクセル→ImGuiポイント
-    float sx = (px_phys + offsetX) / scaleX;
-    float sy = (py_phys + offsetY) / scaleY;
-    
-    // 6) 丸めてチラつき防止
-    float draw_x = std::floor(sx + 0.5f);
-    float draw_y = std::floor(sy + 0.5f);
-       
-    // ラベルを描画（ImGui::GetForegroundDrawList() はスクリーン座標での描画を行うので、ピクセル座標をそのまま使用）
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%.2f", value);
-    draw_list->AddText(ImVec2(draw_x, draw_y), IM_COL32(255,255,255,255), buf);
-  }
 }
 
 #ifdef VOLUME_RENDERING
@@ -4919,21 +3256,21 @@ void RenderScene() {
   glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"), 6, samplers);
   
   glBindVertexArray(particleVAO);
-  if(flagHideAllParticles == false)
+  if(gSettingsRuntimeState.flagHideAllParticles == false)
     glDrawArrays(GL_POINTS, 0, g_filteredParticleCount);
   glBindVertexArray(0);
 
   // ※速度ベクトルの描画（インスタンシング方式）
-  if (showVelocityVectors) {
+  if (gSettingsRuntimeState.showVelocityVectors) {
     // 速度データが更新されている場合のみインスタンスバッファを更新
     if (P->velocityDirty) {
       UpdateVelocityInstanceBuffer(P->particleBlock.particles);
       P->velocityDirty = false;
     }
-    RenderVelocityVectors(view, projection, arrowScale, useVelocityArrowLogScale);
+    RenderVelocityVectors(view, projection, gSettingsRuntimeState.arrowScale, gSettingsRuntimeState.useVelocityArrowLogScale);
   }
 
-  if(g_flagShowSinkIDs){
+  if(gSettingsRuntimeState.flagShowSinkIDs){
     UpdateLabelIndicesIfNeeded(); //test
     DrawParticleLabels(view, projection); //test
   }
@@ -4941,28 +3278,28 @@ void RenderScene() {
   RenderCross(view, projection);  // 粒子描画後に呼び出す
 
 #ifdef ISO_CONTOUR
-  if (showIsocontour && meshIsocontourVAO) {
+  if (gRenderRuntimeState.showIsocontour && meshIsocontourVAO) {
     glUseProgram(isocontourProgram);       // if you have a separate shader
     glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "model"),      1, GL_FALSE, glm::value_ptr(model));
     glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "view"),       1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniform1f(glGetUniformLocation(isocontourProgram, "opacity"), isoOpacity);
+    glUniform1f(glGetUniformLocation(isocontourProgram, "opacity"), gRenderRuntimeState.isoOpacity);
     glBindVertexArray(meshIsocontourVAO);
-    glDrawElements(GL_TRIANGLES, (GLsizei)indsIsocontour.size(), GL_UNSIGNED_INT, nullptr);
+    glDrawElements(GL_TRIANGLES, (GLsizei)gAppServices.isoContour.inds.size(), GL_UNSIGNED_INT, nullptr);
     glBindVertexArray(0);
   }
 #endif
 
 #ifdef GEOMETRICAL_ANALYSIS
-  if (showEllipsoid && ellipsoidVAO) {
+  if (gRenderRuntimeState.showEllipsoid && ellipsoidVAO) {
 #ifdef USE_ELLIPSES
     glUseProgram(ellipseProgram);
     
-    glm::mat4 M = gEllipsoid->getModelMatrix();
+    glm::mat4 M = gAppServices.ellipsoid->getModelMatrix();
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), isoOpacityEllipsoid);
+    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), gRenderRuntimeState.isoOpacityEllipsoid);
 
     glBindVertexArray(ellipsoidVAO); 
     glDrawArrays(GL_LINE_LOOP,            0,           maxSegmentsEllipse);
@@ -4971,13 +3308,13 @@ void RenderScene() {
     glBindVertexArray(0);
 #else
     glUseProgram(ellipsoidProgram);
-    glm::mat4 M = gEllipsoid->getModelMatrix();
+    glm::mat4 M = gAppServices.ellipsoid->getModelMatrix();
 
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
     glUniform3fv(glGetUniformLocation(ellipsoidProgram,"color"),1,glm::value_ptr(glm::vec3(1.,1.,1.)));
-    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), isoOpacityEllipsoid);
+    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), gRenderRuntimeState.isoOpacityEllipsoid);
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -4992,15 +3329,15 @@ void RenderScene() {
 #endif
   }
 
-  if (showDisks && diskVAO) {
+  if (gRenderRuntimeState.showDisks && diskVAO) {
     glUseProgram(diskProgram);
-    glm::mat4 M = gDiskFinder->getModelMatrix();
+    glm::mat4 M = gAppServices.diskFinder->getModelMatrix();
     
     glUniformMatrix4fv(glGetUniformLocation(diskProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
     glUniformMatrix4fv(glGetUniformLocation(diskProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(diskProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
     glUniform3f(glGetUniformLocation(diskProgram,"color"), 1.0f,1.0f,1.0f);
-    glUniform1f(glGetUniformLocation(diskProgram,"opacity"), diskOpacity);
+    glUniform1f(glGetUniformLocation(diskProgram,"opacity"), gRenderRuntimeState.diskOpacity);
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -5015,13 +3352,13 @@ void RenderScene() {
 #endif
 
 #ifdef STREAM_LINE
-  if (showStreamLine && streamlineVAO) {
+  if (gRenderRuntimeState.showStreamLine && streamlineVAO) {
     static std::vector<size_t> m_firsts, m_counts;    
     static std::vector<GLint> firstsGL;
     static std::vector<GLsizei> countsGL;
     
-    if(flagStreamDirty){
-      const StreamlineMeshData stream_mesh = gStreamLine->meshData();
+    if(gRenderRuntimeState.flagStreamDirty){
+      const StreamlineMeshData stream_mesh = gAppServices.streamLine->meshData();
       
       m_firsts = stream_mesh.firsts;
       m_counts = stream_mesh.counts;
@@ -5040,7 +3377,7 @@ void RenderScene() {
 		   GL_DYNAMIC_DRAW);
       glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-      flagStreamDirty = false;
+      gRenderRuntimeState.flagStreamDirty = false;
     }
     
     glUseProgram(streamlineProgram);
@@ -5049,7 +3386,7 @@ void RenderScene() {
     glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
     glUniform3f(glGetUniformLocation(streamlineProgram,"color"), 1.0f,1.0f,1.0f);
-    glUniform1f(glGetUniformLocation(streamlineProgram,"opacity"), streamlineopacity);
+    glUniform1f(glGetUniformLocation(streamlineProgram,"opacity"), gRenderRuntimeState.streamlineOpacity);
 
     int streamlineCount = firstsGL.size();
     glBindVertexArray(streamlineVAO);
@@ -5067,7 +3404,7 @@ void RenderScene() {
     static std::vector<glm::mat4> instanceModels;
     std::vector<float> opacities;
     
-    if (flagCubesDirty) {
+    if (gRenderRuntimeState.flagCubesDirty) {
       // 1) インスタンス変換行列を再構築
       instanceModels.clear();
       const auto& cubes = gCubeManager.getCubes(); // 立方体の位置・スケール情報を持つ自前管理クラス
@@ -5095,7 +3432,7 @@ void RenderScene() {
 		   GL_DYNAMIC_DRAW);
       glBindBuffer(GL_ARRAY_BUFFER, 0);
       
-      flagCubesDirty = false;
+      gRenderRuntimeState.flagCubesDirty = false;
     }
 
     // 3) シェーダーと行列セットアップ
@@ -5157,14 +3494,14 @@ void RenderScene() {
   }
 
 #ifdef VOLUME_RENDERING 
-  if(showVolumeRendering && flagRT == 1){    
-    if(flagUpdateRendering){
+  if(gRenderRuntimeState.showVolumeRendering && gRenderRuntimeState.flagRT == 1){    
+    if(gRenderRuntimeState.flagUpdateRendering){
       G_bvh = uploadBVH_TBO(gBVHresult);
-      flagUpdateRendering = false;
+      gRenderRuntimeState.flagUpdateRendering = false;
     }
     
-    int lowW = std::max(1.0f, g_viewportWidth  / rtDownscale);
-    int lowH = std::max(1.0f, g_viewportHeight / rtDownscale);
+    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.rtDownscale);
+    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.rtDownscale);
     if (lowW != gRtW || lowH != gRtH) {
       CreateOrResizeRTFBO(lowW, lowH);
     }
@@ -5191,9 +3528,9 @@ void RenderScene() {
 
     // カメラ・LOD ユニフォーム
     glUniform1i (glGetUniformLocation(rtProgram,"uRoot"), G_bvh.root);
-    glUniform1i (glGetUniformLocation(rtProgram,"uLodMode"), lodMode); // 0/1/2
-    glUniform1f (glGetUniformLocation(rtProgram,"uPxThreshold"), pxThreshold);
-    glUniform1f (glGetUniformLocation(rtProgram,"uTauMax"), tauMax);
+    glUniform1i (glGetUniformLocation(rtProgram,"uLodMode"), gRenderRuntimeState.lodMode); // 0/1/2
+    glUniform1f (glGetUniformLocation(rtProgram,"uPxThreshold"), gRenderRuntimeState.pxThreshold);
+    glUniform1f (glGetUniformLocation(rtProgram,"uTauMax"), gRenderRuntimeState.tauMax);
     glUniform1f (glGetUniformLocation(rtProgram,"uStepBias"), 1e-4f);
 
     glUniform1f (glGetUniformLocation(rtProgram,"uFocalPx"), focalPx);
@@ -5236,14 +3573,14 @@ void RenderScene() {
     glUseProgram(0);    
   }
 
-  if(showVolumeRendering && flagRT == 2){    
-    if(flagUpdateRendering){
-      uploadOctTree_TBO(gOctTree);
-      flagUpdateRendering = false;
+  if(gRenderRuntimeState.showVolumeRendering && gRenderRuntimeState.flagRT == 2){    
+    if(gRenderRuntimeState.flagUpdateRendering){
+      uploadOctTree_TBO(gAppServices.volume.octTree, gGPUOctTree, gAppServices.volume.rho2sigma);
+      gRenderRuntimeState.flagUpdateRendering = false;
     }
     
-    int lowW = std::max(1.0f, g_viewportWidth  / rtDownscale);
-    int lowH = std::max(1.0f, g_viewportHeight / rtDownscale);
+    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.rtDownscale);
+    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.rtDownscale);
     if (lowW != gRtW || lowH != gRtH) {
       CreateOrResizeRTFBO(lowW, lowH);
     }
@@ -5262,17 +3599,17 @@ void RenderScene() {
     glUniform1i (glGetUniformLocation(octrayProgram,"uDebugMode"), debug_mode);
     
     // TBO をユニットへ
-    bindTBO(octrayProgram, "nodeMinTB", gOctTree.gpuTree.nodeMin.tex,    0);
-    bindTBO(octrayProgram, "nodeMaxTB", gOctTree.gpuTree.nodeMax.tex,    1);
-    bindTBO(octrayProgram, "childATB",  gOctTree.gpuTree.texChildA.tex,  2);
-    bindTBO(octrayProgram, "childBTB",  gOctTree.gpuTree.texChildB.tex,  3);
-    bindTBO(octrayProgram, "cornerLoTB", gOctTree.gpuTree.cornerLo.tex,  4);
-    bindTBO(octrayProgram, "cornerHiTB", gOctTree.gpuTree.cornerHi.tex,  5);
+    bindTBO(octrayProgram, "nodeMinTB", gGPUOctTree.nodeMin.tex,    0);
+    bindTBO(octrayProgram, "nodeMaxTB", gGPUOctTree.nodeMax.tex,    1);
+    bindTBO(octrayProgram, "childATB",  gGPUOctTree.texChildA.tex,  2);
+    bindTBO(octrayProgram, "childBTB",  gGPUOctTree.texChildB.tex,  3);
+    bindTBO(octrayProgram, "cornerLoTB", gGPUOctTree.cornerLo.tex,  4);
+    bindTBO(octrayProgram, "cornerHiTB", gGPUOctTree.cornerHi.tex,  5);
 
     // カメラ・LOD ユニフォーム
-    glUniform1i (glGetUniformLocation(octrayProgram,"uRoot"), gOctTree.gpuTree.root);
-    glUniform1f (glGetUniformLocation(octrayProgram,"uPxThreshold"), pxThreshold);
-    glUniform1f (glGetUniformLocation(octrayProgram,"uTauMax"), tauMax);
+    glUniform1i (glGetUniformLocation(octrayProgram,"uRoot"), gGPUOctTree.root);
+    glUniform1f (glGetUniformLocation(octrayProgram,"uPxThreshold"), gRenderRuntimeState.pxThreshold);
+    glUniform1f (glGetUniformLocation(octrayProgram,"uTauMax"), gRenderRuntimeState.tauMax);
     glUniform1f (glGetUniformLocation(octrayProgram,"uStepBias"), 1e-4f);
 
     glUniform1f (glGetUniformLocation(octrayProgram,"uFocalPx"), focalPx);
@@ -5311,7 +3648,7 @@ void RenderScene() {
   }
 
 
-  if(showVolumeRendering && (flagRT == 0)){    
+  if(gRenderRuntimeState.showVolumeRendering && (gRenderRuntimeState.flagRT == 0)){    
     int lowW = g_viewportWidth;
     int lowH = g_viewportHeight;
     if (lowW != wboitW || lowH != wboitH) {
@@ -5350,9 +3687,9 @@ void RenderScene() {
     glUniformMatrix4fv(glGetUniformLocation(wboitParticleProgram, "view"), 1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(wboitParticleProgram, "projection"),1,GL_FALSE,glm::value_ptr(projection));
     glUniform1f (glGetUniformLocation(wboitParticleProgram, "uFocalPx"), focalPx);
-    glUniform1i (glGetUniformLocation(wboitParticleProgram, "uKernelMode"), kernelMode);
-    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uGaussNSigma"), gaussNSigma);
-    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uEnlargeHsml"), enlargeKernel);
+    glUniform1i (glGetUniformLocation(wboitParticleProgram, "uKernelMode"), gRenderRuntimeState.kernelMode);
+    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uGaussNSigma"), gRenderRuntimeState.gaussNSigma);
+    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uEnlargeHsml"), gRenderRuntimeState.enlargeKernel);
     // pointSizes[], typeColors[], baseAlpha, softness を適宜
     // 例
     glUniform1f(glGetUniformLocation(wboitParticleProgram,"baseAlpha"), 0.1f);
@@ -5392,27 +3729,27 @@ void RenderScene() {
 #endif
 
 #ifdef USE_CONVEX_HULL
-  if (gClumpFind->checkClumpComputation()){
+  if (gAppServices.clumpFind->checkClumpComputation()){
     glUseProgram(lineProgram);
     glUniformMatrix4fv(glGetUniformLocation(lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-    const int nclumps = gClumpFind->get_nclumps();
+    const int nclumps = gAppServices.clumpFind->get_nclumps();
 
     // 2) clump側が「全クリア」と言ったらGPUキャッシュも削除
-    if (gClumpFind->checkClearCache()) {
+    if (gAppServices.clumpFind->checkClearCache()) {
       for (auto& [id, e] : s_hull) {
 	if (e.vbo) glDeleteBuffers(1, &e.vbo);
 	if (e.vao) glDeleteVertexArrays(1, &e.vao);
       }
       s_hull.clear();
-      gClumpFind->finishClearCache();
+      gAppServices.clumpFind->finishClearCache();
       // CPU側のPolyhedronや頂点配列は**持っていない**ので何もする必要なし
     }
 
     // 3) 各クランプの描画
     for (int i = 0; i < nclumps; ++i) {
-      if (!gClumpFind->flagShowHull(i)) continue;
+      if (!gAppServices.clumpFind->flagShowHull(i)) continue;
 
       // エントリ確保
       auto& e = s_hull[i];
@@ -5430,7 +3767,7 @@ void RenderScene() {
 
       // dirtyなら：点群→凸包→線分→VBOへアップロード
       if (e.dirty) {
-	TrackingVector<ParticleData> pts = gClumpFind->get_particle_indices(i, P->particleBlock.particles);       
+	TrackingVector<ParticleData> pts = gAppServices.clumpFind->get_particle_indices(i, P->particleBlock.particles);       
 	TrackingVector<float> vertices = gConvexHullGenerator->buildLineVertices(pts);
 
 	e.vertexCount = (GLsizei)(vertices.size() / 3);
@@ -5453,77 +3790,84 @@ void RenderScene() {
 #endif
     
   RenderColorBar(gParticleVisualConfig.types[0].colormapIndex);
-  RenderColorBarLabels();
+
+  ColorBarLabelLayout layout;
+  ComputeColorBarPixelCoords(layout.left_pixel,
+			     layout.right_pixel,
+			     layout.top_pixel,
+			     layout.bottom_pixel);
+  
+#ifdef USE_LETTERBOX
+  layout.offsetX = static_cast<float>(g_viewportX);
+  layout.offsetY = static_cast<float>(g_viewportY);
+#else
+  layout.offsetX = 0.0f;
+  layout.offsetY = 0.0f;
+#endif
+
+  DrawColorBarLabelsUI(layout,
+		       gParticleVisualConfig.types[0].colorMin,
+		       gParticleVisualConfig.types[0].colorMax);
 }
 
-static GLuint   gProjTex = 0;
-static int      gProjW = 0, gProjH = 0;
-static uint64_t gUploadedVersion = 0;
-
-void RenderProjectionUI(ProjectionMapGenerator& gen)
+ProjectionPreviewUIState MakeProjectionPreviewUIState(const ProjectionPreviewGLState& glst)
 {
-  if (!gen.getImageFlag())
-    return;
-  
-  const auto& img = gen.getImage();
+  ProjectionPreviewUIState ui;
+  ui.textureId = (void*)(intptr_t)glst.tex;
+  ui.width = glst.width;
+  ui.height = glst.height;
+  ui.valid = (glst.tex != 0 && glst.width > 0 && glst.height > 0);
+  return ui;
+}
 
-  // ImGui ウィンドウはここで初めて開く
-  ImGui::Begin("2D Projection Map");
+void UpdateProjectionPreviewTexture(const ProjectionImage& img,
+                                    ProjectionPreviewGLState& st)
+{
+  if (img.width <= 0 || img.height <= 0) return;
+  if (img.rgb.size() != static_cast<size_t>(img.width * img.height * 3)) return;
+  if (img.version == st.uploadedVersion) return;
 
-  if (img.width > 0 && img.height > 0 &&
-      img.rgb.size() == static_cast<size_t>(img.width * img.height * 3))
-    {
-      // 新しいバージョンならGPUへアップロード
-      if (img.version != gUploadedVersion)
-        {
-	  if (gProjTex == 0) {
-	    glGenTextures(1, &gProjTex);
-	    glBindTexture(GL_TEXTURE_2D, gProjTex);
-	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	    gProjW = gProjH = 0;
-	  }
-
-	  glBindTexture(GL_TEXTURE_2D, gProjTex);
-	  GLint prevUnpack;
-	  glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpack);
-	  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-	  if (img.width != gProjW || img.height != gProjH) {
-	    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
-			 img.width, img.height, 0,
-			 GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
-	    gProjW = img.width;
-	    gProjH = img.height;
-	  } else {
-	    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-			    img.width, img.height,
-			    GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
-	  }
-
-	  glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpack);
-	  glBindTexture(GL_TEXTURE_2D, 0);
-	  gUploadedVersion = img.version;
-        }
-
-      // ImGui上にテクスチャを表示
-      ImVec2 size((float)gProjW, (float)gProjH);
-      ImGui::Image((ImTextureID)(intptr_t)gProjTex, size);
-    }
-  else {
-    ImGui::TextUnformatted("Invalid image buffer.");
+  if (st.tex == 0) {
+    glGenTextures(1, &st.tex);
+    glBindTexture(GL_TEXTURE_2D, st.tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    st.width = 0;
+    st.height = 0;
   }
 
-  ImGui::End();
+  glBindTexture(GL_TEXTURE_2D, st.tex);
+
+  GLint prevUnpack;
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpack);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+  if (img.width != st.width || img.height != st.height) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+                 img.width, img.height, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
+    st.width = img.width;
+    st.height = img.height;
+  } else {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                    img.width, img.height,
+                    GL_RGB, GL_UNSIGNED_BYTE, img.rgb.data());
+  }
+
+  glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpack);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  st.uploadedVersion = img.version;
 }
+
 
 void Cleanup() {
 #ifdef PYTHON_BRIDGE
-  if (g_py.ptr) {
-    g_py.ptr->shutdown(); 
-    g_py.ptr.reset();
+  if (gAppServices.py.ptr) {
+    gAppServices.py.ptr->shutdown(); 
+    gAppServices.py.ptr.reset();
   }
 #endif
   
@@ -5552,6 +3896,28 @@ void Cleanup() {
   glfwTerminate();
 }
 
+static void InitAppServices(AppServices& services, CameraContext& camCtx)
+{
+  services.radialProfile   = std::make_unique<RadialProfileComputer>(camCtx.cameraTarget);
+  services.histogram2D     = std::make_unique<Histogram2DComputer>(camCtx.cameraTarget);
+  services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
+  services.clumpFind       = std::make_unique<FindClump>(camCtx);
+#ifdef ISO_CONTOUR
+  //services.isoContour      = std::make_unique<IsoSurfaceGenerator>();
+#endif
+#ifdef GEOMETRICAL_ANALYSIS
+  services.diskFinder      = std::make_unique<DiskRadiusFinder>();
+  services.ellipsoid       = std::make_unique<EllipseFitter>();
+#endif
+#ifdef STREAM_LINE
+  services.streamLine      = std::make_unique<StreamlineComputer>();
+#endif
+#ifdef VOLUME_RENDERING
+  services.bvh             = std::make_unique<lbvh::MortonBuilder>();
+  services.tf              = std::make_unique<TransferFunctionEditor>();
+#endif
+}
+
 int main() {  
   InitGLFW();        // GLFW & OpenGL の初期化
   InitImGui();       // ImGui の初期化
@@ -5559,20 +3925,10 @@ int main() {
   InitColorMaps();
   InitColorBar();
 
-  gFileInfo = new FileInfo(camCtx);
-  gRadialProfileComputer = std::make_unique<RadialProfileComputer>(camCtx.cameraTarget);
-  gHistogram2DComputer = std::make_unique<Histogram2DComputer>(camCtx.cameraTarget);
-  gProjectionMap2D = std::make_unique<ProjectionMapGenerator>();
-  gClumpFind = new FindClump(camCtx);
-  P = new ParticleArray(camCtx);
+  InitAppServices(gAppServices, camCtx);
   
-#ifdef ISO_CONTOUR
-  gIsoContour = new IsoSurfaceGenerator();
-#endif
-#ifdef GEOMETRICAL_ANALYSIS
-  gEllipsoid = new EllipseFitter();
-  gDiskFinder = new DiskRadiusFinder();
-#endif
+  gFileInfo = new FileInfo(camCtx);
+  P = new ParticleArray(camCtx);
   
   InitBuffers();     // OpenGL の VAO/VBO の初期化
   ConfigMaskState maskState;
@@ -5589,15 +3945,6 @@ int main() {
   gConvexHullGenerator = new ConvexHullGenerator();
 #endif
 
-#ifdef STREAM_LINE
-  gStreamLine = new StreamlineComputer();
-#endif
-
-#ifdef VOLUME_RENDERING
-  gBVH = new lbvh::MortonBuilder();
-  gTF = new TransferFunctionEditor();
-#endif
-  
   // メインループ
   while (!glfwWindowShouldClose(window)) {
     // 1. フレーム時間の計測   
@@ -5620,17 +3967,20 @@ int main() {
     UpdateUI();            // ImGui UI の更新    
     
 #ifdef PYTHON_BRIDGE
-    if (g_py.ptr) {
+    if (gAppServices.py.ptr) {
       std::vector<FieldId> dirty;
-      g_py.ptr->drainEditFields(dirty);
+      gAppServices.py.ptr->drainEditFields(dirty);
       if (!dirty.empty()) {
-	bridge::applyFromSharedToAoS(g_py.ptr->shared(), *P, dirty);
+	bridge::applyFromSharedToAoS(gAppServices.py.ptr->shared(), *P, dirty);
 	P->particlesDirty = true;      // 位置などを使うなら
       }
     }
 #endif
+    
+    UpdateProjectionPreviewTexture(gAppServices.projectionMap2D->getImage(), gProjectionPreviewGLState);
+    ProjectionPreviewUIState previewUI = MakeProjectionPreviewUIState(gProjectionPreviewGLState);
+    DrawProjectionPreviewUI(*gAppServices.projectionMap2D, previewUI);
 
-    RenderProjectionUI(*gProjectionMap2D);
     // 5. 3D シーンの描画
     RenderScene();         // OpenGL 描画
         
@@ -5643,27 +3993,11 @@ int main() {
   
   Cleanup(); // メモリ解放 & ImGui 終了処理
 
-#ifdef VOLUME_RENDERING
-  delete gBVH;
-  delete gTF;
-#endif
-#ifdef STREAM_LINE
-  delete gStreamLine;
-#endif
 #ifdef USE_CONVEX_HULL
   delete gConvexHullGenerator;
 #endif
-#ifdef GEOMETRICAL_ANALYSIS
-  delete gDiskFinder;
-  delete gEllipsoid;
-#endif
-#ifdef ISO_CONTOUR
-  delete gIsoContour;
-#endif
   delete P;
-  delete gClumpFind;
   delete gFileInfo;
 
   return 0;
-}
- 
+} 

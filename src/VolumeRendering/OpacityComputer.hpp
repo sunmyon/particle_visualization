@@ -77,11 +77,11 @@ static int preorderBuild(ParticleOctree& tree,
 }
 
 
-void buildIndexAndSigma(ParticleOctree& tree,
-                        const RhoSigmaLUT& rho2sigma,
-                        std::vector<const ParticleOctree::Node*>& order,
-                        std::vector<NodeInfo>& info,
-                        std::unordered_map<const ParticleOctree::Node*, int>& toIdx)
+inline void buildIndexAndSigma(ParticleOctree& tree,
+			       const RhoSigmaLUT& rho2sigma,
+			       std::vector<const ParticleOctree::Node*>& order,
+			       std::vector<NodeInfo>& info,
+			       std::unordered_map<const ParticleOctree::Node*, int>& toIdx)
 {
   order.clear();
   info.clear();

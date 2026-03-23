@@ -66,6 +66,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/main.cpp
   ${SRC_DIR}/colormap_defs.cpp
   ${SRC_DIR}/UI.cpp
+  ${SRC_DIR}/settingUI.cpp
+  ${SRC_DIR}/render_actions.cpp
   ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp

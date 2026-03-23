@@ -1,0 +1,82 @@
+#pragma once
+#include <memory>
+#include "tracking_vector.h"
+
+class RadialProfileComputer;
+class Histogram2DComputer;
+class ProjectionMapGenerator;
+class FindClump;
+class DiskRadiusFinder;
+class EllipsoidComputer;
+class StreamlineComputer;
+class EllipseFitter;
+
+#ifdef ISO_CONTOUR
+struct IsoContourRuntime {
+  TrackingVector<float> verts;
+  TrackingVector<unsigned> inds;
+  bool dirty = false;
+};
+#endif
+
+#ifdef VOLUME_RENDERING
+#include "BVH/BVH.hpp"
+#include "VolumeRendering/tau_sph.h"
+#include "VolumeRendering/TransferFunctionEditor.hpp"
+#include "VolumeRendering/OpacityComputer.hpp"
+
+namespace lbvh { class MortonBuilder; }
+class TransferFunctionEditor;
+
+struct OctTreeCPUState {
+  std::unique_ptr<ParticleOctree> cpuTree;
+
+  std::vector<const ParticleOctree::Node*> order;
+  std::vector<NodeInfo> info;
+  std::unordered_map<const ParticleOctree::Node*, int> toIdx;
+
+  uint64_t versionCPU = 0;
+  bool dirtyCPU = true;
+};
+
+struct VolumeRenderingRuntime {
+  lbvh::BuildResult bvhResult;
+  RhoSigmaLUT rho2sigma;
+  OctTreeCPUState octTree;
+};
+#endif
+
+#ifdef PYTHON_BRIDGE
+class PythonBridge;
+struct PythonBridgeState {
+  std::unique_ptr<PythonBridge> ptr;
+  bool launched = false;
+  bool needUploadPos = false;
+};
+#endif
+
+struct AppServices {
+  std::unique_ptr<RadialProfileComputer> radialProfile;
+  std::unique_ptr<Histogram2DComputer> histogram2D;
+  std::unique_ptr<ProjectionMapGenerator> projectionMap2D;
+  std::unique_ptr<FindClump> clumpFind;
+#ifdef GEOMETRICAL_ANALYSIS
+  std::unique_ptr<DiskRadiusFinder> diskFinder;
+  std::unique_ptr<EllipseFitter> ellipsoid;
+#endif
+#ifdef STREAM_LINE
+  std::unique_ptr<StreamlineComputer> streamLine;
+#endif
+#ifdef ISO_CONTOUR
+  //std::unique_ptr<IsoSurfaceGenerator> isoContour;
+  IsoContourRuntime isoContour;
+#endif
+  #ifdef VOLUME_RENDERING
+  std::unique_ptr<lbvh::MortonBuilder> bvh;
+  std::unique_ptr<TransferFunctionEditor> tf;
+  VolumeRenderingRuntime volume;
+#endif
+#ifdef PYTHON_BRIDGE
+  PythonBridgeState py;
+#endif
+};
