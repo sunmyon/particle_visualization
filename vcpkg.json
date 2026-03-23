@@ -9,6 +9,11 @@
     "mpfr",
     "glm",
     "cgal",
+    "zeromq",
+    "cppzmq",
+    "nlohmann-json",
+    "lua",
+    "nativefiledialog-extended",
     "vtk"
   ]
 }

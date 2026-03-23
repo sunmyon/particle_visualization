@@ -1,6 +1,6 @@
 
 cmake_minimum_required(VERSION 3.20)
-project(particle_vis LANGUAGES C CXX)
+Listproject(particle_vis LANGUAGES C CXX)
 
 # ===== 基本設定 =====
 set(CMAKE_CXX_STANDARD 17)
@@ -485,9 +485,8 @@ if(ISO_CONTOUR)
   )
   
   # VTK を検出（9.x系想定。必要ならバージョン縛りを調整）
-  find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} REQUIRED)
-# find_package(VTK CONFIG REQUIRED BYPASS_PROVIDER COMPONENTS ${VTK_COMPONENTS})
-#  find_package(VTK)
+# find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} REQUIRED)
+  find_package(VTK)
 
   if(VTK_VERSION VERSION_LESS "9.0" OR VTK_VERSION VERSION_GREATER_EQUAL "10.0")
 #    message(FATAL_ERROR "VTK 9.x is required, but found ${VTK_VERSION}")
@@ -700,11 +699,7 @@ set(_ROOT_LINK_NAME
 )
 
 # オプション: Windows で権限がない場合に "コピー" に切り替える
-if(WIN32)
-  option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" ON)
-else()
-  option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" OFF)
-endif()
+option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" OFF)
 
 if(WIN32 AND WINDOWS_LINK_AS_COPY)
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

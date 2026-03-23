@@ -1,5 +1,7 @@
 #pragma once
 
+#include <deque>
+
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"

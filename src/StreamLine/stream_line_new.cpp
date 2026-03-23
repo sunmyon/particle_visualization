@@ -31,8 +31,8 @@ void StreamlineComputer::setRegionFromParticleData(TrackingVector<ParticleData>&
   if (flagSetRegionByHand) return;
 
   for (int k = 0; k < 3; ++k) {
-    xmin_seed[k] = 1.e100f;
-    xmax_seed[k] = -1.e100f;
+    xmin_seed[k] = 1.e30f;
+    xmax_seed[k] = -1.e30f;
   }
 
   for (auto& p : particles) {
@@ -56,8 +56,8 @@ void StreamlineComputer::setStreamRegionFromParticleData(TrackingVector<Particle
   if (flagSetStreamRegionByHand) return;
 
   for (int k = 0; k < 3; ++k) {
-    xmin_[k] = 1.e100f;
-    xmax_[k] = -1.e100f;
+    xmin_[k] = 1.e30f;
+    xmax_[k] = -1.e30f;
   }
 
   for (auto& p : particles) {
