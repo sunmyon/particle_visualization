@@ -66,7 +66,7 @@ int EllipseFitter::find_nearest_gas_particle(const float pos[3]) const {
 }
 
 
-void EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B) 
+bool EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B, EllipsoidObject& out) 
 {
   dataPtr_ = &data;
 
@@ -89,11 +89,9 @@ void EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
 
   if(count != 2){
     printf("Could not find two specified particles with ID=%d and %d (count_found=%zu < 2)\n", ID_A, ID_B, count );
-    return;
+    return false;
   }
 
-  printf("found!\n");
-  
   // 2) KD-tree を動的に構築
   PointCloud<ParticleData> cloud{ &data };
   kdtree_.reset(new KDTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams()));
@@ -110,11 +108,8 @@ void EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
 
   if(high < 1.e3){
     density_threshold_ = 0.;
-    ellipsoid_.a = 0.;
-    ellipsoid_.b = 0.;
-    ellipsoid_.c = 0.;
-
-    return;    
+    out.clear();
+    return false;    
   }
   
   for (int it = 0; it < maxIterForLowestBound; ++it) {
@@ -135,11 +130,8 @@ void EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
 
   if(low < 1.e2){
     density_threshold_ = 0.;
-    ellipsoid_.a = 0.;
-    ellipsoid_.b = 0.;
-    ellipsoid_.c = 0.;
-
-    return;    
+    out.clear();
+    return false;    
   }
   
   for (int it = 0; it < bisectIters; ++it) {
@@ -159,49 +151,34 @@ void EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
   Eigen::Matrix3d axes;
   Eigen::Vector3d centroid, evals;
   computePCA3D(comp, axes, centroid, evals);
+
+  glm::vec3 pos(
+		static_cast<float>(centroid.x()),
+		static_cast<float>(centroid.y()),
+		static_cast<float>(centroid.z())
+		);
+
+  glm::vec3 rad(
+		static_cast<float>(2.0 * std::sqrt(evals(0))),
+		static_cast<float>(2.0 * std::sqrt(evals(1))),
+		static_cast<float>(2.0 * std::sqrt(evals(2)))
+		);
+
+  glm::mat3 R(
+	      static_cast<float>(axes(0,0)), static_cast<float>(axes(1,0)), static_cast<float>(axes(2,0)),
+	      static_cast<float>(axes(0,1)), static_cast<float>(axes(1,1)), static_cast<float>(axes(2,1)),
+	      static_cast<float>(axes(0,2)), static_cast<float>(axes(1,2)), static_cast<float>(axes(2,2))
+	      );
+
+  glm::quat q = glm::quat_cast(R);
+  out.set(pos, rad, q);
   
-  // 固有値は昇順 λ0<=λ1<=λ2 なので反転して a>=b>=c
-  ellipsoid_.a = 2.0*std::sqrt(evals(0)); // k=2.0 ⇒ 95% 近傍 (目安)
-  ellipsoid_.b = 2.0*std::sqrt(evals(1));
-  ellipsoid_.c = 2.0*std::sqrt(evals(2));
-  ellipsoid_.center = centroid;
-  ellipsoid_.axes   = axes;
-  
-  printf("ellipsoid: center=%g %g %g a=%g b=%g c=%g\n", centroid.x(), centroid.y(), centroid.z(), ellipsoid_.a, ellipsoid_.b, ellipsoid_.c);
+  printf("ellipsoid: center=%g %g %g a=%g b=%g c=%g\n", centroid.x(), centroid.y(), centroid.z(), out.radii.x, out.radii.y, out.radii.z);
   
   kdtree_.reset();
+
+  return true;
 }
-
-glm::mat4 EllipseFitter::getModelMatrix() const
-{
-    const auto& ell = ellipsoid_;
-
-    // 平行移動
-    glm::mat4 T = glm::translate(glm::mat4(1.f), glm::vec3(float(ell.center.x()),
-                                                          float(ell.center.y()),
-                                                          float(ell.center.z())));
-    // 回転 (principal axes)
-    glm::mat4 R(
-        glm::vec4(float(ell.axes(0,0)), float(ell.axes(1,0)), float(ell.axes(2,0)), 0.f),
-        glm::vec4(float(ell.axes(0,1)), float(ell.axes(1,1)), float(ell.axes(2,1)), 0.f),
-        glm::vec4(float(ell.axes(0,2)), float(ell.axes(1,2)), float(ell.axes(2,2)), 0.f),
-        glm::vec4(0.f, 0.f, 0.f, 1.f)
-    );
-
-    // スケール – 3 軸 a,b,c
-    glm::mat4 S = glm::scale(glm::mat4(1.f), glm::vec3(float(ell.a),
-                                                       float(ell.b),
-                                                       float(ell.c)));
-    return T * R * S;
-}
-
-void EllipseFitter::getEllipsoids(double *a, double *b, double *c, double *n){
-  *a = ellipsoid_.a;
-  *b = ellipsoid_.b;
-  *c = ellipsoid_.c;
-  *n = density_threshold_;
-}
-
 
 // ────────────────────────────────────────────────────────────────
 // 3. 3‑D PCA (covariance ellipsoid)

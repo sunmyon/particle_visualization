@@ -14,12 +14,6 @@ void UpdateCuboidTransformArcball(glm::vec3 &center, glm::quat &cuboidTransform
 				  , float lastX, float lastY, float xpos, float ypos
 				  , const glm::mat4 &view, const glm::vec3 &pivotWorld);
 
-struct Ellipsoid {
-  double a{0}, b{0}, c{0};          // 半長軸・半中軸・半短軸
-  Eigen::Vector3d center{0,0,0};    // 質量中心
-  Eigen::Matrix3d axes = Eigen::Matrix3d::Identity(); // 列ベクトルが主軸 (右手系)
-};
-
 struct Cube {
   glm::vec3 position;       // Center position of the cube
   glm::vec3 size;           // Half-extents along each axis (width/2, height/2, depth/2)
@@ -94,3 +88,73 @@ private:
 
 // Inline global reference to the singleton
 inline CubeManager& gCubeManager = CubeManager::getInstance();
+
+
+enum class EllipsoidRenderMode {
+  Wireframe,
+  Solid
+};
+
+struct EllipsoidObject {
+  glm::vec3 position{0.0f};
+  glm::vec3 radii{1.0f};
+  glm::quat orientation{1,0,0,0};
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
+  float opacity = 1.0f;
+  EllipsoidRenderMode renderMode = EllipsoidRenderMode::Solid;
+  std::string tag;
+  
+  void clear()  {
+    position = glm::vec3(0.0f);
+    radii = glm::vec3(0.0f);
+    orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  void set(const glm::vec3& pos,
+           const glm::vec3& rad,
+           const glm::quat& rot)  {
+    position = pos;
+    radii = rad;
+    orientation = rot;
+  }
+  
+  glm::mat4 modelMatrix() const {
+    glm::mat4 M(1.0f);
+    M = glm::translate(M, position);
+    M = M * glm::mat4_cast(orientation);
+    M = glm::scale(M, radii * 2.0f);
+    return M;
+  }
+};
+
+class EllipsoidManager {
+public:
+  static EllipsoidManager& getInstance() {
+    static EllipsoidManager instance;
+    return instance;
+  }
+
+  void add(const EllipsoidObject& e) {
+    ellipsoids_.push_back(e);
+  }
+
+  void clearGroup(const std::string& tag) {
+    ellipsoids_.erase(
+      std::remove_if(ellipsoids_.begin(), ellipsoids_.end(),
+                     [&](const EllipsoidObject& e){ return e.tag == tag; }),
+      ellipsoids_.end());
+  }
+
+  void clear() { ellipsoids_.clear(); }
+
+  const std::vector<EllipsoidObject>& getEllipsoids() const {
+    return ellipsoids_;
+  }
+
+  bool show() const { return !ellipsoids_.empty(); }
+
+private:
+  std::vector<EllipsoidObject> ellipsoids_;
+};
+
+inline EllipsoidManager& gEllipsoidManager = EllipsoidManager::getInstance();

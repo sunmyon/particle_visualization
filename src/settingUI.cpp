@@ -972,12 +972,21 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
     ImGui::SliderFloat("Opacity##contour_ellipse", &render->isoOpacityEllipsoid, 0.0f, 1.0f); 
 				
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
-      render->showEllipsoid = true;
-      ellipsoid->computeEllipse(Part->particleBlock.particles, queryID1, queryID2);
+      gEllipsoidManager.clearGroup("analysis_ellipsoid");
+      
+      EllipsoidObject obj;
+      if (ellipsoid->computeEllipse(Part->particleBlock.particles, queryID1, queryID2, obj)) {
+	obj.opacity = render->isoOpacityEllipsoid;
+	obj.color = glm::vec3(1.0f);
+	obj.tag = "analysis_ellipsoid";
+	obj.renderMode = EllipsoidRenderMode::Solid;
+	
+	gEllipsoidManager.add(obj);
+      }      
     }
 				
     if (ImGui::Button("disable Ellipsoid")) {
-      render->showEllipsoid = false;
+      gEllipsoidManager.clearGroup("analysis_ellipsoid");
     }
 				
     static char fname_input[255]="binary_fragmentation.txt";
@@ -1015,9 +1024,12 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	fileInfo->loadNewSnapshot(r.snap, Part);
 	if(Part->particleBlock.particles.size() == 0)
 	  continue;        
-						
-	ellipsoid->computeEllipse(Part->particleBlock.particles, r.idA, r.idB);
-						
+
+	EllipsoidObject obj;
+	bool flag_ellipse = ellipsoid->computeEllipse(Part->particleBlock.particles, r.idA, r.idB, obj);
+	if(flag_ellipse == false)
+	  continue;
+	
 	FILE *fp_out;
 	if(flag_first)
 	  fp_out = std::fopen(fname_output, "a");
@@ -1030,9 +1042,11 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	  std::fprintf(fp_out, "index ID1 ID2 snap n a b c\n");
 	  flag_first = false;
 	}
-						
-	double a, b, c, n;
-	ellipsoid->getEllipsoids(&a, &b, &c, &n);
+	
+	double a = obj.radii.x;
+	double b = obj.radii.y;
+	double c = obj.radii.z;
+	double n = ellipsoid->getDensityThreshold();	
 	std::fprintf(fp_out, "%d %d %d %d %g %g %g %g\n", r.idx, r.idA, r.idB, r.snap, n, a, b, c);
 	std::fclose(fp_out);
       }

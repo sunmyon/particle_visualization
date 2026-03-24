@@ -3,14 +3,13 @@
 #define ELLIPSE_FITTER_H
 
 #include <vector>
-#include <queue>
-#include <cmath>
-#include <limits>
-#include <algorithm>
 #include <Eigen/Dense>
+#include <memory>
+
 #include <nanoflann.hpp>
 
 #include "main.h"
+#include "object.h" 
 #include <glm/glm.hpp>
 
 class EllipseFitter {
@@ -22,9 +21,8 @@ class EllipseFitter {
    * - data 参照はコピー不要
    * - 毎回内部で KD-tree を構築
    */
-  void computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B);
-  glm::mat4 getModelMatrix(void) const;
-  void getEllipsoids(double *a, double *b, double *c, double *n);
+  bool computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B, EllipsoidObject& out);
+  double getDensityThreshold() {return density_threshold_;};
   
  private:
   template<typename T>
@@ -56,8 +54,7 @@ class EllipseFitter {
   
   int find_nearest_gas_particle(const float pos[3]) const;
 
-  Ellipsoid ellipsoid_;
-  double density_threshold_;
+  double density_threshold_ = 0.;
   
   static constexpr int maxIterForLowestBound = 10;
   static constexpr int bisectIters=100;

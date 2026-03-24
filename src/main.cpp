@@ -784,29 +784,6 @@ void main() {
 #endif
 
 #ifdef GEOMETRICAL_ANALYSIS
-const char* ellipseVertexShaderSource = R"(
-layout(location=0) in vec3 aPos;
-
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
-
-void main() {
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
-}
-)";
-
-const char* ellipseFragmentShaderSource = R"(
-out vec4 FragColor;
-
-uniform vec3 color;
-uniform float opacity;
-
-void main() {
-    FragColor = vec4(1.,1.,1., opacity);
-}
-)";
-
 const char* ellipsoidVertexShaderSource = R"(
 layout(location=0) in vec3 aPos;
 uniform mat4 model, view, projection;
@@ -1698,7 +1675,6 @@ GLuint velocityArrowShader = 0; // 上記のシェーダープログラムID
 GLuint quadShader = 0;
 
 #ifdef GEOMETRICAL_ANALYSIS
-GLuint ellipseProgram = 0;
 GLuint ellipsoidProgram = 0;
 GLuint diskProgram = 0;
 #endif
@@ -1734,7 +1710,6 @@ void InitShaders() {
 #endif
 
 #ifdef GEOMETRICAL_ANALYSIS
-  ellipseProgram = createShaderProgram(ellipseVertexShaderSource, ellipseFragmentShaderSource);
   ellipsoidProgram = createShaderProgram(ellipsoidVertexShaderSource, ellipsoidFragmentShaderSource);
   diskProgram = createShaderProgram(diskVertexShaderSource, diskFragmentShaderSource);  
 #endif
@@ -1815,32 +1790,6 @@ GLuint ellipsoidVAO = 0, ellipsoidVBO = 0;
 GLuint diskVAO, diskVBO, diskEBO;
 GLsizei g_indexCountDisk;
 
-#ifdef USE_ELLIPSES
-const int maxSegmentsEllipse=128;
-
-static std::vector<glm::vec3> buildWireSphere(int slices = 64)
-{
-    const float TWO_PI = 6.28318530718f;
-    std::vector<glm::vec3> verts; verts.reserve(3*slices);
-
-    /* (1) XY 平面 */
-    for (int i=0;i<slices;++i){
-        float t = i*TWO_PI/slices;
-        verts.emplace_back(std::cos(t), std::sin(t), 0.f);
-    }
-    /* (2) YZ 平面 */
-    for (int i=0;i<slices;++i){
-        float t = i*TWO_PI/slices;
-        verts.emplace_back(0.f, std::cos(t), std::sin(t));
-    }
-    /* (3) ZX 平面 */
-    for (int i=0;i<slices;++i){
-        float t = i*TWO_PI/slices;
-        verts.emplace_back(std::cos(t), 0.f, std::sin(t));
-    }
-    return verts;
-}
-#else
 GLuint ellipsoidIBO = 0;
 struct Vtx { glm::vec3 pos; glm::vec3 nrm; };
 std::vector<Vtx>          sphereV;
@@ -1876,7 +1825,6 @@ void buildSphereMesh(int stacks, int slices,
       I.insert(I.end(),{a32,b32,b32+1, a32,b32+1,a32+1});      // 2 三角形/クアッド
     }
 }
-#endif
 
 struct MeshData {
   std::vector<glm::vec3> verts;
@@ -1984,25 +1932,6 @@ void InitBuffers() {
   glBindVertexArray(0);
 
 #ifdef GEOMETRICAL_ANALYSIS
-#ifdef USE_ELLIPSES
-  const int slices = maxSegmentsEllipse;     // 例: 64
-  std::vector<glm::vec3> wireVerts = buildWireSphere(slices);
-  const int totalVerts = static_cast<int>(wireVerts.size());
-    
-  glGenVertexArrays(1, &ellipsoidVAO);
-  glGenBuffers(1,      &ellipsoidVBO);
-    
-  glBindVertexArray(ellipsoidVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, ellipsoidVBO);
-  glBufferData(GL_ARRAY_BUFFER,
-	       sizeof(glm::vec3) * totalVerts,
-	       wireVerts.data(),          // ← 実データ
-	       GL_STATIC_DRAW);
-    
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-  glBindVertexArray(0);
-#else
   buildSphereMesh(64,128,sphereV,sphereI);
 
   glGenVertexArrays(1,&ellipsoidVAO);
@@ -2021,7 +1950,6 @@ void InitBuffers() {
   glEnableVertexAttribArray(0);                 // pos
   glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(Vtx),(void*)0);
   glBindVertexArray(0);
-#endif
 
   MeshData m = buildFlatDiskMesh();
   glGenVertexArrays(1,&diskVAO);
@@ -3290,45 +3218,44 @@ void RenderScene() {
   }
 #endif
 
-#ifdef GEOMETRICAL_ANALYSIS
-  if (gRenderRuntimeState.showEllipsoid && ellipsoidVAO) {
-#ifdef USE_ELLIPSES
-    glUseProgram(ellipseProgram);
-    
-    glm::mat4 M = gAppServices.ellipsoid->getModelMatrix();
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), gRenderRuntimeState.isoOpacityEllipsoid);
-
-    glBindVertexArray(ellipsoidVAO); 
-    glDrawArrays(GL_LINE_LOOP,            0,           maxSegmentsEllipse);
-    glDrawArrays(GL_LINE_LOOP,            maxSegmentsEllipse,      maxSegmentsEllipse);
-    glDrawArrays(GL_LINE_LOOP,            2*maxSegmentsEllipse,    maxSegmentsEllipse);
-    glBindVertexArray(0);
-#else
+  if (gEllipsoidManager.show() && ellipsoidVAO) {
     glUseProgram(ellipsoidProgram);
-    glm::mat4 M = gAppServices.ellipsoid->getModelMatrix();
+    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "view"),
+		       1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "projection"),
+		       1, GL_FALSE, glm::value_ptr(projection));
 
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform3fv(glGetUniformLocation(ellipsoidProgram,"color"),1,glm::value_ptr(glm::vec3(1.,1.,1.)));
-    glUniform1f(glGetUniformLocation(ellipsoidProgram,"opacity"), gRenderRuntimeState.isoOpacityEllipsoid);
-    
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);       // 深度は書かず透明を重ねるなら
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
 
     glBindVertexArray(ellipsoidVAO);
-    glDrawElements(GL_TRIANGLES, sphereI.size(), GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
 
+    for (const auto& e : gEllipsoidManager.getEllipsoids()) {
+      if (e.renderMode != EllipsoidRenderMode::Solid)
+	continue;
+
+      glm::mat4 M = e.modelMatrix();
+
+      glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "model"),
+			 1, GL_FALSE, glm::value_ptr(M));
+      glUniform3fv(glGetUniformLocation(ellipsoidProgram, "color"),
+		   1, glm::value_ptr(e.color));
+      glUniform1f(glGetUniformLocation(ellipsoidProgram, "opacity"),
+		  e.opacity);
+
+      glDrawElements(GL_TRIANGLES,
+		     static_cast<GLsizei>(sphereI.size()),
+		     GL_UNSIGNED_INT,
+		     0);
+    }
+
+    glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
-#endif
   }
 
+#ifdef GEOMETRICAL_ANALYSIS
   if (gRenderRuntimeState.showDisks && diskVAO) {
     glUseProgram(diskProgram);
     glm::mat4 M = gAppServices.diskFinder->getModelMatrix();
