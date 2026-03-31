@@ -22,28 +22,35 @@ struct SettingsRuntimeState {
   bool flagHideAllParticles = false;
 };
 
-struct RenderRuntimeState {
-  bool showDisks = false;
-  bool showEllipsoid = false;
-  bool showStreamLine = false;
-  bool flagStreamDirty = false;
 
-  bool flagCubesDirty = false;
-  bool showIsocontour = false;
-  bool showVolumeRendering = false;
-  bool flagUpdateRendering = false;
-
-  float diskOpacity = 1.0f;
-  float streamlineOpacity = 0.9f;
-  float isoOpacity = 1.0f;
-  float isoOpacityEllipsoid = 1.0f;
-  
-  int flagRT = 0;
-  int kernelMode = 0;
-  float gaussNSigma = 1.0f;
-  float enlargeKernel = 1.0f;
-  int lodMode = 0;
-  float pxThreshold = 1.0f;
-  float tauMax = 1.0f;
-  float rtDownscale = 1.0f;
+struct RenderLayerState {
+  bool show = false;
+  bool cpuUpdated = false;
+  float opacity = 1.0f;
 };
+
+struct RenderRuntimeState {
+  RenderLayerState lines;
+  RenderLayerState disks;
+  RenderLayerState cubes;
+  RenderLayerState ellipsoids;
+  RenderLayerState isocontour;
+  
+  RenderLayerState polyhedra;
+  RenderLayerState cuboids;
+  RenderLayerState cuboidAnnotations;
+  
+  struct Volume {
+    bool show = false;
+    bool cpuUpdated = false;
+    int flagRT = 0;
+    int kernelMode = 0;
+    float gaussNSigma = 1.0f;
+    float enlargeKernel = 1.0f;
+    int lodMode = 0;
+    float pxThreshold = 1.0f;
+    float tauMax = 1.0f;
+    float rtDownscale = 1.0f;
+  } volume;
+};
+

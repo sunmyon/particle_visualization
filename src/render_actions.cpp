@@ -44,7 +44,7 @@ void UpdateSeedRegionPreview(StreamlineComputer& streamLine,
     streamLine.disableRegion();
   }
 
-  render.flagCubesDirty = true;
+  render.cubes.cpuUpdated = true;
 }
 #endif
 
@@ -54,12 +54,12 @@ void PrepareVolumeRendering(ParticleArray& part,
 			    VolumeRenderingRuntime& volume,
                             RenderRuntimeState& render)
 {
-  if (render.flagRT == 1) {
+  if (render.volume.flagRT == 1) {
     volume.bvhResult = bvh.build(part.particleBlock.particles);
     lbvh::computeSigma(volume.bvhResult, volume.rho2sigma);
   }
 
-  if (render.flagRT == 2) {
+  if (render.volume.flagRT == 2) {
     TrackingVector<ParticleDataForTree> particles;
     particles.reserve(part.particleBlock.particles.size());
 
@@ -81,22 +81,22 @@ void PrepareVolumeRendering(ParticleArray& part,
     buildIndexAndSigma(*volume.octTree.cpuTree, volume.rho2sigma, volume.octTree.order, volume.octTree.info, volume.octTree.toIdx);
   }
 
-  render.showVolumeRendering = true;
-  render.flagUpdateRendering = true;
+  render.volume.show = true;
+  render.volume.cpuUpdated = true;
 }
 
 void ReloadVolumeRendering(VolumeRenderingRuntime& volume, RenderRuntimeState& render)
 {
-  if (render.flagRT == 1) {
+  if (render.volume.flagRT == 1) {
     lbvh::computeSigma(volume.bvhResult, volume.rho2sigma);
   }
 
-  if (render.flagRT == 2) {
+  if (render.volume.flagRT == 2) {
     buildIndexAndSigma(*volume.octTree.cpuTree, volume.rho2sigma, volume.octTree.order, volume.octTree.info, volume.octTree.toIdx);
   }
 
-  render.showVolumeRendering = true;
-  render.flagUpdateRendering = true;
+  render.volume.show = true;
+  render.volume.cpuUpdated = true;
 }
 #endif
 
@@ -108,7 +108,7 @@ void BuildIsoContourMesh(ParticleArray& part,
 			 IsoContourRuntime& iso,
                          RenderRuntimeState& render)
 {
-  render.showIsocontour = true;
+  render.isocontour.show = true;
 
   TrackingVector<ParticleDataForTree> particles;
   particles.reserve(part.particleBlock.particles.size());

@@ -38,7 +38,7 @@
 #endif
 
 #ifndef NONATIVEFILEDIALOG
-#include "nfd.h"
+#include <nfd.h>
 #else
 #include "ImGuiFileDialog.h" // インクルードパスを合わせる
 #endif
@@ -174,50 +174,62 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part){
   std::snprintf(fileNameOnly, sizeof(fileNameOnly), fileInfo->fileFormat, fileInfo->initialIndex);
   std::snprintf(fileInfo->filePath, sizeof(fileInfo->filePath), "%s/%s", fileInfo->folderPath, fileNameOnly);
 		
-  if (ImGui::Button("Browse Folder")) {
+  if (ImGui::Button("Browse Files")) {
 #ifndef NONATIVEFILEDIALOG
-    char* outPath = nullptr;
-    // NFD_PickFolder は outPath に選択されたパスを malloc() で割り当てるので、後で free() が必要です。
-    nfdresult_t result = NFD_OpenDialog("", fileInfo->folderPath, &outPath);
+    nfdu8char_t* outPath = nullptr;
+
+    nfdu8filteritem_t filters[] = {
+      { "Snapshot files", "hdf5,h5,bin,dat,*" }
+    };
+
+    nfdopendialogu8args_t args = {};
+    args.filterList  = filters;
+    args.filterCount = 1;
+    args.defaultPath = fileInfo->folderPath[0] ? fileInfo->folderPath : nullptr;
+
+    nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
+
     if (result == NFD_OKAY) {
-      // 選択されたパスを folderPath にコピー
-      std::strncpy(fileInfo->filePath, outPath, IM_ARRAYSIZE(fileInfo->folderPath));
-      free(outPath);
-				
-      // 1. フォルダ部分を抽出
+      std::strncpy(fileInfo->filePath, outPath, IM_ARRAYSIZE(fileInfo->filePath));
+      fileInfo->filePath[IM_ARRAYSIZE(fileInfo->filePath) - 1] = '\0';
+      NFD_FreePathU8(outPath);
+
+      // フォルダ部分を抽出
       char* lastSlash = std::strrchr(fileInfo->filePath, '/');
-      if (lastSlash) {
-	size_t folderLen = lastSlash - fileInfo->filePath + 1; // '/'を含む
-	std::strncpy(fileInfo->folderPath, fileInfo->filePath, folderLen);
-	fileInfo->folderPath[folderLen] = '\0';	    
+#ifdef _WIN32
+      char* lastBackslash = std::strrchr(fileInfo->filePath, '\\');
+      if (!lastSlash || (lastBackslash && lastBackslash > lastSlash)) {
+        lastSlash = lastBackslash;
       }
-				
-      char *filename = fileInfo->filePath;
-      if(lastSlash)
-	filename = lastSlash + 1;
-				
+#endif
+
+      if (lastSlash) {
+        size_t folderLen = static_cast<size_t>(lastSlash - fileInfo->filePath + 1);
+        std::strncpy(fileInfo->folderPath, fileInfo->filePath, folderLen);
+        fileInfo->folderPath[folderLen] = '\0';
+      }
+
+      char* filename = fileInfo->filePath;
+      if (lastSlash) filename = lastSlash + 1;
+      
 #ifdef HAVE_HDF5
-      // 2. ファイル形式（拡張子）の抽出
       fileInfo->useHDF5 = false;
       char* dot = std::strrchr(filename, '.');
       if (dot) {
-	std::string ext(dot);
-	if (ext == ".hdf5") 
-	  fileInfo->useHDF5 = true;	  
+        std::string ext(dot);
+        if (ext == ".hdf5" || ext == ".h5")
+          fileInfo->useHDF5 = true;
       }
 #endif
-				
-      auto res = convertFilenameToFormatAndExtractNumber(filename);       
+      auto res = convertFilenameToFormatAndExtractNumber(filename);
       std::strncpy(fileInfo->fileFormat, res.first.c_str(), IM_ARRAYSIZE(fileInfo->fileFormat));
-      fileInfo->fileFormat[IM_ARRAYSIZE(fileInfo->fileFormat) - 1] = '\0'; 
-      fileInfo->initialIndex = res.second;	
+      fileInfo->fileFormat[IM_ARRAYSIZE(fileInfo->fileFormat) - 1] = '\0';
+      fileInfo->initialIndex = res.second;
     }
     else if (result == NFD_CANCEL) {
-      // ユーザーがキャンセルした場合
-      // （特に処理を行わなくてもよい）
+      // do nothing
     }
     else {
-      // エラー発生時
       std::cerr << "Error: " << NFD_GetError() << std::endl;
     }
 #else
@@ -699,19 +711,19 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
       for(int i=0;i<nsnapshots;i++){
 	fileInfo->currentStep = savedStep;
 	if(i > 0) fileInfo->currentStep += i;
-						
+	
 	int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
 	fileInfo->loadNewSnapshot(newFileIndex, Part);            
-						
+	
 	if(Part->particleBlock.particles.size() == 0)
 	  continue;
-						
+	
 	clumpFind->do_FOF_and_output_clump_data(method, Part->particleBlock.particles, Part->particleBlock.header, filename, newFileIndex);
       }
 					
       fileInfo->currentStep = savedStep;
       fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-					
+      
       int initstep = fileInfo->currentFileIndex;
       int dstep = fileInfo->skipStep;
       std::string fname(filename);
@@ -778,7 +790,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
   case ANALYSIS_DISK: {
     static int queryID_disk=0;
     ImGui::InputInt("Particle ID1##disk", &queryID_disk);
-    ImGui::SliderFloat("Opacity##disk", &render->diskOpacity, 0.0f, 1.0f); 
+    ImGui::SliderFloat("Opacity##disk", &render->disks.opacity, 0.0f, 1.0f); 
 				
     DiskRadiusFinder::Params param_disk;
 				
@@ -797,19 +809,27 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	if(flag_found)
 	  break;
       }
-					
-      if(flag_found){
-	render->showDisks = true;
-	param_disk.G = Part->GravConst_internal;	
+
+      if (flag_found) {
+	param_disk.G = Part->GravConst_internal;
 	param_disk.max_shell = 100;
 	param_disk.scale_fac = Part->originalMax / Part->desiredMax;
-						
-	diskFinder->compute(Part->particleBlock.particles, param_disk);
-      }
+	
+	DiskObject disk;
+	disk.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	disk.opacity = render->disks.opacity;
+	disk.tag = "main_disk";
+	
+	gDiskManager.clearGroup("main_disk");
+	
+	if (diskFinder->compute(Part->particleBlock.particles, param_disk, disk)) {
+	  gDiskManager.add(disk);
+	}
+      }      
     }
 				
     if (ImGui::Button("disable disks")) {
-      render->showDisks = false;
+      gDiskManager.clear();
     }
 				
     static char fname_input[255]="binary_fragmentation_ellipticity_all_w_mode.txt";
@@ -906,16 +926,21 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	      if(flag_found)
 		break;
 	    }
-								
-	    if(flag_found){
-	      param_disk0.G = Part->GravConst_internal;	
+
+	    if (flag_found) {
+	      param_disk0.G = Part->GravConst_internal;
 	      param_disk0.max_shell = 100;
 	      param_disk0.scale_fac = Part->originalMax / Part->desiredMax;
-									
-	      diskFinder->compute(Part->particleBlock.particles, param_disk0);
-	      *r_disk = diskFinder->getDiskRadius();
+	      
+	      DiskObject disk;
+	      disk.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	      disk.opacity = render->disks.opacity;
+	      disk.tag = "main_disk";
+	      
+	      if (diskFinder->compute(Part->particleBlock.particles, param_disk, disk)) 
+		*r_disk = disk.radius;
 	    }else
-	      flag_found_binary = false;
+	      flag_found_binary = false;	      
 	  }
 							
 	  if(flag_found_binary == false)
@@ -969,14 +994,14 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
     static int queryID1=0, queryID2=0;
     ImGui::InputInt("Particle ID1", &queryID1);
     ImGui::InputInt("Particle ID2", &queryID2); 
-    ImGui::SliderFloat("Opacity##contour_ellipse", &render->isoOpacityEllipsoid, 0.0f, 1.0f); 
+    ImGui::SliderFloat("Opacity##contour_ellipse", &render->ellipsoids.opacity, 0.0f, 1.0f); 
 				
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
       gEllipsoidManager.clearGroup("analysis_ellipsoid");
       
       EllipsoidObject obj;
       if (ellipsoid->computeEllipse(Part->particleBlock.particles, queryID1, queryID2, obj)) {
-	obj.opacity = render->isoOpacityEllipsoid;
+	obj.opacity = render->ellipsoids.opacity;
 	obj.color = glm::vec3(1.0f);
 	obj.tag = "analysis_ellipsoid";
 	obj.renderMode = EllipsoidRenderMode::Solid;
@@ -1301,7 +1326,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 							
 							
 	  projectionMap2D->set_projection_parameters(Part->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
-						      std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
+						     std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
 							
 	  projectionMap2D->make_density_map(Part, filename);
 							
@@ -1381,22 +1406,30 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
       }
     }else
       streamLine->disableStreamRegion();
-				
+
     if (ImGui::Button("Build stream lines")) {
       streamLine->setRegionFromParticleData(Part->particleBlock.particles);
       streamLine->setStreamRegionFromParticleData(Part->particleBlock.particles);
-					
+
       streamLine->setSeeds(Part->particleBlock.particles, n_seeds);
-      float degree = 10.;
-      streamLine->build(Part->particleBlock, degree);
-					
-      render->showStreamLine = true;
-      render->flagStreamDirty = true;
+      float degree = 10.f;
+
+      gLineManager.clearGroup("streamline");
+
+      auto lines = streamLine->build(Part->particleBlock,  degree);
+
+      for (auto& line : lines) {
+	line.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	line.opacity = 1.0;
+	line.tag = "streamline";
+	gLineManager.add(line);
+      }
+    }
+
+    if (ImGui::Button("disable Grid & Mesh")) {
+      gLineManager.clearGroup("streamline");
     }
 				
-    if (ImGui::Button("disable Grid & Mesh")) {
-      render->showStreamLine = false;
-    }    
     break;
   }
 #endif
@@ -1406,7 +1439,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     static float isoLevel = 0.;
 				
     ImGui::InputFloat("Threshold value for iso-contour", &isoLevel);
-    ImGui::SliderFloat("Opacity", &render->isoOpacity, 0.0f, 1.0f);
+    ImGui::SliderFloat("Opacity", &render->isocontour.opacity, 0.0f, 1.0f);
 				
     static int max_treelevel = 15;
     ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
@@ -1428,7 +1461,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     }
 								
     if (ImGui::Button("disable Grid & Mesh")) {
-      render->showIsocontour = false;
+      render->isocontour.show = false;
     }    
     break;
   }
@@ -1437,36 +1470,36 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 #ifdef VOLUME_RENDERING  
   case RENDER_VOLUME_RENDERING: {
     ImGui::Text("RayTracing?");
-    ImGui::RadioButton("Ray Tracing with BVH", &render->flagRT, 1);
+    ImGui::RadioButton("Ray Tracing with BVH", &render->volume.flagRT, 1);
     ImGui::SameLine();
-    ImGui::RadioButton("Ray Marching with octtree", &render->flagRT, 2);
+    ImGui::RadioButton("Ray Marching with octtree", &render->volume.flagRT, 2);
     ImGui::SameLine();
-    ImGui::RadioButton("No, blending", &render->flagRT, 0);
+    ImGui::RadioButton("No, blending", &render->volume.flagRT, 0);
 				
-    if(render->flagRT == 0){
+    if(render->volume.flagRT == 0){
       ImGui::Text("kernel");
-      ImGui::RadioButton("Gaussian", &render->kernelMode, 0);
+      ImGui::RadioButton("Gaussian", &render->volume.kernelMode, 0);
       ImGui::SameLine();
-      ImGui::RadioButton("SPH interpolation", &render->kernelMode, 1);
+      ImGui::RadioButton("SPH interpolation", &render->volume.kernelMode, 1);
 					
-      if(render->kernelMode == 0)
-	ImGui::SliderFloat("Maximum size of the kernel", &render->gaussNSigma, 1.0f, 50.f);    	
+      if(render->volume.kernelMode == 0)
+	ImGui::SliderFloat("Maximum size of the kernel", &render->volume.gaussNSigma, 1.0f, 50.f);    	
 					
-      if(render->kernelMode == 1)
-	ImGui::SliderFloat("Enlarge factor for Kernel", &render->enlargeKernel, 0.5f, 50.f);    	      
+      if(render->volume.kernelMode == 1)
+	ImGui::SliderFloat("Enlarge factor for Kernel", &render->volume.enlargeKernel, 0.5f, 50.f);    	      
     }
 				
-    if(render->flagRT){
+    if(render->volume.flagRT){
       ImGui::Text("LOD");
-      ImGui::RadioButton("LEAF ONLY", &render->lodMode, 0);
+      ImGui::RadioButton("LEAF ONLY", &render->volume.lodMode, 0);
       ImGui::SameLine();
-      ImGui::RadioButton("Auto LOD", &render->lodMode, 1);
+      ImGui::RadioButton("Auto LOD", &render->volume.lodMode, 1);
 					
-      if(render->lodMode == 1)
-	ImGui::SliderFloat("Pixel Threshold (px)", &render->pxThreshold, 0.5f, 6.0f, "%.2f");      
+      if(render->volume.lodMode == 1)
+	ImGui::SliderFloat("Pixel Threshold (px)", &render->volume.pxThreshold, 0.5f, 6.0f, "%.2f");      
 					
-      ImGui::SliderFloat("Maximum Tau for RT", &render->tauMax, 0.1f, 100.f);    
-      ImGui::SliderFloat("upscaling factor", &render->rtDownscale, 1.0f, 10.0f);
+      ImGui::SliderFloat("Maximum Tau for RT", &render->volume.tauMax, 0.1f, 100.f);    
+      ImGui::SliderFloat("upscaling factor", &render->volume.rtDownscale, 1.0f, 10.0f);
     }
 				
     static QuantityId selectedVar_volume = QuantityId::Density;

@@ -110,7 +110,7 @@ void StreamlineComputer::setSeeds(TrackingVector<ParticleData>& particles, int n
   }
 }
 
-void StreamlineComputer::build(ParticleBlock& particles, double theta_max_in_degree) {
+std::vector<LineObject> StreamlineComputer::build(ParticleBlock& particles, double theta_max_in_degree) {
   estimate_gradB(particles);
 
   const float theta_max = static_cast<float>(theta_max_in_degree * 3.14159265358979323846 / 180.0);
@@ -124,7 +124,22 @@ void StreamlineComputer::build(ParticleBlock& particles, double theta_max_in_deg
     m_lines.push_back(sampleByCurvature(line, theta_max));
   }
 
-  flattenLines_();
+  std::vector<LineObject> out;
+  out.reserve(m_lines.size());
+
+  for (const auto& linePts : m_lines) {
+    if (linePts.empty()) continue;
+
+    LineObject obj;
+    obj.points.reserve(linePts.size());
+
+    for (const auto& p : linePts) 
+      obj.points.emplace_back(p.x, p.y, p.z);    
+
+    out.push_back(std::move(obj));
+  }
+
+  return out;
 }
 
 void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock) {
@@ -456,21 +471,3 @@ std::vector<Vec3> StreamlineComputer::sampleByCurvature(const std::vector<Vec3>&
   return out;
 }
 
-void StreamlineComputer::flattenLines_() {
-  auto& M = m_mesh;
-  M.vertices.clear();
-  M.firsts.clear();
-  M.counts.clear();
-
-  size_t cursor = 0;
-  for (const auto& line : m_lines) {
-    M.firsts.push_back(cursor);
-    M.counts.push_back(line.size());
-    for (const auto& p : line) {
-      M.vertices.push_back(p.x);
-      M.vertices.push_back(p.y);
-      M.vertices.push_back(p.z);
-    }
-    cursor += line.size();
-  }
-}

@@ -945,7 +945,7 @@ public:
 	}
       }
     }
-    
+      
     {
       TIME_SCOPE("dispatch loop");
       const uint8_t* base = data_ + data_offset_ + begin * layout.recordSize;
@@ -974,8 +974,7 @@ public:
 	    break;
 	  }
 	}
-      }
-    }
+      }    
     }
     return true;
   }

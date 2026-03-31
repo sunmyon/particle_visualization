@@ -31,6 +31,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "colormap_defs.h"
+#include "object.h"
 
 struct ProjectionImage {
   int width = 0;
@@ -143,6 +144,8 @@ private:
   void createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles);
   void createStarMap(ProjectionMap &map, const TrackingVector<pos_val>& particles, float sigma_pix, bool normalize);
 
+  CuboidObject interactiveCuboid_;
+  
 public:
   ProjectionMapParams params;
 
@@ -268,6 +271,9 @@ public:
   void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis,
                                  const float* pos_center, const float len, const float val_min, const float val_max,
                                  const int npixel_input, const int nslices, std::string var);
+
+  CuboidObject& interactiveCuboid() { return interactiveCuboid_; }
+  const CuboidObject& interactiveCuboid() const { return interactiveCuboid_; }
 };
 
 static inline double Ledd_Lsun(double M_Msun){ return 3.8e4 * M_Msun; }

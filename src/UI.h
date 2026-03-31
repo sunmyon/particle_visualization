@@ -2,6 +2,7 @@
 
 #include <deque>
 #include "ui_state.h"
+#include "object_renderer.h"
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
@@ -175,19 +176,6 @@ struct ProjectionPreviewUIState {
 class ProjectionMapGenerator;
 void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
                              const ProjectionPreviewUIState& st);
-
-struct ColorBarLabelLayout {
-  float left_pixel = 0.0f;
-  float right_pixel = 0.0f;
-  float top_pixel = 0.0f;
-  float bottom_pixel = 0.0f;
-  float offsetX = 0.0f;
-  float offsetY = 0.0f;
-};
-
-void DrawColorBarLabelsUI(const ColorBarLabelLayout& layout,
-                          float valueMin,
-                          float valueMax);
 
 void ShowCameraSettingsUI();
 void ShowTime(double time);

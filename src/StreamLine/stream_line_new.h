@@ -10,6 +10,8 @@
 #include <Eigen/Dense>
 #include <nanoflann.hpp>
 
+#include "../object.h"
+
 struct Vec3 {
   float x, y, z;
 
@@ -54,7 +56,7 @@ class StreamlineComputer {
   void setRegionByHand(float* center, float* len);
   void setSeeds(TrackingVector<ParticleData>& particles, int n_seeds);
 
-  void build(ParticleBlock& particles, double theta_max_in_degree);
+  std::vector<LineObject> build(ParticleBlock& particles, double theta_max_in_degree);
   const StreamlineMeshData& meshData() const { return m_mesh; }
 
   void disableRegion() { flagSetRegionByHand = false; }

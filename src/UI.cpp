@@ -11,16 +11,14 @@
 #include "FileIO/file_io.h"
 #include "colormap_defs.h"
 
-extern void UpdateCuboidTransformArcball(glm::vec3& center,
-                                         glm::quat& cuboidTransform,
+extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,
                                          float newX, float newY,
+					 float screenWidth, float screenHeight,
                                          const glm::mat4& view,
                                          const glm::vec3& pivot);
 
-extern bool g_flagShowCuboid;
-extern TrackingVector<glm::vec3> g_cubicPoints;
-extern int g_selectedAxis;
+extern RenderRuntimeState gRenderRuntimeState;
 
 namespace {
   RadialProfileUIState gRadialProfileUIState;
@@ -324,7 +322,41 @@ static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
 
   ImGui::End();
 }
- 
+
+namespace {
+  void updateInteractiveCuboidIfNeeded(CuboidObject& cuboid,
+				       const glm::vec3& newCenter,
+				       const glm::quat& newOrientation,
+				       const glm::vec3& newHalfSize,
+				       bool newShow)
+  {
+    bool changed = false;
+
+    if (glm::distance(cuboid.center, newCenter) > 1e-6f) {
+      cuboid.center = newCenter;
+      changed = true;
+    }
+
+    if (glm::length(cuboid.orientation - newOrientation) > 1e-6f) {
+      cuboid.orientation = glm::normalize(newOrientation);
+      changed = true;
+    }
+
+    if (glm::distance(cuboid.halfSize, newHalfSize) > 1e-6f) {
+      cuboid.halfSize = newHalfSize;
+      changed = true;
+    }
+
+    if (gRenderRuntimeState.cuboidAnnotations.show != newShow) {
+      gRenderRuntimeState.cuboidAnnotations.show = newShow;
+      changed = true;
+    }
+
+    if (changed) {
+      gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;
+    }
+  }
+}
 
 void OpenProjectionMapUI() {
   gProjectionMapUIState.open = true;
@@ -339,7 +371,9 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   if (!state.open) return;
 
   auto& params = generator.params;
-
+  auto& cuboid = generator.interactiveCuboid();
+  int prevSelectedAxis = params.selectedAxis; 
+  
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("make projectoin map", &state.open, ImGuiWindowFlags_None);
 
@@ -420,19 +454,27 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
     lastY = ypos;
 
     if (ImGui::IsMouseDown(0)) {
-      UpdateCuboidTransformArcball(generator.center,
-                                   generator.cuboidTransform,
-                                   xpos - dx, ypos - dy,
-                                   lastX, lastY,
-                                   view, pivot);
+      ImGuiIO& io = ImGui::GetIO();
+            
+      UpdateCuboidTransformArcball(cuboid,
+				   xpos - dx, ypos - dy,
+				   lastX, lastY,
+				   io.DisplaySize.x, io.DisplaySize.y,
+				   view, pivot);
+
+      gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;
     }
 
-    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(generator.cuboidTransform));
+    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(cuboid.orientation));
     params.tilt[0] = eulerAngles.x;
     params.tilt[1] = eulerAngles.y;
     params.tilt[2] = eulerAngles.z;
+
+    generator.center = cuboid.center;
+    generator.cuboidTransform = cuboid.orientation;
   } else {
     generator.cuboidTransform = generator.UpdateTransformFromEuler(params.tilt);
+    generator.center = glm::vec3(params.xoffset[0], params.xoffset[1], params.xoffset[2]);
   }
 
   // -----------------------------
@@ -441,9 +483,9 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   if (ImGui::Button("set axis from angular momentum")) {
     glm::vec3 normal(0.f, 0.f, 1.f);
     generator.planeNormal = glm::normalize(
-      generator.calc_angular_momentum_axis(P->particleBlock.particles,
-                                           generator.center,
-                                           params.xlen));
+					   generator.calc_angular_momentum_axis(P->particleBlock.particles,
+										generator.center,
+										params.xlen));
 
     printf("planeNormal = %g %g %g\n",
            generator.planeNormal.x,
@@ -460,12 +502,17 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
     params.tilt[2] = eulerAngles.z;
   }
 
-  TrackingVector<glm::vec3> cubicPoints =
-    generator.computeCuboidVertices(xmin, xmax, generator.center, generator.cuboidTransform);
-
-  g_flagShowCuboid = params.flagShowCuboid;
-  g_cubicPoints    = cubicPoints;
-
+  updateInteractiveCuboidIfNeeded(cuboid,
+                                generator.center,
+                                generator.cuboidTransform,
+                                glm::vec3(0.5f * params.xlen[0],
+                                          0.5f * params.xlen[1],
+                                          0.5f * params.xlen[2]),
+                                params.flagShowCuboid);
+    
+  cuboid.edgeColor = glm::vec4(1.0f);
+  cuboid.tag = "interactive_cuboid";
+  
   // -----------------------------
   // output file
   // -----------------------------
@@ -494,7 +541,8 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   if (params.selectedAxis == 1) normal = glm::vec3(0, 1, 0);
   if (params.selectedAxis == 2) normal = glm::vec3(0, 0, 1);
 
-  g_selectedAxis = params.selectedAxis;
+  if (prevSelectedAxis != params.selectedAxis) 
+    gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;  
 
   // -----------------------------
   // particle type
@@ -573,18 +621,18 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
       params.starQuantity = static_cast<StarQuantity>(q);
 
       switch (params.starQuantity) {
-        case StarQuantity::Density:
-          params.var = "stellar density";
-          break;
-        case StarQuantity::Metallicity:
-          params.var = "stellar metallicity";
-          break;
-        case StarQuantity::Mass:
-          params.var = "stellar mass";
-          break;
-        case StarQuantity::Flux:
-          params.var = "stellar flux";
-          break;
+      case StarQuantity::Density:
+	params.var = "stellar density";
+	break;
+      case StarQuantity::Metallicity:
+	params.var = "stellar metallicity";
+	break;
+      case StarQuantity::Mass:
+	params.var = "stellar mass";
+	break;
+      case StarQuantity::Flux:
+	params.var = "stellar flux";
+	break;
       }
     }
 
@@ -1499,7 +1547,7 @@ void ExportMaskConfigState(ConfigMaskState& outState)
 void ApplyMaskConfigState(const ConfigMaskState& state)
 {
   if (!state.valid) return;
-
+  
   gMaskUIState.enableSphere = state.enableSphere;
   gMaskUIState.center[0] = (float)state.center[0];
   gMaskUIState.center[1] = (float)state.center[1];
@@ -1547,20 +1595,24 @@ void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
   ImGui::End();
 }
 
-void DrawColorBarLabelsUI(const ColorBarLabelLayout& layout,
-                          float valueMin,
-                          float valueMax)
+ColorbarLabelRenderer gColorbarLabelRenderer;
+void ColorbarLabelRenderer::draw(const ColorbarGizmo& gizmo) const
 {
+  if (!gizmo.visible) return;
+
   ImGuiIO& io = ImGui::GetIO();
   float scaleX = io.DisplayFramebufferScale.x;
   float scaleY = io.DisplayFramebufferScale.y;
 
-  int numTicks = 5;
   ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+  if (!draw_list) return;
+
+  const auto& layout = gizmo.layout;
+  const int numTicks = gizmo.numTicks;
 
   for (int i = 0; i < numTicks; i++) {
-    float t = float(i) / (numTicks - 1);
-    float value = valueMin + t * (valueMax - valueMin);
+    float t = (numTicks > 1) ? float(i) / float(numTicks - 1) : 0.0f;
+    float value = gizmo.valueMin + t * (gizmo.valueMax - gizmo.valueMin);
 
     float px_phys = layout.left_pixel + t * (layout.right_pixel - layout.left_pixel);
     float py_phys = layout.bottom_pixel + 5.0f * scaleY;
@@ -1573,7 +1625,10 @@ void DrawColorBarLabelsUI(const ColorBarLabelLayout& layout,
 
     char buf[32];
     snprintf(buf, sizeof(buf), "%.2f", value);
-    draw_list->AddText(ImVec2(draw_x, draw_y), IM_COL32(255,255,255,255), buf);
+
+    draw_list->AddText(ImVec2(draw_x, draw_y),
+                       IM_COL32(255,255,255,255),
+                       buf);
   }
 }
 

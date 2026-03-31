@@ -921,10 +921,11 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 	    setFlagsRecursively(nodeList[i], originalParticles);	  
 	  }
 
+	  flagHullUpdated = true;
 	  flag_button_pushed = false;
 	}
 #endif
-      
+	
 	ImGui::EndTable();
       }
     }

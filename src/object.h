@@ -2,9 +2,10 @@
 
 #include <vector>
 #include <glm/glm.hpp>
-
 #include <glm/gtc/matrix_transform.hpp>   // for translate, scale
 #include <glm/gtc/quaternion.hpp>         // for mat4_cast
+
+#include "tracking_vector.h"
 
 extern int g_selectedAxis;
 extern bool g_flagShowCuboid;
@@ -73,10 +74,8 @@ public:
         return cubes_;
     }
 
-  bool showCubes(){
-    return (cubes_.size() > 0 ? true : false);
-  }
-  
+  bool show() const { return !cubes_.empty(); }
+    
 private:
     CubeManager() = default;
     ~CubeManager() = default;
@@ -158,3 +157,297 @@ private:
 };
 
 inline EllipsoidManager& gEllipsoidManager = EllipsoidManager::getInstance();
+
+
+struct DiskObject {
+  glm::vec3 position{0.0f};
+  float radius = 0.0f;
+  glm::quat orientation{1,0,0,0};
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
+  float opacity = 1.0f;
+  std::string tag;
+
+  void clear() {
+    position = glm::vec3(0.0f);
+    radius = 0.0f;
+    orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  void set(const glm::vec3& pos,
+           float r,
+           const glm::quat& rot) {
+    position = pos;
+    radius = r;
+    orientation = rot;
+  }
+
+  glm::mat4 modelMatrix(float thicknessRatio = 0.1f) const {
+    glm::mat4 M(1.0f);
+    M = glm::translate(M, position);
+    M = M * glm::mat4_cast(orientation);
+    M = glm::scale(M, glm::vec3(radius * 2.0f,
+                                radius * thicknessRatio * 2.0f,
+                                radius * 2.0f));
+    return M;
+  }
+};
+
+class DiskManager {
+public:
+  static DiskManager& getInstance() {
+    static DiskManager instance;
+    return instance;
+  }
+
+  void add(const DiskObject& d) {
+    disks_.push_back(d);
+  }
+
+  void clearGroup(const std::string& tag) {
+    disks_.erase(
+      std::remove_if(disks_.begin(), disks_.end(),
+                     [&](const DiskObject& d){ return d.tag == tag; }),
+      disks_.end());
+  }
+
+  void clear() { disks_.clear(); }
+
+  const std::vector<DiskObject>& getDisks() const {
+    return disks_;
+  }
+
+  bool show() const { return !disks_.empty(); }
+
+private:
+  std::vector<DiskObject> disks_;
+};
+
+inline DiskManager& gDiskManager = DiskManager::getInstance();
+
+
+struct LineObject {
+  std::vector<glm::vec3> points;
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
+  float opacity = 1.0f;
+  std::string tag;
+
+  void clear() {
+    points.clear();
+  }
+
+  bool empty() const {
+    return points.empty();
+  }
+};
+
+class LineManager {
+public:
+  static LineManager& getInstance() {
+    static LineManager instance;
+    return instance;
+  }
+
+  void add(const LineObject& l) {
+    lines_.push_back(l);
+  }
+
+  void clearGroup(const std::string& tag) {
+    lines_.erase(
+      std::remove_if(lines_.begin(), lines_.end(),
+                     [&](const LineObject& l){ return l.tag == tag; }),
+      lines_.end());
+  }
+
+  void clear() { lines_.clear(); }
+
+  const std::vector<LineObject>& getLines() const {
+    return lines_;
+  }
+
+  bool show() const { return !lines_.empty(); }
+
+private:
+  std::vector<LineObject> lines_;
+};
+
+inline LineManager& gLineManager = LineManager::getInstance();
+
+enum class PolyhedronRenderMode {
+  Wireframe,
+  Solid,
+  WireframeAndSolid
+};
+
+struct PolyhedronObject {
+  std::vector<glm::vec3> vertices;
+  std::vector<unsigned int> lineIndices;
+  std::vector<unsigned int> triIndices;
+
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
+  float opacity = 1.0f;
+  PolyhedronRenderMode renderMode = PolyhedronRenderMode::Wireframe;
+  std::string tag;
+
+  void clear() {
+    vertices.clear();
+    lineIndices.clear();
+    triIndices.clear();
+  }
+
+  bool empty() const {
+    return vertices.empty();
+  }
+
+  bool hasLines() const {
+    return !lineIndices.empty();
+  }
+
+  bool hasTriangles() const {
+    return !triIndices.empty();
+  }
+};
+
+
+class PolyhedronManager {
+public:
+  static PolyhedronManager& getInstance() {
+    static PolyhedronManager instance;
+    return instance;
+  }
+
+  void add(int id, const PolyhedronObject& obj) {
+    objects_[id] = obj;
+  }
+
+  void remove(int id) {
+    objects_.erase(id);
+  }
+
+  void clear() {
+    objects_.clear();
+  }
+
+  void clearGroup(const std::string& tag) {
+    for (auto it = objects_.begin(); it != objects_.end(); ) {
+      if (it->second.tag == tag) it = objects_.erase(it);
+      else ++it;
+    }
+  }
+
+  bool has(int id) const {
+    return objects_.find(id) != objects_.end();
+  }
+
+  PolyhedronObject* get(int id) {
+    auto it = objects_.find(id);
+    return (it == objects_.end()) ? nullptr : &it->second;
+  }
+
+  const std::unordered_map<int, PolyhedronObject>& getObjects() const {
+    return objects_;
+  }
+
+  bool show() const { return !objects_.empty(); }
+
+private:
+  std::unordered_map<int, PolyhedronObject> objects_;
+};
+
+inline PolyhedronManager& gPolyhedronManager = PolyhedronManager::getInstance();
+
+struct CuboidObject {
+  glm::vec3 center{0.0f};
+  glm::quat orientation{1.0f, 0.0f, 0.0f, 0.0f};
+  glm::vec3 halfSize{0.5f};
+
+  glm::vec4 edgeColor{1.0f, 1.0f, 1.0f, 1.0f};
+  std::string tag;
+
+  bool empty() const {
+    return halfSize.x <= 0.0f || halfSize.y <= 0.0f || halfSize.z <= 0.0f;
+  }
+};
+
+inline std::array<glm::vec3, 8> computeCuboidCorners(const CuboidObject& obj)
+{
+  const glm::vec3 h = obj.halfSize;
+
+  const std::array<glm::vec3, 8> local = {{
+    {-h.x, -h.y, -h.z},
+    {+h.x, -h.y, -h.z},
+    {+h.x, +h.y, -h.z},
+    {-h.x, +h.y, -h.z},
+    {-h.x, -h.y, +h.z},
+    {+h.x, -h.y, +h.z},
+    {+h.x, +h.y, +h.z},
+    {-h.x, +h.y, +h.z}
+  }};
+
+  std::array<glm::vec3, 8> world{};
+  for (int i = 0; i < 8; ++i)
+    world[i] = obj.center + obj.orientation * local[i];
+
+  return world;
+}
+
+struct ArrowObject {
+  glm::vec3 origin{0.0f};
+  glm::vec3 direction{0.0f, 0.0f, 1.0f};
+  float length = 1.0f;
+
+  glm::vec4 color{1.0f, 0.0f, 0.0f, 1.0f};
+  float headLength = 0.05f;
+  float headWidth  = 0.03f;
+
+  std::string tag;
+
+  bool empty() const {
+    return glm::length(direction) < 1.0e-8f || length <= 0.0f;
+  }
+};
+
+enum class CuboidAxis {
+  X = 0,
+  Y = 1,
+  Z = 2
+};
+
+struct CuboidAnnotationObject {
+  CuboidObject cuboid;
+
+  bool showAxisHighlight = true;
+  bool showArrow = true;
+  CuboidAxis selectedAxis = CuboidAxis::Z;
+
+  glm::vec4 highlightColor{1.0f, 0.0f, 0.0f, 1.0f};
+  glm::vec4 arrowColor{1.0f, 0.0f, 0.0f, 1.0f};
+
+  float arrowLength = 0.2f;
+  float arrowHeadLength = 0.05f;
+  float arrowHeadWidth  = 0.03f;
+
+  std::string tag;
+};
+
+class CuboidAnnotationManager {
+public:
+  void clear() { objects_.clear(); }
+
+  void add(const CuboidAnnotationObject& obj) {
+    objects_.push_back(obj);
+  }
+
+  const std::vector<CuboidAnnotationObject>& objects() const {
+    return objects_;
+  }
+
+  bool show() const {
+    return !objects_.empty();
+  }
+
+private:
+  std::vector<CuboidAnnotationObject> objects_;
+};
+
+inline CuboidAnnotationManager gCuboidAnnotationManager;
+ArrowObject buildArrowFromCuboidAnnotation(const CuboidAnnotationObject& obj);

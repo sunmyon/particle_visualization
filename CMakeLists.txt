@@ -45,7 +45,7 @@ set(USE_MMAP_DEFAULT ON)
 if(WIN32)
   set(USE_MMAP_DEFAULT OFF)
 endif()
-option(USE_MMAP "Use POSIX mmap for file IO" {USE_MMAP_DEFAULT})
+option(USE_MMAP "Use POSIX mmap for file IO" ${USE_MMAP_DEFAULT})
 
 # グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
@@ -68,6 +68,10 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI.cpp
   ${SRC_DIR}/settingUI.cpp
   ${SRC_DIR}/render_actions.cpp
+  ${SRC_DIR}/object_renderer.cpp
+  ${SRC_DIR}/interaction_utils.cpp
+  ${SRC_DIR}/field_renderer.cpp
+  ${SRC_DIR}/particle_renderer.cpp
   ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
@@ -120,8 +124,6 @@ set(IMPLOT_SRC
 	${EXTERNAL_DIR}/implot/implot.cpp
 	${EXTERNAL_DIR}/implot/implot_items.cpp
 )
-
-set(NFD_SRC_COMMON ${EXTERNAL_DIR}/nfd/nfd_common.c)
 
 # デスクトップGL用 glad（Windows/macOS/Linux のデスクトップGLで使用）
 # ※ USE_GLES=ON の場合は glad を使わず <GLES3/gl3.h> を使う方針
@@ -179,8 +181,6 @@ add_executable(${PROJECT_NAME}
   ${SOURCES_CPP}
   ${IMGUI_SRC}
   ${IMPLOT_SRC}
-  ${NFD_SRC_COMMON}
-	${NFD_SRC_OS}
 )
 
 # ===== インクルードパス =====
@@ -189,7 +189,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   ${EXTERNAL_DIR}/imgui
   ${EXTERNAL_DIR}/imgui/backends
   ${EXTERNAL_DIR}/implot
-	${EXTERNAL_DIR}/nfd
 	${EXTERNAL_DIR}/include
 	${EXTERNAL_DIR}
 )
@@ -420,39 +419,36 @@ if(NONATIVEFILEDIALOG)
   )
   target_compile_definitions(${PROJECT_NAME} PRIVATE NONATIVEFILEDIALOG)
 else()
-  # === OS ネイティブの Native File Dialog を使う ===
-  # 共通
-  target_sources(${PROJECT_NAME} PRIVATE
-    ${EXTERNAL_DIR}/nfd/nfd_common.c
+  find_path(NFD_INCLUDE_DIR
+    NAMES nfd.h
+    PATH_SUFFIXES include
   )
 
-  if(WIN32)
-    target_sources(${PROJECT_NAME} PRIVATE
-      ${EXTERNAL_DIR}/nfd/nfd_win.cpp
-    )
-    # Windows で必要なライブラリ
+  find_library(NFD_LIBRARY
+    NAMES nfd
+    PATH_SUFFIXES lib
+  )
+
+  if(NOT NFD_INCLUDE_DIR OR NOT NFD_LIBRARY)
+    message(FATAL_ERROR
+      "nativefiledialog-extended not found. "
+      "Please run: brew install nativefiledialog-extended")
+  endif()
+
+  target_include_directories(${PROJECT_NAME} PRIVATE ${NFD_INCLUDE_DIR})
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${NFD_LIBRARY})
+
+  if(APPLE)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(UTI_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE
-      ole32 uuid comdlg32 shell32
+      ${APPKIT_FRAMEWORK}
+      ${UTI_FRAMEWORK}
     )
-  elseif(APPLE)
-    target_sources(${PROJECT_NAME} PRIVATE
-      ${EXTERNAL_DIR}/nfd/nfd_cocoa.m
+  elseif(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+      ole32 uuid shell32
     )
-    # Cocoa フレームワーク（既にリンク済みなら重複OK）
-    find_library(COCOA_FRAMEWORK Cocoa)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${COCOA_FRAMEWORK})
-  else() # Linux/Unix
-    # 例1: 依存の少ない Zenity 版
-    target_sources(${PROJECT_NAME} PRIVATE
-      ${EXTERNAL_DIR}/nfd/nfd_zenity.c
-    )
-    # 例2: GTK 版を使いたいならこちら（コメントアウト解除）
-    # find_package(PkgConfig REQUIRED)
-    # pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
-    # target_sources(${PROJECT_NAME} PRIVATE ${EXTERNAL_DIR}/nfd/nfd_gtk.c)
-    # target_include_directories(${PROJECT_NAME} PRIVATE ${GTK3_INCLUDE_DIRS})
-    # target_link_directories(${PROJECT_NAME} PRIVATE ${GTK3_LIBRARY_DIRS})
-    # target_link_libraries(${PROJECT_NAME} PRIVATE ${GTK3_LIBRARIES})
   endif()
 endif()
 

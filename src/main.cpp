@@ -56,12 +56,23 @@
 #include "GeometricAnalysis/DiskRadius.hpp"
 #endif
 
+#ifndef NONATIVEFILEDIALOG
+#include <nfd.h>
+#endif
+
 #include "app_services.h"
 AppServices gAppServices;
 
 #include "ui_state.h"
 SettingsRuntimeState gSettingsRuntimeState;
 RenderRuntimeState gRenderRuntimeState;
+
+#include "particle_renderer.h"
+#include "object_renderer.h"
+#include "field_renderer.h"
+ColorbarGizmo gColorbar;
+
+#include "interaction_utils.h"
 
 // tinyfiledialogs（フォルダ選択用）
 
@@ -70,13 +81,6 @@ RenderRuntimeState gRenderRuntimeState;
 #ifdef USE_CONVEX_HULL
 #include "FindClumps/create_convex_hull.h"
 ConvexHullGenerator* gConvexHullGenerator = nullptr;
-
-struct HullGpuEntry {
-  GLuint vao = 0, vbo = 0;
-  GLsizei vertexCount = 0; // = number of float3 vertices
-  bool dirty = true;
-};
-static std::unordered_map<int, HullGpuEntry> s_hull;
 #endif
 
 #ifdef PYTHON_BRIDGE
@@ -99,14 +103,8 @@ struct CameraContext camCtx;
 FileInfo *gFileInfo;
 ParticleArray *P;
 
-bool g_flagShowCuboid = false;
-TrackingVector<glm::vec3> g_cubicPoints;
-
 #include "particle_visual_config.h"
 ParticleVisualConfig gParticleVisualConfig;
-GLuint colormapTextures[50] = {0};
-
-size_t g_filteredParticleCount = 0;
 
 std::vector<size_t> g_labelIndices;  // 毎回 ImGui 描画に使う
 
@@ -121,7 +119,6 @@ ProjectionPreviewGLState gProjectionPreviewGLState;
 
 #ifdef ISO_CONTOUR
 #include "IsoSurface/IsoSurfaceGenerator.h"
-unsigned meshIsocontourVAO=0, meshIsocontourVBO=0, meshIsocontourEBO=0, meshIsocontourNBO=0;
 #endif
 
 #ifdef VOLUME_RENDERING
@@ -153,33 +150,6 @@ bool firstMouse = true;
 // メインループ用の時間計測変数
 // ------------------------------
 float lastFrame = 0.0f;
-
-// 仮想球面へのマッピング関数
-glm::vec3 mapToSphere(float x, float y) {
-  ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-  float centerX = displaySize.x * 0.5f;
-  float centerY = displaySize.y * 0.5f;
-  float sizemax = std::max(displaySize.x, displaySize.y);
-  
-  // 画面中心を原点にして -1～1 に正規化
-  //float nx = 2.0f * (x - centerX) / screenWidth;
-  float nx = 2.0f * (centerX - x) / sizemax;
-  float ny = 2.0f * (centerY - y) / sizemax; // Y座標は上方向が正になるように
-  //float ny = (2.0f * y - screenWidth) / screenHeight; // Y座標は上方向が正になるように
-  float lengthSquared = nx * nx + ny * ny;
-
-  glm::vec3 result;
-  if (lengthSquared <= 1.0f) {
-    // 球面上の点：z = sqrt(1 - x^2 - y^2)
-    result = glm::vec3(nx, ny, sqrt(1.0f - lengthSquared));
-  } else {
-    // 球の外側の場合は正規化（楕円状に補正）
-    result = glm::normalize(glm::vec3(nx, ny, 0.0f));
-  }
-
-  return result;
-}
-
 
 // ------------------------------
 // マウスコールバック
@@ -221,9 +191,10 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
     camCtx.cameraPos += panOffset;
   } else {
 #ifdef ROTATE_ARCBALL
+    ImGuiIO& io = ImGui::GetIO();   
     // Arcball によるマウス座標の写像
-    glm::vec3 startSphere = mapToSphere(lastX - xoffset, lastY - yoffset);
-    glm::vec3 endSphere   = mapToSphere(xpos, ypos);
+    glm::vec3 startSphere = mapToSphere(lastX - xoffset, lastY - yoffset, io.DisplaySize.x, io.DisplaySize.y);
+    glm::vec3 endSphere   = mapToSphere(xpos, ypos, io.DisplaySize.x, io.DisplaySize.y);
     
     // 始点と終点の外積で回転軸を求める
     glm::vec3 rotAxis = glm::cross(startSphere, endSphere);
@@ -461,7 +432,6 @@ unsigned int createShaderProgram(const char* vertexSource, const char* fragmentS
 }
 
 
-
 // ------------------------------
 // シェーダーソースコード
 // ------------------------------
@@ -603,13 +573,9 @@ void main()
 )";
 
 // カラーバー用のグローバル変数
-GLuint colorbarVAO, colorbarVBO, colorbarEBO;
-GLuint colorbarProgram;
 
 // 現在使用するカラーマップテクスチャ（たとえば UI で選択したもの）
 // これは、InitColorMaps() 等で初期化しているもの（例：jetTex, viridisTex など）から選択します。
-GLuint currentColorMapTex = 0;  // ※ 既に定義済みのグローバル変数とする
-
 
 // カラーバー用頂点シェーダー（スクリーン空間の NDC 座標で描画）
 const char* colorbarVertexShaderSource = R"(
@@ -704,7 +670,6 @@ void main() {
 )";
 
 
-
 // simple_tex.vert
 const char *colormap2DShaderSource = R"(
 
@@ -783,7 +748,6 @@ void main() {
 )";
 #endif
 
-#ifdef GEOMETRICAL_ANALYSIS
 const char* ellipsoidVertexShaderSource = R"(
 layout(location=0) in vec3 aPos;
 uniform mat4 model, view, projection;
@@ -817,33 +781,6 @@ uniform vec3 color;
 uniform float opacity;
 void main(){ FragColor = vec4(color, opacity); }
 )";
-#endif
-
-#ifdef STREAM_LINE
-const char* streamlineVertexShaderSource = R"(
-layout(location = 0) in vec3 aPos;
-
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
-
-void main(){
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
-}
-)";
-
-
-const char* streamlineFragmentShaderSource = R"(
-out vec4 FragColor;
-uniform vec3  color;
-uniform float opacity;
-
-void main()
-{
-    FragColor = vec4(color, opacity);
-}
-)";
-#endif
 
 const char* cubicShaderSource = R"(
 layout (location = 0) in vec3 aPos;
@@ -1571,49 +1508,13 @@ void main(){
 )";
 #endif
 
-static float quadVertices[] = {
-    //   inPos (x,y)   inTexCoord (u,v)
-    -1.f, -1.f,    0.f, 0.f,
-     1.f, -1.f,    1.f, 0.f,
-     1.f,  1.f,    1.f, 1.f,
-
-    -1.f, -1.f,    0.f, 0.f,
-     1.f,  1.f,    1.f, 1.f,
-    -1.f,  1.f,    0.f, 1.f
-};
-
-GLuint quadVAO = 0;
-GLuint quadVBO = 0;
-
-void SetupQuad()
-{
-    glGenVertexArrays(1, &quadVAO);
-    glGenBuffers(1, &quadVBO);
-
-    glBindVertexArray(quadVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
-    // inPos -> location=0
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // inTexCoord -> location=1
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*sizeof(float), (void*)(2*sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    glBindVertexArray(0);
-}
-
-
 // ------------------------------
 // normalize 用グローバル変数
 // ------------------------------
 // 例：利用可能なカラーマップのテクスチャID（これらは InitColorMaps() 内で作成）
 GLuint jetTex, viridisTex, plasmaTex;
-// … 他にも必要なら追加
 
 void InitApplication() {
-  // 設定のロード（前回の状態を復元）
 }
 
 GLFWwindow* window = nullptr;
@@ -1670,21 +1571,14 @@ void InitImGui() {
     ImGui_ImplOpenGL3_Init("#version 330");
 }
 
-GLuint particleProgram, lineProgram;
+GLuint particleProgram;
 GLuint velocityArrowShader = 0; // 上記のシェーダープログラムID
-GLuint quadShader = 0;
 
-#ifdef GEOMETRICAL_ANALYSIS
-GLuint ellipsoidProgram = 0;
-GLuint diskProgram = 0;
-#endif
+GLuint lineProgram, ellipsoidProgram = 0, diskProgram = 0;
+GLuint cubicProgram, coordProgram, colorbarProgram;
 
 #ifdef ISO_CONTOUR
 GLuint isocontourProgram;
-#endif
-
-#ifdef STREAM_LINE
-GLuint streamlineProgram;
 #endif
 
 #ifdef VOLUME_RENDERING
@@ -1696,11 +1590,10 @@ GLuint wboitParticleProgram;
 GLuint wboitCompositeProgram;
 #endif
 
-GLuint cubicProgram, coordProgram;
-
-#define N_LINES_FOR_CROSS 3
 
 void InitShaders() {
+  colorbarProgram = createShaderProgram(colorbarVertexShaderSource, colorbarFragmentShaderSource);
+  
   particleProgram = createShaderProgram(particleVertexShaderSource, particleFragmentShaderSource);
   lineProgram = createShaderProgram(lineVertexShaderSource, lineFragmentShaderSource);
   velocityArrowShader = createShaderProgram(velocityArrowVertexShaderSource, velocityArrowFragmentShaderSource);
@@ -1709,20 +1602,11 @@ void InitShaders() {
   isocontourProgram = createShaderProgram(isocontourVertexShaderSource, isocontourFragmentShaderSource);
 #endif
 
-#ifdef GEOMETRICAL_ANALYSIS
-  ellipsoidProgram = createShaderProgram(ellipsoidVertexShaderSource, ellipsoidFragmentShaderSource);
-  diskProgram = createShaderProgram(diskVertexShaderSource, diskFragmentShaderSource);  
-#endif
-
-#ifdef STREAM_LINE
-  streamlineProgram = createShaderProgram(streamlineVertexShaderSource, streamlineFragmentShaderSource);
-#endif
-
   cubicProgram = createShaderProgram(cubicShaderSource, cubicFragmentShaderSource);
+  ellipsoidProgram = createShaderProgram(ellipsoidVertexShaderSource, ellipsoidFragmentShaderSource);
+  diskProgram = createShaderProgram(diskVertexShaderSource, diskFragmentShaderSource);   
+  
   coordProgram = createShaderProgram(coordShaderSource, coordFragmentShaderSource);
-  quadShader = createShaderProgram(colormap2DShaderSource, colormap2DFragmentShaderSource);
-  // Quad 準備
-  SetupQuad();
 
 #ifdef VOLUME_RENDERING
   rtProgram = createShaderProgramWithHeader(fullscreenShaderSource, rtFragmentShaderSource, shaderHeader410);
@@ -1734,342 +1618,36 @@ void InitShaders() {
 #endif
 }
 
-
-// グローバル変数（初期化時に生成）
-GLuint velocityArrowVAO = 0, velocityArrowVBO = 0, instanceVBO = 0;
-int arrowVertexCount = 2;       // 直線なので2頂点
-int instanceCount = 0;          // 更新時に粒子数をセット
-
-// 矢印モデルの頂点データ（直線）
-float arrowVertices[] = {
-    0.0f, 0.0f, 0.0f, // 始点（原点）
-    0.0f, 0.0f, 1.0f  // 終点（Z軸方向、1単位）
-};
-
-void InitVelocityArrowGeometry() {
-    glGenVertexArrays(1, &velocityArrowVAO);
-    glGenBuffers(1, &velocityArrowVBO);
-    glGenBuffers(1, &instanceVBO);
-
-    glBindVertexArray(velocityArrowVAO);
-
-    // モデル頂点データ
-    glBindBuffer(GL_ARRAY_BUFFER, velocityArrowVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(arrowVertices), arrowVertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // インスタンス属性用のVBO（各粒子につき、位置(vec3)と速度(vec3)の合計6要素）
-    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    // 初期は空データ。後でUpdateVelocityInstanceBuffer()で更新する。
-    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    // instancePos：location 1
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribDivisor(1, 1); // インスタンス属性
-    // instanceVel：location 2
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    glVertexAttribDivisor(2, 1);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-}
-
-GLuint particleVAO, particleVBO, crossVAO, crossVBO;
-GLuint cubicVAO, cubicVBO, cubicEBO, cubicInstanceVBO, cubicOpacityVBO;
-GLuint coordVAO, coordVBO;
-#ifdef STREAM_LINE
-GLuint streamlineVAO, streamlineVBO;
-#endif
 #ifdef VOLUME_RENDERING
 GLuint fullscreenVAO;
 #endif
-#ifdef GEOMETRICAL_ANALYSIS
-GLuint ellipsoidVAO = 0, ellipsoidVBO = 0;
-GLuint diskVAO, diskVBO, diskEBO;
-GLsizei g_indexCountDisk;
-
-GLuint ellipsoidIBO = 0;
-struct Vtx { glm::vec3 pos; glm::vec3 nrm; };
-std::vector<Vtx>          sphereV;
-std::vector<uint32_t>     sphereI;
-
-// ---------------- build UV-sphere  (stacks×slices = 64×128 くらいで十分)
-void buildSphereMesh(int stacks, int slices,
-                     std::vector<Vtx>& V, std::vector<uint32_t>& I)
-{
-  const float PI = 3.1415926535f;
-  for (int i=0;i<=stacks;++i){
-    float v = float(i)/stacks;
-    float phi = PI*(v-0.5f);              // -π/2 .. +π/2
-    float z = std::sin(phi);
-    float r = std::cos(phi);
-    for (int j=0;j<=slices;++j){
-      float u = float(j)/slices;
-      float theta = 2*PI*u;
-      float x = r*std::cos(theta);
-      float y = r*std::sin(theta);
-      glm::vec3 p(x,y,z);
-      V.push_back({p,p});               // 半径1なので法線=位置
-    }
-  }
-  for (int i=0;i<stacks;++i)
-    for (int j=0;j<slices;++j){
-      int a=i*(slices+1)+j;
-      int b=(i+1)*(slices+1)+j;
-
-      uint32_t a32 = static_cast<uint32_t>(a);
-      uint32_t b32 = static_cast<uint32_t>(b);
-	    
-      I.insert(I.end(),{a32,b32,b32+1, a32,b32+1,a32+1});      // 2 三角形/クアッド
-    }
-}
-
-struct MeshData {
-  std::vector<glm::vec3> verts;
-  std::vector<uint32_t>  inds;
-};
-
-inline MeshData buildFlatDiskMesh(int slices = 64)
-{
-  MeshData m;
-  m.verts.reserve(2 + (slices+1)*2);
-  m.inds .reserve(slices*12);          // 粗い見積り
-
-  /* 上下中心 */
-  m.verts.push_back({0, 0.5f, 0});
-  m.verts.push_back({0,-0.5f, 0});
-
-  for (int i=0;i<=slices;++i){
-    float th = 2.f*glm::pi<float>()*i/slices;
-    float x = std::cos(th), z = std::sin(th);
-    m.verts.push_back({x, 0.5f, z});
-    m.verts.push_back({x,-0.5f, z});
-  }
-  /* 上面・下面ファン */
-  for (int i=0;i<slices;++i){
-    m.inds.insert(m.inds.end(), { 0u, 2u+i*2u, 2u+(i+1u)*2u });
-    m.inds.insert(m.inds.end(), { 1u, 3u+(i+1u)*2u, 3u+i*2u });
-  }
-  /* 側面 */
-  for (int i=0;i<slices;++i){
-    uint32_t a=2u+i*2u, b=a+1u, c=2u+(i+1u)*2u, d=c+1u;
-    m.inds.insert(m.inds.end(), { a,b,c,  c,b,d });
-  }
-  return m;
-}
-#endif
-
-float cubicVerts[] = {
-    -0.5f, -0.5f, -0.5f,  
-     0.5f, -0.5f, -0.5f,  
-     0.5f,  0.5f, -0.5f,  
-    -0.5f,  0.5f, -0.5f,  
-    -0.5f, -0.5f,  0.5f,  
-     0.5f, -0.5f,  0.5f,  
-     0.5f,  0.5f,  0.5f,  
-    -0.5f,  0.5f,  0.5f   
-};
-unsigned int cubicIdx[] = {
-    // back face
-    0,1,2,  2,3,0,
-    // front face
-    4,5,6,  6,7,4,
-    // left face
-    4,0,3,  3,7,4,
-    // right face
-    1,5,6,  6,2,1,
-    // bottom face
-    4,5,1,  1,0,4,
-    // top face
-    3,2,6,  6,7,3
-};
 
 void InitBuffers() {
-  // ---- パーティクルデータの VAO/VBO を作成 ----
-  glGenVertexArrays(1, &particleVAO);
-  glGenBuffers(1, &particleVBO);
-
-  glBindVertexArray(particleVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, particleVBO);    
-    
-  // 初期データを転送（サイズは `originalParticles` に応じて変更可能）
-  glBufferData(GL_ARRAY_BUFFER, P->particleBlock.particles.size() * sizeof(ParticleData), P->particleBlock.particles.data(), GL_DYNAMIC_DRAW);
-    
-  // attribute 0: pos → offset 0
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ParticleData),  (void*)offsetof(ParticleData, pos));
-  glEnableVertexAttribArray(0);
-  // attribute 1: type
-  glVertexAttribIPointer(1, 1, GL_UNSIGNED_BYTE, sizeof(ParticleData), (void*)offsetof(ParticleData, type));
-  glEnableVertexAttribArray(1);
-  // attribute 2: flag
-  glVertexAttribIPointer(2, 1, GL_UNSIGNED_BYTE, sizeof(ParticleData), (void*)offsetof(ParticleData, flag_stress));
-  glEnableVertexAttribArray(2);
-  // attribute 3: Hsml
-  glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, Hsml));
-  glEnableVertexAttribArray(3);
+  gParticleRenderer.init(*P);
   
-  glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleData), (void*)offsetof(ParticleData, val_show));
-  glEnableVertexAttribArray(4);
-    
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
+  std::vector<ColormapDefView> cmapViews;
+  cmapViews.reserve(gNumColormaps);
+  for (int i = 0; i < gNumColormaps; ++i) {
+    cmapViews.push_back({gColormapDefs[i].data, gColormapDefs[i].count});
+  }
 
-  // ---- 交差点マーカーの VAO/VBO を作成 ----
-  glGenVertexArrays(1, &crossVAO);
-  glGenBuffers(1, &crossVBO);
-
-  glBindVertexArray(crossVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, crossVBO);
-
-  // 交差点マーカー用の 6点データ（初期化は `nullptr` で後から `glBufferSubData()` で更新）
-  glBufferData(GL_ARRAY_BUFFER, 2 * N_LINES_FOR_CROSS * 3 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
-
-#ifdef GEOMETRICAL_ANALYSIS
-  buildSphereMesh(64,128,sphereV,sphereI);
-
-  glGenVertexArrays(1,&ellipsoidVAO);
-  glGenBuffers(1,&ellipsoidVBO);
-  glGenBuffers(1,&ellipsoidIBO);
-
-  glBindVertexArray(ellipsoidVAO);
-  glBindBuffer(GL_ARRAY_BUFFER,ellipsoidVBO);
-  glBufferData(GL_ARRAY_BUFFER,sphereV.size()*sizeof(Vtx),
-	       sphereV.data(),GL_STATIC_DRAW);
+  gColorbarRenderer.init();
+  gColorbarRenderer.initColorMaps(cmapViews.data(), static_cast<int>(cmapViews.size()));
   
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,ellipsoidIBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER,sphereI.size()*sizeof(uint32_t),
-	       sphereI.data(),GL_STATIC_DRAW);
-
-  glEnableVertexAttribArray(0);                 // pos
-  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(Vtx),(void*)0);
-  glBindVertexArray(0);
-
-  MeshData m = buildFlatDiskMesh();
-  glGenVertexArrays(1,&diskVAO);
-  glGenBuffers(1,&diskVBO);
-  glGenBuffers(1,&diskEBO);
-
-  glBindVertexArray(diskVAO);
-
-  /* VBO */
-  glBindBuffer(GL_ARRAY_BUFFER, diskVBO);
-  glBufferData(GL_ARRAY_BUFFER, m.verts.size()*sizeof(glm::vec3), m.verts.data(), GL_STATIC_DRAW);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),(void*)0);
-
-  /* EBO */
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, diskEBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, m.inds.size()*sizeof(uint32_t), m.inds.data(), GL_STATIC_DRAW);
-
-  glBindVertexArray(0);
-  g_indexCountDisk = static_cast<GLsizei>(m.inds.size());
-#endif
-
-#ifdef STREAM_LINE
-  glGenVertexArrays(1, &streamlineVAO);
-  glGenBuffers     (1, &streamlineVBO);
-
-  glBindVertexArray(streamlineVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, streamlineVBO);
-  // 頂点属性 layout(location=0) に vec3 を割り当て
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
-  glBindVertexArray(0);
-#endif
+  // ---- object renderers ----
+  gEllipsoidRenderer.init();
+  gDiskRenderer.init();
+  gLineRenderer.init();
+  gCubeRenderer.init();
 
 #ifdef VOLUME_RENDERING
   glGenVertexArrays(1, &fullscreenVAO);
 #endif
-  
-  glGenVertexArrays(1, &cubicVAO);
-  glGenBuffers(1, &cubicVBO);
-  glGenBuffers(1, &cubicEBO);
-  glGenBuffers(1, &cubicInstanceVBO);
-  glGenBuffers(1, &cubicOpacityVBO);
-  
-  // 2) VAO に頂点属性を登録
-  glBindVertexArray(cubicVAO);
 
-  // ── (a) 既存の頂点座標バッファ
-  glBindBuffer(GL_ARRAY_BUFFER, cubicVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(cubicVerts), cubicVerts, GL_STATIC_DRAW);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  gCrossGizmoRenderer.init();
+  gCoordAxesRenderer.init();
 
-  // ── (b) インデンス行列用バッファ（まだ中身は入れない。後で glBufferData します）
-  glBindBuffer(GL_ARRAY_BUFFER, cubicInstanceVBO);
-  // 4×4 行列は vec4 が 4 つに分かれるので attribute location 1,2,3,4 を使う
-  GLsizei vec4Size = sizeof(glm::vec4);
-  for (GLuint i = 0; i < 4; ++i) {
-    glEnableVertexAttribArray(1 + i);
-    glVertexAttribPointer(
-			  1 + i,             // location 1,2,3,4
-			  4,                  // vec4
-			  GL_FLOAT, GL_FALSE,
-			  sizeof(glm::mat4),  // ストライド
-			  (void*)(i * vec4Size)
-			  );
-    glVertexAttribDivisor(1 + i, 1);  // ★ インスタンスごとに１個進める
-  }
-
-  // ── (c) インスタンス不透明度用バッファ (location = 5)
-  glBindBuffer(GL_ARRAY_BUFFER, cubicOpacityVBO);
-  glEnableVertexAttribArray(5);
-  glVertexAttribPointer(
-			5,               // location 5
-			1,               // float
-			GL_FLOAT,
-			GL_FALSE,
-			sizeof(float),   // stride (1要素)
-			(void*)0         // offset
-			);
-  glVertexAttribDivisor(5, 1);
-  
-  // ── (c) インデックスバッファ
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubicEBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubicIdx), cubicIdx, GL_STATIC_DRAW);
-  
-  glBindVertexArray(0);
-
-  float axesVertsColored[] = {
-    //  pos         ,    color
-    0,0,0,          1,0,0,    // X 軸 始点（赤）
-    1,0,0,          1,0,0,    // X 軸 終点
-    0,0,0,          0,1,0,    // Y 軸 始点（緑）
-    0,1,0,          0,1,0,    // Y 軸 終点
-    0,0,0,          1,1,1,    // Z 軸 始点（青）
-    0,0,1,          1,1,1     // Z 軸 終点
-  };
-  
-  glGenVertexArrays(1, &coordVAO);
-  glGenBuffers(1, &coordVBO);
-
-  glBindVertexArray(coordVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, coordVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(axesVertsColored),
-	       axesVertsColored, GL_STATIC_DRAW);
-
-  // aPos (location = 0)
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-			6 * sizeof(float), (void*)0);
-
-  // aColor (location = 1)
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-			6 * sizeof(float),
-			(void*)(3 * sizeof(float)));
-
-  glBindVertexArray(0);
-  
-  InitVelocityArrowGeometry();
+  gVelocityFieldRenderer.init();
 }
 
 #ifdef VOLUME_RENDERING
@@ -2195,140 +1773,6 @@ void uploadOctTree_TBO(OctTreeCPUState& cpu, GpuOctree& gpu, const RhoSigmaLUT& 
 
   gpu = G;
 
-}
-#endif
-
-static GLuint CreateColormapTexture1D(const float* rgb, int nColors)
-{
-  GLuint tex = 0;
-  glGenTextures(1, &tex);
-  glBindTexture(GL_TEXTURE_1D, tex);
-
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-  glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB32F, nColors, 0, GL_RGB, GL_FLOAT, rgb);
-  glBindTexture(GL_TEXTURE_1D, 0);
-  return tex;
-}
-
-void InitColorMaps()
-{
-  for (int i = 0; i < gNumColormaps; ++i) {
-    colormapTextures[i] =
-      CreateColormapTexture1D(gColormapDefs[i].data, gColormapDefs[i].count);
-  }
-}
-
-void InitColorBar() {
-    // 画面右下に表示するカラーバーの頂点データ（NDC 座標）
-    // ここでは、左下 (0.70, -0.95)、右下 (0.85, -0.95)、右上 (0.85, -0.65)、左上 (0.70, -0.65) の矩形を定義
-    float dummyVertices[] = {
-        // 位置 (x, y)      // テクスチャ座標 (u, v)
-         0.70f, -0.95f,     0.0f, 0.0f,   // bottom-left
-         0.85f, -0.95f,     1.0f, 0.0f,   // bottom-right
-         0.85f, -0.9f,     1.0f, 1.0f,   // top-right
-         0.70f, -0.9f,     0.0f, 1.0f    // top-left
-	 };
-    
-    // インデックス（2つの三角形で矩形を構成）
-    unsigned int indices[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-
-    // VAO, VBO, EBO の生成
-    glGenVertexArrays(1, &colorbarVAO);
-    glGenBuffers(1, &colorbarVBO);
-    glGenBuffers(1, &colorbarEBO);
-
-    glBindVertexArray(colorbarVAO);
-
-    // 頂点データのバッファ転送
-    glBindBuffer(GL_ARRAY_BUFFER, colorbarVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(dummyVertices), dummyVertices, GL_STATIC_DRAW);
-
-    // インデックスデータのバッファ転送
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, colorbarEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-    // 頂点属性の設定
-    // 位置属性：location = 0, vec2, stride = 4 * sizeof(float)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // テクスチャ座標属性：location = 1, vec2, オフセット = 2 * sizeof(float)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    glBindVertexArray(0);
-
-    // シェーダープログラムの生成（createShaderProgram() はご利用のヘルパー関数）
-    colorbarProgram = createShaderProgram(colorbarVertexShaderSource, colorbarFragmentShaderSource);
-}
-
-#ifdef ISO_CONTOUR
-inline void computeNormals(const TrackingVector<float>& verts, const TrackingVector<unsigned>& inds, TrackingVector<float>& out_normals)
-{
-    size_t vcount = verts.size() / 3;
-    std::vector<glm::vec3> normals(vcount, glm::vec3(0.0f));
-    // 各三角形フェイス法線を頂点に加算
-    for (size_t i = 0; i < inds.size(); i += 3) {
-        unsigned i0 = inds[i+0], i1 = inds[i+1], i2 = inds[i+2];
-        glm::vec3 v0{verts[3*i0+0], verts[3*i0+1], verts[3*i0+2]};
-        glm::vec3 v1{verts[3*i1+0], verts[3*i1+1], verts[3*i1+2]};
-        glm::vec3 v2{verts[3*i2+0], verts[3*i2+1], verts[3*i2+2]};
-	
-	glm::vec3 n = glm::cross(v1 - v0, v2 - v0);
-	if (glm::length(n) > 1e-6f) n = glm::normalize(n);
-	
-        normals[i0] += n;
-        normals[i1] += n;
-        normals[i2] += n;
-    }
-    // 頂点法線を正規化してフラット配列に
-    out_normals.resize(verts.size());
-    for (size_t v = 0; v < vcount; ++v) {
-        glm::vec3 n = glm::normalize(normals[v]);
-        out_normals[3*v+0] = n.x;
-        out_normals[3*v+1] = n.y;
-        out_normals[3*v+2] = n.z;
-    }
-}
-
-static void uploadMeshWithNormals(const TrackingVector<float>& verts, const TrackingVector<unsigned>& inds,
-				  GLuint& vao, GLuint& vbo, GLuint& nbo, GLuint& ebo)
-{
-    // 法線を計算
-    TrackingVector<float> normals;
-    computeNormals(verts, inds, normals);
-
-    if (!vao) {
-        glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-        glGenBuffers(1, &nbo);
-        glGenBuffers(1, &ebo);
-    }
-    glBindVertexArray(vao);
-
-    // 頂点座標
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size()*sizeof(float), verts.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-    // 頂点法線
-    glBindBuffer(GL_ARRAY_BUFFER, nbo);
-    glBufferData(GL_ARRAY_BUFFER, normals.size()*sizeof(float), normals.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-    // インデックス
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, inds.size()*sizeof(unsigned), inds.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
 }
 #endif
 
@@ -2517,282 +1961,6 @@ void DrawParticleLabels(const glm::mat4& view, const glm::mat4& proj)
   }
 }
 
-int g_selectedAxis = 2;
-GLuint g_CuboidVAO = 0;
-GLuint g_CuboidVBO = 0;
-GLuint g_ArrowVAO = 0;
-GLuint g_ArrowVBO = 0;
-
-static bool g_CuboidInitialized = false;
-static bool g_ArrowInitialized = false;
-
-// 各軸ごとの代表的な頂点インデックスのペア
-// ローカル空間で v0=(xmin,ymin,zmin) としておき、
-// X軸方向の辺： (v0→v1)、Y軸方向の辺： (v0→v3)、Z軸方向の辺： (v0→v4)
-static const std::pair<int,int> repEdgeX = {0, 1};
-static const std::pair<int,int> repEdgeY = {0, 3};
-static const std::pair<int,int> repEdgeZ = {0, 4};
-
-// 「すべてのエッジ」のインデックス (ワイヤーフレーム用)
-static const std::vector<std::pair<int,int>> allEdges = {
-	{0,1}, {1,2}, {2,3}, {3,0},  // 底面
-	{4,5}, {5,6}, {6,7}, {7,4},  // 上面
-	{0,4}, {1,5}, {2,6}, {3,7}   // 垂直辺
-};
-// 軸ごとのエッジ一覧 (ハイライト用)
-static const std::vector<std::pair<int,int>> edgesX = {
-	{0,1}, {3,2}, {4,5}, {7,6}
-};
-static const std::vector<std::pair<int,int>> edgesY = {
-	{1,2}, {0,3}, {5,6}, {4,7}
-};
-static const std::vector<std::pair<int,int>> edgesZ = {
-	{0,4}, {1,5}, {2,6}, {3,7}
-};
-
-void RenderCuboid(const glm::mat4 &view, const glm::mat4 &projection)
-{
-  //――――― (1) VAO/VBO を一度だけ生成 ―――――
-  if (!g_CuboidInitialized) {
-    glGenVertexArrays(1, &g_CuboidVAO);
-    glGenBuffers(1, &g_CuboidVBO);
-    g_CuboidInitialized = true;
-  }
-  if (!g_ArrowInitialized) {
-    glGenVertexArrays(1, &g_ArrowVAO);
-    glGenBuffers(1, &g_ArrowVBO);
-    g_ArrowInitialized = true;
-  }
-	
-  //――――― (2) 選択された軸を見て、頂点インデックスから axis_world を計算 ―――――
-  glm::vec3 axis_world(0.0f);
-  std::vector<glm::vec3> otherEdgeVerts;
-  std::vector<glm::vec3> highlightEdgeVerts;
-  const std::vector<std::pair<int,int>>* edgePairsForAxis = &edgesZ;
-
-  if (g_selectedAxis == 0) {
-    // X 軸を選択 → ローカルの (v0→v1) が回転後の X 軸向き
-    glm::vec3 A = g_cubicPoints[repEdgeX.first];  // g_cubicPoints[0]
-    glm::vec3 B = g_cubicPoints[repEdgeX.second]; // g_cubicPoints[1]
-    axis_world = glm::normalize(B - A);
-    edgePairsForAxis = &edgesX;
-  }
-  else if (g_selectedAxis == 1) {
-    // Y 軸を選択 → ローカルの (v0→v3) が回転後の Y 軸向き
-    glm::vec3 A = g_cubicPoints[repEdgeY.first];  // g_cubicPoints[0]
-    glm::vec3 B = g_cubicPoints[repEdgeY.second]; // g_cubicPoints[3]
-    axis_world = glm::normalize(B - A);
-    edgePairsForAxis = &edgesY;
-  }
-  else {
-    // Z 軸を選択 → ローカルの (v0→v4) が回転後の Z 軸向き
-    glm::vec3 A = g_cubicPoints[repEdgeZ.first];  // g_cubicPoints[0]
-    glm::vec3 B = g_cubicPoints[repEdgeZ.second]; // g_cubicPoints[4]
-    axis_world = glm::normalize(B - A);
-    edgePairsForAxis = &edgesZ;
-  }
-		
-  // 全エッジを走査し、ペアが選択軸群に含まれればハイライト、それ以外はその他へ
-  for (auto &e : allEdges) {
-    int i0 = e.first;
-    int i1 = e.second;
-    glm::vec3 A = g_cubicPoints[i0];
-    glm::vec3 B = g_cubicPoints[i1];
-		
-    bool isHighlight = false;
-    for (auto &h : *edgePairsForAxis) {
-      if ((h.first == i0 && h.second == i1) ||
-	  (h.first == i1 && h.second == i0)) {
-	isHighlight = true;
-	break;
-      }
-    }
-    if (isHighlight) {
-      highlightEdgeVerts.push_back(A);
-      highlightEdgeVerts.push_back(B);
-    }
-    else {
-      otherEdgeVerts.push_back(A);
-      otherEdgeVerts.push_back(B);
-    }
-  }
-	
-  //――――― (4) シェーダに行列を送る ―――――
-  glUseProgram(lineProgram);
-  glUniformMatrix4fv(glGetUniformLocation(lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-  glUniformMatrix4fv(glGetUniformLocation(lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	
-  //――――― (5) 「その他のエッジ」を白で描画 ―――――
-  if (!otherEdgeVerts.empty()) {
-    glBindVertexArray(g_CuboidVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, g_CuboidVBO);
-    glBufferData(GL_ARRAY_BUFFER,
-		 otherEdgeVerts.size() * sizeof(glm::vec3),
-		 otherEdgeVerts.data(),
-		 GL_STATIC_DRAW);
-    GLint locColor = glGetUniformLocation(lineProgram, "color");
-    glUniform4f(locColor, 1.0f, 1.0f, 1.0f, 1.0f); // 白
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-    glDrawArrays(GL_LINES, 0, (GLsizei)otherEdgeVerts.size());
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-  }
-	
-  //――――― (6) 「選択軸方向のエッジ」を赤で描画 ―――――
-  if (!highlightEdgeVerts.empty()) {
-    glUseProgram(lineProgram);
-    glBindVertexArray(g_CuboidVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, g_CuboidVBO);
-    glBufferData(GL_ARRAY_BUFFER,
-		 highlightEdgeVerts.size() * sizeof(glm::vec3),
-		 highlightEdgeVerts.data(),
-		 GL_STATIC_DRAW);
-    GLint locColor = glGetUniformLocation(lineProgram, "color");
-    glUniform4f(locColor, 1.0f, 0.0f, 0.0f, 1.0f); // 赤
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-    glDrawArrays(GL_LINES, 0, (GLsizei)highlightEdgeVerts.size());
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-  }
-	
-  //――――― (7) 矢印を追加描画 ―――――
-	
-  // (7-1) 軸の正方向の面上にある頂点群を探す（dot 値が最大のもの）
-  float maxProj = -FLT_MAX;
-  std::array<float,8> projs;
-  for (int i = 0; i < 8; ++i) {
-    projs[i] = glm::dot(g_cubicPoints[i], axis_world);
-    if (projs[i] > maxProj) maxProj = projs[i];
-  }
-  // 面上 (≈4点) を集める
-  std::vector<glm::vec3> faceVerts;
-  const float faceEps = 1e-4f;
-  for (int i = 0; i < 8; ++i) {
-    if (glm::abs(projs[i] - maxProj) < faceEps) {
-      faceVerts.push_back(g_cubicPoints[i]);
-    }
-  }
-  if (faceVerts.empty()) {
-    // 面が取れなければ矢印は描かない
-    return;
-  }
-  // (7-2) 面の中心を計算
-  glm::vec3 faceCenter(0.0f);
-  for (auto &v : faceVerts) faceCenter += v;
-  faceCenter /= (float)faceVerts.size();
-	
-  // (7-3) 矢印の先端・矢じりを決定
-  const float arrowLength    = 0.2f;  // 面中心から先端までの距離
-  const float arrowHeadLen   = 0.05f; // 矢じりの長さ
-  const float arrowHeadWidth = 0.03f; // 矢じりの幅
-	
-  glm::vec3 arrowTip = faceCenter + axis_world * arrowLength;
-  glm::vec3 base     = arrowTip - axis_world * arrowHeadLen;
-	
-  // (7-4) axis_world に垂直なベクトル u を作成
-  glm::vec3 arbitrary(0.0f, 1.0f, 0.0f);
-  if (glm::abs(glm::dot(axis_world, arbitrary)) > 0.9f) {
-    arbitrary = glm::vec3(1.0f, 0.0f, 0.0f);
-  }
-  glm::vec3 u = glm::normalize(glm::cross(axis_world, arbitrary));
-  glm::vec3 side1 = base + u * arrowHeadWidth;
-  glm::vec3 side2 = base - u * arrowHeadWidth;
-	
-  // (7-5) 矢印頂点リストを作る
-  std::vector<glm::vec3> arrowVerts;
-  // シャフト
-  arrowVerts.push_back(faceCenter);
-  arrowVerts.push_back(arrowTip);
-  // 矢じりの両サイド
-  arrowVerts.push_back(arrowTip);
-  arrowVerts.push_back(side1);
-  arrowVerts.push_back(arrowTip);
-  arrowVerts.push_back(side2);
-
-  glUseProgram(lineProgram);
- 
-  // (7-6) Arrow用VAO/VBO にアップロードして描画
-  glBindVertexArray(g_ArrowVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, g_ArrowVBO);
-  glBufferData(GL_ARRAY_BUFFER,
-	       arrowVerts.size() * sizeof(glm::vec3),
-	       arrowVerts.data(),
-	       GL_STATIC_DRAW);
-  GLint locColor2 = glGetUniformLocation(lineProgram, "color");
-  glUniform4f(locColor2, 1.0f, 0.0f, 0.0f, 1.0f); // 矢印も赤
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-  glDrawArrays(GL_LINES, 0, (GLsizei)arrowVerts.size());
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
-}
-
-glm::vec3 FlipLeftRight(const glm::vec3& v) {
-    return glm::vec3(-v.x, -v.y, v.z);
-}
-
-void UpdateCuboidTransformArcball(glm::vec3 &center, glm::quat &cuboidTransform
-				  , float lastX, float lastY, float xpos, float ypos
-				  , const glm::mat4 &view, const glm::vec3 &pivotWorld)
-{
-  // マウス座標を単位球上の3D点に写像
-  glm::vec3 startSphere = mapToSphere(lastX, lastY);
-  glm::vec3 endSphere   = mapToSphere(xpos, ypos);
-
-  // 始点と終点の外積で回転軸を求める
-  glm::vec3 rotAxis = glm::cross(startSphere, endSphere);
-  rotAxis = FlipLeftRight(rotAxis);
-  if (glm::length(rotAxis) > 1e-5f) {
-    rotAxis = glm::normalize(rotAxis);
-    // 内積から回転角度を算出（acosの結果 [rad]）
-    float dotVal = glm::clamp(glm::dot(startSphere, endSphere), -1.0f, 1.0f);
-    float angle = std::acos(dotVal);
-    // 必要に応じて感度調整
-    float sensitivity = 1.0f;
-    angle *= sensitivity;
-
-    // Arcball 回転四元数を作成
-    //glm::quat qArcball = glm::angleAxis(angle, rotAxis);
-    // 現在の直方体変換行列に回転を乗算（合成順序は用途に合わせて調整）
-    //    cuboidTransform = glm::normalize(cuboidTransform * qArcball);
-    // rotAxis はこの時点ではカメラ（画面）空間での軸となっているので、
-    // それをビュー行列の逆行列でワールド空間に変換する
-
-    glm::mat4 invView = glm::inverse(view);
-    glm::vec3 worldRotAxis = glm::normalize(glm::vec3(invView * glm::vec4(rotAxis, 0.0f)));
-    
-    // カメラ視点に合わせた回転四元数を生成
-    glm::quat qArcball = glm::angleAxis(angle, worldRotAxis);
-
-    // 新しい回転を左側に乗算（前から適用）して直方体の変換行列を更新
-    //cuboidTransform = glm::normalize(qArcball * cuboidTransform);   
-    
-    glm::mat4 T      = glm::translate(glm::mat4(1.0f),  pivotWorld);
-    glm::mat4 Tinv   = glm::translate(glm::mat4(1.0f), -pivotWorld);
-    glm::mat4 R      = glm::mat4_cast(qArcball);
-
-    glm::mat4 oldMat = glm::translate(glm::mat4(1.f), center)
-      * glm::mat4_cast(cuboidTransform);
-    
-    glm::mat4 newMat = T * R * Tinv * oldMat;
-
-    // 5) newMat を「位置 + 回転」に分解
-    //    (スケールがないと仮定)
-    //    → translate = 4列目, 回転 = 上左3x3
-    glm::vec3 newTrans = glm::vec3(newMat[3].x, newMat[3].y, newMat[3].z);
-    glm::mat3 rot3x3   = glm::mat3(newMat);
-    glm::quat newRot   = glm::quat_cast(rot3x3);
-
-    printf("center=%g %g %g newTrans=%g %g %g\n", center.x, center.y, center.z, newTrans.x, newTrans.y, newTrans.z);
-    
-    // 6) 書き戻す
-    center          = newTrans;    
-    cuboidTransform = glm::normalize(newRot);
-  }
-}
-
 // 希望する色バーのサイズと余白（ピクセル単位）
 const float colorBarWidth = 400.0f;   // 色バーの横幅
 const float colorBarHeight = 40.0f;   // 色バーの高さ
@@ -2816,91 +1984,35 @@ void ComputeColorBarPixelCoords(float &left, float &right, float &top, float &bo
   top    = effectiveHeight - colorBarHeight - margin;
 }
 
-// ピクセル座標を NDC に変換する関数
-ImVec2 PixelToNDC(float x, float y) {
-#ifdef USE_LETTERBOX
-  // 実際のレンダリング領域（レターボックス）のサイズを使う
-  float effectiveWidth = static_cast<float>(g_viewportWidth);
-  float effectiveHeight = static_cast<float>(g_viewportHeight);
-#else
-  ImGuiIO& io = ImGui::GetIO();
-  float effectiveWidth = io.DisplaySize.x/io.DisplayFramebufferScale.x;
-  float effectiveHeight = io.DisplaySize.y/io.DisplayFramebufferScale.y;
-#endif
-  
-  float x_ndc = (x / effectiveWidth) * 2.0f - 1.0f;
-  float y_ndc = 1.0f - (y / effectiveHeight) * 2.0f;
-  
-  return ImVec2(x_ndc, y_ndc);
-}
-
-
-void UpdateColorBarVertices() {
-    float left_pixel, right_pixel, top_pixel, bottom_pixel;
-    ComputeColorBarPixelCoords(left_pixel, right_pixel, top_pixel, bottom_pixel);
-    
-    // 各頂点のピクセル座標から NDC 座標に変換
-    ImVec2 ndc_left_bottom  = PixelToNDC(left_pixel, bottom_pixel);
-    ImVec2 ndc_right_bottom = PixelToNDC(right_pixel, bottom_pixel);
-    ImVec2 ndc_right_top    = PixelToNDC(right_pixel, top_pixel);
-    ImVec2 ndc_left_top     = PixelToNDC(left_pixel, top_pixel);
-
-    float barVertices[] = {
-        ndc_left_bottom.x,  ndc_left_bottom.y,  0.0f, 0.0f,   // 左下
-        ndc_right_bottom.x, ndc_right_bottom.y, 1.0f, 0.0f,   // 右下
-        ndc_right_top.x,    ndc_right_top.y,    1.0f, 1.0f,   // 右上
-        ndc_left_top.x,     ndc_left_top.y,     0.0f, 1.0f    // 左上
-    };
-
-    glBindBuffer(GL_ARRAY_BUFFER, colorbarVBO);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(barVertices), barVertices);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-
 // インスタンスVBOを更新する（すべての粒子の位置と速度をアップロードする例）
-void UpdateVelocityInstanceBuffer(const TrackingVector<ParticleData>& particles) {
-  TrackingVector<float> instanceData;
+static std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>& particles,
+                                                    const SettingsRuntimeState& settings)
+{
+  std::vector<float> instanceData;
   instanceData.reserve(particles.size() * 6);
-  for (size_t i=0;i<particles.size();i++) {
-    if(i % gSettingsRuntimeState.velocitySubtraction != 0)
-      continue;
 
-    const ParticleData &p = particles[i];
-      
-    // Particle構造体に vel[3] があると仮定
+  const int stride = (settings.velocitySubtraction > 0)
+                   ? settings.velocitySubtraction : 1;
+
+  for (size_t i = 0; i < particles.size(); ++i) {
+    if (i % stride != 0) continue;
+
+    const auto& p = particles[i];
+
     instanceData.push_back(p.pos[0]);
     instanceData.push_back(p.pos[1]);
     instanceData.push_back(p.pos[2]);
-    instanceData.push_back(p.vel[0]);  // 速度のx成分
-    instanceData.push_back(p.vel[1]);  // 速度のy成分
-    instanceData.push_back(p.vel[2]);  // 速度のz成分
+
+    instanceData.push_back(p.vel[0]);
+    instanceData.push_back(p.vel[1]);
+    instanceData.push_back(p.vel[2]);
   }
-  
-  instanceCount = instanceData.size() / 6;
 
-  glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-  glBufferData(GL_ARRAY_BUFFER, instanceData.size() * sizeof(float), instanceData.data(), GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-// 速度ベクトル（矢印）の描画
-void RenderVelocityVectors(const glm::mat4 &view, const glm::mat4 &projection, float scaleFactor, bool useLogScale) {
-    glUseProgram(velocityArrowShader);
-    glUniformMatrix4fv(glGetUniformLocation(velocityArrowShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(velocityArrowShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniform1f(glGetUniformLocation(velocityArrowShader, "scaleFactor"), scaleFactor);
-    glUniform1f(glGetUniformLocation(velocityArrowShader, "logScale"), useLogScale ? 1.0f : 0.0f);
-
-    glBindVertexArray(velocityArrowVAO);
-    glDrawArraysInstanced(GL_LINES, 0, arrowVertexCount, instanceCount);
-    glBindVertexArray(0);
+  return instanceData;
 }
 
 
 void UpdateUI() {
-  UpdateColorBarVertices();
-
   ShowTime(P->particleBlock.header.time);
 
   SettingsUIContext settingsCtx;
@@ -2914,10 +2026,6 @@ void UpdateUI() {
   
   ShowSettingsUI(settingsCtx, gSettingsRuntimeState);
 
-  uploadMeshWithNormals(gAppServices.isoContour.verts, gAppServices.isoContour.inds,
-                        meshIsocontourVAO, meshIsocontourVBO,
-                        meshIsocontourNBO, meshIsocontourEBO); /*temporally here*/
-  
   ShowCameraSettingsUI();
 
   gAppServices.clumpFind->ShowFindClumpsUI(P->particleBlock.particles, P->particleBlock.header);
@@ -2947,67 +2055,6 @@ void UpdateUI() {
   DrawTopParticlesUI(P, camCtx);
 }
 
-void RenderCross(const glm::mat4 &view, const glm::mat4 &projection){
-  // --- 交差点マーカー描画 ---
-  glDisable(GL_DEPTH_TEST); // Zバッファ無効化（手前に表示する）
-  glLineWidth(3.0f);        // 線を太くする
-    
-  glm::vec3 forward = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
-  glm::vec3 rightVec = glm::normalize(glm::cross(forward, camCtx.cameraUp));
-  glm::vec3 upVec = glm::normalize(glm::cross(rightVec, camCtx.cameraUp));
-  glm::vec3 upVec_new = glm::normalize(glm::cross(rightVec, forward));
-  glm::vec3 v1 = camCtx.cameraTarget - (rightVec + upVec) * gSettingsRuntimeState.crossSize;
-  glm::vec3 v2 = camCtx.cameraTarget + (rightVec + upVec) * gSettingsRuntimeState.crossSize;
-  glm::vec3 v3 = camCtx.cameraTarget - (rightVec - upVec) * gSettingsRuntimeState.crossSize;
-  glm::vec3 v4 = camCtx.cameraTarget + (rightVec - upVec) * gSettingsRuntimeState.crossSize;
-  glm::vec3 v5 = camCtx.cameraTarget - upVec_new * gSettingsRuntimeState.crossSize;
-  glm::vec3 v6 = camCtx.cameraTarget + upVec_new * gSettingsRuntimeState.crossSize;
-
-  float crossVertices[6 * N_LINES_FOR_CROSS] = {
-    v1.x, v1.y, v1.z,
-    v2.x, v2.y, v2.z,
-    v3.x, v3.y, v3.z,
-    v4.x, v4.y, v4.z,
-    v5.x, v5.y, v5.z,
-    v6.x, v6.y, v6.z
-  };
-  glBindBuffer(GL_ARRAY_BUFFER, crossVBO);
-  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(crossVertices), crossVertices);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  
-  glUseProgram(lineProgram);
-  glUniformMatrix4fv(glGetUniformLocation(lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-  glUniformMatrix4fv(glGetUniformLocation(lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-  glUniform4f(glGetUniformLocation(lineProgram, "color"), 1.0f, 1.0f, 1.0f, 1.0f); // 白色
-
-  glBindVertexArray(crossVAO);
-  glDrawArrays(GL_LINES, 0, 2 * N_LINES_FOR_CROSS);
-  glBindVertexArray(0);
-
-  glEnable(GL_DEPTH_TEST); // Zバッファ再有効化
-}
-
-
-void RenderColorBar(int colormapIndex) {
-  // シーンとは別にオーバーレイ表示するため、深度テストを一時無効化
-  glDisable(GL_DEPTH_TEST);
-
-  glUseProgram(colorbarProgram);
-
-  // テクスチャユニット 0 に現在のカラーマップテクスチャをバインド
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_1D, colormapTextures[colormapIndex]);
-  // シェーダー内の uniform "colormap" をテクスチャユニット 0 に設定
-  glUniform1i(glGetUniformLocation(colorbarProgram, "colormap"), 0);
-
-  // VAO をバインドして描画（6個のインデックス）
-  glBindVertexArray(colorbarVAO);
-  glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-  glBindVertexArray(0);
-
-  // 描画後、必要に応じて深度テストを再有効化
-  glEnable(GL_DEPTH_TEST);
-}
 
 #ifdef VOLUME_RENDERING
 GLuint gRtFbo = 0, gRtTex = 0;
@@ -3071,49 +2118,41 @@ void CreateOrResizeWBOITFBO(int W, int H){
 
 #endif
 
+void UpdateColorbarGizmoFromCurrentState(ColorbarGizmo& gizmo)
+{
+  gizmo.visible       = true;
+  gizmo.colormapIndex = gParticleVisualConfig.types[0].colormapIndex;
+  gizmo.valueMin      = gParticleVisualConfig.types[0].colorMin;
+  gizmo.valueMax      = gParticleVisualConfig.types[0].colorMax;
+  gizmo.numTicks      = 5;
+
+  ComputeColorBarPixelCoords(gizmo.layout.left_pixel,
+                             gizmo.layout.right_pixel,
+                             gizmo.layout.top_pixel,
+                             gizmo.layout.bottom_pixel);
+
+#ifdef USE_LETTERBOX
+  gizmo.layout.offsetX = static_cast<float>(g_viewportX);
+  gizmo.layout.offsetY = static_cast<float>(g_viewportY);
+
+  gizmo.effectiveWidth  = static_cast<float>(g_viewportWidth);
+  gizmo.effectiveHeight = static_cast<float>(g_viewportHeight);
+#else
+  gizmo.layout.offsetX = 0.0f;
+  gizmo.layout.offsetY = 0.0f;
+
+  ImGuiIO& io = ImGui::GetIO();
+  gizmo.effectiveWidth  = io.DisplaySize.x / io.DisplayFramebufferScale.x;
+  gizmo.effectiveHeight = io.DisplaySize.y / io.DisplayFramebufferScale.y;
+#endif
+}
+
 void RenderScene() {
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-  if (P->particlesDirty) {
-    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-
-    for(int i=0;i<6;i++){
-      for (size_t ipart=0;ipart < P->particleBlock.particles.size();ipart++) {
-	auto &p = P->particleBlock.particles[ipart];	
-	int itype = p.type;
-	if(itype != i)
-	  continue;
-	
-	p.val_show = getScalarValue(P->particleBlock, p, ipart, gParticleVisualConfig.types[i].selectedQuantity);
-      }
-    }
-
-    TrackingVector<ParticleData> filtered;
-    filtered.reserve(P->particleBlock.particles.size());
-    for (size_t i=0;i<P->particleBlock.particles.size();i++){
-      auto &p = P->particleBlock.particles[i];
-      if (P->flag_mask[i] == 0 && gParticleVisualConfig.types[p.type].hideParticles == false)
-	filtered.push_back(p);
-    }
-      
-    g_filteredParticleCount = filtered.size();
-
-    size_t nStress = 0;
-    for (auto &pp : filtered) if (pp.flag_stress == 1) nStress++;
-    static size_t last = (size_t)-1;
-    if (nStress != last) {
-      std::printf("[stress] filtered=%zu stressed=%zu\n", filtered.size(), nStress);
-      last = nStress;
-    }
-    
-    glBufferData(GL_ARRAY_BUFFER, filtered.size() * sizeof(ParticleData), filtered.data(), GL_DYNAMIC_DRAW);      
-        
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    P->particlesDirty = false; // 転送後、フラグをクリア
-    P->velocityDirty = true;
-  }
-
+  
+  gParticleRenderer.sync(*P, gParticleVisualConfig);
+  
   glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
   float fovY = 45.0f;
 #ifdef USE_LETTERBOX
@@ -3140,295 +2179,127 @@ void RenderScene() {
   };    
   float focalPx = focalPxFromFovY(viewportH, fovY);
   
-  if (g_flagShowCuboid)
-    RenderCuboid(view, projection);
-  
   glm::mat4 model = glm::mat4(1.0f);
 
-  // --- パーティクル描画 ---
-  glUseProgram(particleProgram);
-  glUniformMatrix4fv(glGetUniformLocation(particleProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-  glUniformMatrix4fv(glGetUniformLocation(particleProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-  glUniformMatrix4fv(glGetUniformLocation(particleProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-  float pointSizes[6];
-  float valueMin[6];
-  float valueMax[6];
-  int useLog[6];
-  int samplers[6];
-  int periodicMapping[6];
+  gParticleRenderer.draw(particleProgram,
+                         model,
+                         view,
+                         projection,
+                         gParticleVisualConfig,
+                         gColorbarRenderer,
+                         gSettingsRuntimeState.flagHideAllParticles);
   
-  for (int i = 0; i < 6; ++i) {
-    const auto& cfg = gParticleVisualConfig.types[i];
-
-    pointSizes[i] = cfg.pointSize;
-    valueMin[i]   = cfg.colorMin;
-    valueMax[i]   = cfg.colorMax;
-    useLog[i]     = cfg.useLogScale ? 1 : 0;
-    periodicMapping[i] = cfg.periodicColorBar ? 1 : 0;
-    samplers[i]   = i;
-
-    int cmap = cfg.colormapIndex;
-    if (cmap < 0) cmap = 0;
-    if (cmap >= gNumColormaps) cmap = gNumColormaps - 1;
-
-    glActiveTexture(GL_TEXTURE0 + i);
-    glBindTexture(GL_TEXTURE_1D, colormapTextures[cmap]);
-  }
-
-  glUniform1fv(glGetUniformLocation(particleProgram, "pointSizes"), 6, pointSizes);
-  glUniform1fv(glGetUniformLocation(particleProgram, "valueMin"), 6, valueMin);
-  glUniform1fv(glGetUniformLocation(particleProgram, "valueMax"), 6, valueMax); 
-  glUniform1iv(glGetUniformLocation(particleProgram, "useLog"), 6, useLog);
-  glUniform1iv(glGetUniformLocation(particleProgram, "periodicMapping"), 6, periodicMapping);  
-  glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"), 6, samplers);
-  
-  glBindVertexArray(particleVAO);
-  if(gSettingsRuntimeState.flagHideAllParticles == false)
-    glDrawArrays(GL_POINTS, 0, g_filteredParticleCount);
-  glBindVertexArray(0);
-
-  // ※速度ベクトルの描画（インスタンシング方式）
   if (gSettingsRuntimeState.showVelocityVectors) {
-    // 速度データが更新されている場合のみインスタンスバッファを更新
     if (P->velocityDirty) {
-      UpdateVelocityInstanceBuffer(P->particleBlock.particles);
-      P->velocityDirty = false;
+      auto instanceData = BuildVelocityInstanceData(P->particleBlock.particles,
+						    gSettingsRuntimeState);
+      gVelocityFieldRenderer.sync(instanceData, P->velocityDirty);
     }
-    RenderVelocityVectors(view, projection, gSettingsRuntimeState.arrowScale, gSettingsRuntimeState.useVelocityArrowLogScale);
+    
+    gVelocityFieldRenderer.draw(velocityArrowShader,
+				view,
+				projection,
+				gSettingsRuntimeState.arrowScale,
+				gSettingsRuntimeState.useVelocityArrowLogScale);
   }
+  
 
   if(gSettingsRuntimeState.flagShowSinkIDs){
     UpdateLabelIndicesIfNeeded(); //test
     DrawParticleLabels(view, projection); //test
   }
 
-  RenderCross(view, projection);  // 粒子描画後に呼び出す
-
 #ifdef ISO_CONTOUR
-  if (gRenderRuntimeState.showIsocontour && meshIsocontourVAO) {
-    glUseProgram(isocontourProgram);       // if you have a separate shader
-    glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "model"),      1, GL_FALSE, glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "view"),       1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(isocontourProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniform1f(glGetUniformLocation(isocontourProgram, "opacity"), gRenderRuntimeState.isoOpacity);
-    glBindVertexArray(meshIsocontourVAO);
-    glDrawElements(GL_TRIANGLES, (GLsizei)gAppServices.isoContour.inds.size(), GL_UNSIGNED_INT, nullptr);
-    glBindVertexArray(0);
-  }
+  gIsoContourRenderer.sync(gAppServices.isoContour.verts,
+                           gAppServices.isoContour.inds,
+                           gRenderRuntimeState.isocontour);
+
+  gIsoContourRenderer.draw(isocontourProgram,
+                           model,
+                           view,
+                           projection,
+                           gRenderRuntimeState.isocontour);
 #endif
 
-  if (gEllipsoidManager.show() && ellipsoidVAO) {
-    glUseProgram(ellipsoidProgram);
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "view"),
-		       1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "projection"),
-		       1, GL_FALSE, glm::value_ptr(projection));
+  if (gRenderRuntimeState.cuboidAnnotations.cpuUpdated) {
+    gCuboidAnnotationManager.clear();
+    
+    if (gRenderRuntimeState.cuboidAnnotations.show) {
+      CuboidAnnotationObject obj;
+      obj.cuboid = gAppServices.projectionMap2D->interactiveCuboid();
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
+      obj.cuboid.edgeColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+      obj.highlightColor   = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+      obj.arrowColor       = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
 
-    glBindVertexArray(ellipsoidVAO);
+      const int axis = gAppServices.projectionMap2D->params.selectedAxis;      
+      if (axis == 0) obj.selectedAxis = CuboidAxis::X;
+      else if (axis == 1) obj.selectedAxis = CuboidAxis::Y;
+      else obj.selectedAxis = CuboidAxis::Z;
 
-    for (const auto& e : gEllipsoidManager.getEllipsoids()) {
-      if (e.renderMode != EllipsoidRenderMode::Solid)
-	continue;
+      obj.showAxisHighlight = true;
+      obj.showArrow = true;
+      obj.arrowLength = 0.2f;
+      obj.arrowHeadLength = 0.05f;
+      obj.arrowHeadWidth = 0.03f;
+      obj.tag = "interactive_cuboid";
 
-      glm::mat4 M = e.modelMatrix();
-
-      glUniformMatrix4fv(glGetUniformLocation(ellipsoidProgram, "model"),
-			 1, GL_FALSE, glm::value_ptr(M));
-      glUniform3fv(glGetUniformLocation(ellipsoidProgram, "color"),
-		   1, glm::value_ptr(e.color));
-      glUniform1f(glGetUniformLocation(ellipsoidProgram, "opacity"),
-		  e.opacity);
-
-      glDrawElements(GL_TRIANGLES,
-		     static_cast<GLsizei>(sphereI.size()),
-		     GL_UNSIGNED_INT,
-		     0);
+      gCuboidAnnotationManager.add(obj);
     }
 
-    glBindVertexArray(0);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
+    gRenderRuntimeState.cuboidAnnotations.cpuUpdated = false;
   }
 
-#ifdef GEOMETRICAL_ANALYSIS
-  if (gRenderRuntimeState.showDisks && diskVAO) {
-    glUseProgram(diskProgram);
-    glm::mat4 M = gAppServices.diskFinder->getModelMatrix();
-    
-    glUniformMatrix4fv(glGetUniformLocation(diskProgram,"model"),1,GL_FALSE,glm::value_ptr(M));
-    glUniformMatrix4fv(glGetUniformLocation(diskProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(diskProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform3f(glGetUniformLocation(diskProgram,"color"), 1.0f,1.0f,1.0f);
-    glUniform1f(glGetUniformLocation(diskProgram,"opacity"), gRenderRuntimeState.diskOpacity);
-    
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);          // 透過重ねる場合
+  if (gRenderRuntimeState.cuboidAnnotations.show && gCuboidAnnotationManager.show()) {
+    for (const auto& obj : gCuboidAnnotationManager.objects()) {
+      gCuboidRenderer.draw(obj.cuboid,
+			   lineProgram,
+			   view,
+			   projection,
+			   gRenderRuntimeState.cuboidAnnotations);
 
-    glBindVertexArray(diskVAO);
-    glDrawElements(GL_TRIANGLES, g_indexCountDisk, GL_UNSIGNED_INT, 0);
+      gCuboidRenderer.drawHighlight(obj,
+				    lineProgram,
+				    view,
+				    projection,
+				    gRenderRuntimeState.cuboidAnnotations);
 
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-  }
-#endif
-
-#ifdef STREAM_LINE
-  if (gRenderRuntimeState.showStreamLine && streamlineVAO) {
-    static std::vector<size_t> m_firsts, m_counts;    
-    static std::vector<GLint> firstsGL;
-    static std::vector<GLsizei> countsGL;
-    
-    if(gRenderRuntimeState.flagStreamDirty){
-      const StreamlineMeshData stream_mesh = gAppServices.streamLine->meshData();
-      
-      m_firsts = stream_mesh.firsts;
-      m_counts = stream_mesh.counts;
-
-      firstsGL.resize(m_firsts.size());
-      countsGL.resize(m_counts.size());
-      for(size_t i=0;i<m_firsts.size();++i){
-	firstsGL [i] = static_cast<GLint>(m_firsts[i]);
-	countsGL [i] = static_cast<GLsizei>(m_counts[i]);
+      if (obj.showArrow) {
+	ArrowObject arrow = buildArrowFromCuboidAnnotation(obj);
+	arrow.color = obj.arrowColor;
+	gArrowRenderer.draw(arrow,
+			    lineProgram,
+			    view,
+			    projection,
+			    gRenderRuntimeState.cuboidAnnotations);
       }
-      
-      glBindBuffer(GL_ARRAY_BUFFER, streamlineVBO);
-      glBufferData(GL_ARRAY_BUFFER,
-		   stream_mesh.vertices.size()*sizeof(float),
-		   stream_mesh.vertices.data(),
-		   GL_DYNAMIC_DRAW);
-      glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-      gRenderRuntimeState.flagStreamDirty = false;
     }
-    
-    glUseProgram(streamlineProgram);
-
-    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"model"),1,GL_FALSE,glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(streamlineProgram,"projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform3f(glGetUniformLocation(streamlineProgram,"color"), 1.0f,1.0f,1.0f);
-    glUniform1f(glGetUniformLocation(streamlineProgram,"opacity"), gRenderRuntimeState.streamlineOpacity);
-
-    int streamlineCount = firstsGL.size();
-    glBindVertexArray(streamlineVAO);
-    glMultiDrawArrays(
-		      GL_LINE_STRIP,
-		      firstsGL.data(),
-		      countsGL.data(),
-		      (GLsizei)streamlineCount
-		      );
-    glBindVertexArray(0);
   }
-#endif
+  
+  gEllipsoidRenderer.draw(gEllipsoidManager, ellipsoidProgram, view,  projection, gRenderRuntimeState.ellipsoids);
+  gDiskRenderer.draw(gDiskManager, diskProgram, view, projection, gRenderRuntimeState.disks);  
+  gLineRenderer.draw(gLineManager, lineProgram, model, view, projection, gRenderRuntimeState.lines);
 
-  if (gCubeManager.showCubes() && cubicVAO) {
-    static std::vector<glm::mat4> instanceModels;
-    std::vector<float> opacities;
-    
-    if (gRenderRuntimeState.flagCubesDirty) {
-      // 1) インスタンス変換行列を再構築
-      instanceModels.clear();
-      const auto& cubes = gCubeManager.getCubes(); // 立方体の位置・スケール情報を持つ自前管理クラス
-      instanceModels.reserve(cubes.size());
-      for (auto& c : cubes) {
-	glm::mat4 M = glm::mat4(1.0f);
-	M = glm::translate(M, c.position);
-	M = glm::scale   (M, glm::vec3(c.size));
-	instanceModels.push_back(M);
-	opacities.push_back(c.opacity);
-      }
+  gCubeRenderer.sync(gCubeManager, gRenderRuntimeState.cubes);
+  gCubeRenderer.draw(gCubeManager, cubicProgram, view, projection, gRenderRuntimeState.cubes);
 
-      // 2) GPU にアップロード
-      glBindBuffer(GL_ARRAY_BUFFER, cubicInstanceVBO);    // ← ここを instanceVBO に
-      glBufferData(GL_ARRAY_BUFFER,
-		   instanceModels.size() * sizeof(glm::mat4),
-		   instanceModels.data(),
-		   GL_DYNAMIC_DRAW);
-      glBindBuffer(GL_ARRAY_BUFFER, 0);
-      
-      glBindBuffer(GL_ARRAY_BUFFER, cubicOpacityVBO);
-      glBufferData(GL_ARRAY_BUFFER,
-		   opacities.size() * sizeof(float),
-		   opacities.data(),
-		   GL_DYNAMIC_DRAW);
-      glBindBuffer(GL_ARRAY_BUFFER, 0);
-      
-      gRenderRuntimeState.flagCubesDirty = false;
-    }
+  gCrossGizmoRenderer.draw(lineProgram, view, projection, camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp, gSettingsRuntimeState.crossSize);
+  if (flagShowCoordinates) 
+    gCoordAxesRenderer.draw(coordProgram, view);
 
-    // 3) シェーダーと行列セットアップ
-    glUseProgram(cubicProgram);
-    glUniformMatrix4fv(glGetUniformLocation(cubicProgram, "view"),       1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(cubicProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniform3f(glGetUniformLocation(cubicProgram,"color"), 1.0f,1.0f,1.0f);
-    // 必要なら色やライティングパラメータもここで set
-
-    // 4) 描画
-    glBindVertexArray(cubicVAO);
-    // インデックス数 36 (= 12 面×3 頂点)、インスタンス数だけ一度に描く
-    glDrawElementsInstanced(GL_TRIANGLES,
-                            36,
-                            GL_UNSIGNED_INT,
-                            nullptr,
-                            (GLsizei)instanceModels.size());
-    glBindVertexArray(0);
-  }
-
-  if (flagShowCoordinates && coordVAO) {
-    GLboolean wasDepthTest = glIsEnabled(GL_DEPTH_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-
-    // 2) ライン幅を太めに
-    glLineWidth(50.0f);
-
-    glm::mat4 P_ortho = glm::ortho(-1.0f, +1.0f,
-				   -1.0f, +1.0f,
-				   -1.0f, +1.0f);
-    
-    glm::mat4 T = glm::translate(glm::mat4(1.0f), glm::vec3(+0.85f, -0.75f, 0.0f));
-    glm::mat4 S = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f, 0.1f, 0.1f));
-
-    // (A) ビュー回転を打ち消す行列はそのまま
-    glm::mat4 R_c = glm::transpose(glm::mat4(glm::mat3(view)));
-    
-    // 合成して model_axes を作成
-    glm::mat4 model_axes = T * R_c * S;
-
-    glUseProgram(coordProgram);
-
-    GLint locModel      = glGetUniformLocation(coordProgram, "model");
-    GLint locView       = glGetUniformLocation(coordProgram, "view");
-    GLint locProjection = glGetUniformLocation(coordProgram, "projection");
-
-    glUniformMatrix4fv(locModel,      1, GL_FALSE, glm::value_ptr(model_axes));
-    glUniformMatrix4fv(locView,       1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));  
-    glUniformMatrix4fv(locProjection, 1, GL_FALSE, glm::value_ptr(P_ortho));
-
-    glBindVertexArray(coordVAO);
-    glDrawArrays(GL_LINES, 0, 6);
-    glBindVertexArray(0);
-     
-    // 8) 深度テスト／深度マスクを元に戻す
-    glDepthMask(GL_TRUE);
-    if (wasDepthTest) glEnable(GL_DEPTH_TEST);
-  }
-
+  UpdateColorbarGizmoFromCurrentState(gColorbar);
+  gColorbarRenderer.draw(colorbarProgram, gColorbar);
+  gColorbarLabelRenderer.draw(gColorbar);
+  
 #ifdef VOLUME_RENDERING 
-  if(gRenderRuntimeState.showVolumeRendering && gRenderRuntimeState.flagRT == 1){    
-    if(gRenderRuntimeState.flagUpdateRendering){
+  if(gRenderRuntimeState.volume.show && gRenderRuntimeState.volume.flagRT == 1){    
+    if(gRenderRuntimeState.volume.cpuUpdated){
       G_bvh = uploadBVH_TBO(gBVHresult);
-      gRenderRuntimeState.flagUpdateRendering = false;
+      gRenderRuntimeState.volume.cpuUpdated = false;
     }
     
-    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.rtDownscale);
-    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.rtDownscale);
+    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.volume.rtDownscale);
+    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.volume.rtDownscale);
     if (lowW != gRtW || lowH != gRtH) {
       CreateOrResizeRTFBO(lowW, lowH);
     }
@@ -3455,9 +2326,9 @@ void RenderScene() {
 
     // カメラ・LOD ユニフォーム
     glUniform1i (glGetUniformLocation(rtProgram,"uRoot"), G_bvh.root);
-    glUniform1i (glGetUniformLocation(rtProgram,"uLodMode"), gRenderRuntimeState.lodMode); // 0/1/2
-    glUniform1f (glGetUniformLocation(rtProgram,"uPxThreshold"), gRenderRuntimeState.pxThreshold);
-    glUniform1f (glGetUniformLocation(rtProgram,"uTauMax"), gRenderRuntimeState.tauMax);
+    glUniform1i (glGetUniformLocation(rtProgram,"uLodMode"), gRenderRuntimeState.volume.lodMode); // 0/1/2
+    glUniform1f (glGetUniformLocation(rtProgram,"uPxThreshold"), gRenderRuntimeState.volume.pxThreshold);
+    glUniform1f (glGetUniformLocation(rtProgram,"uTauMax"), gRenderRuntimeState.volume.tauMax);
     glUniform1f (glGetUniformLocation(rtProgram,"uStepBias"), 1e-4f);
 
     glUniform1f (glGetUniformLocation(rtProgram,"uFocalPx"), focalPx);
@@ -3500,14 +2371,14 @@ void RenderScene() {
     glUseProgram(0);    
   }
 
-  if(gRenderRuntimeState.showVolumeRendering && gRenderRuntimeState.flagRT == 2){    
-    if(gRenderRuntimeState.flagUpdateRendering){
+  if(gRenderRuntimeState.volume.show && gRenderRuntimeState.volume.flagRT == 2){    
+    if(gRenderRuntimeState.volume.cpuUpdated){
       uploadOctTree_TBO(gAppServices.volume.octTree, gGPUOctTree, gAppServices.volume.rho2sigma);
-      gRenderRuntimeState.flagUpdateRendering = false;
+      gRenderRuntimeState.volume.cpuUpdated = false;
     }
     
-    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.rtDownscale);
-    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.rtDownscale);
+    int lowW = std::max(1.0f, g_viewportWidth  / gRenderRuntimeState.volume.rtDownscale);
+    int lowH = std::max(1.0f, g_viewportHeight / gRenderRuntimeState.volume.rtDownscale);
     if (lowW != gRtW || lowH != gRtH) {
       CreateOrResizeRTFBO(lowW, lowH);
     }
@@ -3535,8 +2406,8 @@ void RenderScene() {
 
     // カメラ・LOD ユニフォーム
     glUniform1i (glGetUniformLocation(octrayProgram,"uRoot"), gGPUOctTree.root);
-    glUniform1f (glGetUniformLocation(octrayProgram,"uPxThreshold"), gRenderRuntimeState.pxThreshold);
-    glUniform1f (glGetUniformLocation(octrayProgram,"uTauMax"), gRenderRuntimeState.tauMax);
+    glUniform1f (glGetUniformLocation(octrayProgram,"uPxThreshold"), gRenderRuntimeState.volume.pxThreshold);
+    glUniform1f (glGetUniformLocation(octrayProgram,"uTauMax"), gRenderRuntimeState.volume.tauMax);
     glUniform1f (glGetUniformLocation(octrayProgram,"uStepBias"), 1e-4f);
 
     glUniform1f (glGetUniformLocation(octrayProgram,"uFocalPx"), focalPx);
@@ -3573,168 +2444,64 @@ void RenderScene() {
     glBindVertexArray(0);
     glUseProgram(0);    
   }
-
-
-  if(gRenderRuntimeState.showVolumeRendering && (gRenderRuntimeState.flagRT == 0)){    
-    int lowW = g_viewportWidth;
-    int lowH = g_viewportHeight;
-    if (lowW != wboitW || lowH != wboitH) {
-      CreateOrResizeWBOITFBO(lowW, lowH);
-    }
-    
-    // 2) WBOIT FBO へバインド&クリア
-    glBindFramebuffer(GL_FRAMEBUFFER, wboitFbo);
-    GLenum bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    glDrawBuffers(2, bufs);
-
-    // 重要：初期値
-    GLfloat color0[4] = {0.f, 0.f, 0.f, 0.f};
-    GLfloat color1[4] = {1.f, 0.f, 0.f, 0.f};
-    glClearBufferfv(GL_COLOR, 0, color0);  // accum = 0
-    glClearBufferfv(GL_COLOR, 1, color1);  // reveal= 1（積の単位元）
-
-    // 3) ブレンド設定（添付ごとに別設定）
-    glEnablei(GL_BLEND, 0); // color0 (accum)
-    glBlendFunci(0, GL_ONE, GL_ONE);               // accum を加算
-    glBlendEquationi(0, GL_FUNC_ADD);
-
-    glEnablei(GL_BLEND, 1); // color1 (reveal)
-    // dst = dst * (1 - srcAlpha) になるように：
-    //glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
-    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR); 
-    glBlendEquationi(1, GL_FUNC_ADD);
-
-    glDisable(GL_DEPTH_TEST); // 粒子の順序独立を狙うので基本OFF（必要なら深度読みでもOK）
-
-    // 4) 粒子パス：同じ VAO をそのまま
-    glUseProgram(wboitParticleProgram);
-    glBindVertexArray(particleVAO);
-
-    glUniformMatrix4fv(glGetUniformLocation(wboitParticleProgram, "model"),1,GL_FALSE,glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(wboitParticleProgram, "view"), 1,GL_FALSE,glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(wboitParticleProgram, "projection"),1,GL_FALSE,glm::value_ptr(projection));
-    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uFocalPx"), focalPx);
-    glUniform1i (glGetUniformLocation(wboitParticleProgram, "uKernelMode"), gRenderRuntimeState.kernelMode);
-    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uGaussNSigma"), gRenderRuntimeState.gaussNSigma);
-    glUniform1f (glGetUniformLocation(wboitParticleProgram, "uEnlargeHsml"), gRenderRuntimeState.enlargeKernel);
-    // pointSizes[], typeColors[], baseAlpha, softness を適宜
-    // 例
-    glUniform1f(glGetUniformLocation(wboitParticleProgram,"baseAlpha"), 0.1f);
-    glUniform1f(glGetUniformLocation(wboitParticleProgram,"softness"), 0.9f);
-
-    glDrawArrays(GL_POINTS, 0, g_filteredParticleCount);
-
-    glBindVertexArray(0);
-    glUseProgram(0);
-
-    // 5) デフォルトFBOへ戻し、合成   
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDisablei(GL_BLEND, 0);
-    glDisablei(GL_BLEND, 1);
-    
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    //glEnable(GL_DEPTH_TEST); // 他ジオメトリを描くなら戻してOK
-    
-    glUseProgram(wboitCompositeProgram);
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texAccum);
-    glUniform1i(glGetUniformLocation(wboitCompositeProgram,"uAccumTex"), 0);
-
-    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, texReveal);
-    glUniform1i(glGetUniformLocation(wboitCompositeProgram,"uRevealTex"), 1);
-
-    // フルスクリーン三角形で出力（あなたの fullscreenVAO/三角形流用）
-    glBindVertexArray(fullscreenVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
-
-    glDisable(GL_BLEND);
-    glEnable(GL_DEPTH_TEST); // 他ジオメトリを描くなら戻してOK
-    
-    glUseProgram(0);
-  }
 #endif
 
 #ifdef USE_CONVEX_HULL
-  if (gAppServices.clumpFind->checkClumpComputation()){
-    glUseProgram(lineProgram);
-    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-    const int nclumps = gAppServices.clumpFind->get_nclumps();
-
-    // 2) clump側が「全クリア」と言ったらGPUキャッシュも削除
+  // ===========================
+  // CPU side: update scene objects
+  // ===========================
+  if (gAppServices.clumpFind->checkClumpComputation()) {
     if (gAppServices.clumpFind->checkClearCache()) {
-      for (auto& [id, e] : s_hull) {
-	if (e.vbo) glDeleteBuffers(1, &e.vbo);
-	if (e.vao) glDeleteVertexArrays(1, &e.vao);
-      }
-      s_hull.clear();
+      gPolyhedronManager.clearGroup("convex_hull");
+      gPolyhedronRenderer.requestResetGroup("convex_hull");
       gAppServices.clumpFind->finishClearCache();
-      // CPU側のPolyhedronや頂点配列は**持っていない**ので何もする必要なし
     }
 
-    // 3) 各クランプの描画
-    for (int i = 0; i < nclumps; ++i) {
-      if (!gAppServices.clumpFind->flagShowHull(i)) continue;
-
-      // エントリ確保
-      auto& e = s_hull[i];
-      if (e.vao == 0) {
-	// 初回だけVAO/VBO作成＆レイアウト設定
-	glGenVertexArrays(1, &e.vao);
-	glGenBuffers(1, &e.vbo);
-	glBindVertexArray(e.vao);
-	glBindBuffer(GL_ARRAY_BUFFER, e.vbo);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0);
-	glBindVertexArray(0);
-	e.dirty = true; // 新規なので更新が必要
-      }
-
-      // dirtyなら：点群→凸包→線分→VBOへアップロード
-      if (e.dirty) {
-	TrackingVector<ParticleData> pts = gAppServices.clumpFind->get_particle_indices(i, P->particleBlock.particles);       
-	TrackingVector<float> vertices = gConvexHullGenerator->buildLineVertices(pts);
-
-	e.vertexCount = (GLsizei)(vertices.size() / 3);
-
-	glBindBuffer(GL_ARRAY_BUFFER, e.vbo);
-	glBufferData(GL_ARRAY_BUFFER, vertices.size()*sizeof(float), vertices.data(), GL_STATIC_DRAW);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	e.dirty = false;
-      }
-
-      // ドロー：**VAOは描画時にバインドが必要**
-      glBindVertexArray(e.vao);
-      glDrawArrays(GL_LINES, 0, e.vertexCount);
-      glBindVertexArray(0);
-    }
-
-    glUseProgram(0);
-  }
-#endif
+    gRenderRuntimeState.polyhedra.cpuUpdated = gAppServices.clumpFind->get_flagUpdated();
     
-  RenderColorBar(gParticleVisualConfig.types[0].colormapIndex);
+    if (gRenderRuntimeState.polyhedra.cpuUpdated) {
+      gPolyhedronManager.clearGroup("convex_hull");
+      
+      const int nclumps = gAppServices.clumpFind->get_nclumps();
+      printf("[convex] nclumps=%d\n", nclumps);
 
-  ColorBarLabelLayout layout;
-  ComputeColorBarPixelCoords(layout.left_pixel,
-			     layout.right_pixel,
-			     layout.top_pixel,
-			     layout.bottom_pixel);
+      for (int i = 0; i < nclumps; ++i) {
+	bool showHull = gAppServices.clumpFind->flagShowHull(i);
+	printf("[convex] clump=%d showHull=%d\n", i, (int)showHull);	
+	if (!showHull)
+	  continue;
+
+	TrackingVector<ParticleData> pts =
+	  gAppServices.clumpFind->get_particle_indices(i, P->particleBlock.particles);
+
+	TrackingVector<float> vertices =
+	  gConvexHullGenerator->buildLineVertices(pts);
+
+	PolyhedronObject obj;
+	obj.vertices.reserve(vertices.size() / 3);
+	for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
+	  obj.vertices.emplace_back(vertices[k], vertices[k + 1], vertices[k + 2]);
+	}
+
+	printf("[convex] clump=%d obj.vertices=%zu\n", i, obj.vertices.size());      
+	
+	obj.color = glm::vec3(1.0f);
+	obj.opacity = gRenderRuntimeState.polyhedra.opacity;
+	obj.tag = "convex_hull";
+
+	gPolyhedronManager.add(i, obj);
+      }
+      
+      gRenderRuntimeState.polyhedra.cpuUpdated = false;
+      gAppServices.clumpFind->disable_flagUpdated();
+      
+      gPolyhedronRenderer.requestResetGroup("convex_hull");
+    }
+  }
   
-#ifdef USE_LETTERBOX
-  layout.offsetX = static_cast<float>(g_viewportX);
-  layout.offsetY = static_cast<float>(g_viewportY);
-#else
-  layout.offsetX = 0.0f;
-  layout.offsetY = 0.0f;
+  if (gPolyhedronManager.show()) 
+    gPolyhedronRenderer.drawWireframe(gPolyhedronManager, view, projection, lineProgram);
 #endif
-
-  DrawColorBarLabelsUI(layout,
-		       gParticleVisualConfig.types[0].colorMin,
-		       gParticleVisualConfig.types[0].colorMax);
 }
 
 ProjectionPreviewUIState MakeProjectionPreviewUIState(const ProjectionPreviewGLState& glst)
@@ -3799,11 +2566,15 @@ void Cleanup() {
 #endif
   
   // OpenGL バッファ解放
-  glDeleteVertexArrays(1, &particleVAO);
-  glDeleteBuffers(1, &particleVBO);
-  glDeleteVertexArrays(1, &crossVAO);
-  glDeleteBuffers(1, &crossVBO);
-
+  gCrossGizmoRenderer.destroy();
+  gCoordAxesRenderer.destroy();
+  gVelocityFieldRenderer.destroy();
+  gParticleRenderer.destroy();
+  
+#ifdef ISO_CONTOUR
+  gIsoContourRenderer.destroy();
+#endif
+  
   // OpenGL シェーダープログラム解放
   glDeleteProgram(particleProgram);
   glDeleteProgram(lineProgram);
@@ -3811,6 +2582,10 @@ void Cleanup() {
   ConfigMaskState maskState;
   ExportMaskConfigState(maskState);
   saveConfig("config.txt", P, gFileInfo, &gParticleVisualConfig, &maskState);
+
+#ifndef NONATIVEFILEDIALOG
+  NFD_Quit();
+#endif
   
   // ImGui の終了処理
   ImGui_ImplOpenGL3_Shutdown();
@@ -3848,10 +2623,14 @@ static void InitAppServices(AppServices& services, CameraContext& camCtx)
 int main() {  
   InitGLFW();        // GLFW & OpenGL の初期化
   InitImGui();       // ImGui の初期化
-  InitShaders();     // シェーダーの初期化
-  InitColorMaps();
-  InitColorBar();
 
+#ifndef NONATIVEFILEDIALOG
+  if (NFD_Init() != NFD_OKAY) {
+    std::cerr << "NFD_Init failed: " << NFD_GetError() << std::endl;
+  }
+#endif
+  
+  InitShaders();     // シェーダーの初期化
   InitAppServices(gAppServices, camCtx);
   
   gFileInfo = new FileInfo(camCtx);
@@ -3861,6 +2640,9 @@ int main() {
   ConfigMaskState maskState;
   if (loadConfig("config.txt", P, gFileInfo, &gParticleVisualConfig, &maskState)) {
     ApplyMaskConfigState(maskState);
+
+    MaskConfig cfg = MakeMaskConfigFromUI();
+    gFileInfo->setMaskConfig(cfg);
   }
 
   gFileInfo->setUnit(P);

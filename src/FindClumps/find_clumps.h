@@ -150,6 +150,7 @@ private:
   bool flagFOFComputed = false;
   bool flagDendrogramComputed = false;
   bool flagClearCache = false;
+  bool flagHullUpdated = false;
   bool useHsml = true;
   
   float densityThreshold = 10.;
@@ -347,6 +348,14 @@ public:
     return nodeList.size();
   }
 
+  bool get_flagUpdated(){
+    return flagHullUpdated;
+  }
+
+  void disable_flagUpdated(){
+    flagHullUpdated = false;
+  }
+  
   TrackingVector<ParticleData> get_particle_indices(int i, TrackingVector<ParticleData>& originalParticles) const{
     TrackingVector<ParticleData> pts = getAllChildren(nodeList[i], originalParticles);
   
@@ -372,6 +381,7 @@ public:
 
   void finishClearCache(void){
     flagClearCache = false;
+    flagHullUpdated = true;
   }
 
   void showWindow(void){
