@@ -75,6 +75,12 @@ set(SOURCES_CPP
   ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
+  ${SRC_DIR}/shader_utils.cpp
+  ${SRC_DIR}/shader_sources.cpp
+  ${SRC_DIR}/imgui_context.cpp
+  ${SRC_DIR}/window_context.cpp
+  ${SRC_DIR}/render_programs.cpp
+  ${SRC_DIR}/render_resources.cpp
   ${SRC_DIR}/config/config_io.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
 	${SRC_DIR}/FileIO/file_io_hdf5.cpp

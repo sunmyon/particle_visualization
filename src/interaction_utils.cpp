@@ -1,37 +1,100 @@
 #include "interaction_utils.h"
 
-#include "object.h"
-
+#include <algorithm>
 #include <cmath>
 
-#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-glm::vec3 mapToSphere(float x, float y, float width, float height) {
-  float centerX = width * 0.5f;
-  float centerY = height * 0.5f;
-  float sizemax = std::max(width, height);
-  
-  // 画面中心を原点にして -1～1 に正規化
-  //float nx = 2.0f * (x - centerX) / screenWidth;
+glm::vec3 MapToSphere(float x, float y,
+                      float screenWidth,
+                      float screenHeight)
+{
+  float centerX = screenWidth  * 0.5f;
+  float centerY = screenHeight * 0.5f;
+  float sizemax = std::max(screenWidth, screenHeight);
+
   float nx = 2.0f * (centerX - x) / sizemax;
-  float ny = 2.0f * (centerY - y) / sizemax; // Y座標は上方向が正になるように
-  //float ny = (2.0f * y - screenWidth) / screenHeight; // Y座標は上方向が正になるように
+  float ny = 2.0f * (centerY - y) / sizemax;
   float lengthSquared = nx * nx + ny * ny;
 
-  glm::vec3 result;
   if (lengthSquared <= 1.0f) {
-    // 球面上の点：z = sqrt(1 - x^2 - y^2)
-    result = glm::vec3(nx, ny, sqrt(1.0f - lengthSquared));
-  } else {
-    // 球の外側の場合は正規化（楕円状に補正）
-    result = glm::normalize(glm::vec3(nx, ny, 0.0f));
+    return glm::vec3(nx, ny, std::sqrt(1.0f - lengthSquared));
   }
 
-  return result;
+  return glm::normalize(glm::vec3(nx, ny, 0.0f));
 }
 
+void ApplyCameraPan(CameraContext& camCtx,
+                    float xoffset,
+                    float yoffset)
+{
+  float panSensitivity = 0.005f * camCtx.distance;
+
+  glm::vec3 forward = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
+  glm::vec3 rightVec = glm::normalize(glm::cross(forward, camCtx.cameraUp));
+  glm::vec3 upVec = glm::normalize(glm::cross(rightVec, forward));
+
+  glm::vec3 panOffset =
+    (-xoffset * panSensitivity) * rightVec +
+    (-yoffset * panSensitivity) * upVec;
+
+  camCtx.cameraTarget += panOffset;
+  camCtx.cameraPos += panOffset;
+}
+
+void ApplyCameraZoom(CameraContext& camCtx,
+                     float yoffset,
+                     float minZoom,
+                     float maxZoom)
+{
+  float zoomSpeed = 0.1f * camCtx.distance;
+  camCtx.distance += yoffset * zoomSpeed;
+
+  if (camCtx.distance < minZoom) camCtx.distance = minZoom;
+  if (camCtx.distance > maxZoom) camCtx.distance = maxZoom;
+
+#if defined(ROTATE_ARCBALL) || defined(ROTATE_QUATERNION)
+  glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+#else
+  glm::vec3 direction = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
+#endif
+
+  camCtx.cameraPos = camCtx.cameraTarget - direction * camCtx.distance;
+}
+
+void ApplyCameraArcballRotation(CameraContext& camCtx,
+                                float oldX, float oldY,
+                                float newX, float newY,
+                                float screenWidth,
+                                float screenHeight)
+{
+  const float xoffset = newX - oldX;
+  const float yoffset = oldY - newY;
+
+  // 旧コードの規約をそのまま再現
+  const float startX = newX - xoffset; // = oldX
+  const float startY = newY - yoffset; // = 2*newY - oldY
+
+  glm::vec3 startSphere = MapToSphere(startX, startY, screenWidth, screenHeight);
+  glm::vec3 endSphere   = MapToSphere(newX, newY, screenWidth, screenHeight);
+
+  glm::vec3 rotAxis = glm::cross(startSphere, endSphere);
+  if (glm::length(rotAxis) <= 1.0e-5f)
+    return;
+
+  rotAxis = glm::normalize(rotAxis);
+
+  float dotVal = glm::clamp(glm::dot(startSphere, endSphere), -1.0f, 1.0f);
+  float angle = std::acos(dotVal);
+
+  glm::quat qArcball = glm::angleAxis(angle, rotAxis);
+  camCtx.cameraOrientation = glm::normalize(camCtx.cameraOrientation * qArcball);
+
+  glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+  camCtx.cameraPos = camCtx.cameraTarget - direction * camCtx.distance;
+  camCtx.cameraUp  = camCtx.cameraOrientation * glm::vec3(0.0f, 1.0f, 0.0f);
+}
 
 glm::vec3 FlipLeftRight(const glm::vec3& v)
 {
@@ -39,16 +102,15 @@ glm::vec3 FlipLeftRight(const glm::vec3& v)
 }
 
 void UpdateCuboidTransformArcball(CuboidObject& cuboid,
-                                  float lastX,
-                                  float lastY,
-                                  float xpos,
-                                  float ypos,
-				  float screenWidth, float screenHeight,				  
+                                  float oldX, float oldY,
+                                  float newX, float newY,
+                                  float screenWidth,
+                                  float screenHeight,
                                   const glm::mat4& view,
                                   const glm::vec3& pivotWorld)
 {
-  glm::vec3 startSphere = mapToSphere(lastX, lastY, screenWidth, screenHeight);
-  glm::vec3 endSphere   = mapToSphere(xpos,  ypos,  screenWidth, screenHeight);
+  glm::vec3 startSphere = MapToSphere(oldX, oldY, screenWidth, screenHeight);
+  glm::vec3 endSphere   = MapToSphere(newX, newY, screenWidth, screenHeight);
 
   glm::vec3 rotAxis = glm::cross(startSphere, endSphere);
   rotAxis = FlipLeftRight(rotAxis);
@@ -60,9 +122,6 @@ void UpdateCuboidTransformArcball(CuboidObject& cuboid,
 
   float dotVal = glm::clamp(glm::dot(startSphere, endSphere), -1.0f, 1.0f);
   float angle = std::acos(dotVal);
-
-  float sensitivity = 1.0f;
-  angle *= sensitivity;
 
   glm::mat4 invView = glm::inverse(view);
   glm::vec3 worldRotAxis =
@@ -80,10 +139,7 @@ void UpdateCuboidTransformArcball(CuboidObject& cuboid,
 
   glm::mat4 newMat = T * R * Tinv * oldMat;
 
-  glm::vec3 newCenter = glm::vec3(newMat[3]);
-  glm::mat3 rot3x3    = glm::mat3(newMat);
-  glm::quat newRot    = glm::quat_cast(rot3x3);
-
-  cuboid.center      = newCenter;
-  cuboid.orientation = glm::normalize(newRot);
+  cuboid.center = glm::vec3(newMat[3].x, newMat[3].y, newMat[3].z);
+  cuboid.orientation = glm::normalize(glm::quat_cast(glm::mat3(newMat)));
 }
+
