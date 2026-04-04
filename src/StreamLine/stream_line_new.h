@@ -10,7 +10,9 @@
 #include <Eigen/Dense>
 #include <nanoflann.hpp>
 
-#include "../object.h"
+#include "core/tracking_vector.h"
+#include "data/particle_block.h"
+#include "object.h"
 
 struct Vec3 {
   float x, y, z;

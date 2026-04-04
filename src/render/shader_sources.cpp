@@ -313,68 +313,45 @@ void main() {
 )";
 #endif
 
-const char* ellipsoidVertexShaderSource = R"(
-layout(location=0) in vec3 aPos;
-uniform mat4 model, view, projection;
+const char* instancedSolidVertexShaderSource = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
 
-void main(){
-    gl_Position = projection * view * model * vec4(aPos,1.0);
-}
-)";
+layout(location = 1) in vec4 iModel0;
+layout(location = 2) in vec4 iModel1;
+layout(location = 3) in vec4 iModel2;
+layout(location = 4) in vec4 iModel3;
 
-const char* ellipsoidFragmentShaderSource = R"(
-out vec4 FragColor;
-uniform vec3  color;
-uniform float opacity;
-
-void main(){
-    FragColor  = vec4(color, opacity);
-}
-)";
-
-const char* diskVertexShaderSource = R"(
-layout(location=0) in vec3 aPos;
-uniform mat4 model, view, projection;
-void main(){
-    gl_Position = projection * view * model * vec4(aPos,1.0);
-}
-)";
-
-const char* diskFragmentShaderSource = R"(
-out vec4 FragColor;
-uniform vec3 color;
-uniform float opacity;
-void main(){ FragColor = vec4(color, opacity); }
-)";
-
-const char* cubicShaderSource = R"(
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in mat4 instanceModel;
-layout(location = 5) in float instanceOpacity;
+layout(location = 5) in vec3 iColor;
+layout(location = 6) in float iOpacity;
 
 uniform mat4 view;
 uniform mat4 projection;
 
+out vec3 vColor;
 out float vOpacity;
-
-void main(){
-    gl_Position = projection * view * instanceModel * vec4(aPos, 1.0);
-    vOpacity = instanceOpacity;
-}
-)";
-
-
-const char* cubicFragmentShaderSource = R"(
-out vec4 FragColor;
-uniform vec3  color;
-in  float vOpacity;  
 
 void main()
 {
-    FragColor = vec4(color, vOpacity);
+    mat4 model = mat4(iModel0, iModel1, iModel2, iModel3);
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+    vColor = iColor;
+    vOpacity = iOpacity;
 }
 )";
 
+const char* instancedSolidFragmentShaderSource = R"(
+#version 330 core
+in vec3 vColor;
+in float vOpacity;
+
+out vec4 FragColor;
+
+void main()
+{
+    FragColor = vec4(vColor, vOpacity);
+}
+)";
 
 const char* coordShaderSource = R"(
 layout(location=0) in vec3 aPos;  

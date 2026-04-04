@@ -1,6 +1,5 @@
 #include <nanoflann.hpp>
 #include <Eigen/Core>
-#include "main.h"
 #include <StreamLine/stream_line.h>
 
 void StreamlineComputer::setRegionFromParticleData(TrackingVector<ParticleData>& particles){  

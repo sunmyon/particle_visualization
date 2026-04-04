@@ -6,8 +6,7 @@ struct RenderPrograms {
   GLuint particle = 0;
   GLuint velocityArrow = 0;
   GLuint line = 0;
-  GLuint ellipsoid = 0;
-  GLuint disk = 0;
+  GLuint instancedSolid = 0;
   GLuint cubic = 0;
   GLuint coord = 0;
   GLuint colorbar = 0;

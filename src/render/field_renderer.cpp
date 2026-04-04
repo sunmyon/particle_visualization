@@ -1,5 +1,4 @@
 #include "field_renderer.h"
-#include "main.h"
 #include <vector>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -69,11 +68,9 @@ void VelocityFieldRenderer::destroy()
   instanceCount_ = 0;
 }
 
-void VelocityFieldRenderer::sync(const std::vector<float>& instanceData,
-                                 bool& velocityDirty)
+void VelocityFieldRenderer::sync(const std::vector<float>& instanceData)
 {
   if (vao_ == 0) return;
-  if (!velocityDirty) return;
 
   instanceCount_ = static_cast<GLsizei>(instanceData.size() / 6);
 
@@ -83,8 +80,6 @@ void VelocityFieldRenderer::sync(const std::vector<float>& instanceData,
                instanceData.data(),
                GL_DYNAMIC_DRAW);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  velocityDirty = false;
 }
 
 void VelocityFieldRenderer::draw(GLuint program,

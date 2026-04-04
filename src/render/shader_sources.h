@@ -15,14 +15,8 @@ extern const char* velocityArrowFragmentShaderSource;
 extern const char* colormap2DShaderSource;
 extern const char* colormap2DFragmentShaderSource;
 
-extern const char* ellipsoidVertexShaderSource;
-extern const char* ellipsoidFragmentShaderSource;
-
-extern const char* diskVertexShaderSource;
-extern const char* diskFragmentShaderSource;
-
-extern const char* cubicShaderSource;
-extern const char* cubicFragmentShaderSource;
+extern const char* instancedSolidVertexShaderSource;
+extern const char* instancedSolidFragmentShaderSource;
 
 extern const char* coordShaderSource;
 extern const char* coordFragmentShaderSource;

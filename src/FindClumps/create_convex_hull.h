@@ -1,5 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>  // glm::mat4用
+#include "core/tracking_vector.h"
+#include "data/particle_data.h"
 
 // 前方宣言で依存を隠蔽
 class FindClump;

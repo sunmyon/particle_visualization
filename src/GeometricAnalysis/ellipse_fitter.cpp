@@ -1,7 +1,7 @@
 #ifdef GEOMETRICAL_ANALYSIS
 // EllipseFitter.cpp
-#include "main.h"
 #include "GeometricAnalysis/ellipse_fitter.h"
+#include "data/particle_data.h"
 
 #include <memory>
 #include <glm/glm.hpp>

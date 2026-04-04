@@ -7,7 +7,6 @@
 #include <string>
 #include <vector>
 
-#include "main.h"
 #include "FileIO/file_io.h"
 #include "particle_visual_config.h"
 

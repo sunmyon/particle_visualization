@@ -2,7 +2,9 @@
 
 #include <deque>
 #include "ui_state.h"
-#include "object_renderer.h"
+#include "scene_manager.h"
+#include "interaction/camera.h"
+#include "render/object_renderer.h"
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
@@ -54,6 +56,7 @@ void OpenProjectionMapUI();
 void DrawProjectionMapUI(ProjectionMapGenerator& generator,
                          ParticleArray* P,
                          CameraContext& camCtx,
+			 RenderLayerState& cuboidAnnotationState,
                          int fileindex);
 
 
@@ -190,6 +193,7 @@ struct SettingsUIContext {
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
   CubeManager* cubeManager = nullptr;
+  SceneManagers* scene = nullptr;
 };
 
 void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt);

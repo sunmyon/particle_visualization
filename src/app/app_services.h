@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include "tracking_vector.h"
+#include "core/tracking_vector.h"
 
 class RadialProfileComputer;
 class Histogram2DComputer;
@@ -52,6 +52,9 @@ struct PythonBridgeState {
   std::unique_ptr<PythonBridge> ptr;
   bool launched = false;
   bool needUploadPos = false;
+
+  PythonBridgeState();
+  ~PythonBridgeState();
 };
 #endif
 
@@ -79,4 +82,7 @@ struct AppServices {
 #ifdef PYTHON_BRIDGE
   PythonBridgeState py;
 #endif
+  
+  AppServices();
+  ~AppServices();
 };

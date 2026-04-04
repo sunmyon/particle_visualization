@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 class WindowContext {
@@ -8,7 +9,8 @@ public:
   void destroy();
 
   void attachCallbacks(GLFWcursorposfun mouseCb,
-                       GLFWscrollfun scrollCb);
+                     GLFWscrollfun scrollCb,
+                     GLFWframebuffersizefun framebufferCb);
 
   void updateFramebufferSize(int width, int height);
 
@@ -33,5 +35,3 @@ private:
   int viewportWidth_ = 1280;
   int viewportHeight_ = 720;
 };
-
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);

@@ -7,7 +7,7 @@
 
 #include <cstdint>
 #include "IsoSurface/DensityEstimator.h"
-#include "main.h"
+#include "core/tracking_vector.h"
 
 struct ParticleDataForTree {
   glm::vec3 pos;

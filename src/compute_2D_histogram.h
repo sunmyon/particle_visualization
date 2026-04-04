@@ -3,8 +3,10 @@
 #include <glm/glm.hpp>
 #include <functional>
 
-#include "main.h"
-#include "quantity.h"
+#include "data/particle_block.h"
+#include "core/tracking_vector.h"
+#include "core/quantity.h"
+#include "convex_hull_interface.h"
 
 #ifdef USE_CONVEX_HULL
 #include <memory>

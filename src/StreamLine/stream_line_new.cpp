@@ -3,8 +3,8 @@
 #include <Eigen/Core>
 #include <nanoflann.hpp>
 
-#include "main.h"
-#include <StreamLine/stream_line_new.h>
+#include "StreamLine/stream_line_new.h"
+
 
 namespace {
 

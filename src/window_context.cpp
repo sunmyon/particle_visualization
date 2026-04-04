@@ -4,10 +4,6 @@
 #include <iostream>
 #include <cstdlib>
 
-namespace {
-WindowContext* gWindowContextInstance = nullptr;
-}
-
 bool WindowContext::init(int width, int height, const char* title)
 {
   initialWidth_ = width;
@@ -47,9 +43,6 @@ bool WindowContext::init(int width, int height, const char* title)
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  gWindowContextInstance = this;
-  glfwSetFramebufferSizeCallback(handle_, framebuffer_size_callback);
-
   int fbW = 0, fbH = 0;
   glfwGetFramebufferSize(handle_, &fbW, &fbH);
   updateFramebufferSize(fbW, fbH);
@@ -64,19 +57,17 @@ void WindowContext::destroy()
     handle_ = nullptr;
   }
   glfwTerminate();
-
-  if (gWindowContextInstance == this) {
-    gWindowContextInstance = nullptr;
-  }
 }
 
 void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
-                                    GLFWscrollfun scrollCb)
+                                    GLFWscrollfun scrollCb,
+                                    GLFWframebuffersizefun framebufferCb)
 {
   if (!handle_) return;
 
   glfwSetCursorPosCallback(handle_, mouseCb);
   glfwSetScrollCallback(handle_, scrollCb);
+  glfwSetFramebufferSizeCallback(handle_, framebufferCb);
 }
 
 void WindowContext::updateFramebufferSize(int width, int height)
@@ -107,11 +98,4 @@ void WindowContext::updateFramebufferSize(int width, int height)
   viewportHeight_ = height;
   glViewport(0, 0, width, height);
 #endif
-}
-
-void framebuffer_size_callback(GLFWwindow* /*window*/, int width, int height)
-{
-  if (gWindowContextInstance) {
-    gWindowContextInstance->updateFramebufferSize(width, height);
-  }
 }

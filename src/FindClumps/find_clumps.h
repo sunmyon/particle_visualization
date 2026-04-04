@@ -2,8 +2,11 @@
 #include <nanoflann.hpp>
 #include <imgui.h>
 
-/**** needed for Im32U ****/
+#include "core/tracking_vector.h"
+#include "data/particle_array.h"
 
+/**** needed for Im32U ****/
+class FileInfo;
 class ProjectionMapGenerator;
 
 class StructureNode {
@@ -342,7 +345,7 @@ public:
     camCtx(cam)
   {}
   
-  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header);
+  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo);
   
   int get_nclumps() const{
     return nodeList.size();
@@ -390,8 +393,9 @@ public:
 
   void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
   
-  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex);
+  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo);
 
+  
   void showClumpListWindow(){
     showWindowClumpList = true;
   }
@@ -411,7 +415,7 @@ public:
   }
   
   void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname);
-  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj);
+  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo);  
 };
 
 

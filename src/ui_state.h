@@ -13,20 +13,27 @@ struct SettingsRuntimeState {
   bool flagShowSinkIDs = false;
   float moveThreshold = 0.05f;
   glm::vec3 lastCameraPos = glm::vec3(0.0f);
-
-  bool showVelocityVectors = false;
-  int velocitySubtraction = 1;
-  float arrowScale = 1.0f;
-  bool useVelocityArrowLogScale = false;
-
-  bool flagHideAllParticles = false;
 };
-
 
 struct RenderLayerState {
   bool show = false;
   bool cpuUpdated = false;
   float opacity = 1.0f;
+};
+
+struct OverlayRuntimeState {
+  bool showCoordinates = true;
+  bool showCrossGizmo = true;
+  bool showColorbar = true;
+  float crossSize = 0.05f;
+};
+
+struct VelocityRenderState : RenderLayerState {
+  VelocityRenderState() { show = false; }
+
+  int subtraction = 100;
+  float arrowScale = 1.0f;
+  bool useLogScale = false;
 };
 
 struct RenderRuntimeState {
@@ -39,6 +46,9 @@ struct RenderRuntimeState {
   RenderLayerState polyhedra;
   RenderLayerState cuboids;
   RenderLayerState cuboidAnnotations;
+
+  VelocityRenderState velocity;
+  OverlayRuntimeState overlay;  
   
   struct Volume {
     bool show = false;

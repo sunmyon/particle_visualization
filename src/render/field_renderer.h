@@ -9,8 +9,7 @@ public:
   void init();
   void destroy();
 
-  void sync(const std::vector<float>& instanceData,
-            bool& velocityDirty);
+  void sync(const std::vector<float>& instanceData);
 
   void draw(GLuint program,
             const glm::mat4& view,

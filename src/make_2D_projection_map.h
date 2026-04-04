@@ -30,7 +30,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "colormap_defs.h"
+#include "data/particle_array.h"
+#include "core/tracking_vector.h"
+#include "core/quantity.h"
+#include "render/colormap_defs.h"
+
 #include "object.h"
 
 struct ProjectionImage {

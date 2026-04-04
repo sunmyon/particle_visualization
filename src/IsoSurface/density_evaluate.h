@@ -4,7 +4,7 @@
 #include <nanoflann.hpp>
 #include <glm/glm.hpp>
 #include "IsoSurface/DensityEstimator.h"
-#include "main.h"
+#include "core/tracking_vector.h"
 
 struct ParticleDataForKdTree {
     glm::vec3 pos;

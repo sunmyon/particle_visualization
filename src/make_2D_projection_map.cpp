@@ -1,5 +1,5 @@
-#include "main.h"
-#include "camera.h"
+#include "interaction/camera.h"
+#include "data/particle_array.h"
 #include "object.h"
 
 #include <chrono>
@@ -10,8 +10,8 @@
 // GLM 関連
 //#include <glm/gtc/matrix_transform.hpp>
 
-#include "colormap_defs.h"
-#include"make_2D_projection_map.h"
+#include "render/colormap_defs.h"
+#include "make_2D_projection_map.h"
 
 #ifdef USE_LUA
 #include <lua.hpp>

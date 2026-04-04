@@ -5,8 +5,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <H5Cpp.h>
-#include "main.h"  // TrackingVector の定義があるヘッダー
-
+#include "core/tracking_vector.h"
 
 namespace HDF5Helper {
   // ヘルパー: 既存データセットを消す

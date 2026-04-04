@@ -6,7 +6,6 @@
 #include <sstream>
 #include <glm/glm.hpp>
 
-#include "main.h"
 #include "IsoSurface/marching_cubes.h"
 
 static std::string boxToString(const BoundingBox& b) {

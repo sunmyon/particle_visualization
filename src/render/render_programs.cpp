@@ -16,15 +16,9 @@ bool InitRenderPrograms(RenderPrograms& p)
 
   p.velocityArrow = createShaderProgram(velocityArrowVertexShaderSource,
                                         velocityArrowFragmentShaderSource);
-
-  p.cubic = createShaderProgram(cubicShaderSource,
-                                cubicFragmentShaderSource);
-
-  p.ellipsoid = createShaderProgram(ellipsoidVertexShaderSource,
-                                    ellipsoidFragmentShaderSource);
-
-  p.disk = createShaderProgram(diskVertexShaderSource,
-                               diskFragmentShaderSource);
+  
+  p.instancedSolid = createShaderProgram(instancedSolidVertexShaderSource,
+					 instancedSolidFragmentShaderSource);
 
   p.coord = createShaderProgram(coordShaderSource,
                                 coordFragmentShaderSource);
@@ -72,9 +66,7 @@ void DestroyRenderPrograms(RenderPrograms& p)
   DeleteProgram(p.particle);
   DeleteProgram(p.velocityArrow);
   DeleteProgram(p.line);
-  DeleteProgram(p.ellipsoid);
-  DeleteProgram(p.disk);
-  DeleteProgram(p.cubic);
+  DeleteProgram(p.instancedSolid);
   DeleteProgram(p.coord);
   DeleteProgram(p.colorbar);
 

@@ -5,11 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>   // for translate, scale
 #include <glm/gtc/quaternion.hpp>         // for mat4_cast
 
-#include "tracking_vector.h"
-
-extern int g_selectedAxis;
-extern bool g_flagShowCuboid;
-extern TrackingVector<glm::vec3> g_cubicPoints;
+#include "core/tracking_vector.h"
 
 void UpdateCuboidTransformArcball(glm::vec3 &center, glm::quat &cuboidTransform
 				  , float lastX, float lastY, float xpos, float ypos
@@ -35,59 +31,49 @@ struct Cube {
 
 class CubeManager {
 public:
-    // Get the global instance (singleton)
-    static CubeManager& getInstance() {
-        static CubeManager instance;
-        return instance;
-    }
+    CubeManager() = default;
+    ~CubeManager() = default;
 
-    // Add a cube with given position, size, optional orientation and tag
+    CubeManager(const CubeManager&) = delete;
+    CubeManager& operator=(const CubeManager&) = delete;
+
+    CubeManager(CubeManager&&) = default;
+    CubeManager& operator=(CubeManager&&) = default;
+
     void addCube(const glm::vec3& position,
                  const glm::vec3& size,
                  const glm::quat& orientation = glm::quat{1,0,0,0},
-		 const float& opacity = 0.5,
+                 const float& opacity = 0.5f,
                  const std::string& tag = "default") {
       cubes_.push_back({ position, size, orientation, opacity, tag });
     }
 
     void clearGroup(const std::string& tag) {
-        cubes_.erase(
-            std::remove_if(cubes_.begin(), cubes_.end(),
-                [&](const Cube& c){ return c.tag == tag; }),
-            cubes_.end());
+      cubes_.erase(
+        std::remove_if(cubes_.begin(), cubes_.end(),
+                       [&](const Cube& c){ return c.tag == tag; }),
+        cubes_.end());
     }
-    
-    // Remove cube by index (no-op if out of range)
+
     void removeCube(size_t index) {
-        if (index < cubes_.size()) {
-            cubes_.erase(cubes_.begin() + index);
-        }
+      if (index < cubes_.size()) {
+        cubes_.erase(cubes_.begin() + index);
+      }
     }
 
-    // Remove all cubes
     void clear() {
-        cubes_.clear();
+      cubes_.clear();
     }
 
-    // Access the current list of cubes (read-only)
     const std::vector<Cube>& getCubes() const {
-        return cubes_;
+      return cubes_;
     }
 
-  bool show() const { return !cubes_.empty(); }
-    
-private:
-    CubeManager() = default;
-    ~CubeManager() = default;
-    CubeManager(const CubeManager&) = delete;
-    CubeManager& operator=(const CubeManager&) = delete;
+    bool show() const { return !cubes_.empty(); }
 
+private:
     std::vector<Cube> cubes_;
 };
-
-// Inline global reference to the singleton
-inline CubeManager& gCubeManager = CubeManager::getInstance();
-
 
 enum class EllipsoidRenderMode {
   Wireframe,
@@ -128,10 +114,14 @@ struct EllipsoidObject {
 
 class EllipsoidManager {
 public:
-  static EllipsoidManager& getInstance() {
-    static EllipsoidManager instance;
-    return instance;
-  }
+  EllipsoidManager() = default;
+  ~EllipsoidManager() = default;
+
+  EllipsoidManager(const EllipsoidManager&) = delete;
+  EllipsoidManager& operator=(const EllipsoidManager&) = delete;
+
+  EllipsoidManager(EllipsoidManager&&) = default;
+  EllipsoidManager& operator=(EllipsoidManager&&) = default;
 
   void add(const EllipsoidObject& e) {
     ellipsoids_.push_back(e);
@@ -155,8 +145,6 @@ public:
 private:
   std::vector<EllipsoidObject> ellipsoids_;
 };
-
-inline EllipsoidManager& gEllipsoidManager = EllipsoidManager::getInstance();
 
 
 struct DiskObject {
@@ -194,10 +182,14 @@ struct DiskObject {
 
 class DiskManager {
 public:
-  static DiskManager& getInstance() {
-    static DiskManager instance;
-    return instance;
-  }
+  DiskManager() = default;
+  ~DiskManager() = default;
+
+  DiskManager(const DiskManager&) = delete;
+  DiskManager& operator=(const DiskManager&) = delete;
+
+  DiskManager(DiskManager&&) = default;
+  DiskManager& operator=(DiskManager&&) = default;
 
   void add(const DiskObject& d) {
     disks_.push_back(d);
@@ -222,9 +214,6 @@ private:
   std::vector<DiskObject> disks_;
 };
 
-inline DiskManager& gDiskManager = DiskManager::getInstance();
-
-
 struct LineObject {
   std::vector<glm::vec3> points;
   glm::vec3 color{1.0f, 1.0f, 1.0f};
@@ -242,10 +231,14 @@ struct LineObject {
 
 class LineManager {
 public:
-  static LineManager& getInstance() {
-    static LineManager instance;
-    return instance;
-  }
+  LineManager() = default;
+  ~LineManager() = default;
+
+  LineManager(const LineManager&) = delete;
+  LineManager& operator=(const LineManager&) = delete;
+
+  LineManager(LineManager&&) = default;
+  LineManager& operator=(LineManager&&) = default;
 
   void add(const LineObject& l) {
     lines_.push_back(l);
@@ -269,8 +262,6 @@ public:
 private:
   std::vector<LineObject> lines_;
 };
-
-inline LineManager& gLineManager = LineManager::getInstance();
 
 enum class PolyhedronRenderMode {
   Wireframe,
@@ -307,13 +298,16 @@ struct PolyhedronObject {
   }
 };
 
-
 class PolyhedronManager {
 public:
-  static PolyhedronManager& getInstance() {
-    static PolyhedronManager instance;
-    return instance;
-  }
+  PolyhedronManager() = default;
+  ~PolyhedronManager() = default;
+
+  PolyhedronManager(const PolyhedronManager&) = delete;
+  PolyhedronManager& operator=(const PolyhedronManager&) = delete;
+
+  PolyhedronManager(PolyhedronManager&&) = default;
+  PolyhedronManager& operator=(PolyhedronManager&&) = default;
 
   void add(int id, const PolyhedronObject& obj) {
     objects_[id] = obj;
@@ -353,7 +347,7 @@ private:
   std::unordered_map<int, PolyhedronObject> objects_;
 };
 
-inline PolyhedronManager& gPolyhedronManager = PolyhedronManager::getInstance();
+
 
 struct CuboidObject {
   glm::vec3 center{0.0f};
@@ -449,5 +443,3 @@ private:
   std::vector<CuboidAnnotationObject> objects_;
 };
 
-inline CuboidAnnotationManager gCuboidAnnotationManager;
-ArrowObject buildArrowFromCuboidAnnotation(const CuboidAnnotationObject& obj);

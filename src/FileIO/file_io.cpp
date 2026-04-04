@@ -1,5 +1,4 @@
-#include "main.h"
-#include "camera.h"
+#include "interaction/camera.h"
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "FileIO/file_io.h"
@@ -19,7 +18,7 @@
 #include <cstring>
 #include <random>
 
-#include "PerfTimer.h"
+#include "core/PerfTimer.h"
 
 TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
   ParticleBlock p_block;

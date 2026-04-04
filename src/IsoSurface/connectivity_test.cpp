@@ -1,11 +1,11 @@
 #define GLM_ENABLE_EXPERIMENTAL 1
-
-#include "main.h"
-#include "IsoSurface/mesh_data.h"
-#include "IsoSurface/connectivity_test.h"
 #include <unordered_set>
 #include <glm/gtx/norm.hpp>
 #include <iostream>
+
+#include "core/tracking_vector.h"
+#include "IsoSurface/mesh_data.h"
+#include "IsoSurface/connectivity_test.h"
 
 // --- ローカル定義 (private 成員に依存しない) -----------------
 static const glm::vec3 kOffsets[8] = {

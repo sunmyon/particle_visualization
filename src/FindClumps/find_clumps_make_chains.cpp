@@ -1,19 +1,17 @@
-#include "main.h"
-
-#include "colormap_defs.h"
+#include "render/colormap_defs.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_IO.h"
 #include "make_2D_projection_map.h"
 
 #include "FileIO/file_io.h"
-#include "camera.h"
+#include "interaction/camera.h"
 
 #include <imgui.h>
 
 #include "implot.h"
 
 #ifdef CLUMP_DATA_READ
-void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex) {
+void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo) {
   if (!showWindowClumpList) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -24,7 +22,7 @@ void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex) {
 
   ImGui::SameLine();
   if (ImGui::Button("path")) {
-    strcpy(buf, gFileInfo->folderPath);
+    strcpy(buf, fileinfo.folderPath);
   }
 
   if(P->flag_renew_clumpList){
@@ -546,7 +544,7 @@ TrackingVector<FindClump::clump_properties> FindClump::calc_chain_properties(Tra
 }
 
 
-void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj){
+void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo){
   if(!flagShowWindowClumpChainList)
     return;
 
@@ -679,12 +677,12 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
       }
       
       ImGui::Text("current snapshot index: %d (init=%d now=%d step=%d) time=%g\n"
-		  , gFileInfo->initialIndex + (selected_chain.first_snapshot + i_snapshot) * gFileInfo->skipStep
-		  , selected_chain.first_snapshot, selected_chain.first_snapshot + i_snapshot, gFileInfo->skipStep
+		  , fileinfo.initialIndex + (selected_chain.first_snapshot + i_snapshot) * fileinfo.skipStep
+		  , selected_chain.first_snapshot, selected_chain.first_snapshot + i_snapshot, fileinfo.skipStep
 		  , P->particleBlock.header.time);
       
       if(flag_button_pushed){
-	int snapshot = gFileInfo->initialIndex + (selected_chain.first_snapshot + i_snapshot) * gFileInfo->skipStep;
+	int snapshot = fileinfo.initialIndex + (selected_chain.first_snapshot + i_snapshot) * fileinfo.skipStep;
 
 	float pos[3];
 
@@ -692,7 +690,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	pos[1] = ch[i_snapshot]->pos[1] * P->desiredMax / P->originalMax;
 	pos[2] = ch[i_snapshot]->pos[2] * P->desiredMax / P->originalMax;
 	
-	gFileInfo->loadNewSnapshot(snapshot, P);
+	fileinfo.loadNewSnapshot(snapshot, P);
 	    
 	float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
 	glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -826,8 +824,8 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	  if(i==0)
 	    flag_use_amvector = 1;
 
-	  int snapshot = gFileInfo->initialIndex + (selected_chain.first_snapshot + i) * gFileInfo->skipStep;	  
-	  gFileInfo->loadNewSnapshot(snapshot, P);
+	  int snapshot = fileinfo.initialIndex + (selected_chain.first_snapshot + i) * fileinfo.skipStep;	  
+	  fileinfo.loadNewSnapshot(snapshot, P);
 	
 	  float pos_center[3];	  
 	  pos_center[0] = ch[i]->pos[0] * P->desiredMax / P->originalMax;

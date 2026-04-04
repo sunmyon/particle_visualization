@@ -1,15 +1,16 @@
 #include <unordered_set>
 
-#include "colormap_defs.h"
 #include "UI.h"
 #include <imgui.h>
 #include "implot.h"
 
-#include "camera.h"
+#include "core/tracking_vector.h"
+#include "interaction/camera.h"
 #include "object.h"
-#include "main.h"
 #include "FileIO/file_io.h"
-#include "colormap_defs.h"
+#include "render/colormap_defs.h"
+#include "render/gizmo_renderer.h"
+#include "data/particle_array.h"
 
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,
@@ -17,8 +18,6 @@ extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
 					 float screenWidth, float screenHeight,
                                          const glm::mat4& view,
                                          const glm::vec3& pivot);
-
-extern RenderRuntimeState gRenderRuntimeState;
 
 namespace {
   RadialProfileUIState gRadialProfileUIState;
@@ -325,6 +324,7 @@ static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
 
 namespace {
   void updateInteractiveCuboidIfNeeded(CuboidObject& cuboid,
+				       RenderLayerState& cuboidAnnotationState,
 				       const glm::vec3& newCenter,
 				       const glm::quat& newOrientation,
 				       const glm::vec3& newHalfSize,
@@ -347,13 +347,13 @@ namespace {
       changed = true;
     }
 
-    if (gRenderRuntimeState.cuboidAnnotations.show != newShow) {
-      gRenderRuntimeState.cuboidAnnotations.show = newShow;
+    if (cuboidAnnotationState.show != newShow) {
+      cuboidAnnotationState.show = newShow;
       changed = true;
     }
 
     if (changed) {
-      gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;
+      cuboidAnnotationState.cpuUpdated = true;
     }
   }
 }
@@ -365,6 +365,7 @@ void OpenProjectionMapUI() {
 void DrawProjectionMapUI(ProjectionMapGenerator& generator,
                          ParticleArray* P,
                          CameraContext& camCtx,
+			 RenderLayerState& cuboidAnnotationState,
                          int indexfile)
 {
   auto& state = gProjectionMapUIState;
@@ -462,7 +463,7 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
 				   io.DisplaySize.x, io.DisplaySize.y,
 				   view, pivot);
 
-      gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;
+      cuboidAnnotationState.cpuUpdated = true;
     }
 
     glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(cuboid.orientation));
@@ -503,12 +504,13 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   }
 
   updateInteractiveCuboidIfNeeded(cuboid,
-                                generator.center,
-                                generator.cuboidTransform,
-                                glm::vec3(0.5f * params.xlen[0],
-                                          0.5f * params.xlen[1],
-                                          0.5f * params.xlen[2]),
-                                params.flagShowCuboid);
+				  cuboidAnnotationState,
+				  generator.center,
+				  generator.cuboidTransform,
+				  glm::vec3(0.5f * params.xlen[0],
+					    0.5f * params.xlen[1],
+					    0.5f * params.xlen[2]),
+				  params.flagShowCuboid);
     
   cuboid.edgeColor = glm::vec4(1.0f);
   cuboid.tag = "interactive_cuboid";
@@ -542,7 +544,7 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
   if (params.selectedAxis == 2) normal = glm::vec3(0, 0, 1);
 
   if (prevSelectedAxis != params.selectedAxis) 
-    gRenderRuntimeState.cuboidAnnotations.cpuUpdated = true;  
+    cuboidAnnotationState.cpuUpdated = true;  
 
   // -----------------------------
   // particle type

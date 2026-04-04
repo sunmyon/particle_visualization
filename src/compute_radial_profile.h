@@ -4,8 +4,9 @@
 #include <string>
 #include <glm/glm.hpp>
 
-#include "main.h"        // TrackingVector, ParticleData, ParticleBlock がここにある前提
-#include "quantity.h"  // QuantityId, QuantityLabel, getScalarValue(...) がある前提
+#include "data/particle_block.h"
+#include "core/tracking_vector.h"
+#include "core/quantity.h"  // QuantityId, QuantityLabel, getScalarValue(...) がある前提
 
 // --- X axis mode for 1D profile ---
 enum class XAxisMode : int { Radius = 0, PosX = 1, PosY = 2, PosZ = 3, EnclosedMass = 4 };

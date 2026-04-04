@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <algorithm>
 #include "PythonBridge/PythonBridge.h"  // PythonBridge::Shared, FieldId
-#include "main.h"              // あなたの AoS 定義
+#include "data/particle_array.h"
 
 namespace bridge {
   // AoS → SHM（初期一括コピー）

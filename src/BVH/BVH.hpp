@@ -5,7 +5,9 @@
 #include <numeric>
 #include <limits>
 #include <cmath>
-#include "main.h"
+
+#include "core/tracking_vector.h"
+#include "data/particle_data.h"
 
 namespace lbvh {
   // ----------------- 基本ユーティリティ -----------------

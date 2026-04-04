@@ -1,6 +1,5 @@
 //=== nanoflann_sph.cpp ===
 #include "IsoSurface/density_evaluate.h"
-#include "main.h"
 #include <glm/gtc/constants.hpp>
 #include <nanoflann.hpp>
 

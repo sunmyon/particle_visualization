@@ -28,6 +28,7 @@ endif()
 option(DEBUG_MODE          "Enable debug mode"                   ON)
 option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
+option(USE_LETTERBOX       "Use Letter box"                      ON)
 option(CLUMP_DATA_READ     "Enable Clump data read"              ON)
 option(ISO_CONTOUR         "Enable iso-contour/VTK"              ON)
 option(GEOMETRICAL_ANALYSIS "Enable geometrical analysis"        ON)
@@ -64,24 +65,33 @@ set(EXTERNAL_DIR ${CMAKE_SOURCE_DIR}/external)
 # ===== ソース一覧 =====
 set(SOURCES_CPP
   ${SRC_DIR}/main.cpp
-  ${SRC_DIR}/colormap_defs.cpp
   ${SRC_DIR}/UI.cpp
   ${SRC_DIR}/settingUI.cpp
   ${SRC_DIR}/render_actions.cpp
-  ${SRC_DIR}/object_renderer.cpp
-  ${SRC_DIR}/interaction_utils.cpp
-  ${SRC_DIR}/field_renderer.cpp
-  ${SRC_DIR}/particle_renderer.cpp
   ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
-  ${SRC_DIR}/shader_utils.cpp
-  ${SRC_DIR}/shader_sources.cpp
   ${SRC_DIR}/imgui_context.cpp
   ${SRC_DIR}/window_context.cpp
-  ${SRC_DIR}/render_programs.cpp
-  ${SRC_DIR}/render_resources.cpp
+  ${SRC_DIR}/particle_label_overlay.cpp
+  ${SRC_DIR}/projection_preview_gl.cpp
+  ${SRC_DIR}/app/app_services.cpp  
+  ${SRC_DIR}/app/app_callbacks.cpp
+  ${SRC_DIR}/app/app_lifecycle.cpp
+  ${SRC_DIR}/app/app_frame.cpp
+  ${SRC_DIR}/render/frame_matrices.cpp
+  ${SRC_DIR}/render/colormap_defs.cpp
+  ${SRC_DIR}/render/render_programs.cpp
+  ${SRC_DIR}/render/shader_utils.cpp
+  ${SRC_DIR}/render/shader_sources.cpp
+  ${SRC_DIR}/render/field_renderer.cpp
+  ${SRC_DIR}/render/particle_renderer.cpp
+  ${SRC_DIR}/render/object_renderer.cpp
+  ${SRC_DIR}/render/gizmo_renderer.cpp
+  ${SRC_DIR}/render/render_resources.cpp
+  ${SRC_DIR}/interaction/interaction_utils.cpp
   ${SRC_DIR}/config/config_io.cpp
+  ${SRC_DIR}/core/tracking_vector.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
 	${SRC_DIR}/FileIO/file_io_hdf5.cpp
   ${SRC_DIR}/FindClumps/find_clumps.cpp
@@ -673,6 +683,7 @@ endif()
 add_def(DEBUG_MODE          DEBUG_MODE)
 add_def(USE_LUA             USE_LUA)
 add_def(USE_CONVEX_HULL     USE_CONVEX_HULL)
+add_def(USE_LETTERBOX       USE_LETTERBOX)
 add_def(CLUMP_DATA_READ     CLUMP_DATA_READ)
 add_def(ISO_CONTOUR         ISO_CONTOUR)
 add_def(GEOMETRICAL_ANALYSIS GEOMETRICAL_ANALYSIS)

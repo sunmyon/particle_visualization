@@ -8,8 +8,8 @@
 
 #include <nanoflann.hpp>
 
-#include "main.h"
 #include "object.h" 
+#include "data/particle_data.h"
 #include <glm/glm.hpp>
 
 class EllipseFitter {

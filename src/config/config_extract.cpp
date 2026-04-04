@@ -1,7 +1,6 @@
 #include "config_extract.h"
 
-#include "main.h"
-#include "camera.h"
+#include "interaction/camera.h"
 #include "make_2D_projection_map.h"
 #include "FileIO/file_io.h"   // 実際の型名に合わせて修正
 

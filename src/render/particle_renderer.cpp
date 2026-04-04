@@ -1,13 +1,15 @@
-#include "main.h"
 #include "particle_renderer.h"
 #include "colormap_defs.h"
+#include "render_resources.h"
+#include "particle_visual_config.h"
+#include "gizmo_renderer.h"
 
 #include <cstdio>
 #include <glm/gtc/type_ptr.hpp>
 
 ParticleRenderer gParticleRenderer;
 
-void ParticleRenderer::init(const ParticleArray& P)
+void ParticleRenderer::init()
 {
   if (vao_ == 0) glGenVertexArrays(1, &vao_);
   if (vbo_ == 0) glGenBuffers(1, &vbo_);
@@ -15,102 +17,56 @@ void ParticleRenderer::init(const ParticleArray& P)
   glBindVertexArray(vao_);
   glBindBuffer(GL_ARRAY_BUFFER, vbo_);
 
-  glBufferData(GL_ARRAY_BUFFER,
-               P.particleBlock.particles.size() * sizeof(ParticleData),
-               P.particleBlock.particles.data(),
-               GL_DYNAMIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                        sizeof(ParticleData),
-                        (void*)offsetof(ParticleData, pos));
+                        sizeof(RenderParticle),
+                        (void*)offsetof(RenderParticle, pos));
   glEnableVertexAttribArray(0);
 
   glVertexAttribIPointer(1, 1, GL_UNSIGNED_BYTE,
-                         sizeof(ParticleData),
-                         (void*)offsetof(ParticleData, type));
+                         sizeof(RenderParticle),
+                         (void*)offsetof(RenderParticle, type));
   glEnableVertexAttribArray(1);
 
   glVertexAttribIPointer(2, 1, GL_UNSIGNED_BYTE,
-                         sizeof(ParticleData),
-                         (void*)offsetof(ParticleData, flag_stress));
+                         sizeof(RenderParticle),
+                         (void*)offsetof(RenderParticle, flag_stress));
   glEnableVertexAttribArray(2);
 
   glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE,
-                        sizeof(ParticleData),
-                        (void*)offsetof(ParticleData, Hsml));
+                        sizeof(RenderParticle),
+                        (void*)offsetof(RenderParticle, hsml));
   glEnableVertexAttribArray(3);
 
   glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE,
-                        sizeof(ParticleData),
-                        (void*)offsetof(ParticleData, val_show));
+                        sizeof(RenderParticle),
+                        (void*)offsetof(RenderParticle, val_show));
   glEnableVertexAttribArray(4);
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
 }
 
-void ParticleRenderer::sync(ParticleArray& P,
-                            const ParticleVisualConfig& visualConfig)
+void ParticleRenderer::sync(const std::vector<RenderParticle>& particles)
 {
-  if (!P.particlesDirty) return;
+  filteredCount_ = particles.size();
 
   glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-
-  for (int i = 0; i < 6; ++i) {
-    for (size_t ipart = 0; ipart < P.particleBlock.particles.size(); ++ipart) {
-      auto& p = P.particleBlock.particles[ipart];
-      int itype = p.type;
-      if (itype != i) continue;
-
-      p.val_show = getScalarValue(P.particleBlock,
-                                  p,
-                                  ipart,
-                                  visualConfig.types[i].selectedQuantity);
-    }
-  }
-
-  TrackingVector<ParticleData> filtered;
-  filtered.reserve(P.particleBlock.particles.size());
-
-  for (size_t i = 0; i < P.particleBlock.particles.size(); ++i) {
-    auto& p = P.particleBlock.particles[i];
-    if (P.flag_mask[i] == 0 &&
-        visualConfig.types[p.type].hideParticles == false) {
-      filtered.push_back(p);
-    }
-  }
-
-  filteredCount_ = filtered.size();
-
-  size_t nStress = 0;
-  for (auto& pp : filtered) {
-    if (pp.flag_stress == 1) ++nStress;
-  }
-  static size_t lastStress = (size_t)-1;
-  if (nStress != lastStress) {
-    std::printf("[stress] filtered=%zu stressed=%zu\n",
-                filtered.size(), nStress);
-    lastStress = nStress;
-  }
-
   glBufferData(GL_ARRAY_BUFFER,
-               filtered.size() * sizeof(ParticleData),
-               filtered.data(),
+               particles.size() * sizeof(RenderParticle),
+               particles.data(),
                GL_DYNAMIC_DRAW);
-
   glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  P.particlesDirty = false;
-  P.velocityDirty = true;
 }
+
 
 void ParticleRenderer::draw(GLuint particleProgram,
                             const glm::mat4& model,
                             const glm::mat4& view,
                             const glm::mat4& projection,
                             const ParticleVisualConfig& visualConfig,
-                            const ColorbarRenderer& colorbarRenderer,
-                            bool hideAllParticles) const
+                            const ColorbarRenderer& colorbarRenderer) const
 {
   glUseProgram(particleProgram);
 
@@ -154,9 +110,7 @@ void ParticleRenderer::draw(GLuint particleProgram,
   glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"),  6, samplers);
 
   glBindVertexArray(vao_);
-  if (!hideAllParticles) {
-    glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(filteredCount_));
-  }
+  glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(filteredCount_));
   glBindVertexArray(0);
 }
 

@@ -1,8 +1,9 @@
 #include "render_actions.h"
 #include "ui_state.h"
 
-#include "main.h"
 #include "object.h"
+#include "data/particle_array.h"
+
 #include <glm/vec3.hpp>
 #include <glm/gtc/quaternion.hpp>
 

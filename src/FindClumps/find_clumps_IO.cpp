@@ -1,4 +1,4 @@
-#include "main.h"
+#include "core/tracking_vector.h"
 #include "FindClumps/find_clumps_IO.h"
 
 #ifdef CLUMP_DATA_READ

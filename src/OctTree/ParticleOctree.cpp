@@ -1,5 +1,4 @@
 // ParticleOctree.cpp
-#include "main.h"
 #include "OctTree/ParticleOctree.h"
 #include "IsoSurface/density_evaluate.h"
 #include <algorithm>

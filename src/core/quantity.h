@@ -6,6 +6,9 @@ enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
 static constexpr int kMaxQ = 18;
 enum class QuantityId : int { Density, Temperature, Val, Val2, Mass, Hsml, PosX, PosY, PosZ, Radius, VRad, B, Beta, Metallicity, ElectronAbundance, H2Abundance, HDAbundance, J21};
 
+static constexpr int kNumTypes = 6;
+extern QuantityId selectedQuantity[6];
+
 inline const char* QuantityLabel(QuantityId q) {
   switch (q) {
     case QuantityId::Density:     return "Density";

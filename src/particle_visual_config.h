@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include "core/quantity.h"
 
 constexpr int kNumParticleTypes = 6;
 

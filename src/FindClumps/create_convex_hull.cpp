@@ -1,9 +1,9 @@
 #ifdef USE_CONVEX_HULL
-#include "main.h"
-#include "camera.h"
+#include "interaction/camera.h"
 #include "FindClumps/create_convex_hull.h"
 #include "FindClumps/find_clumps.h"
 #include "compute_2D_histogram.h"
+#include "data/particle_data.h"
 
 #include <CGAL/convex_hull_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>

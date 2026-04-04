@@ -1,7 +1,6 @@
 #include "BridgeAdapter.h"
 #include <cstring>
 #include <mutex>
-#include "main.h"
 
 namespace bridge {
   bool loadInitialFromAoS(PythonBridge& bridge, const ParticleArray& P, size_t stride_bytes) {

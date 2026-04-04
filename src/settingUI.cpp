@@ -1,13 +1,12 @@
 #include "UI.h"
-#include "app_services.h"
+#include "app/app_services.h"
 #include "render_actions.h"
 
-#include "main.h"                 // CameraContext の完全定義がここにあるなら
-#include "camera.h"
+#include "interaction/camera.h"
 #include "particle_visual_config.h"   // ParticleVisualConfig の実定義
 #include "FileIO/file_io.h"       // FileInfo の実定義
-#include "colormap_defs.h"  
-
+#include "render/colormap_defs.h"  
+#include "data/particle_array.h"
 
 #include "FindClumps/find_clumps.h"             // FindClump
 
@@ -49,8 +48,47 @@ struct PullDownItem {
   int mode;
 };
 
-std::pair<std::string,int>
-convertFilenameToFormatAndExtractNumber(const std::string& filename);
+namespace {
+  std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
+  {
+    size_t dotPos = filename.find_last_of('.');
+    std::string basename = (dotPos == std::string::npos) ? filename : filename.substr(0, dotPos);
+    std::string extension = (dotPos == std::string::npos) ? "" : filename.substr(dotPos); 
+
+    // 最後の数字がある位置を探す
+    size_t pos = basename.find_last_of("0123456789");
+    if (pos == std::string::npos)
+      return std::make_pair(filename, 0); // 数字が見つからなければそのまま返す
+
+    // 数字部分の開始位置を後ろから辿って求める
+    size_t numEnd = pos;
+    size_t numStart = pos;
+    while (numStart > 0 && std::isdigit(basename[numStart - 1])) {
+      numStart--;
+    }
+    size_t numLen = numEnd - numStart + 1;
+
+    // ファイル名の前半部分（数字部分以前）を取得
+    std::string prefix = basename.substr(0, numStart);
+    // この例では数字部分以降の文字列は取り除く（必要に応じて拡張子などを扱えます）
+    std::string suffix = "";
+
+    // 桁数に合わせたフォーマット指定子を作成（例: 3桁なら "%03d"）
+    std::string formatSpecifier = "%" + std::string("0") + std::to_string(numLen) + "d";
+
+    std::string newFormat = prefix + formatSpecifier + suffix + extension;
+
+    // 数字部分を整数に変換
+    int fileNumber = -1;
+    try {
+      fileNumber = std::stoi(basename.substr(numStart, numLen));
+    } catch (const std::exception& e) {
+      fileNumber = -1;
+    }
+    
+    return std::make_pair(newFormat, fileNumber);
+  }
+}
 
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
@@ -63,7 +101,7 @@ static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeStat
 #endif
 static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt);
 static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& rt);
-static void DrawOtherSettingsSection(ParticleArray* P, FileInfo* fileInfo, SettingsRuntimeState& rt);
+static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
 
 void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt) {
   ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
@@ -79,7 +117,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt) {
 #endif
   DrawAnalysisSection(ctx, rt);
   DrawRenderingSection(ctx, rt);
-  DrawOtherSettingsSection(ctx.P, ctx.fileInfo, rt);
+  DrawOtherSettingsSection(ctx.P, ctx.fileInfo, rt, *ctx.render);
 
   ImGui::End();
 }
@@ -610,8 +648,8 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
   auto* diskFinder    = services->diskFinder.get();
   auto* ellipsoid     = services->ellipsoid.get();
 #endif
-
   auto* render = ctx.render;
+  auto* scene = ctx.scene;
   
   enum AnalysisMode {
     ANALYSIS_RADIAL_PROFILE,
@@ -820,16 +858,16 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	disk.opacity = render->disks.opacity;
 	disk.tag = "main_disk";
 	
-	gDiskManager.clearGroup("main_disk");
+	scene->disk.clearGroup("main_disk");
 	
 	if (diskFinder->compute(Part->particleBlock.particles, param_disk, disk)) {
-	  gDiskManager.add(disk);
+	  scene->disk.add(disk);
 	}
       }      
     }
 				
     if (ImGui::Button("disable disks")) {
-      gDiskManager.clear();
+      scene->disk.clear();
     }
 				
     static char fname_input[255]="binary_fragmentation_ellipticity_all_w_mode.txt";
@@ -997,7 +1035,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
     ImGui::SliderFloat("Opacity##contour_ellipse", &render->ellipsoids.opacity, 0.0f, 1.0f); 
 				
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
-      gEllipsoidManager.clearGroup("analysis_ellipsoid");
+      scene->ellipsoid.clearGroup("analysis_ellipsoid");
       
       EllipsoidObject obj;
       if (ellipsoid->computeEllipse(Part->particleBlock.particles, queryID1, queryID2, obj)) {
@@ -1006,12 +1044,12 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 	obj.tag = "analysis_ellipsoid";
 	obj.renderMode = EllipsoidRenderMode::Solid;
 	
-	gEllipsoidManager.add(obj);
+	scene->ellipsoid.add(obj);
       }      
     }
 				
     if (ImGui::Button("disable Ellipsoid")) {
-      gEllipsoidManager.clearGroup("analysis_ellipsoid");
+      scene->ellipsoid.clearGroup("analysis_ellipsoid");
     }
 				
     static char fname_input[255]="binary_fragmentation.txt";
@@ -1104,6 +1142,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
   auto& volume = services->volume;
 #endif
   auto* render = ctx.render;
+  auto* scene = ctx.scene;
   
   enum RenderingMode {
     RENDER_PROJECTION_MAP,
@@ -1155,7 +1194,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     if (ImGui::Button("make projection map"))
       OpenProjectionMapUI();    
 				
-    DrawProjectionMapUI(*projectionMap2D, Part, camCtx, fileInfo->currentFileIndex);
+    DrawProjectionMapUI(*projectionMap2D, Part, camCtx, render->cuboidAnnotations, fileInfo->currentFileIndex);
 				
     ImGui::Text("create projection maps for continuous snapshots");
 				
@@ -1378,7 +1417,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 				
     // 4) If either length or opacity changed, re‐create exactly one cube
     if (seedRegionDirty) {
-      UpdateSeedRegionPreview(*streamLine, *ctx.cubeManager, *render, seed_center, seed_len, seed_opacity);
+      UpdateSeedRegionPreview(*streamLine, scene->cube, *render, seed_center, seed_len, seed_opacity);
       seedRegionDirty = false;
     }
 				
@@ -1414,7 +1453,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
       streamLine->setSeeds(Part->particleBlock.particles, n_seeds);
       float degree = 10.f;
 
-      gLineManager.clearGroup("streamline");
+      scene->line.clearGroup("streamline");
 
       auto lines = streamLine->build(Part->particleBlock,  degree);
 
@@ -1422,12 +1461,12 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 	line.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	line.opacity = 1.0;
 	line.tag = "streamline";
-	gLineManager.add(line);
+	scene->line.add(line);
       }
     }
 
     if (ImGui::Button("disable Grid & Mesh")) {
-      gLineManager.clearGroup("streamline");
+      scene->line.clearGroup("streamline");
     }
 				
     break;
@@ -1540,12 +1579,12 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 #endif
 			
   case RENDER_VELOCITY_FIELD: {
-    ImGui::InputInt("show velocity field out of n particles", &rt.velocitySubtraction);
-    ImGui::InputFloat("Arrow Scale", &rt.arrowScale, 0.1f, 1.0f, "%.2f");
-    ImGui::Checkbox("Use Log Scale", &rt.useVelocityArrowLogScale);
+    ImGui::InputInt("show velocity field out of n particles", &render->velocity.subtraction);
+    ImGui::InputFloat("Arrow Scale", &render->velocity.arrowScale, 0.1f, 1.0f, "%.2f");
+    ImGui::Checkbox("Use Log Scale", &render->velocity.useLogScale);
 				
-    if(ImGui::Checkbox("render velocity field", &rt.showVelocityVectors)){
-      if(rt.showVelocityVectors)
+    if(ImGui::Checkbox("render velocity field", &render->velocity.show)){
+      if(render->velocity.show)
 	Part->velocityDirty = true;
     }
     break;
@@ -1553,7 +1592,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
   }
 }
 
-static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt){
+static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render){
   if(!ImGui::CollapsingHeader("Other settings"))
     return;
   
@@ -1590,7 +1629,7 @@ static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, Se
   }
 		
   if(ImGui::CollapsingHeader("Cross Marker"))
-    ImGui::SliderFloat("Cross Marker Size", &rt.crossSize, 0.01f, 1.0f); 
+    ImGui::SliderFloat("Cross Marker Size", &render.overlay.crossSize, 0.01f, 1.0f); 
 }
 
 

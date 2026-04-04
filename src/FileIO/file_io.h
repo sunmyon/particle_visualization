@@ -1,5 +1,10 @@
 #pragma once
 // POSIX I/O 用
+#include "data/particle_array.h"
+#include "data/header_info.h"
+#include "core/physics_constants.h"
+#include "core/PerfTimer.h"
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -14,7 +19,6 @@
 #endif
 
 #include <fstream>
-#include "PerfTimer.h"
 
 enum class FileFormat {
   Auto,       // 拡張子から自動判別 (従来の動作)

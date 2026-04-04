@@ -3,9 +3,10 @@
 #include <mutex>
 #include <iostream>
 
-
-extern std::size_t g_totalAllocated;
-extern std::mutex g_mutex;
+namespace tracking_alloc_detail {
+  extern std::size_t totalAllocated;
+  extern std::mutex mutex;
+}
 
 template<typename T>
 struct TrackingAllocator {
@@ -19,22 +20,22 @@ struct TrackingAllocator {
     T* allocate(std::size_t n) {
         std::size_t bytes = n * sizeof(T);
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            g_totalAllocated += bytes;
+	  std::lock_guard<std::mutex> lock(tracking_alloc_detail::mutex);
+	    tracking_alloc_detail::totalAllocated += bytes;
         }
 	if(bytes > 1024. * 1024.)
-	  std::cout << "Allocating " << bytes << " bytes. Total allocated: " << g_totalAllocated/1024./1024. << " Mbytes." << std::endl;
+	  std::cout << "Allocating " << bytes << " bytes. Total allocated: " << tracking_alloc_detail::totalAllocated/1024./1024. << " Mbytes." << std::endl;
         return static_cast<T*>(::operator new(bytes));
     }
 
     void deallocate(T* p, std::size_t n) noexcept {
         std::size_t bytes = n * sizeof(T);
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            g_totalAllocated -= bytes;
+	  std::lock_guard<std::mutex> lock(tracking_alloc_detail::mutex);
+	    tracking_alloc_detail::totalAllocated -= bytes;
         }
 	if(bytes > 1024. * 1024.)
-	  std::cout << "Deallocating " << bytes << " bytes. Total allocated: " << g_totalAllocated/1024./1024. << " Mbytes." << std::endl;
+	  std::cout << "Deallocating " << bytes << " bytes. Total allocated: " << tracking_alloc_detail::totalAllocated/1024./1024. << " Mbytes." << std::endl;
         ::operator delete(p);
     }
 };

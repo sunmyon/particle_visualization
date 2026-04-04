@@ -4,7 +4,6 @@
 #include <string>
 #include <cstdint>
 
-#include "main.h"
 #include "PythonBridge/JupyterLauncher.h"
 #include "ShmLayout.h"
 

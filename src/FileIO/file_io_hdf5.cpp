@@ -1,5 +1,4 @@
 #ifdef HAVE_HDF5
-#include "main.h"
 #include "FileIO/file_io.h"
 #include "H5Cpp.h"
 

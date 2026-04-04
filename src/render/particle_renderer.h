@@ -6,21 +6,21 @@
 #include <glm/glm.hpp>
 
 #include "object_renderer.h"
+#include "gizmo_renderer.h"
 #include "particle_visual_config.h"
 #include "FileIO/file_io.h"
 
+struct RenderParticle;
 class ParticleRenderer {
 public:
-  void init(const ParticleArray& P);
-  void sync(ParticleArray& P,
-            const ParticleVisualConfig& visualConfig);
+  void init();
+  void sync(const std::vector<RenderParticle>& P);
   void draw(GLuint particleProgram,
             const glm::mat4& model,
             const glm::mat4& view,
             const glm::mat4& projection,
             const ParticleVisualConfig& visualConfig,
-            const ColorbarRenderer& colorbarRenderer,
-            bool hideAllParticles) const;
+            const ColorbarRenderer& colorbarRenderer) const;
   void destroy();
 
   GLuint vao() const { return vao_; }
