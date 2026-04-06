@@ -67,13 +67,13 @@ void FileInfo::generateTestData(ParticleArray *P){
       for (int k = 0; k < n_side; k++) {
 	double z = x_min + dx * k;
 
-	double dx = ud(rng);
-	double dy = ud(rng);
-	double dz = ud(rng);
+	double rx = ud(rng);
+	double ry = ud(rng);
+	double rz = ud(rng);
 
-	double x_out = x + amp * dx;
-	double y_out = y + amp * dy;
-	double z_out = z + amp * dz;
+	double x_out = x + amp * rx;
+	double y_out = y + amp * ry;
+	double z_out = z + amp * rz;
 	
 	double r2 = x_out * x_out + y_out * y_out + z_out * z_out;
 
@@ -100,6 +100,8 @@ void FileInfo::generateTestData(ParticleArray *P){
 	p.density = 1.;
 	p.temperature = 1.;
 	p.type = 0;
+
+	p.ID = particles.size();
 	
 	particles.push_back(p);
       }
@@ -865,7 +867,7 @@ void ParticleArray::swap_particles(TrackingVector<ParticleBlock>& batchP, int ib
   particleBlock_index = ibatch;
 
   // 7) particleValueMin/Max に格納（有効分だけ上書き）
-  for (int q = 0; q < newParticleBlock.nUIQ; ++q)
+  for (int q = 0; q < particleBlock.nUIQ; ++q)
     for (int t = 0; t < kNumTypes; ++t) {
       particleValueMin[q][t] = newMin[q][t];
       particleValueMax[q][t] = newMax[q][t];

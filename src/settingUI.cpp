@@ -419,7 +419,7 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part){
   if (ImGui::Button("Mask Settings...")) {
     OpenMaskUI();
   }
-		
+  
   if (ImGui::Button("Generate test data")) {
     fileInfo->generateTestData(Part);      
   }
