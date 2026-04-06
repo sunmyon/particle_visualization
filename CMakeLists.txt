@@ -731,11 +731,19 @@ else()
   option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" OFF)
 endif()
 
-if(WIN32 AND WINDOWS_LINK_AS_COPY)
+
+if(WIN32)
+  file(GLOB WIN_RUNTIME_DLLS "${CMAKE_BINARY_DIR}/*.dll")
+
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove -f "${_ROOT_LINK_NAME}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${PROJECT_NAME}>" "${_ROOT_LINK_NAME}"
-    COMMENT "Copying ${PROJECT_NAME} to repo root (Windows fallback)"
+    COMMAND ${CMAKE_COMMAND} -E remove -f "${CMAKE_SOURCE_DIR}/${PROJECT_NAME}.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+            "${CMAKE_SOURCE_DIR}/${PROJECT_NAME}.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${WIN_RUNTIME_DLLS}
+            "${CMAKE_SOURCE_DIR}"
+    COMMENT "Copying ${PROJECT_NAME}.exe and runtime DLLs to repo root"
     VERBATIM)
 else()
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -744,4 +752,3 @@ else()
     COMMENT "Creating symlink to ${PROJECT_NAME} in repo root"
     VERBATIM)
 endif()
-

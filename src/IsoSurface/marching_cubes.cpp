@@ -5,6 +5,7 @@
 #include <array>
 #include <sstream>
 #include <glm/glm.hpp>
+#include <algorithm>
 
 #include "IsoSurface/marching_cubes.h"
 

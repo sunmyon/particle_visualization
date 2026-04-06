@@ -17,7 +17,8 @@ particle_vis.exe
 *.o
 *.dSYM/
 *.exe
+*.dll
 
 jupyter_work/*
 !jupyter_work/shm_reader.py
-imgui.iniimgui.ini
+imgui.ini
