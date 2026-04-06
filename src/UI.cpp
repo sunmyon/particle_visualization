@@ -1597,8 +1597,7 @@ void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
   ImGui::End();
 }
 
-ColorbarLabelRenderer gColorbarLabelRenderer;
-void ColorbarLabelRenderer::draw(const ColorbarGizmo& gizmo) const
+void ColorbarLabelRenderer::draw(const ColorbarGizmoState& gizmo) const
 {
   if (!gizmo.visible) return;
 
@@ -1610,11 +1609,11 @@ void ColorbarLabelRenderer::draw(const ColorbarGizmo& gizmo) const
   if (!draw_list) return;
 
   const auto& layout = gizmo.layout;
-  const int numTicks = gizmo.numTicks;
+  const int numTicks = gizmo.content.numTicks;
 
   for (int i = 0; i < numTicks; i++) {
     float t = (numTicks > 1) ? float(i) / float(numTicks - 1) : 0.0f;
-    float value = gizmo.valueMin + t * (gizmo.valueMax - gizmo.valueMin);
+    float value = gizmo.content.valueMin + t * (gizmo.content.valueMax - gizmo.content.valueMin);
 
     float px_phys = layout.left_pixel + t * (layout.right_pixel - layout.left_pixel);
     float py_phys = layout.bottom_pixel + 5.0f * scaleY;

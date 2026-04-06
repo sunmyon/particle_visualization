@@ -33,7 +33,6 @@ struct AppState {
 
   InteractionState interaction;
   ParticleLabelOverlay particleLabels;
-  ColorbarGizmo colorbar;
 
 #ifdef USE_CONVEX_HULL
   ConvexHullGenerator* convexHullGenerator = nullptr;

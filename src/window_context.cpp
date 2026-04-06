@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 #include "window_context.h"
 
+#include <imgui.h>
 #include <iostream>
 #include <cstdlib>
 
@@ -98,4 +99,41 @@ void WindowContext::updateFramebufferSize(int width, int height)
   viewportHeight_ = height;
   glViewport(0, 0, width, height);
 #endif
+}
+
+glm::vec2 WindowContext::framebufferToImGui(float px, float py) const
+{
+  ImGuiIO& io = ImGui::GetIO();
+
+  const float scaleX = io.DisplayFramebufferScale.x;
+  const float scaleY = io.DisplayFramebufferScale.y;
+  const float fbH    = io.DisplaySize.y * scaleY;
+
+  return glm::vec2(px / scaleX,
+                   (fbH - py) / scaleY);
+}
+
+glm::vec2 WindowContext::ndcToFramebuffer(const glm::vec3& ndc) const
+{
+  const float px = viewportX_ +
+                   (ndc.x * 0.5f + 0.5f) * static_cast<float>(viewportWidth_);
+  const float py = viewportY_ +
+                   (ndc.y * 0.5f + 0.5f) * static_cast<float>(viewportHeight_);
+
+  return glm::vec2(px, py);
+}
+
+glm::vec2 WindowContext::ndcToImGui(const glm::vec3& ndc) const
+{
+  glm::vec2 fb = ndcToFramebuffer(ndc);
+  return framebufferToImGui(fb.x, fb.y);
+}
+
+float WindowContext::projectionAspect() const
+{
+  if (viewportHeight_ <= 0)
+    return 1.0f;
+
+  return static_cast<float>(viewportWidth_) /
+         static_cast<float>(viewportHeight_);
 }

@@ -21,11 +21,27 @@ struct RenderLayerState {
   float opacity = 1.0f;
 };
 
-struct OverlayRuntimeState {
-  bool showCoordinates = true;
-  bool showCrossGizmo = true;
-  bool showColorbar = true;
-  float crossSize = 0.05f;
+struct ColorbarLayoutSettings {
+  float width = 400.0f;
+  float height = 40.0f;
+  float margin = 40.0f;
+};
+
+struct ColorbarRenderState : RenderLayerState {
+  ColorbarRenderState() { show = true; }
+  
+  int sourceParticleType = 0;
+  int numTicks = 5;
+  ColorbarLayoutSettings layout;
+};
+
+struct CrossGizmoRenderState : RenderLayerState {
+  CrossGizmoRenderState() { show = true; }
+  float size = 0.05f;
+};
+
+struct CoordAxesRenderState : RenderLayerState {
+  CoordAxesRenderState() { show = true; }
 };
 
 struct VelocityRenderState : RenderLayerState {
@@ -48,7 +64,10 @@ struct RenderRuntimeState {
   RenderLayerState cuboidAnnotations;
 
   VelocityRenderState velocity;
-  OverlayRuntimeState overlay;  
+
+  CrossGizmoRenderState crossGizmo;
+  CoordAxesRenderState coordAxes;
+  ColorbarRenderState colorbar;
   
   struct Volume {
     bool show = false;

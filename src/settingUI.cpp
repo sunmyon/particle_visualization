@@ -474,7 +474,7 @@ static void DrawCameraPlacementSection(ParticleArray* Part, CameraContext& camCt
     } else {
       camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]);
     }
-			
+    
     camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
   }
 		
@@ -551,8 +551,7 @@ static void DrawCameraPlacementSection(ParticleArray* Part, CameraContext& camCt
     for(size_t i=0;i<Part->particleBlock.particles.size();i++)
       Part->flag_mask[i] = 0;            
     Part->particlesDirty = true; 
-  }
-  
+  }  
 }
 
 
@@ -1362,8 +1361,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 	      flag_center = 1;
 	    }
 	  }
-							
-							
+	  
 	  projectionMap2D->set_projection_parameters(Part->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
 						     std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
 							
@@ -1495,7 +1493,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     }
 				
     if (ImGui::Button("Build OctTree & Mesh")) {
-      auto& iso = ctx.services->isoContour;
+      auto& iso = services->isoContour;
       BuildIsoContourMesh(*Part, selectedVar_iso, isoLevel, max_treelevel, iso, *render);
     }
 								
@@ -1629,7 +1627,7 @@ static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, Se
   }
 		
   if(ImGui::CollapsingHeader("Cross Marker"))
-    ImGui::SliderFloat("Cross Marker Size", &render.overlay.crossSize, 0.01f, 1.0f); 
+    ImGui::SliderFloat("Cross Marker Size", &render.crossGizmo.size, 0.01f, 1.0f); 
 }
 
 

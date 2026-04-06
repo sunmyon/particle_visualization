@@ -78,11 +78,6 @@ void ParticleLabelOverlay::draw(const glm::mat4& view,
   if (labels_.empty())
     return;
 
-  ImGuiIO& io = ImGui::GetIO();
-  float scaleX = io.DisplayFramebufferScale.x;
-  float scaleY = io.DisplayFramebufferScale.y;
-  float FBH    = io.DisplaySize.y * scaleY;
-
   ImDrawList* draw = ImGui::GetBackgroundDrawList();
 
   for (const auto& item : labels_) {
@@ -95,21 +90,15 @@ void ParticleLabelOverlay::draw(const glm::mat4& view,
     if (std::abs(ndc.x) > 1.f || std::abs(ndc.y) > 1.f)
       continue;
 
-    float px = windowCtx.viewportX() +
-               (ndc.x * 0.5f + 0.5f) * float(windowCtx.viewportWidth());
-    float py = windowCtx.viewportY() +
-               (ndc.y * 0.5f + 0.5f) * float(windowCtx.viewportHeight());
-
-    float sx = px / scaleX;
-    float sy = (FBH - py) / scaleY;
+    glm::vec2 screen = windowCtx.ndcToImGui(ndc);
 
     char buf[12];
     std::snprintf(buf, sizeof(buf), "%d", item.id);
 
-    draw->AddRectFilled(ImVec2(sx - 2, sy - 2),
-                        ImVec2(sx + ImGui::CalcTextSize(buf).x + 2,
-                               sy + ImGui::GetFontSize() + 2),
+    draw->AddRectFilled(ImVec2(screen.x - 2, screen.y - 2),
+                        ImVec2(screen.x + ImGui::CalcTextSize(buf).x + 2,
+                               screen.y + ImGui::GetFontSize() + 2),
                         IM_COL32(0, 0, 0, 128), 2.0f);
-    draw->AddText(ImVec2(sx, sy), IM_COL32_WHITE, buf);
+    draw->AddText(ImVec2(screen.x, screen.y), IM_COL32_WHITE, buf);
   }
 }

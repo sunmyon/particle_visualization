@@ -25,64 +25,6 @@
 #include "PythonBridge/ShmLayout.h"
 #endif
 
-static void ComputeColorBarPixelCoords(const WindowContext& window,
-				       float& left,
-                                       float& right,
-                                       float& top,
-                                       float& bottom)
-{
-#ifdef USE_LETTERBOX
-  float effectiveWidth  = static_cast<float>(window.viewportWidth());
-  float effectiveHeight = static_cast<float>(window.viewportHeight());
-#else
-  ImGuiIO& io = ImGui::GetIO();
-  float effectiveWidth  = io.DisplaySize.x / io.DisplayFramebufferScale.x;
-  float effectiveHeight = io.DisplaySize.y / io.DisplayFramebufferScale.y;
-#endif
-
-  constexpr float colorBarWidth  = 400.0f;
-  constexpr float colorBarHeight = 40.0f;
-  constexpr float margin         = 40.0f;
-
-  left   = effectiveWidth  - colorBarWidth  - margin;
-  right  = effectiveWidth  - margin;
-  bottom = effectiveHeight - margin;
-  top    = effectiveHeight - colorBarHeight - margin;
-}
-
-static void UpdateColorbarGizmoFromCurrentState(AppState& app, const WindowContext& window)
-{
-  ColorbarGizmo& gizmo = app.colorbar;
-
-  gizmo.visible       = true;
-  gizmo.colormapIndex = app.particleVisual.types[0].colormapIndex;
-  gizmo.valueMin      = app.particleVisual.types[0].colorMin;
-  gizmo.valueMax      = app.particleVisual.types[0].colorMax;
-  gizmo.numTicks      = 5;
-
-  ComputeColorBarPixelCoords(window,
-			     gizmo.layout.left_pixel,
-                             gizmo.layout.right_pixel,
-                             gizmo.layout.top_pixel,
-                             gizmo.layout.bottom_pixel);
-
-#ifdef USE_LETTERBOX
-  gizmo.layout.offsetX = static_cast<float>(window.viewportX());
-  gizmo.layout.offsetY = static_cast<float>(window.viewportY());
-
-  gizmo.effectiveWidth  = static_cast<float>(window.viewportWidth());
-  gizmo.effectiveHeight = static_cast<float>(window.viewportHeight());
-#else
-  ImGuiIO& io = ImGui::GetIO();
-
-  gizmo.layout.offsetX = 0.0f;
-  gizmo.layout.offsetY = 0.0f;
-
-  gizmo.effectiveWidth  = io.DisplaySize.x / io.DisplayFramebufferScale.x;
-  gizmo.effectiveHeight = io.DisplaySize.y / io.DisplayFramebufferScale.y;
-#endif
-}
-
 
 static void UpdateUI(AppState& app)
 {
@@ -385,16 +327,72 @@ static void DrawSceneObjectsPass(AppState& app,
 #endif
 }
 
+static ColorBarLabelLayout ComputeColorbarLayout(const WindowContext& window,
+                                                 const ColorbarLayoutSettings& settings)
+{
+  ColorBarLabelLayout layout;
+
+  const float width  = static_cast<float>(window.viewportWidth());
+  const float height = static_cast<float>(window.viewportHeight());
+
+  layout.left_pixel   = width  - settings.width  - settings.margin;
+  layout.right_pixel  = width  - settings.margin;
+  layout.bottom_pixel = height - settings.margin;
+  layout.top_pixel    = height - settings.height - settings.margin;
+
+  layout.offsetX = static_cast<float>(window.viewportX());
+  layout.offsetY = static_cast<float>(window.viewportY());
+
+  return layout;
+}
+
+static ColorbarGizmoState BuildColorbarGizmoState(const AppState& app,
+                                                  const WindowContext& window)
+{
+  ColorbarGizmoState state;
+  state.visible = app.render.colorbar.show;
+
+  const int ptype = app.render.colorbar.sourceParticleType;
+  const auto& vis = app.particleVisual.types[ptype];
+
+  state.content.colormapIndex = vis.colormapIndex;
+  state.content.valueMin      = vis.colorMin;
+  state.content.valueMax      = vis.colorMax;
+  state.content.numTicks      = app.render.colorbar.numTicks;
+
+  state.effectiveWidth  = static_cast<float>(window.viewportWidth());
+  state.effectiveHeight = static_cast<float>(window.viewportHeight());
+  state.layout = ComputeColorbarLayout(window, app.render.colorbar.layout);
+
+  return state;
+}
+
+static CrossGizmoState BuildCrossGizmoState(const AppState& app)
+{
+  CrossGizmoState state;
+  state.visible      = app.render.crossGizmo.show;
+  state.cameraPos    = app.camera.cameraPos;
+  state.cameraTarget = app.camera.cameraTarget;
+  state.cameraUp     = app.camera.cameraUp;
+  state.crossSize    = app.render.crossGizmo.size;
+  return state;
+}
+
+static CoordAxesGizmoState BuildCoordAxesGizmoState(const AppState& app)
+{
+  CoordAxesGizmoState state;
+  state.visible = app.render.coordAxes.show;
+  return state;
+}
+
 static void DrawOverlayPass(AppState& app,
-		     RenderSystem& rs,
-		     const WindowContext& window,
-		     const FrameMatrices& fm)
+                            RenderSystem& rs,
+                            const WindowContext& window,
+                            const FrameMatrices& fm)
 {
   app.particleLabels.draw(fm.view,
-			  fm.projection,
-			  window);
-
-  UpdateColorbarGizmoFromCurrentState(app, window);
+                          fm.projection,
+                          window);
 
   GizmoDrawContext gctx;
   gctx.view            = fm.view;
@@ -403,20 +401,14 @@ static void DrawOverlayPass(AppState& app,
   gctx.coordProgram    = rs.programs.coord;
   gctx.colorbarProgram = rs.programs.colorbar;
 
-  CrossGizmoState crossState;
-  crossState.visible      = app.render.overlay.showCrossGizmo;
-  crossState.cameraPos    = app.camera.cameraPos;
-  crossState.cameraTarget = app.camera.cameraTarget;
-  crossState.cameraUp     = app.camera.cameraUp;
-  crossState.crossSize    = app.render.overlay.crossSize;
-
-  CoordAxesGizmoState axesState;
-  axesState.visible = app.render.overlay.showCoordinates;
+  const CrossGizmoState crossState = BuildCrossGizmoState(app);
+  const CoordAxesGizmoState axesState = BuildCoordAxesGizmoState(app);
+  const ColorbarGizmoState colorbarState = BuildColorbarGizmoState(app, window);
 
   rs.crossGizmo.draw(gctx, crossState);
   rs.coordAxes.draw(gctx, axesState);
-  rs.colorbar.draw(gctx, app.colorbar);
-  rs.colorbarLabels.draw(app.colorbar);
+  rs.colorbar.draw(gctx, colorbarState);
+  rs.colorbarLabels.draw(colorbarState);
 }
 
 static void DrawParticlePass(AppState& app,

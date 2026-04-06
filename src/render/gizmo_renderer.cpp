@@ -22,10 +22,6 @@ void CrossGizmoRenderer::init()
   glBindVertexArray(0);
 }
 
-
-CrossGizmoRenderer gCrossGizmoRenderer;
-CoordAxesRenderer  gCoordAxesRenderer;
-
 void CrossGizmoRenderer::destroy()
 {
   if (vbo_) glDeleteBuffers(1, &vbo_);
@@ -173,8 +169,6 @@ void CoordAxesRenderer::draw(const GizmoDrawContext& ctx,
   if (wasDepthTest) glEnable(GL_DEPTH_TEST);
 }
 
-ColorbarRenderer      gColorbarRenderer;
-
 void ColorbarRenderer::init()
 {
   if (vao_ != 0) return;
@@ -283,7 +277,7 @@ inline glm::vec2 PixelToNDC(float x, float y,
   return glm::vec2(x_ndc, y_ndc);
 }
 
-void ColorbarRenderer::updateVertices_(const ColorbarGizmo& gizmo) const
+void ColorbarRenderer::updateVertices_(const ColorbarGizmoState& gizmo) const
 {
   float left_pixel   = gizmo.layout.left_pixel;
   float right_pixel  = gizmo.layout.right_pixel;
@@ -308,12 +302,12 @@ void ColorbarRenderer::updateVertices_(const ColorbarGizmo& gizmo) const
 }
 
 void ColorbarRenderer::draw(const GizmoDrawContext& ctx,
-                            const ColorbarGizmo& gizmo) const
+                            const ColorbarGizmoState& gizmo) const
 {
   if (!gizmo.visible) return;
   if (vao_ == 0) return;
-  if (gizmo.colormapIndex < 0) return;
-  if (static_cast<size_t>(gizmo.colormapIndex) >= colormapTextures_.size()) return;
+  if (gizmo.content.colormapIndex < 0) return;
+  if (static_cast<size_t>(gizmo.content.colormapIndex) >= colormapTextures_.size()) return;
 
   updateVertices_(gizmo);
 
@@ -323,7 +317,7 @@ void ColorbarRenderer::draw(const GizmoDrawContext& ctx,
   glUseProgram(ctx.colorbarProgram);
 
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_1D, colormapTextures_[gizmo.colormapIndex]);
+  glBindTexture(GL_TEXTURE_1D, colormapTextures_[gizmo.content.colormapIndex]);
   glUniform1i(glGetUniformLocation(ctx.colorbarProgram, "colormap"), 0);
 
   glBindVertexArray(vao_);

@@ -2,6 +2,8 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
 
 class WindowContext {
 public:
@@ -9,8 +11,8 @@ public:
   void destroy();
 
   void attachCallbacks(GLFWcursorposfun mouseCb,
-                     GLFWscrollfun scrollCb,
-                     GLFWframebuffersizefun framebufferCb);
+                       GLFWscrollfun scrollCb,
+                       GLFWframebuffersizefun framebufferCb);
 
   void updateFramebufferSize(int width, int height);
 
@@ -24,6 +26,12 @@ public:
   int viewportWidth() const { return viewportWidth_; }
   int viewportHeight() const { return viewportHeight_; }
 
+  glm::vec2 framebufferToImGui(float px, float py) const;
+  glm::vec2 ndcToFramebuffer(const glm::vec3& ndc) const;
+  glm::vec2 ndcToImGui(const glm::vec3& ndc) const;
+
+  float projectionAspect() const;
+  
 private:
   GLFWwindow* handle_ = nullptr;
 

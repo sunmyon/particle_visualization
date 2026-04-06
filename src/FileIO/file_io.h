@@ -1067,12 +1067,6 @@ static DataType mapMetaToDataType(const H5DatasetMeta& m)
     if (m.bytes == 4) return DataType::Float;
     if (m.bytes == 8) return DataType::Double;
   } else if (m.cls == H5T_INTEGER) {
-    // 可視化用途で unsigned を許さないならここで落とす
-    // ここが “判断” の場所
-    if (m.sign != H5T_SGN_2) {
-      // ここを endrun() にしてもいいし例外でもいい
-      throw std::runtime_error("unsupported integer sign (unsigned?)");
-    }
     if (m.bytes == 4) return DataType::Int32;
     if (m.bytes == 8) return DataType::Int64;
   }

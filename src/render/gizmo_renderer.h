@@ -52,9 +52,6 @@ private:
   GLuint vbo_ = 0;
 };
 
-extern CrossGizmoRenderer gCrossGizmoRenderer;
-extern CoordAxesRenderer  gCoordAxesRenderer;
-
 struct ColorBarLabelLayout {
   float left_pixel   = 0.0f;
   float right_pixel  = 0.0f;
@@ -64,12 +61,17 @@ struct ColorBarLabelLayout {
   float offsetY      = 0.0f;
 };
 
-struct ColorbarGizmo {
-  bool visible = false;
-  int  colormapIndex = 0;
+struct ColorbarContentState {
+  int colormapIndex = 0;
   float valueMin = 0.0f;
   float valueMax = 1.0f;
-  int   numTicks = 5;
+  int numTicks = 5;
+};
+
+struct ColorbarGizmoState {
+  bool visible = false;
+
+  ColorbarContentState content;
 
   float effectiveWidth  = 1.0f;
   float effectiveHeight = 1.0f;
@@ -90,7 +92,7 @@ public:
   void initColorMaps(const ColormapDefView* defs, int numColormaps);
 
   void draw(const GizmoDrawContext& ctx,
-            const ColorbarGizmo& gizmo) const;
+            const ColorbarGizmoState& gizmo) const;
 
   GLuint colormapTexture(int index) const
   {
@@ -102,7 +104,7 @@ public:
   int numColormaps() const { return static_cast<int>(colormapTextures_.size()); }
 
 private:
-  void updateVertices_(const ColorbarGizmo& gizmo) const;
+  void updateVertices_(const ColorbarGizmoState& gizmo) const;
 
   GLuint vao_ = 0;
   GLuint vbo_ = 0;
@@ -114,8 +116,6 @@ private:
 
 class ColorbarLabelRenderer {
 public:
-  void draw(const ColorbarGizmo& gizmo) const;
+  void draw(const ColorbarGizmoState& gizmo) const;
 };
 
-extern ColorbarRenderer      gColorbarRenderer;
-extern ColorbarLabelRenderer gColorbarLabelRenderer;

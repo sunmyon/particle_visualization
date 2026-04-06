@@ -184,7 +184,6 @@ void ShowCameraSettingsUI();
 void ShowTime(double time);
 
 struct AppServices;
-class CubeManager;
 struct SettingsUIContext {
   ParticleArray* P = nullptr;
   FileInfo* fileInfo = nullptr;
@@ -192,7 +191,6 @@ struct SettingsUIContext {
   ParticleVisualConfig* particleVisual = nullptr;
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
-  CubeManager* cubeManager = nullptr;
   SceneManagers* scene = nullptr;
 };
 

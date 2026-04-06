@@ -9,24 +9,14 @@ FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
                                  const WindowContext& windowCtx)
 {
   FrameMatrices fm;
-
   fm.view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
 
   const float fovY = 45.0f;
+  const float aspect = windowCtx.projectionAspect();
 
-#ifdef USE_LETTERBOX
-  const float targetAspect = 1280.0f / 720.0f;
-  fm.projection = glm::perspective(glm::radians(fovY), targetAspect, 0.1f, 1000.0f);
+  fm.projection = glm::perspective(glm::radians(fovY), aspect, 0.1f, 1000.0f);
   fm.viewportW = windowCtx.viewportWidth();
   fm.viewportH = windowCtx.viewportHeight();
-#else
-  int width, height;
-  glfwGetFramebufferSize(windowCtx.handle(), &width, &height);
-  float aspect = static_cast<float>(width) / static_cast<float>(height);
-  fm.projection = glm::perspective(glm::radians(fovY), aspect, 0.1f, 1000.0f);
-  fm.viewportW = width;
-  fm.viewportH = height;
-#endif
 
   fm.invProj = glm::inverse(fm.projection);
   fm.invView = glm::inverse(fm.view);
@@ -41,3 +31,4 @@ FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
 
   return fm;
 }
+
