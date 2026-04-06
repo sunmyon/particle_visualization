@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "core/tracking_vector.h"
 
 class ClumpData {

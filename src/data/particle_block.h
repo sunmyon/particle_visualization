@@ -1,4 +1,8 @@
 #pragma once
+
+#include <unordered_map>
+#include <array>
+
 #include "particle_data.h"
 #include "header_info.h"
 #include "core/physics_constants.h"

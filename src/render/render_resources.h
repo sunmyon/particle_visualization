@@ -124,9 +124,11 @@ void BuildEllipsoidRenderData(const EllipsoidManager& manager,
 void BuildLineRenderData(const LineManager& manager,
                          std::vector<LineRenderItem>& out);
 
+#ifdef ISO_CONTOUR
 void BuildIsoContourRenderData(const TrackingVector<float>& verts,
                                const TrackingVector<unsigned>& inds,
                                IsoContourRenderData& out);
+#endif
 
 void BuildPolyhedronRenderData(const PolyhedronManager& manager,
                                std::vector<PolyhedronRenderItem>& out);

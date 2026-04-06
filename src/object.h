@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+#include <array>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>   // for translate, scale

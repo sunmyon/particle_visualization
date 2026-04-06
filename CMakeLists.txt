@@ -660,22 +660,32 @@ endif()
 
 # ===== Lua =====
 if(USE_LUA)
-  # まずはモジュール検索
+# 1)  CMake  FindLua
   find_package(Lua QUIET)
-  if(Lua_FOUND AND TARGET Lua::Lua)
+
+# CMake module mode  LUA_FOUND / LUA_LIBRARIES / LUA_INCLUDE_DIR
+  if(TARGET Lua::Lua)
     target_link_libraries(${PROJECT_NAME} PRIVATE Lua::Lua)
-  elseif(Lua_FOUND)
+    message(STATUS "Lua: using imported target Lua::Lua")
+  elseif(LUA_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIR})
     target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
+    message(STATUS "Lua: include=${LUA_INCLUDE_DIR}")
+    message(STATUS "Lua: libs=${LUA_LIBRARIES}")
+# 2) pkg-config fallback macOS/Linux
   elseif(PKG_CONFIG_FOUND)
     pkg_check_modules(LUA QUIET lua-5.4 lua5.4 lua5.3 lua)
     if(LUA_FOUND)
       target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIRS})
       target_link_directories(${PROJECT_NAME} PRIVATE ${LUA_LIBRARY_DIRS})
       target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
+      message(STATUS "Lua: pkg-config include=${LUA_INCLUDE_DIRS}")
+      message(STATUS "Lua: pkg-config libs=${LUA_LIBRARIES}")
     else()
-      message(WARNING "Lua not found. Install Lua (e.g. brew install lua).")
+      message(WARNING "Lua not found.")
     endif()
+  else()
+      message(WARNING "Lua not found.")
   endif()
 endif()
 

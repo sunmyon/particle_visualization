@@ -1,5 +1,6 @@
 #ifdef GEOMETRICAL_ANALYSIS
 // EllipseFitter.cpp
+#include <queue>
 #include "GeometricAnalysis/ellipse_fitter.h"
 #include "data/particle_data.h"
 

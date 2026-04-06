@@ -27,7 +27,7 @@ Volume,float,1
 J21,float,1
 Metallicity,float,1
 H2Abundance,float,1
-ParticleType0_Size=1
+ParticleType0_Size=83.62
 ParticleType0_Min=0
 ParticleType0_Max=5
 ParticleType0_Periodic=1
@@ -90,7 +90,7 @@ Mask_Type4=0
 Mask_Type5=1
 Mask_EnableMaxParticles=0
 Mask_MaxParticles=2000000
-NormalizationFactor=10000
+NormalizationFactor=10
 skipStep=10
 currentStep=4
 UnitMass_in_msolar=1e+10

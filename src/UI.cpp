@@ -1,3 +1,4 @@
+#include <functional>
 #include <unordered_set>
 
 #include "UI.h"

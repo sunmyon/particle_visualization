@@ -321,6 +321,28 @@ void AppendCuboidArrowRenderData(const CuboidAnnotationManager& manager,
   }
 }
 
+void BuildLineRenderData(const LineManager& manager,
+                         std::vector<LineRenderItem>& out)
+{
+  const auto& lines = manager.getLines();
+
+  out.clear();
+  out.reserve(lines.size());
+
+  for (const auto& line : lines) {
+    if (line.empty()) continue;
+    if (line.points.empty()) continue;
+
+    LineRenderItem item;
+    item.points.assign(line.points.begin(), line.points.end());
+    item.color = line.color;
+    item.opacity = line.opacity;
+
+    out.push_back(std::move(item));
+  }
+}
+
+
 #ifdef ISO_CONTOUR
 namespace {
   void computeIsoContourNormals(const TrackingVector<float>& verts,
@@ -360,27 +382,6 @@ namespace {
       out_normals[3 * v + 1] = n.y;
       out_normals[3 * v + 2] = n.z;
     }
-  }
-}
-
-void BuildLineRenderData(const LineManager& manager,
-                         std::vector<LineRenderItem>& out)
-{
-  const auto& lines = manager.getLines();
-
-  out.clear();
-  out.reserve(lines.size());
-
-  for (const auto& line : lines) {
-    if (line.empty()) continue;
-    if (line.points.empty()) continue;
-
-    LineRenderItem item;
-    item.points.assign(line.points.begin(), line.points.end());
-    item.color = line.color;
-    item.opacity = line.opacity;
-
-    out.push_back(std::move(item));
   }
 }
 
