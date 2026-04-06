@@ -2,6 +2,7 @@
 
 #include <deque>
 #include "ui_state.h"
+#include "app/analysis_state.h"
 #include "scene_manager.h"
 #include "interaction/camera.h"
 #include "render/object_renderer.h"
@@ -36,7 +37,8 @@ struct Histogram2DUIState {
 
 void OpenHistogram2DUI();
 void DrawHistogram2DUI(Histogram2DComputer& computer,
-                       ParticleBlock& partblock);
+                       ParticleBlock& partblock,
+		       const Histogram2DContext& ctx);
 
 
 struct ProjectionMapUIState {
@@ -192,6 +194,7 @@ struct SettingsUIContext {
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
   SceneManagers* scene = nullptr;
+  AnalysisState* analysis = nullptr;  
 };
 
 void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt);

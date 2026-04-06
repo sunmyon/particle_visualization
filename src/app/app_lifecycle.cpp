@@ -60,9 +60,12 @@ bool InitPlatform(WindowContext& window,
 static void InitAppServices(AppServices& services, CameraContext& camera)
 {
   services.radialProfile   = std::make_unique<RadialProfileComputer>(camera.cameraTarget);
-  services.histogram2D     = std::make_unique<Histogram2DComputer>(camera.cameraTarget);
+  services.histogram2D     = std::make_unique<Histogram2DComputer>();
   services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
   services.clumpFind       = std::make_unique<FindClump>(camera);
+#ifdef USE_CONVEX_HULL
+  services.convexHull      = std::make_unique<ConvexHullGenerator>();
+#endif
 #ifdef GEOMETRICAL_ANALYSIS
   services.diskFinder      = std::make_unique<DiskRadiusFinder>();
   services.ellipsoid       = std::make_unique<EllipseFitter>();
@@ -85,10 +88,6 @@ void InitApplication(AppState& app, RenderSystem& render)
   app.particles = new ParticleArray(app.camera);
 
   InitRenderSystem(render);
-
-#ifdef USE_CONVEX_HULL
-  app.convexHullGenerator = new ConvexHullGenerator();
-#endif
 }
 
 
@@ -146,11 +145,6 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   rs.preview.destroy();
   ShutdownImGuiContext();
   window.destroy();
-
-#ifdef USE_CONVEX_HULL
-  delete app.convexHullGenerator;
-  app.convexHullGenerator = nullptr;
-#endif
 
   delete app.particles;
   app.particles = nullptr;

@@ -10,11 +10,6 @@
 
 #include <nanoflann.hpp>
 
-namespace{
-
-}
-
-
 int FindClump::find_parent(TrackingVector<int>& parent, int i) {
     if (parent[i] != i)
         parent[i] = find_parent(parent, parent[i]);
@@ -768,7 +763,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
     
     findClumpComputed = true;
     flagFOFComputed = true;
-    flagClearCache = true;
+    flagDirty = true;
   }
 
   ImGui::SameLine();
@@ -788,7 +783,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
     findClumpComputed = true;
     flagFOFComputed = false;
     flagDendrogramComputed = true;
-    flagClearCache = true;
+    flagDirty = true;
   }
 
 #ifdef CLUMP_DATA_READ
@@ -827,7 +822,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 	if(flagDendrogramComputed){
 	  sortNodesByMass(nodeList);
 
-	  flagClearCache = true;
+	  flagDirty = true;
 	}
       }
     }
@@ -840,7 +835,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 	if(flagDendrogramComputed){
 	  sortNodesByHierarchy(nodeList);
 
-	  flagClearCache = true;
+	  flagDirty = true;
 	}
       }
     }
@@ -920,7 +915,7 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 	    setFlagsRecursively(nodeList[i], originalParticles);	  
 	  }
 
-	  flagHullUpdated = true;
+	  flagDirty = true;
 	  flag_button_pushed = false;
 	}
 #endif

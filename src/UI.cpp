@@ -146,7 +146,8 @@ void OpenHistogram2DUI() {
 }
 
 void DrawHistogram2DUI(Histogram2DComputer& computer,
-                       ParticleBlock& partblock)
+                       ParticleBlock& partblock,
+		       const Histogram2DContext& ctx)
 {
   auto& state = gHistogram2DUIState;
   if (!state.open) return;
@@ -202,7 +203,7 @@ void DrawHistogram2DUI(Histogram2DComputer& computer,
   }
 
   if (ImGui::Button("Compute Histogram")) {
-    state.result = computer.compute(partblock, state.params);
+    state.result = computer.compute(partblock, state.params, ctx);
     if (state.result.valid) {
       state.computed = true;
 

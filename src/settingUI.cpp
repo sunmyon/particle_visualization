@@ -94,7 +94,7 @@ static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
 static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P);
 static void DrawNormalizationSection(ParticleArray* P);
-static void DrawSinkIdSection(const CameraContext& camCtx, SettingsRuntimeState& rt);
+static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(ParticleArray* P, CameraContext& camCtx, SettingsRuntimeState& rt);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
@@ -110,7 +110,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt) {
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
   DrawFileNavigationSection(ctx.fileInfo, ctx.P);
   DrawNormalizationSection(ctx.P);
-  DrawSinkIdSection(*ctx.camCtx, rt);
+  DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, *ctx.camCtx, rt);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
@@ -437,23 +437,25 @@ static void DrawNormalizationSection(ParticleArray* Part) {
   ImGui::Text("Max coordinate is normalized to: %.3f", Part->desiredMax);
 }
 
-static void DrawSinkIdSection(const CameraContext& camCtx, SettingsRuntimeState& rt){
+static void DrawSinkIdSection(const CameraContext& camCtx,
+                              ParticleLabelRenderState& labels)
+{
   if (!ImGui::CollapsingHeader("set sink ID visualization"))
     return;
-  
-  ImGui::InputFloat("radius", &rt.queryRadius, 0.f, 0.f, "%g");
-  ImGui::InputInt("number of particles", &rt.nqueryparticles);
-		
-  rt.moveThreshold = 0.1f*rt.queryRadius;
-		
-  if(ImGui::Button("show sink IDs")){
-    rt.flagShowSinkIDs = true;
-    rt.lastCameraPos = camCtx.cameraPos;
+
+  ImGui::InputFloat("radius", &labels.queryRadius, 0.f, 0.f, "%g");
+  ImGui::InputInt("number of particles", &labels.maxLabels);
+
+  labels.moveThreshold = 0.1f * labels.queryRadius;
+
+  if (ImGui::Button("show sink IDs")) {
+    labels.show = true;
+    labels.lastCameraPos = camCtx.cameraPos;
   }
-		
-  if(ImGui::Button("disable sink IDs")){
-    rt.flagShowSinkIDs = false;
-  }  
+
+  if (ImGui::Button("disable sink IDs")) {
+    labels.show = false;
+  }
 }
 
 static void DrawCameraPlacementSection(ParticleArray* Part, CameraContext& camCtx, SettingsRuntimeState& rt){
@@ -649,6 +651,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 #endif
   auto* render = ctx.render;
   auto* scene = ctx.scene;
+  auto* analysis = ctx.analysis;
   
   enum AnalysisMode {
     ANALYSIS_RADIAL_PROFILE,
@@ -709,7 +712,14 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
   case ANALYSIS_2D_HISTOGRAM: {
     if (ImGui::Button("Compute 2D histogram"))
       OpenHistogram2DUI();
-    DrawHistogram2DUI(*histogram2D, Part->particleBlock);
+
+    Histogram2DContext histCtx;
+    histCtx.cameraCenter = &camCtx.cameraTarget;
+    
+    auto visibleHulls = analysis->convexHulls.visibleHulls();
+    histCtx.convexHulls = &visibleHulls;
+
+    DrawHistogram2DUI(*histogram2D, Part->particleBlock, histCtx);
     break;
   }
   case ANALYSIS_CLUMP_FIND: {

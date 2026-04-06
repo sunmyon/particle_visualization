@@ -106,7 +106,7 @@ if(GEOMETRICAL_ANALYSIS)
 endif()
 
 if(USE_CONVEX_HULL)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/FindClumps/create_convex_hull.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/geometry/convex_hull_generator.cpp)
 endif()
 
 if(STREAM_LINE)

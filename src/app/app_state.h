@@ -4,7 +4,8 @@
 #include "ui_state.h"
 #include "scene_manager.h"
 #include "particle_visual_config.h"
-#include "particle_label_overlay.h"
+#include "overlay_state.h"
+#include "analysis_state.h"
 #include "render/gizmo_renderer.h"
 #include "interaction/interaction_utils.h"
 
@@ -14,29 +15,22 @@ class WindowContext;
 
 #include "app_services.h"
 
-#ifdef USE_CONVEX_HULL
-#include "FindClumps/create_convex_hull.h"
-#endif
-
 struct AppState {
   AppServices services;
 
   CameraContext camera;
+  InteractionState interaction;
+
   SettingsRuntimeState settings;
   RenderRuntimeState render;
   ParticleVisualConfig particleVisual;
 
   SceneManagers scene;
-
+  OverlayState overlay;
+  AnalysisState analysis;
+  
   ParticleArray* particles = nullptr;
   FileInfo* fileInfo = nullptr;
-
-  InteractionState interaction;
-  ParticleLabelOverlay particleLabels;
-
-#ifdef USE_CONVEX_HULL
-  ConvexHullGenerator* convexHullGenerator = nullptr;
-#endif
 };
 
 struct CallbackContext {

@@ -1,12 +1,11 @@
 #pragma once
 
-#include <glm/glm.hpp>
-#include <functional>
+#include <glm/vec3.hpp>
 
 #include "data/particle_block.h"
 #include "core/tracking_vector.h"
 #include "core/quantity.h"
-#include "convex_hull_interface.h"
+#include "geometry/convex_hull_interface.h"
 
 #ifdef USE_CONVEX_HULL
 #include <memory>
@@ -50,24 +49,18 @@ struct Histogram2DResult {
   bool valid = false;
 };
 
-class Histogram2DComputer {
-public:
-  explicit Histogram2DComputer(const glm::vec3& center)
-    : camCenter(center) {}
+struct Histogram2DContext {
+  const glm::vec3* cameraCenter = nullptr;
 
 #ifdef USE_CONVEX_HULL
-  void setConvexHulls(const TrackingVector<std::shared_ptr<IConvexHull>>& convexHulls) {
-    convexHullCache = convexHulls;
-  }
-#endif
-
-  Histogram2DResult compute(const ParticleBlock& partblock,
-                            const Histogram2DParams& params);
-
-private:
-  const glm::vec3& camCenter;
-
-#ifdef USE_CONVEX_HULL
-  TrackingVector<std::shared_ptr<IConvexHull>> convexHullCache;
+  const TrackingVector<std::shared_ptr<IConvexHull>>* convexHulls = nullptr;
 #endif
 };
+
+class Histogram2DComputer {
+public:
+  Histogram2DResult compute(const ParticleBlock& partblock,
+                            const Histogram2DParams& params,
+                            const Histogram2DContext& ctx) const;
+};
+

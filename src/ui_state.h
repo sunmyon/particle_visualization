@@ -6,13 +6,6 @@ struct SettingsRuntimeState {
   float radiusCullingSphere = 1.0f;
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
-  float crossSize = 0.05f;
-
-  float queryRadius = 0.5f;
-  int nqueryparticles = 0;
-  bool flagShowSinkIDs = false;
-  float moveThreshold = 0.05f;
-  glm::vec3 lastCameraPos = glm::vec3(0.0f);
 };
 
 struct RenderLayerState {
@@ -44,6 +37,15 @@ struct CoordAxesRenderState : RenderLayerState {
   CoordAxesRenderState() { show = true; }
 };
 
+struct ParticleLabelRenderState : RenderLayerState {
+  ParticleLabelRenderState() { show = false; }
+
+  float queryRadius = 0.0f;
+  float moveThreshold = 0.0f;
+  int maxLabels = 50;
+  glm::vec3 lastCameraPos{0.0f};
+};
+
 struct VelocityRenderState : RenderLayerState {
   VelocityRenderState() { show = false; }
 
@@ -68,6 +70,7 @@ struct RenderRuntimeState {
   CrossGizmoRenderState crossGizmo;
   CoordAxesRenderState coordAxes;
   ColorbarRenderState colorbar;
+  ParticleLabelRenderState particleLabels;
   
   struct Volume {
     bool show = false;

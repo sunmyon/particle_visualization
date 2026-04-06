@@ -152,8 +152,7 @@ private:
   bool findClumpComputed = false;              // FOFの結果が得られたかどうか
   bool flagFOFComputed = false;
   bool flagDendrogramComputed = false;
-  bool flagClearCache = false;
-  bool flagHullUpdated = false;
+  bool flagDirty = false;
   bool useHsml = true;
   
   float densityThreshold = 10.;
@@ -350,13 +349,17 @@ public:
   int get_nclumps() const{
     return nodeList.size();
   }
-
-  bool get_flagUpdated(){
-    return flagHullUpdated;
+  
+  bool isDirty(){
+    return flagDirty;
   }
 
-  void disable_flagUpdated(){
-    flagHullUpdated = false;
+  void clearDirtyFlag(){
+    flagDirty = false;
+  }
+
+  void setDirtyFlag(){
+    flagDirty = true;
   }
   
   TrackingVector<ParticleData> get_particle_indices(int i, TrackingVector<ParticleData>& originalParticles) const{
@@ -378,15 +381,6 @@ public:
     return (flagFOFComputed || flagDendrogramComputed);
   }
 
-  bool checkClearCache(void) const{
-    return flagClearCache;
-  }
-
-  void finishClearCache(void){
-    flagClearCache = false;
-    flagHullUpdated = true;
-  }
-
   void showWindow(void){
     showWindowClumpFinder = true;
   }  
@@ -394,7 +388,6 @@ public:
   void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
   
   void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo);
-
   
   void showClumpListWindow(){
     showWindowClumpList = true;

@@ -1,12 +1,15 @@
 #include "compute_2D_histogram.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
+#include <glm/glm.hpp>
 
 Histogram2DResult
 Histogram2DComputer::compute(const ParticleBlock& partblock,
-                             const Histogram2DParams& params)
+                             const Histogram2DParams& params,
+                             const Histogram2DContext& ctx) const
 {
   Histogram2DResult result;
   result.valid = false;
@@ -20,34 +23,31 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
 
 #ifdef USE_CONVEX_HULL
   if (params.useConvexHull) {
-    TrackingVector<std::function<bool(const ParticleData&)>> convexConditions;
+    condition = [&ctx](const ParticleData& p) -> bool {
+      if (!ctx.convexHulls || ctx.convexHulls->empty()) {
+        return false;
+      }
 
-    for (const auto& testerPtr : convexHullCache) {
-      auto isInsideConvexHull = [tester = testerPtr.get()](const ParticleData& p) -> bool {
-        std::array<double, 3> pt = { p.pos[0], p.pos[1], p.pos[2] };
-        return tester->isInside(pt);
-      };
-      convexConditions.push_back(isInsideConvexHull);
-    }
+      const std::array<double, 3> pt = { p.pos[0], p.pos[1], p.pos[2] };
 
-    std::function<bool(const ParticleData&)> convexFunc =
-      [](const ParticleData&) { return false; };
-
-    for (auto& cond : convexConditions) {
-      auto prev = convexFunc;
-      convexFunc = [prev, cond](const ParticleData& p) -> bool {
-        return prev(p) || cond(p);
-      };
-    }
-
-    condition = convexFunc;
+      for (const auto& hull : *ctx.convexHulls) {
+        if (hull && hull->isInside(pt)) {
+          return true;
+        }
+      }
+      return false;
+    };
   }
 #endif
 
   if (params.useCameraCenter) {
-    auto isWithinRadius = [this, &params](const ParticleData& p) -> bool {
+    auto isWithinRadius = [&ctx, &params](const ParticleData& p) -> bool {
+      if (!ctx.cameraCenter) {
+        return false;
+      }
+
       glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
-      return glm::length(pos - this->camCenter) <= params.cameraRadius;
+      return glm::length(pos - *ctx.cameraCenter) <= params.cameraRadius;
     };
 
     auto prevFunc = condition;
@@ -59,6 +59,8 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
   float min1 = 1.e30f, max1 = -1.e30f;
   float min2 = 1.e30f, max2 = -1.e30f;
 
+  const float* centerPtr = ctx.cameraCenter ? &ctx.cameraCenter->x : nullptr;
+
   if (params.autoRange) {
     bool firstX = true;
     bool firstY = true;
@@ -68,7 +70,6 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
       if (p.type != 0) continue;
       if (!condition(p)) continue;
 
-      const float* centerPtr = &camCenter.x;
       float v1 = getScalarValue(partblock, p, ipart, params.var1, centerPtr);
       float v2 = getScalarValue(partblock, p, ipart, params.var2, centerPtr);
 
@@ -140,7 +141,6 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
     if (p.type != 0) continue;
     if (!condition(p)) continue;
 
-    const float* centerPtr = &camCenter.x;
     float v1 = getScalarValue(partblock, p, ipart, params.var1, centerPtr);
     float v2 = getScalarValue(partblock, p, ipart, params.var2, centerPtr);
 

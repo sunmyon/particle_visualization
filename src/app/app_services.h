@@ -58,11 +58,18 @@ struct PythonBridgeState {
 };
 #endif
 
+#ifdef USE_CONVEX_HULL
+#include "geometry/convex_hull_generator.h"
+#endif
+
 struct AppServices {
   std::unique_ptr<RadialProfileComputer> radialProfile;
   std::unique_ptr<Histogram2DComputer> histogram2D;
   std::unique_ptr<ProjectionMapGenerator> projectionMap2D;
   std::unique_ptr<FindClump> clumpFind;
+#ifdef USE_CONVEX_HULL
+  std::unique_ptr<ConvexHullGenerator> convexHull;
+#endif
 #ifdef GEOMETRICAL_ANALYSIS
   std::unique_ptr<DiskRadiusFinder> diskFinder;
   std::unique_ptr<EllipseFitter> ellipsoid;
@@ -71,7 +78,6 @@ struct AppServices {
   std::unique_ptr<StreamlineComputer> streamLine;
 #endif
 #ifdef ISO_CONTOUR
-  //std::unique_ptr<IsoSurfaceGenerator> isoContour;
   IsoContourRuntime isoContour;
 #endif
   #ifdef VOLUME_RENDERING

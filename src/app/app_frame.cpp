@@ -38,6 +38,7 @@ static void UpdateUI(AppState& app)
   settingsCtx.services       = &app.services;
   settingsCtx.render         = &app.render;
   settingsCtx.scene          = &app.scene;
+  settingsCtx.analysis       = &app.analysis;
     
   ShowSettingsUI(settingsCtx, app.settings);
   ShowCameraSettingsUI();
@@ -66,11 +67,6 @@ static void UpdateUI(AppState& app)
     app.fileInfo->setMaskConfig(cfg);
   }
 
-#ifdef VOLUME_RENDERING
-  app.services.tf->showUI();
-  app.services.volume.rho2sigma = app.services.tf->bakeLUT(1024);
-#endif
-
   DrawTopParticlesUI(app.particles, app.camera);
 }
 
@@ -92,12 +88,17 @@ static void UpdateExternalInputs(AppState& app)
 
 static void UpdateOverlayState(AppState& app)
 {
-  if (app.settings.flagShowSinkIDs) {
-    app.particleLabels.updateIfNeeded(*app.particles,
-                                      app.camera,
-                                      app.settings);
-  }else{
-    app.particleLabels.clear();
+  auto& state = app.render.particleLabels;
+  auto& overlay = app.overlay.particleLabels;
+
+  if (!state.show) {
+    overlay.clear();
+    return;
+  }
+
+  if (overlay.needsRebuild(*app.particles, app.camera, state)) {
+    overlay.rebuild(*app.particles, app.camera, state);
+    app.particles->flagParticleIndexDirty = false;
   }
 }
 
@@ -174,28 +175,36 @@ static void UpdateFrameState(AppState& app, RenderSystem& rs)
 
 #ifdef USE_CONVEX_HULL
   if (app.services.clumpFind->checkClumpComputation()) {
-    if (app.services.clumpFind->checkClearCache()) {
-      app.scene.polyhedron.clearGroup("convex_hull");
-      rs.polyhedron.requestResetGroup("convex_hull");
-      app.services.clumpFind->finishClearCache();
-    }
-
-    app.render.polyhedra.cpuUpdated = app.services.clumpFind->get_flagUpdated();
-
+    app.render.polyhedra.cpuUpdated = app.services.clumpFind->isDirty();
     if (app.render.polyhedra.cpuUpdated) {
       app.scene.polyhedron.clearGroup("convex_hull");
-
+      app.analysis.convexHulls.resetGroup("convex_hull");
+      
       const int nclumps = app.services.clumpFind->get_nclumps();
       for (int i = 0; i < nclumps; ++i) {
         if (!app.services.clumpFind->flagShowHull(i))
           continue;
 
-        TrackingVector<ParticleData> pts =
-          app.services.clumpFind->get_particle_indices(i,
-                                                       app.particles->particleBlock.particles);
+	TrackingVector<ParticleData> pts =
+	  app.services.clumpFind->get_particle_indices(i, app.particles->particleBlock.particles);
+	
+	std::vector<glm::vec3> points;
+	points.reserve(pts.size());
+	for (const auto& p : pts) {
+	  points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
+	}
+	
+	auto hull = app.services.convexHull->buildHull(points);
+
+        ConvexHullEntry entry;
+        entry.hull = hull;
+        entry.tag = "convex_hull";
+        entry.sourceId = i;
+        entry.visible = true;
+        app.analysis.convexHulls.entries.push_back(std::move(entry));
 
         TrackingVector<float> vertices =
-          app.convexHullGenerator->buildLineVertices(pts);
+          app.services.convexHull->buildLineVertices(points);
 
         PolyhedronObject obj;
         obj.vertices.reserve(vertices.size() / 3);
@@ -216,7 +225,7 @@ static void UpdateFrameState(AppState& app, RenderSystem& rs)
       rs.resources.polyhedraGpuDirty = true;
       app.render.polyhedra.show = true;
       app.render.polyhedra.cpuUpdated = false;
-      app.services.clumpFind->disable_flagUpdated();
+      app.services.clumpFind->clearDirtyFlag();
 
       rs.polyhedron.requestResetGroup("convex_hull");
     }
@@ -390,9 +399,9 @@ static void DrawOverlayPass(AppState& app,
                             const WindowContext& window,
                             const FrameMatrices& fm)
 {
-  app.particleLabels.draw(fm.view,
-                          fm.projection,
-                          window);
+  app.overlay.particleLabels.draw(fm.view,
+				  fm.projection,
+				  window);
 
   GizmoDrawContext gctx;
   gctx.view            = fm.view;
@@ -451,10 +460,6 @@ static void RenderScene(AppState& app, RenderSystem& rs, const WindowContext& wi
   DrawParticlePass(app, rs, fm);
   DrawSceneObjectsPass(app, rs, fm);
   DrawOverlayPass(app, rs, window, fm);
-
-#ifdef VOLUME_RENDERING
-  // DrawVolumePass(...);
-#endif
 }
 
 void RunFrame(AppState& app,
