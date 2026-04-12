@@ -33,7 +33,7 @@
 #endif
 
 #ifdef ISO_CONTOUR
-#include "IsoSurface/IsoSurfaceGenerator.h"
+#include "IsoSurface/iso_contour_build.h"
 #endif
 
 #ifndef NONATIVEFILEDIALOG
@@ -221,8 +221,10 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part){
     };
 
     nfdopendialogu8args_t args = {};
-    args.filterList  = filters;
-    args.filterCount = 1;
+    //args.filterList  = filters;
+    //args.filterCount = 1;
+    args.filterList  = nullptr; 
+    args.filterCount = 0;    
     args.defaultPath = fileInfo->folderPath[0] ? fileInfo->folderPath : nullptr;
 
     nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
@@ -1152,6 +1154,9 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 #endif
   auto* render = ctx.render;
   auto* scene = ctx.scene;
+#ifdef ISO_CONTOUR
+  auto* isoContour = ctx.isoContour;
+#endif
   
   enum RenderingMode {
     RENDER_PROJECTION_MAP,
@@ -1412,7 +1417,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     if (ImGui::InputFloat3("Center of the region to place seed points", seed_center, "%.3f")){
       seedRegionDirty = true;
     }
-				
+    
     // 2) Side‐length: rebuild when changed
     if (ImGui::InputFloat3("side len", seed_len, "%.3f")) {
       seedRegionDirty = true;
@@ -1503,86 +1508,20 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
     }
 				
     if (ImGui::Button("Build OctTree & Mesh")) {
-      auto& iso = services->isoContour;
-      BuildIsoContourMesh(*Part, selectedVar_iso, isoLevel, max_treelevel, iso, *render);
+      BuildIsoContourGeometry(*Part,
+			      selectedVar_iso,
+			      isoLevel,
+			      max_treelevel,
+			      *isoContour);
+
+      render->isocontour.show = true;
+      render->isocontour.cpuUpdated = true;
     }
 								
     if (ImGui::Button("disable Grid & Mesh")) {
       render->isocontour.show = false;
     }    
     break;
-  }
-#endif
-			
-#ifdef VOLUME_RENDERING  
-  case RENDER_VOLUME_RENDERING: {
-    ImGui::Text("RayTracing?");
-    ImGui::RadioButton("Ray Tracing with BVH", &render->volume.flagRT, 1);
-    ImGui::SameLine();
-    ImGui::RadioButton("Ray Marching with octtree", &render->volume.flagRT, 2);
-    ImGui::SameLine();
-    ImGui::RadioButton("No, blending", &render->volume.flagRT, 0);
-				
-    if(render->volume.flagRT == 0){
-      ImGui::Text("kernel");
-      ImGui::RadioButton("Gaussian", &render->volume.kernelMode, 0);
-      ImGui::SameLine();
-      ImGui::RadioButton("SPH interpolation", &render->volume.kernelMode, 1);
-					
-      if(render->volume.kernelMode == 0)
-	ImGui::SliderFloat("Maximum size of the kernel", &render->volume.gaussNSigma, 1.0f, 50.f);    	
-					
-      if(render->volume.kernelMode == 1)
-	ImGui::SliderFloat("Enlarge factor for Kernel", &render->volume.enlargeKernel, 0.5f, 50.f);    	      
-    }
-				
-    if(render->volume.flagRT){
-      ImGui::Text("LOD");
-      ImGui::RadioButton("LEAF ONLY", &render->volume.lodMode, 0);
-      ImGui::SameLine();
-      ImGui::RadioButton("Auto LOD", &render->volume.lodMode, 1);
-					
-      if(render->volume.lodMode == 1)
-	ImGui::SliderFloat("Pixel Threshold (px)", &render->volume.pxThreshold, 0.5f, 6.0f, "%.2f");      
-					
-      ImGui::SliderFloat("Maximum Tau for RT", &render->volume.tauMax, 0.1f, 100.f);    
-      ImGui::SliderFloat("upscaling factor", &render->volume.rtDownscale, 1.0f, 10.0f);
-    }
-				
-    static QuantityId selectedVar_volume = QuantityId::Density;
-    if (ImGui::BeginCombo("Quantity for Volume rendering", QuantityLabel(selectedVar_volume))) {
-      for (int q = 0; q < Part->particleBlock.nUIQ; ++q) {
-	QuantityId cand = Part->particleBlock.uiQ[q];
-	bool is_selected = (cand == selectedVar_volume);
-	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_volume = cand;
-	if (is_selected) ImGui::SetItemDefaultFocus();
-      }
-      ImGui::EndCombo();
-    }
-				
-    if(ImGui::Button("set Render Opacitiy")){
-      float val_max = -1.e30, val_min = 1.e30;
-      for (size_t ipart=0;ipart < Part->particleBlock.particles.size();ipart++) {
-	const auto &pd = Part->particleBlock.particles[ipart];
-	if(pd.type != 0)
-	  continue;
-						
-	float val = getScalarValue(Part->particleBlock, pd, ipart, selectedVar_volume);
-	if(val > val_max) val_max = val;
-	if(val < val_min) val_min = val;
-      }
-					
-      tf->set_minmax(selectedVar_volume, val_min, val_max);      
-      tf->set_window();
-    }
-
-    if (ImGui::Button("do volume rendering")) {
-      PrepareVolumeRendering(*Part, *bvh, volume, *render);
-    }
-    
-    if (ImGui::Button("reload opacity")) {
-      ReloadVolumeRendering(volume, *render);
-    }
   }
 #endif
 			

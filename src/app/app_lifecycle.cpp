@@ -82,10 +82,10 @@ static void InitAppServices(AppServices& services, CameraContext& camera)
 void InitApplication(AppState& app, RenderSystem& render)
 {
   InitRenderPrograms(render.programs);
-  InitAppServices(app.services, app.camera);
+  InitAppServices(app.services, app.view.camera);
 
-  app.fileInfo  = new FileInfo(app.camera);
-  app.particles = new ParticleArray(app.camera);
+  app.data.fileInfo  = new FileInfo(app.view.camera);
+  app.data.particles = new ParticleArray(app.view.camera);
 
   InitRenderSystem(render);
 }
@@ -96,26 +96,26 @@ void LoadInitialData(AppState& app)
 {
   ConfigMaskState maskState;
   if (loadConfig("config.txt",
-                 app.particles,
-                 app.fileInfo,
-                 &app.particleVisual,
+                 app.data.particles,
+                 app.data.fileInfo,
+                 &app.view.particleVisual,
                  &maskState)) {
     ApplyMaskConfigState(maskState);
 
     MaskConfig cfg = MakeMaskConfigFromUI();
-    app.fileInfo->setMaskConfig(cfg);
+    app.data.fileInfo->setMaskConfig(cfg);
   }
 
-  app.fileInfo->setUnit(app.particles);
+  app.data.fileInfo->setUnit(app.data.particles);
 
   const int newFileIndex =
-    app.fileInfo->initialIndex +
-    app.fileInfo->currentStep * app.fileInfo->skipStep;
+    app.data.fileInfo->initialIndex +
+    app.data.fileInfo->currentStep * app.data.fileInfo->skipStep;
 
-  app.fileInfo->loadBatch(newFileIndex,
-                          app.fileInfo->batchSize,
-                          app.fileInfo->skipStep,
-                          app.particles);
+  app.data.fileInfo->loadBatch(newFileIndex,
+                          app.data.fileInfo->batchSize,
+                          app.data.fileInfo->skipStep,
+                          app.data.particles);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
@@ -133,9 +133,9 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   ConfigMaskState maskState;
   ExportMaskConfigState(maskState);
   saveConfig("config.txt",
-             app.particles,
-             app.fileInfo,
-             &app.particleVisual,
+             app.data.particles,
+             app.data.fileInfo,
+             &app.view.particleVisual,
              &maskState);
 
 #ifndef NONATIVEFILEDIALOG
@@ -146,9 +146,9 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   ShutdownImGuiContext();
   window.destroy();
 
-  delete app.particles;
-  app.particles = nullptr;
+  delete app.data.particles;
+  app.data.particles = nullptr;
 
-  delete app.fileInfo;
-  app.fileInfo = nullptr;
+  delete app.data.fileInfo;
+  app.data.fileInfo = nullptr;
 }

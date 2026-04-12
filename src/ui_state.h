@@ -11,6 +11,7 @@ struct SettingsRuntimeState {
 struct RenderLayerState {
   bool show = false;
   bool cpuUpdated = false;
+  bool gpuUpdated = false;
   float opacity = 1.0f;
 };
 

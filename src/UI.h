@@ -3,6 +3,7 @@
 #include <deque>
 #include "ui_state.h"
 #include "app/analysis_state.h"
+#include "app/app_state.h"
 #include "scene_manager.h"
 #include "interaction/camera.h"
 #include "render/object_renderer.h"
@@ -194,7 +195,10 @@ struct SettingsUIContext {
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
   SceneManagers* scene = nullptr;
-  AnalysisState* analysis = nullptr;  
+  AnalysisState* analysis = nullptr;
+#ifdef ISO_CONTOUR
+  IsoContourGeometryState* isoContour = nullptr;
+#endif
 };
 
 void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt);

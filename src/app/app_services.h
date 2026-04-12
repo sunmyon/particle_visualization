@@ -11,14 +11,6 @@ class EllipsoidComputer;
 class StreamlineComputer;
 class EllipseFitter;
 
-#ifdef ISO_CONTOUR
-struct IsoContourRuntime {
-  TrackingVector<float> verts;
-  TrackingVector<unsigned> inds;
-  bool dirty = false;
-};
-#endif
-
 #ifdef VOLUME_RENDERING
 #include "BVH/BVH.hpp"
 #include "VolumeRendering/tau_sph.h"
@@ -76,9 +68,6 @@ struct AppServices {
 #endif
 #ifdef STREAM_LINE
   std::unique_ptr<StreamlineComputer> streamLine;
-#endif
-#ifdef ISO_CONTOUR
-  IsoContourRuntime isoContour;
 #endif
   #ifdef VOLUME_RENDERING
   std::unique_ptr<lbvh::MortonBuilder> bvh;

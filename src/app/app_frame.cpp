@@ -25,256 +25,366 @@
 #include "PythonBridge/ShmLayout.h"
 #endif
 
-
-static void UpdateUI(AppState& app)
+static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
+                                               AppViewState& view,
+                                               AppRuntimeState& runtime,
+                                               AppDerivedState& derived,
+                                               AppServices& services)
 {
-  ShowTime(app.particles->particleBlock.header.time);
-
-  SettingsUIContext settingsCtx;
-  settingsCtx.P              = app.particles;
-  settingsCtx.fileInfo       = app.fileInfo;
-  settingsCtx.camCtx         = &app.camera;
-  settingsCtx.particleVisual = &app.particleVisual;
-  settingsCtx.services       = &app.services;
-  settingsCtx.render         = &app.render;
-  settingsCtx.scene          = &app.scene;
-  settingsCtx.analysis       = &app.analysis;
-    
-  ShowSettingsUI(settingsCtx, app.settings);
-  ShowCameraSettingsUI();
-
-  app.services.clumpFind->ShowFindClumpsUI(app.particles->particleBlock.particles,
-                                           app.particles->particleBlock.header,
-					   *app.fileInfo);
-
-#ifdef CLUMP_DATA_READ
-  app.services.clumpFind->ReadAndShowClumpsUI(app.particles,
-                                              app.fileInfo->currentFileIndex,
-					      *app.fileInfo);
-  app.services.clumpFind->showClumpChainList(app.particles,
-                                             app.services.projectionMap2D.get(),
-					     *app.fileInfo);
+  SettingsUIContext ctx;
+  ctx.P              = data.particles;
+  ctx.fileInfo       = data.fileInfo;
+  ctx.camCtx         = &view.camera;
+  ctx.particleVisual = &view.particleVisual;
+  ctx.services       = &services;
+  ctx.render         = &runtime.render;
+  ctx.scene          = &derived.scene;
+  ctx.analysis       = &derived.analysis;
+#ifdef ISO_CONTOUR
+  ctx.isoContour     = &derived.isoContour;
 #endif
-
-  app.fileInfo->DrawFormatDialog();
-#ifdef HAVE_HDF5
-  app.fileInfo->ShowHDF5FieldMappingDialog();
-#endif
-
-  const bool applied = DrawMaskWindow();
-  if (applied) {
-    MaskConfig cfg = MakeMaskConfigFromUI();
-    app.fileInfo->setMaskConfig(cfg);
-  }
-
-  DrawTopParticlesUI(app.particles, app.camera);
+  return ctx;
 }
 
-static void UpdateExternalInputs(AppState& app)
+static void DrawSettingsPanels(const AppDataState& data,
+                               AppViewState& view,
+                               AppRuntimeState& runtime,
+                               AppDerivedState& derived,
+                               AppServices& services)
+{
+  SettingsUIContext settingsCtx =
+      MakeSettingsUIContext(data, view, runtime, derived, services);
+  ShowSettingsUI(settingsCtx, runtime.settings);
+  ShowCameraSettingsUI();
+}
+
+static void DrawClumpPanels(const AppDataState& data,
+                            AppServices& services)
+{
+  services.clumpFind->ShowFindClumpsUI(data.particles->particleBlock.particles,
+                                       data.particles->particleBlock.header,
+                                       *data.fileInfo);
+
+#ifdef CLUMP_DATA_READ
+  services.clumpFind->ReadAndShowClumpsUI(data.particles,
+                                          data.fileInfo->currentFileIndex,
+                                          *data.fileInfo);
+  services.clumpFind->showClumpChainList(data.particles,
+                                         services.projectionMap2D.get(),
+                                         *data.fileInfo);
+#endif
+}
+
+static void DrawFileDialogPanels(const AppDataState& data)
+{
+  data.fileInfo->DrawFormatDialog();
+#ifdef HAVE_HDF5
+  data.fileInfo->ShowHDF5FieldMappingDialog();
+#endif
+}
+
+static void ApplyMaskIfRequested(const AppDataState& data)
+{
+  const bool applied = DrawMaskWindow();
+  if (!applied) {
+    return;
+  }
+
+  MaskConfig cfg = MakeMaskConfigFromUI();
+  data.fileInfo->setMaskConfig(cfg);
+}
+
+
+static void DrawAuxiliaryPanels(const AppDataState& data,
+                                AppViewState& view)
+{
+  DrawTopParticlesUI(data.particles, view.camera);
+}
+
+static void UpdateUI(const AppDataState& data,
+                     AppViewState& view,
+                     AppRuntimeState& runtime,
+                     AppDerivedState& derived,
+                     AppServices& services)
+{
+  ShowTime(data.particles->particleBlock.header.time);
+
+  DrawSettingsPanels(data, view, runtime, derived, services);
+  DrawClumpPanels(data, services);
+  DrawFileDialogPanels(data);
+  ApplyMaskIfRequested(data);
+  DrawAuxiliaryPanels(data, view);
+}
+
+static void UpdateExternalInputs(AppServices& services,
+                                 ParticleArray& particles)
 {
 #ifdef PYTHON_BRIDGE
-  if (app.services.py.ptr) {
+  if (services.py.ptr) {
     std::vector<FieldId> dirty;
-    app.services.py.ptr->drainEditFields(dirty);
+    services.py.ptr->drainEditFields(dirty);
     if (!dirty.empty()) {
-      bridge::applyFromSharedToAoS(app.services.py.ptr->shared(),
-                                   *app.particles,
+      bridge::applyFromSharedToAoS(services.py.ptr->shared(),
+                                   particles,
                                    dirty);
-      app.particles->particlesDirty = true;
+      particles.particlesDirty = true;
     }
   }
 #endif
 }
 
-static void UpdateOverlayState(AppState& app)
+static void UpdateOverlayState(ParticleArray& particles,
+                               const CameraContext& camera,
+                               ParticleLabelRenderState& state,
+                               OverlayState& overlay)
 {
-  auto& state = app.render.particleLabels;
-  auto& overlay = app.overlay.particleLabels;
+  auto& labels = overlay.particleLabels;
 
   if (!state.show) {
-    overlay.clear();
+    labels.clear();
     return;
   }
 
-  if (overlay.needsRebuild(*app.particles, app.camera, state)) {
-    overlay.rebuild(*app.particles, app.camera, state);
-    app.particles->flagParticleIndexDirty = false;
+  if (labels.needsRebuild(particles, camera, state)) {
+    labels.rebuild(particles, camera, state);
+    particles.flagParticleIndexDirty = false;
   }
 }
 
-static void PropagateDirtyFlags(const AppState& app, RenderSystem& rs)
+static void PropagateDirtyFlags(const ParticleArray& particles,
+                                RenderSystem& rs)
 {
-  if (app.particles->particlesDirty) {
+  if (particles.particlesDirty) {
     rs.resources.particleRenderDataDirty = true;
   }
 
-  if (app.particles->velocityDirty) {
+  if (particles.velocityDirty) {
     rs.resources.velocityInstanceDataDirty = true;
   }
 }
 
-static void UpdateFrameState(AppState& app, RenderSystem& rs)
+static void UpdateParticleRenderResources(ParticleArray& particles,
+                                          const ParticleVisualConfig& particleVisual,
+                                          const VelocityRenderState& velocityState,
+                                          RenderSystem& rs)
 {
-  rs.resources.cuboidRenderData.clear();
-  rs.resources.lineRenderData.clear();
-
-  PropagateDirtyFlags(app, rs);
-
   if (rs.resources.particleRenderDataDirty) {
-    BuildRenderParticles(*app.particles,
-                         app.particleVisual,
+    BuildRenderParticles(particles,
+                         particleVisual,
                          rs.resources.renderParticles);
     rs.resources.particleRenderDataDirty = false;
     rs.resources.particlesGpuDirty = true;
-    app.particles->particlesDirty = false;
+    particles.particlesDirty = false;
   }
 
   if (rs.resources.velocityInstanceDataDirty) {
-    UpdateVelocityRenderData(*app.particles,
-                             app.render.velocity.subtraction,
+    UpdateVelocityRenderData(particles,
+                             velocityState.subtraction,
                              rs.resources.velocityInstanceData);
     rs.resources.velocityInstanceDataDirty = false;
     rs.resources.velocityGpuDirty = true;
-    app.particles->velocityDirty = false;
+    particles.velocityDirty = false;
   }
+}
 
-  if (app.render.cubes.cpuUpdated) {
-    BuildCubeRenderData(app.scene.cube, rs.resources.cubeRenderData);
-    app.render.cubes.cpuUpdated = false;
+static void UpdateSceneRenderResources(const SceneManagers& scene,
+				       RenderRuntimeState& render,
+				       RenderSystem& rs)
+{
+  if (render.cubes.cpuUpdated) {
+    BuildCubeRenderData(scene.cube, rs.resources.cubeRenderData);
+    render.cubes.cpuUpdated = false;
     rs.resources.cubesGpuDirty = true;
   }
 
   if (rs.resources.ellipsoidRenderDataDirty) {
-    BuildEllipsoidRenderData(app.scene.ellipsoid,
+    BuildEllipsoidRenderData(scene.ellipsoid,
                              rs.resources.ellipsoidRenderData);
     rs.resources.ellipsoidRenderDataDirty = false;
     rs.resources.ellipsoidsGpuDirty = true;
   }
 
   if (rs.resources.diskRenderDataDirty) {
-    BuildDiskRenderData(app.scene.disk, rs.resources.diskRenderData);
+    BuildDiskRenderData(scene.disk, rs.resources.diskRenderData);
     rs.resources.diskRenderDataDirty = false;
     rs.resources.disksGpuDirty = true;
   }
 
   if (rs.resources.lineRenderDataDirty) {
-    BuildLineRenderData(app.scene.line, rs.resources.lineRenderData);
+    BuildLineRenderData(scene.line, rs.resources.lineRenderData);
     rs.resources.lineRenderDataDirty = false;
     rs.resources.linesGpuDirty = true;
   }
+}
 
 #ifdef ISO_CONTOUR
-  if (app.render.isocontour.cpuUpdated) {
-    BuildIsoContourRenderData(app.services.isoContour.verts,
-                              app.services.isoContour.inds,
-                              rs.resources.isoContourRenderData);
-    app.render.isocontour.cpuUpdated = false;
-    rs.resources.isoContourGpuDirty = true;
+static void UpdateIsoContourRenderResources(const IsoContourGeometryState& isoContour,
+                                            RenderRuntimeState& render,
+                                            RenderSystem& rs)
+{
+  if (!render.isocontour.cpuUpdated) {
+    return;
   }
+
+  BuildIsoContourRenderData(isoContour.verts,
+                            isoContour.inds,
+                            rs.resources.isoContourRenderData);
+  render.isocontour.cpuUpdated = false;
+  rs.resources.isoContourGpuDirty = true;
+}
 #endif
 
 #ifdef USE_CONVEX_HULL
-  if (app.services.clumpFind->checkClumpComputation()) {
-    app.render.polyhedra.cpuUpdated = app.services.clumpFind->isDirty();
-    if (app.render.polyhedra.cpuUpdated) {
-      app.scene.polyhedron.clearGroup("convex_hull");
-      app.analysis.convexHulls.resetGroup("convex_hull");
-      
-      const int nclumps = app.services.clumpFind->get_nclumps();
-      for (int i = 0; i < nclumps; ++i) {
-        if (!app.services.clumpFind->flagShowHull(i))
-          continue;
-
-	TrackingVector<ParticleData> pts =
-	  app.services.clumpFind->get_particle_indices(i, app.particles->particleBlock.particles);
-	
-	std::vector<glm::vec3> points;
-	points.reserve(pts.size());
-	for (const auto& p : pts) {
-	  points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
-	}
-	
-	auto hull = app.services.convexHull->buildHull(points);
-
-        ConvexHullEntry entry;
-        entry.hull = hull;
-        entry.tag = "convex_hull";
-        entry.sourceId = i;
-        entry.visible = true;
-        app.analysis.convexHulls.entries.push_back(std::move(entry));
-
-        TrackingVector<float> vertices =
-          app.services.convexHull->buildLineVertices(points);
-
-        PolyhedronObject obj;
-        obj.vertices.reserve(vertices.size() / 3);
-        for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
-          obj.vertices.emplace_back(vertices[k], vertices[k + 1], vertices[k + 2]);
-        }
-
-        obj.color   = glm::vec3(1.0f);
-        obj.opacity = app.render.polyhedra.opacity;
-        obj.tag     = "convex_hull";
-
-        app.scene.polyhedron.add(i, obj);
-      }
-
-      BuildPolyhedronRenderData(app.scene.polyhedron,
-                                rs.resources.polyhedronRenderData);
-
-      rs.resources.polyhedraGpuDirty = true;
-      app.render.polyhedra.show = true;
-      app.render.polyhedra.cpuUpdated = false;
-      app.services.clumpFind->clearDirtyFlag();
-
-      rs.polyhedron.requestResetGroup("convex_hull");
-    }
+static void UpdateConvexHullDerivedState(ParticleArray& particles,
+                                         FindClump& clumpFind,
+                                         ConvexHullGenerator& convexHull,
+                                         RenderLayerState& polyhedraState,
+					 PolyhedronManager& polyhedra,
+                                         AnalysisState& analysis)
+{
+  if (!clumpFind.checkClumpComputation()) {
+    return;
   }
-#endif
 
-  if (app.render.cuboidAnnotations.cpuUpdated) {
-    app.scene.cuboidAnnotation.clear();
+  polyhedraState.cpuUpdated = clumpFind.isDirty();
+  if (!polyhedraState.cpuUpdated) {
+    return;
+  }
 
-    if (app.render.cuboidAnnotations.show) {
-      CuboidAnnotationObject obj;
-      obj.cuboid = app.services.projectionMap2D->interactiveCuboid();
+  polyhedra.clearGroup("convex_hull");
+  analysis.convexHulls.resetGroup("convex_hull");
 
-      obj.cuboid.edgeColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-      obj.highlightColor   = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-      obj.arrowColor       = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+  const int nclumps = clumpFind.get_nclumps();
+  for (int i = 0; i < nclumps; ++i) {
+    if (!clumpFind.flagShowHull(i))
+      continue;
 
-      const int axis = app.services.projectionMap2D->params.selectedAxis;
-      if (axis == 0)      obj.selectedAxis = CuboidAxis::X;
-      else if (axis == 1) obj.selectedAxis = CuboidAxis::Y;
-      else                obj.selectedAxis = CuboidAxis::Z;
+    TrackingVector<ParticleData> pts =
+      clumpFind.get_particle_indices(i, particles.particleBlock.particles);
 
-      obj.showAxisHighlight = true;
-      obj.showArrow         = true;
-      obj.arrowLength       = 0.2f;
-      obj.arrowHeadLength   = 0.05f;
-      obj.arrowHeadWidth    = 0.03f;
-      obj.tag               = "interactive_cuboid";
-
-      app.scene.cuboidAnnotation.add(obj);
-
-      AppendCuboidAnnotationRenderData(app.scene.cuboidAnnotation,
-                                       rs.resources.cuboidRenderData);
-      rs.resources.cuboidsGpuDirty = true;
-      app.render.cuboids.show = true;
-
-      AppendCuboidArrowRenderData(app.scene.cuboidAnnotation,
-                                  rs.resources.lineRenderData);
-      rs.resources.linesGpuDirty = true;
-      app.render.lines.show = true;
+    std::vector<glm::vec3> points;
+    points.reserve(pts.size());
+    for (const auto& p : pts) {
+      points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
     }
 
-    app.render.cuboidAnnotations.cpuUpdated = false;
+    auto hull = convexHull.buildHull(points);
+
+    ConvexHullEntry entry;
+    entry.hull = hull;
+    entry.tag = "convex_hull";
+    entry.sourceId = i;
+    entry.visible = true;
+    analysis.convexHulls.entries.push_back(std::move(entry));
+
+    TrackingVector<float> vertices =
+      convexHull.buildLineVertices(points);
+
+    PolyhedronObject obj;
+    obj.vertices.reserve(vertices.size() / 3);
+    for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
+      obj.vertices.emplace_back(vertices[k], vertices[k + 1], vertices[k + 2]);
+    }
+
+    obj.color   = glm::vec3(1.0f);
+    obj.opacity = polyhedraState.opacity;
+    obj.tag     = "convex_hull";
+
+    polyhedra.add(i, obj);
   }
+
+  clumpFind.clearDirtyFlag();
+
+  polyhedraState.show = true;
+  polyhedraState.cpuUpdated = false;
+  polyhedraState.gpuUpdated = true;
 }
 
-static void DrawSceneObjectsPass(AppState& app,
-			  RenderSystem& rs,
-			  const FrameMatrices& fm)
+static void UpdateConvexHullRenderState(RenderLayerState& polyhedraState,
+					const PolyhedronManager& polyhedra,
+					RenderSystem& rs)
+{
+  if (!polyhedraState.gpuUpdated) {
+    return;
+  }
+
+  BuildPolyhedronRenderData(polyhedra,
+                            rs.resources.polyhedronRenderData);
+  
+  polyhedraState.gpuUpdated = false; 
+  rs.resources.polyhedraGpuDirty = true;
+  rs.polyhedron.requestResetGroup("convex_hull");
+}
+#endif
+
+static void UpdateCuboidAnnotationDerivedState(RenderLayerState& annotationState,
+					       RenderLayerState& cuboidsState,
+					       RenderLayerState& linesState,
+					       CuboidAnnotationManager& annotations,
+                                               ProjectionMapGenerator& projectionMap2D)
+{
+  if (!annotationState.cpuUpdated) {
+    return;
+  }
+
+  annotations.clear();
+
+  if (annotationState.show) {
+    CuboidAnnotationObject obj;
+    obj.cuboid = projectionMap2D.interactiveCuboid();
+
+    obj.cuboid.edgeColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    obj.highlightColor   = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    obj.arrowColor       = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+    const int axis = projectionMap2D.params.selectedAxis;
+    if (axis == 0)      obj.selectedAxis = CuboidAxis::X;
+    else if (axis == 1) obj.selectedAxis = CuboidAxis::Y;
+    else                obj.selectedAxis = CuboidAxis::Z;
+
+    obj.showAxisHighlight = true;
+    obj.showArrow         = true;
+    obj.arrowLength       = 0.2f;
+    obj.arrowHeadLength   = 0.05f;
+    obj.arrowHeadWidth    = 0.03f;
+    obj.tag               = "interactive_cuboid";
+
+    annotations.add(obj);
+  }
+
+  if(annotationState.show){
+    cuboidsState.show = true;
+    linesState.show = true;
+  }
+      
+  annotationState.gpuUpdated = true;
+  annotationState.cpuUpdated = false;
+}
+
+
+static void UpdateCuboidAnnotationRenderResources(RenderLayerState& annotationState,
+						  const CuboidAnnotationManager& annotations,
+						  RenderSystem& rs)
+{
+  if (!annotationState.gpuUpdated) {
+    return;
+  }
+
+  AppendCuboidAnnotationRenderData(annotations,
+				   rs.resources.cuboidRenderData);
+  rs.resources.cuboidsGpuDirty = true;
+  
+
+  AppendCuboidArrowRenderData(annotations,
+			      rs.resources.lineRenderData);
+  rs.resources.linesGpuDirty = true;
+
+  annotationState.gpuUpdated = false;
+}
+
+static void DrawSceneObjectsPass(const RenderRuntimeState& render,
+                                 RenderSystem& rs,
+                                 const FrameMatrices& fm)
 {
   RenderDrawContext ctx;
   ctx.model            = fm.model;
@@ -293,38 +403,38 @@ static void DrawSceneObjectsPass(AppState& app,
               rs.resources.ellipsoidRenderData,
               rs.resources.ellipsoidsGpuDirty,
               ctx,
-              app.render.ellipsoids);
+              render.ellipsoids);
 
   SyncAndDraw(rs.disk,
               rs.resources.diskRenderData,
               rs.resources.disksGpuDirty,
               ctx,
-              app.render.disks);
+              render.disks);
 
   SyncAndDraw(rs.cube,
               rs.resources.cubeRenderData,
               rs.resources.cubesGpuDirty,
               ctx,
-              app.render.cubes);
+              render.cubes);
 
   SyncAndDraw(rs.cuboid,
               rs.resources.cuboidRenderData,
               rs.resources.cuboidsGpuDirty,
               ctx,
-              app.render.cuboids);
+              render.cuboids);
 
   SyncAndDraw(rs.line,
               rs.resources.lineRenderData,
               rs.resources.linesGpuDirty,
               ctx,
-              app.render.lines);
+              render.lines);
 
 #ifdef USE_CONVEX_HULL
   SyncAndDraw(rs.polyhedron,
               rs.resources.polyhedronRenderData,
               rs.resources.polyhedraGpuDirty,
               ctx,
-              app.render.polyhedra);
+              render.polyhedra);
 #endif
 
 #ifdef ISO_CONTOUR
@@ -332,7 +442,7 @@ static void DrawSceneObjectsPass(AppState& app,
               rs.resources.isoContourRenderData,
               rs.resources.isoContourGpuDirty,
               ctx,
-              app.render.isocontour);
+              render.isocontour);
 #endif
 }
 
@@ -355,53 +465,56 @@ static ColorBarLabelLayout ComputeColorbarLayout(const WindowContext& window,
   return layout;
 }
 
-static ColorbarGizmoState BuildColorbarGizmoState(const AppState& app,
+static ColorbarGizmoState BuildColorbarGizmoState(const RenderRuntimeState& render,
+                                                  const ParticleVisualConfig& particleVisual,
                                                   const WindowContext& window)
 {
   ColorbarGizmoState state;
-  state.visible = app.render.colorbar.show;
+  state.visible = render.colorbar.show;
 
-  const int ptype = app.render.colorbar.sourceParticleType;
-  const auto& vis = app.particleVisual.types[ptype];
+  const int ptype = render.colorbar.sourceParticleType;
+  const auto& vis = particleVisual.types[ptype];
 
   state.content.colormapIndex = vis.colormapIndex;
   state.content.valueMin      = vis.colorMin;
   state.content.valueMax      = vis.colorMax;
-  state.content.numTicks      = app.render.colorbar.numTicks;
+  state.content.numTicks      = render.colorbar.numTicks;
 
   state.effectiveWidth  = static_cast<float>(window.viewportWidth());
   state.effectiveHeight = static_cast<float>(window.viewportHeight());
-  state.layout = ComputeColorbarLayout(window, app.render.colorbar.layout);
+  state.layout = ComputeColorbarLayout(window, render.colorbar.layout);
 
   return state;
 }
 
-static CrossGizmoState BuildCrossGizmoState(const AppState& app)
+static CrossGizmoState BuildCrossGizmoState(const CameraContext& camera,
+                                            const CrossGizmoRenderState& gizmo)
 {
   CrossGizmoState state;
-  state.visible      = app.render.crossGizmo.show;
-  state.cameraPos    = app.camera.cameraPos;
-  state.cameraTarget = app.camera.cameraTarget;
-  state.cameraUp     = app.camera.cameraUp;
-  state.crossSize    = app.render.crossGizmo.size;
+  state.visible      = gizmo.show;
+  state.cameraPos    = camera.cameraPos;
+  state.cameraTarget = camera.cameraTarget;
+  state.cameraUp     = camera.cameraUp;
+  state.crossSize    = gizmo.size;
   return state;
 }
 
-static CoordAxesGizmoState BuildCoordAxesGizmoState(const AppState& app)
+static CoordAxesGizmoState BuildCoordAxesGizmoState(const CoordAxesRenderState& axes)
 {
   CoordAxesGizmoState state;
-  state.visible = app.render.coordAxes.show;
+  state.visible = axes.show;
   return state;
 }
 
-static void DrawOverlayPass(AppState& app,
+static void DrawOverlayPass(const OverlayState& overlay,
+                            const RenderRuntimeState& render,
+                            const ParticleVisualConfig& particleVisual,
+                            const CameraContext& camera,
                             RenderSystem& rs,
                             const WindowContext& window,
                             const FrameMatrices& fm)
 {
-  app.overlay.particleLabels.draw(fm.view,
-				  fm.projection,
-				  window);
+  overlay.particleLabels.draw(fm.view, fm.projection, window);
 
   GizmoDrawContext gctx;
   gctx.view            = fm.view;
@@ -410,9 +523,12 @@ static void DrawOverlayPass(AppState& app,
   gctx.coordProgram    = rs.programs.coord;
   gctx.colorbarProgram = rs.programs.colorbar;
 
-  const CrossGizmoState crossState = BuildCrossGizmoState(app);
-  const CoordAxesGizmoState axesState = BuildCoordAxesGizmoState(app);
-  const ColorbarGizmoState colorbarState = BuildColorbarGizmoState(app, window);
+  const CrossGizmoState crossState =
+      BuildCrossGizmoState(camera, render.crossGizmo);
+  const CoordAxesGizmoState axesState =
+      BuildCoordAxesGizmoState(render.coordAxes);
+  const ColorbarGizmoState colorbarState =
+      BuildColorbarGizmoState(render, particleVisual, window);
 
   rs.crossGizmo.draw(gctx, crossState);
   rs.coordAxes.draw(gctx, axesState);
@@ -420,9 +536,10 @@ static void DrawOverlayPass(AppState& app,
   rs.colorbarLabels.draw(colorbarState);
 }
 
-static void DrawParticlePass(AppState& app,
-		      RenderSystem& rs,
-		      const FrameMatrices& fm)
+static void DrawParticlePass(const ParticleVisualConfig& particleVisual,
+                             const RenderRuntimeState& render,
+                             RenderSystem& rs,
+                             const FrameMatrices& fm)
 {
   if (rs.resources.particlesGpuDirty) {
     rs.particle.sync(rs.resources.renderParticles);
@@ -433,10 +550,10 @@ static void DrawParticlePass(AppState& app,
                    fm.model,
                    fm.view,
                    fm.projection,
-                   app.particleVisual,
+                   particleVisual,
                    rs.colorbar);
 
-  if (app.render.velocity.show) {
+  if (render.velocity.show) {
     if (rs.resources.velocityGpuDirty) {
       rs.velocity.sync(rs.resources.velocityInstanceData);
       rs.resources.velocityGpuDirty = false;
@@ -445,48 +562,162 @@ static void DrawParticlePass(AppState& app,
     rs.velocity.draw(rs.programs.velocityArrow,
                      fm.view,
                      fm.projection,
-                     app.render.velocity.arrowScale,
-                     app.render.velocity.useLogScale);
+                     render.velocity.arrowScale,
+                     render.velocity.useLogScale);
   }
 }
 
-static void RenderScene(AppState& app, RenderSystem& rs, const WindowContext& window)
+static void RenderScene(const AppViewState& view,
+                        const AppRuntimeState& runtime,
+                        const AppDerivedState& derived,
+                        RenderSystem& rs,
+                        const WindowContext& window)
 {
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  FrameMatrices fm = BuildFrameMatrices(app.camera, window);
+  FrameMatrices fm = BuildFrameMatrices(view.camera, window);
 
-  DrawParticlePass(app, rs, fm);
-  DrawSceneObjectsPass(app, rs, fm);
-  DrawOverlayPass(app, rs, window, fm);
+  DrawParticlePass(view.particleVisual,
+                   runtime.render,
+                   rs,
+                   fm);
+
+  DrawSceneObjectsPass(runtime.render,
+                       rs,
+                       fm);
+
+  DrawOverlayPass(derived.overlay,
+                  runtime.render,
+                  view.particleVisual,
+                  view.camera,
+                  rs,
+                  window,
+                  fm);
 }
 
-void RunFrame(AppState& app,
-	      RenderSystem& render,
-	      WindowContext& window)
+static void UpdateProjectionPreview(ProjectionMapGenerator& projectionMap,
+                                    RenderSystem& render)
+{
+  render.preview.update(projectionMap.getImage());
+  ProjectionPreviewUIState previewUI = render.preview.makeUIState();
+  DrawProjectionPreviewUI(projectionMap, previewUI);
+}
+
+static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
 {
   float currentFrame = static_cast<float>(glfwGetTime());
-  float deltaTime = app.interaction.beginFrame(currentFrame);
+  float deltaTime = runtime.interaction.beginFrame(currentFrame);
   (void)deltaTime;
 
   processInput(window.handle());
   glfwPollEvents();
-
   BeginImGuiFrame();
+}
 
-  UpdateUI(app);
-  UpdateExternalInputs(app);
-  UpdateOverlayState(app);
-  UpdateFrameState(app, render);
-
-  render.preview.update(app.services.projectionMap2D->getImage());
-  ProjectionPreviewUIState previewUI = render.preview.makeUIState();
-  DrawProjectionPreviewUI(*app.services.projectionMap2D, previewUI);
-
-  RenderScene(app, render, window);
-
+static void EndFrame(WindowContext& window)
+{
   EndImGuiFrame();
   glfwSwapBuffers(window.handle());
 }
 
+static void RebuildDerivedState(AppDataState& data,
+                                AppViewState& view,
+                                AppRuntimeState& runtime,
+                                AppDerivedState& derived,
+                                AppServices& services)
+{
+  UpdateOverlayState(*data.particles,
+                     view.camera,
+                     runtime.render.particleLabels,
+                     derived.overlay);
+
+#ifdef USE_CONVEX_HULL
+  UpdateConvexHullDerivedState(*data.particles,
+                             *services.clumpFind,
+                             *services.convexHull,
+                             runtime.render.polyhedra,
+                             derived.scene.polyhedron,
+                             derived.analysis);
+#endif
+
+  UpdateCuboidAnnotationDerivedState(runtime.render.cuboidAnnotations,
+				     runtime.render.cuboids,
+				     runtime.render.lines,
+				     derived.scene.cuboidAnnotation,
+				     *services.projectionMap2D);
+}
+
+static void UpdateRenderResources(const AppDataState& data,
+                                  const AppViewState& view,
+                                  AppRuntimeState& runtime,
+                                  const AppDerivedState& derived,
+                                  RenderSystem& rs)
+{
+  rs.resources.cuboidRenderData.clear();
+  rs.resources.lineRenderData.clear();
+
+  PropagateDirtyFlags(*data.particles, rs);
+
+  UpdateParticleRenderResources(*data.particles,
+                                view.particleVisual,
+                                runtime.render.velocity,
+                                rs);
+
+  UpdateSceneRenderResources(derived.scene,
+                             runtime.render,
+                             rs);
+
+#ifdef ISO_CONTOUR
+  UpdateIsoContourRenderResources(derived.isoContour,
+                                  runtime.render,
+                                  rs);
+#endif
+  
+#ifdef USE_CONVEX_HULL
+  UpdateConvexHullRenderState(runtime.render.polyhedra,
+                              derived.scene.polyhedron,
+                              rs);
+#endif
+  
+  UpdateCuboidAnnotationRenderResources(runtime.render.cuboidAnnotations,
+                                        derived.scene.cuboidAnnotation,
+                                        rs);
+}
+
+void RunFrame(AppState& app,
+              RenderSystem& render,
+              WindowContext& window)
+{
+  BeginFrame(app.runtime, window);
+
+  UpdateUI(app.data,
+           app.view,
+           app.runtime,
+           app.derived,
+           app.services);
+
+  UpdateExternalInputs(app.services, *app.data.particles);
+
+  RebuildDerivedState(app.data,
+                      app.view,
+                      app.runtime,
+                      app.derived,
+                      app.services);
+
+  UpdateRenderResources(app.data,
+                        app.view,
+                        app.runtime,
+                        app.derived,
+                        render);
+
+  UpdateProjectionPreview(*app.services.projectionMap2D, render);
+
+  RenderScene(app.view,
+              app.runtime,
+              app.derived,
+              render,
+              window);
+
+  EndFrame(window);
+}

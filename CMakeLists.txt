@@ -91,7 +91,6 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/render_resources.cpp
   ${SRC_DIR}/interaction/interaction_utils.cpp
   ${SRC_DIR}/config/config_io.cpp
-  ${SRC_DIR}/core/tracking_vector.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
 	${SRC_DIR}/FileIO/file_io_hdf5.cpp
   ${SRC_DIR}/FindClumps/find_clumps.cpp
@@ -510,6 +509,7 @@ if(ISO_CONTOUR)
 
   # 追加ソース（Makefile 相当）
   target_sources(${PROJECT_NAME} PRIVATE
+    ${SRC_DIR}/IsoSurface/iso_contour_build.cpp
     ${SRC_DIR}/IsoSurface/marching_cubes.cpp
     ${SRC_DIR}/IsoSurface/connectivity_test.cpp
     ${SRC_DIR}/IsoSurface/IsoSurfaceGenerator.cpp

@@ -32,7 +32,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 
   AppState& app = *ctx->app;
 
-  if (ImGui::GetIO().WantCaptureMouse || app.camera.stopCameraMode)
+  if (ImGui::GetIO().WantCaptureMouse || app.view.camera.stopCameraMode)
     return;
 
   const bool leftPressed =
@@ -42,31 +42,31 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
      glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
 
   if (!leftPressed) {
-    app.interaction.resetMouse();
+    app.runtime.interaction.resetMouse();
     return;
   }
 
-  if (app.interaction.firstMouse()) {
-    app.interaction.setMousePosition((float)xpos, (float)ypos);
+  if (app.runtime.interaction.firstMouse()) {
+    app.runtime.interaction.setMousePosition((float)xpos, (float)ypos);
     return;
   }
 
-  const float oldX = app.interaction.lastX();
-  const float oldY = app.interaction.lastY();
+  const float oldX = app.runtime.interaction.lastX();
+  const float oldY = app.runtime.interaction.lastY();
 
   const float xoffset = (float)xpos - oldX;
   const float yoffset = oldY - (float)ypos;
 
-  app.interaction.setMousePosition((float)xpos, (float)ypos);
+  app.runtime.interaction.setMousePosition((float)xpos, (float)ypos);
 
   if (shiftPressed) {
-    ApplyCameraPan(app.camera, xoffset, yoffset);
+    ApplyCameraPan(app.view.camera, xoffset, yoffset);
     return;
   }
 
 #if defined(ROTATE_ARCBALL)
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-  ApplyCameraArcballRotation(app.camera,
+  ApplyCameraArcballRotation(app.view.camera,
                              oldX, oldY,
                              (float)xpos, (float)ypos,
                              displaySize.x, displaySize.y);
@@ -77,21 +77,21 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
   glm::quat qYaw = glm::angleAxis(yawAngle, glm::vec3(0.0f, 1.0f, 0.0f));
 
   glm::vec3 right =
-    app.camera.cameraOrientation * glm::vec3(1.0f, 0.0f, 0.0f);
+    app.view.camera.cameraOrientation * glm::vec3(1.0f, 0.0f, 0.0f);
   float pitchAngle = glm::radians(yoffset * sensitivity);
   glm::quat qPitch = glm::angleAxis(pitchAngle, right);
 
-  app.camera.cameraOrientation =
-    glm::normalize(qYaw * app.camera.cameraOrientation);
-  app.camera.cameraOrientation =
-    glm::normalize(app.camera.cameraOrientation * qPitch);
+  app.view.camera.cameraOrientation =
+    glm::normalize(qYaw * app.view.camera.cameraOrientation);
+  app.view.camera.cameraOrientation =
+    glm::normalize(app.view.camera.cameraOrientation * qPitch);
 
   glm::vec3 direction =
-    app.camera.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-  app.camera.cameraPos =
-    app.camera.cameraTarget - direction * app.camera.distance;
-  app.camera.cameraUp =
-    app.camera.cameraOrientation * glm::vec3(0.0f, 1.0f, 0.0f);
+    app.view.camera.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+  app.view.camera.cameraPos =
+    app.view.camera.cameraTarget - direction * app.view.camera.distance;
+  app.view.camera.cameraUp =
+    app.view.camera.cameraOrientation * glm::vec3(0.0f, 1.0f, 0.0f);
 #else
   float sensitivity = 0.1f;
   float dx = xoffset * sensitivity;
@@ -117,8 +117,8 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
   direction.z = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
   direction = glm::normalize(direction);
 
-  app.camera.cameraPos =
-    app.camera.cameraTarget - direction * app.camera.distance;
+  app.view.camera.cameraPos =
+    app.view.camera.cameraTarget - direction * app.view.camera.distance;
 #endif
 }
 
@@ -133,10 +133,10 @@ void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffset)
   if (ImGui::GetIO().WantCaptureMouse)
     return;
 
-  ApplyCameraZoom(app.camera,
+  ApplyCameraZoom(app.view.camera,
                   static_cast<float>(yoffset),
-                  app.settings.minZoom,
-                  app.settings.maxZoom);
+                  app.runtime.settings.minZoom,
+                  app.runtime.settings.maxZoom);
 }
 
 void processInput(GLFWwindow* window)

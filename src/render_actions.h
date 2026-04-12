@@ -26,15 +26,3 @@ void PrepareVolumeRendering(ParticleArray& part,
 
 void ReloadVolumeRendering(VolumeRenderingRuntime& volume, RenderRuntimeState& render);
 #endif
-
-#ifdef ISO_CONTOUR
-class ParticleArray;
-enum class QuantityId : int;
-
-void BuildIsoContourMesh(ParticleArray& part,
-                         QuantityId selectedVar,
-                         float isoLevel,
-                         int max_treelevel,
-			 IsoContourRuntime& iso,
-                         RenderRuntimeState& render);
-#endif

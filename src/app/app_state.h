@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "ui_state.h"
 #include "scene_manager.h"
@@ -15,22 +16,49 @@ class WindowContext;
 
 #include "app_services.h"
 
-struct AppState {
-  AppServices services;
+#ifdef ISO_CONTOUR
+struct IsoContourGeometryState {
+  TrackingVector<float> verts;
+  TrackingVector<unsigned> inds;
 
+  void clear() {
+    verts.clear();
+    inds.clear();
+  }
+};
+#endif
+
+struct AppDataState {
+  ParticleArray* particles = nullptr;
+  FileInfo* fileInfo = nullptr;
+};
+
+struct AppViewState {
   CameraContext camera;
-  InteractionState interaction;
+  ParticleVisualConfig particleVisual;
+};
 
+struct AppRuntimeState {
+  InteractionState interaction;
   SettingsRuntimeState settings;
   RenderRuntimeState render;
-  ParticleVisualConfig particleVisual;
+};
 
+struct AppDerivedState {
   SceneManagers scene;
   OverlayState overlay;
   AnalysisState analysis;
-  
-  ParticleArray* particles = nullptr;
-  FileInfo* fileInfo = nullptr;
+#ifdef ISO_CONTOUR
+  IsoContourGeometryState isoContour;
+#endif
+};
+
+struct AppState {
+  AppServices services;
+  AppDataState data;
+  AppViewState view;
+  AppRuntimeState runtime;
+  AppDerivedState derived;
 };
 
 struct CallbackContext {
