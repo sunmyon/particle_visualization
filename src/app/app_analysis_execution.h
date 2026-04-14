@@ -52,3 +52,18 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
                                   StellarDensityRequestState& request);
+
+#ifdef CLUMP_DATA_READ
+void ExecuteClumpBatchRequest(ParticleArray& particles,
+                              FileInfo& fileInfo,
+                              FindClump& clumpFind,
+                              ClumpBatchRequestState& request,
+                              ClumpBatchResultState& result);
+#endif
+
+void ExecuteProjectionMovieRequest(ParticleArray& particles,
+                                   FileInfo& fileInfo,
+                                   ProjectionMapGenerator& projectionMap,
+                                   const CameraContext& camera,
+                                   ProjectionMovieRequestState& request,
+                                   ProjectionMovieResultState& result);

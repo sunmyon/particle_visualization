@@ -10,30 +10,10 @@
 
 #include "FindClumps/find_clumps.h"             // FindClump
 
-#ifdef STREAM_LINE
-#include "StreamLine/stream_line_new.h"
-#endif
-
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
 #include "PythonBridge/PythonBridge.h"
 #include "PythonBridge/ShmLayout.h"
-#endif
-
-#ifdef GEOMETRICAL_ANALYSIS
-#include "GeometricAnalysis/ellipse_fitter.h"
-#include "GeometricAnalysis/DiskRadius.hpp"
-#endif
-
-#ifdef VOLUME_RENDERING
-#include "BVH/BVH.hpp"
-#include "VolumeRendering/tau_sph.h"
-#include "VolumeRendering/TransferFunctionEditor.hpp"
-#include "VolumeRendering/OpacityComputer.hpp"
-#endif
-
-#ifdef ISO_CONTOUR
-#include "IsoSurface/iso_contour_build.h"
 #endif
 
 #ifndef NONATIVEFILEDIALOG
@@ -641,16 +621,10 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
   FileInfo* fileInfo = ctx.fileInfo;
-  auto& particleVisual = *ctx.particleVisual;
-
   auto* services = ctx.services;
   auto* radialProfile = services->radialProfile.get();
   auto* histogram2D   = services->histogram2D.get();
   auto* clumpFind     = services->clumpFind.get();
-#ifdef GEOMETRICAL_ANALYSIS
-  auto* diskFinder    = services->diskFinder.get();
-  auto* ellipsoid     = services->ellipsoid.get();
-#endif
   auto* render = ctx.render;
   auto* analysis = ctx.analysis;
   
@@ -667,16 +641,16 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 		
   static PullDownItem analysisItems[] = {
     { "radial profile", ANALYSIS_RADIAL_PROFILE },
-    { "2D histogram", ANALYSIS_2D_HISTOGRAM },
-    { "clump finder", ANALYSIS_CLUMP_FIND },
-    { "stellar density", ANALYSIS_STELLAR_DENSITY },
-    { "halo catalogue", ANALYSIS_HALO_CATALOGUE },
+      { "2D histogram", ANALYSIS_2D_HISTOGRAM },
+      { "clump finder", ANALYSIS_CLUMP_FIND },
+      { "stellar density", ANALYSIS_STELLAR_DENSITY },
+      { "halo catalogue", ANALYSIS_HALO_CATALOGUE },
 #ifdef POWER_SPECTRUM
-    { "power spectrum", ANALYSIS_POWER_SPEC },
+      { "power spectrum", ANALYSIS_POWER_SPEC },
 #endif
 #ifdef GEOMETRICAL_ANALYSIS
-    { "extract disks", ANALYSIS_DISK },
-    { "extract iso density", ANALYSIS_ISO_DENSITY },
+      { "extract disks", ANALYSIS_DISK },
+      { "extract iso density", ANALYSIS_ISO_DENSITY },
 #endif
   };
 		
@@ -707,88 +681,71 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   case ANALYSIS_RADIAL_PROFILE: {
     if (ImGui::Button("Compute radial profile"))
       OpenRadialProfileUI();
-    DrawRadialProfileUI(*radialProfile, Part->particleBlock, Part->UnitMass_in_g, Part->UnitLength_in_cm, Part->UnitTime_in_s);       
     break;
   }
   case ANALYSIS_2D_HISTOGRAM: {
     if (ImGui::Button("Compute 2D histogram"))
       OpenHistogram2DUI();
-
-    Histogram2DContext histCtx;
-    histCtx.cameraCenter = &camCtx.cameraTarget;
-    
-    auto visibleHulls = analysis->convexHulls.visibleHulls();
-    histCtx.convexHulls = &visibleHulls;
-
-    DrawHistogram2DUI(*histogram2D, Part->particleBlock, histCtx);
     break;
   }
   case ANALYSIS_CLUMP_FIND: {
     if (ImGui::Button("Run Clumps finder")) 
       clumpFind->showWindow();
-				
+
 #ifdef CLUMP_DATA_READ
+    auto& batchReq = rt.clumpBatch;
+    auto& batchRes = ctx.analysis->clumpBatch;
+
     ImGui::Text("create clump data for continuous snapshots");
-				
-    static int method = 0;  
-				
-    // ラジオボタン
-    ImGui::RadioButton("FOF",       &method, 0);
+
+    ImGui::RadioButton("FOF",        &batchReq.method, 0);
     ImGui::SameLine();
-    ImGui::RadioButton("Dendrogram",&method, 1);
-				
-    static int nsnapshots = 10;
-    static char outputFileName[255]="clump_data.hdf5";
-    static char outputFolderPath[255]="./output/";
-    ImGui::InputInt("number of snapshots##FOF", &nsnapshots);
-    ImGui::InputText("Output File Name##FOF", outputFileName, IM_ARRAYSIZE(outputFileName));
-    ImGui::InputText("Output Folder##FOF", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
-				
-    char filename[512];
-    snprintf(filename, sizeof(filename), "%s/%s", outputFolderPath, outputFileName);
-				
+    ImGui::RadioButton("Dendrogram", &batchReq.method, 1);
+
+    ImGui::InputInt("number of snapshots##FOF", &batchReq.nSnapshots);
+    ImGui::InputText("Output File Name##FOF",
+		     batchReq.outputFileName,
+		     IM_ARRAYSIZE(batchReq.outputFileName));
+    ImGui::InputText("Output Folder##FOF",
+		     batchReq.outputFolderPath,
+		     IM_ARRAYSIZE(batchReq.outputFolderPath));
+
     ImGui::SameLine();
     if (ImGui::Button("default path")) {
-      strcpy(outputFolderPath, fileInfo->folderPath);
+      std::strncpy(batchReq.outputFolderPath,
+		   fileInfo->folderPath,
+		   IM_ARRAYSIZE(batchReq.outputFolderPath));
+      batchReq.outputFolderPath[IM_ARRAYSIZE(batchReq.outputFolderPath) - 1] = '\0';
     }
-				
-    if(ImGui::Button("generate clump data")){
-      int savedStep = fileInfo->currentStep;
-					
-      clumpFind->initialize_prev_nodes();      
-      for(int i=0;i<nsnapshots;i++){
-	fileInfo->currentStep = savedStep;
-	if(i > 0) fileInfo->currentStep += i;
-	
-	int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-	fileInfo->loadNewSnapshot(newFileIndex, Part);            
-	
-	if(Part->particleBlock.particles.size() == 0)
-	  continue;
-	
-	clumpFind->do_FOF_and_output_clump_data(method, Part->particleBlock.particles, Part->particleBlock.header, filename, newFileIndex);
-      }
-					
-      fileInfo->currentStep = savedStep;
-      fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-      
-      int initstep = fileInfo->currentFileIndex;
-      int dstep = fileInfo->skipStep;
-      std::string fname(filename);
-      clumpFind->give_stellar_id_to_clumps(initstep, nsnapshots, dstep, fname);
+
+    if (ImGui::Button("generate clump data")) {
+      batchReq.runRequested = true;
     }
-				
+
+    if (batchRes.completed) {
+      ImGui::Text("Processed snapshots: %d", batchRes.processedSnapshots);
+      ImGui::Text("Output: %s", batchRes.outputPath);
+    }
+
+    if (batchRes.errorMessage[0] != '\0') {
+      ImGui::TextColored(ImVec4(1,0,0,1), "%s", batchRes.errorMessage);
+    }
+
     if(ImGui::Button("show clump list"))
       clumpFind->showClumpListWindow();
-				
+
     if(ImGui::Button("show clump chain list")){
-      std::string fname(filename);
-      clumpFind->showWindowClumpChainList(fileInfo->initialIndex, nsnapshots, fileInfo->skipStep, fname);
+      std::string fname(batchReq.outputFolderPath);
+      fname += "/";
+      fname += batchReq.outputFileName;
+      clumpFind->showWindowClumpChainList(fileInfo->initialIndex,
+					  batchReq.nSnapshots,
+					  fileInfo->skipStep,
+					  fname);
     }
 #endif
     break;
   }
-
   case ANALYSIS_STELLAR_DENSITY: {
     auto& req = rt.stellarDensity;
 
@@ -814,13 +771,11 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     }
 
     break;
-  }			
-			
+  }
 #ifdef HAVE_HDF5
   case ANALYSIS_HALO_CATALOGUE: {
     if(ImGui::Button("Load Halo"))
       OpenHaloesUI();
-    DrawHaloesUI(Part, camCtx, fileInfo);
     break;
   }
 #endif
@@ -830,7 +785,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     break;
   }
 #endif
-			
+    
 #ifdef GEOMETRICAL_ANALYSIS
   case ANALYSIS_DISK: {
     auto& singleReq = rt.disk;
@@ -933,28 +888,14 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
   FileInfo* fileInfo = ctx.fileInfo;
-  auto& particleVisual = *ctx.particleVisual;
 
   auto* services = ctx.services;
-  auto* projectionMap2D = services->projectionMap2D.get();
-#ifdef STREAM_LINE
-  auto* streamLine      = services->streamLine.get();
-#endif
-#ifdef VOLUME_RENDERING
-  auto* bvh = services->bvh.get();
-  auto* tf  = services->tf.get();
-  auto& volume = services->volume;
-#endif
   auto* render = ctx.render;
-#ifdef ISO_CONTOUR
-  auto* isoContour = ctx.isoContour;
-#endif
   
   enum RenderingMode {
     RENDER_PROJECTION_MAP,
     RENDER_STREAM_LINE,
     RENDER_ISO_CONTOUR,
-    RENDER_VOLUME_RENDERING,
     RENDER_VELOCITY_FIELD
   };
 		
@@ -965,9 +906,6 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
 #endif
 #ifdef ISO_CONTOUR
     { "iso-contour", RENDER_ISO_CONTOUR },
-#endif
-#ifdef VOLUME_RENDERING
-    { "volume rendering", RENDER_VOLUME_RENDERING },
 #endif
     { "velocity field", RENDER_VELOCITY_FIELD},
   };
@@ -999,201 +937,52 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
   case RENDER_PROJECTION_MAP: {
     if (ImGui::Button("make projection map"))
       OpenProjectionMapUI();    
-				
-    DrawProjectionMapUI(*projectionMap2D, Part, camCtx, render->cuboidAnnotations, fileInfo->currentFileIndex);
-				
+    
+    auto& movieReq = rt.projectionMovie;
+    auto& movieRes = ctx.analysis->projectionMovie;
+
     ImGui::Text("create projection maps for continuous snapshots");
-				
-    static int nsnapshots = 10;
-    static char outputFileFormat[255]="image_%04d.png";
-    static char outputFolderPath[255]="./output";
-    static char outputFileName[255]="output.mp4";
-    ImGui::InputInt("number of snapshots##render", &nsnapshots);
-    ImGui::InputText("Output File Format##render", outputFileFormat, IM_ARRAYSIZE(outputFileFormat));
-    ImGui::InputText("Output Folder##render", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
-    ImGui::InputText("Output Name of Movie##render", outputFileName, IM_ARRAYSIZE(outputFolderPath));
-				
-    static bool flagFaceOn = false;
-    ImGui::Checkbox("show face-on view", &flagFaceOn);
-				
-    static bool flagSinkCenter = false, flagSinkCenterMassive = false, flagMassCenter = false;
-    static int particleID_center = 0;
-    static float rcrit_for_MassCenter = 0., ncrit_for_MassCenter = 0.;
-    ImGui::Checkbox("follow the center around the particle", &flagSinkCenter);
-    if(flagSinkCenter){
-      ImGui::Checkbox("the most massive sink particle", &flagSinkCenterMassive);
-      if(flagSinkCenterMassive == false)
-	ImGui::InputInt("particle ID", &particleID_center);	
-					
-      ImGui::Checkbox("mass center around the particle", &flagMassCenter);
-      if(flagMassCenter){
-	ImGui::InputFloat("distance from the particle", &rcrit_for_MassCenter);
-	ImGui::InputFloat("the minimum density", &ncrit_for_MassCenter);
+
+    ImGui::InputInt("number of snapshots##render", &movieReq.nSnapshots);
+    ImGui::InputText("Output File Format##render",
+		     movieReq.outputFileFormat,
+		     IM_ARRAYSIZE(movieReq.outputFileFormat));
+    ImGui::InputText("Output Folder##render",
+		     movieReq.outputFolderPath,
+		     IM_ARRAYSIZE(movieReq.outputFolderPath));
+    ImGui::InputText("Output Name of Movie##render",
+		     movieReq.outputMovieName,
+		     IM_ARRAYSIZE(movieReq.outputMovieName));
+
+    ImGui::Checkbox("show face-on view", &movieReq.faceOn);
+
+    ImGui::Checkbox("follow the center around the particle", &movieReq.followSinkCenter);
+    if (movieReq.followSinkCenter) {
+      ImGui::Checkbox("the most massive sink particle", &movieReq.followMostMassiveSink);
+      if (!movieReq.followMostMassiveSink) {
+	ImGui::InputInt("particle ID", &movieReq.particleIdCenter);
+      }
+
+      ImGui::Checkbox("mass center around the particle", &movieReq.useMassCenter);
+      if (movieReq.useMassCenter) {
+	ImGui::InputFloat("distance from the particle", &movieReq.massCenterRadius);
+	ImGui::InputFloat("the minimum density", &movieReq.massCenterMinDensity);
       }
     }
-				
-    if(ImGui::Button("generate maps")){
-      int savedStep = fileInfo->currentStep;
-					
-      namespace fs = std::filesystem;
-      const fs::path dir = "ffmpeg_frames";
-					
-      try {
-	auto ensure_dir = [](const fs::path& p) {
-	  if (fs::exists(p)) {
-	    if (!fs::is_directory(p)) {
-	      throw fs::filesystem_error("Path exists but is not a directory", p,
-					 std::make_error_code(std::errc::not_a_directory));
-	    }
-	  } else {
-	    fs::create_directories(p);
-	  }
-	};
-						
-	ensure_dir(dir);
-	ensure_dir(outputFolderPath);
-						
-	if (!fs::exists(dir)) {
-	  fs::create_directory(dir);
-	  std::cout << "Directory created: " << dir << std::endl;
-	}
-						
-	if (!fs::exists(outputFolderPath)) {
-	  fs::create_directory(outputFolderPath);
-	  std::cout << "Directory created: " << outputFolderPath << std::endl;
-	}
-						
-	int count_i = 0;
-	for(int i=0;i<nsnapshots;i++){
-	  fileInfo->currentStep = savedStep;
-	  if(i > 0) fileInfo->currentStep += i;
-							
-	  int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-	  fileInfo->loadNewSnapshot(newFileIndex, Part);            
-							
-	  if(Part->particleBlock.particles.size() == 0)
-	    continue;
-							
-	  char filename_format[512];
-	  snprintf(filename_format, sizeof(filename_format), "%s/%s", outputFolderPath, outputFileFormat);
-							
-	  char filename[512];
-	  snprintf(filename, sizeof(filename), filename_format, newFileIndex);
-							
-	  int flag_use_amvector = 0;
-	  if(i==0 && flagFaceOn)
-	    flag_use_amvector = 1;
-							
-	  int flag_center = 0;
-#ifdef CLUMP_DATA_READ
-	  if(Part->flag_follow_clump_center)
-	    flag_center = 1;
-#endif
-	  if(Part->flag_follow_particle_ID)
-	    flag_center = 1;
-							
-	  // まず、カメラターゲットを pos_center 配列に格納しておく
-	  float pos_center[3] = {
-	    camCtx.cameraTarget[0],
-	    camCtx.cameraTarget[1],
-	    camCtx.cameraTarget[2]
-	  };
-							
-	  if(flagSinkCenter){
-	    double pos_init[3];
-	    bool flag_found = false;
-	    if(flagSinkCenterMassive == false){
-	      for(auto &p : Part->particleBlock.particles){
-		if(p.ID == particleID_center){
-		  pos_init[0] = p.pos[0];
-		  pos_init[1] = p.pos[1];
-		  pos_init[2] = p.pos[2];
-		  flag_found = true;
-		}
-		if(flag_found)
-		  break;
-	      }
-	    }
-								
-	    if(flagSinkCenterMassive || (flag_found == false)){
-	      double mass_max = 0.;
-	      for(auto &p : Part->particleBlock.particles){
-		if(p.type < 3)
-		  continue;
-										
-		if(mass_max < p.mass){
-		  pos_init[0] = p.pos[0];
-		  pos_init[1] = p.pos[1];
-		  pos_init[2] = p.pos[2];
-		  flag_found = true;
-		  mass_max = p.mass;
-		}
-	      }
-	    }
-								
-	    if(flag_found){
-	      pos_center[0] = pos_init[0];
-	      pos_center[1] = pos_init[1];
-	      pos_center[2] = pos_init[2];
-	      flag_center = 1;
-	    }
-								
-	    if(flag_found && flagMassCenter){
-	      double pos_temp[3] = {0.,0.,0.}, weight = 0.;
-	      for(auto &p : Part->particleBlock.particles){
-		if(p.type == 1 || p.type == 2)
-		  continue;
-										
-		if(p.type == 0 && p.density < ncrit_for_MassCenter)
-		  continue;
-										
-		double dist2 =
-		  (pos_init[0] - p.pos[0])*(pos_init[0] - p.pos[0])
-		  + (pos_init[1] - p.pos[1])*(pos_init[1] - p.pos[1])
-		  + (pos_init[2] - p.pos[2])*(pos_init[2] - p.pos[2]);
-										
-		if(dist2 > rcrit_for_MassCenter * rcrit_for_MassCenter)
-		  continue;
-										
-		double mass = p.mass;
-		pos_temp[0] += mass * p.pos[0];
-		pos_temp[1] += mass * p.pos[1];
-		pos_temp[2] += mass * p.pos[2];
-		weight += mass;
-	      }
-									
-	      pos_center[0] = pos_temp[0] / weight;
-	      pos_center[1] = pos_temp[1] / weight;
-	      pos_center[2] = pos_temp[2] / weight;
-	      flag_center = 1;
-	    }
-	  }
-	  
-	  projectionMap2D->set_projection_parameters(Part->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
-						     std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
-							
-	  projectionMap2D->make_density_map(Part, filename);
-							
-	  char linkname[512];
-	  snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i);
-	  count_i++;
-							
-	  std::filesystem::remove(linkname);
-	  std::filesystem::create_symlink(std::filesystem::absolute(filename), linkname);
-	}
-						
-	// ffmpeg を呼び出す（mp4 形式、30fps）
-	std::string ffmpegCommand =
-	  "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png -vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p " + std::string(outputFolderPath) + "/" + std::string(outputFileName);
-	std::system(ffmpegCommand.c_str());
-	fs::remove_all("ffmpeg_frames");
-						
-	fileInfo->currentStep = savedStep;
-	fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;    	
-      } catch (const fs::filesystem_error& e) {
-	std::cerr << "Error creating directory: " << e.what() << std::endl;
-      }
+
+    if (ImGui::Button("generate maps")) {
+      movieReq.runRequested = true;
     }
+
+    if (movieRes.completed) {
+      ImGui::Text("Processed snapshots: %d", movieRes.processedSnapshots);
+      ImGui::Text("Movie: %s", movieRes.outputMoviePath);
+    }
+
+    if (movieRes.errorMessage[0] != '\0') {
+      ImGui::TextColored(ImVec4(1,0,0,1), "%s", movieRes.errorMessage);
+    }
+    
     break;
   }
 			

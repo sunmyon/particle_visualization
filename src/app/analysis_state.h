@@ -44,6 +44,34 @@ struct StreamlineBuildResultState {
   TrackingVector<LineObject> lines;
 };
 
+#ifdef ISO_CONTOUR
+struct IsoContourGeometryState {
+  TrackingVector<float> verts;
+  TrackingVector<unsigned> inds;
+
+  void clear() {
+    verts.clear();
+    inds.clear();
+  }
+};
+#endif
+
+#ifdef CLUMP_DATA_READ
+struct ClumpBatchResultState {
+  bool completed = false;
+  int processedSnapshots = 0;
+  char outputPath[512] = "";
+  char errorMessage[512] = "";
+};
+#endif
+
+struct ProjectionMovieResultState {
+  bool completed = false;
+  int processedSnapshots = 0;
+  char outputMoviePath[512] = "";
+  char errorMessage[512] = "";
+};
+
 struct AnalysisDerivedState {
   ConvexHullRuntimeState convexHulls;
   
@@ -52,7 +80,19 @@ struct AnalysisDerivedState {
 
   EllipsoidAnalysisResultState ellipsoid;
   EllipsoidAnalysisBatchResultState ellipsoidBatch;
-
+  
+#ifdef STREAM_LINE  
   StreamlinePreviewResultState streamlinePreview;
   StreamlineBuildResultState streamlineBuild;
+#endif
+  
+#ifdef ISO_CONTOUR
+  IsoContourGeometryState isoContour;
+#endif
+
+#ifdef CLUMP_DATA_READ
+  ClumpBatchResultState clumpBatch;
+#endif
+
+  ProjectionMovieResultState projectionMovie;
 };

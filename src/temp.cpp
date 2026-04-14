@@ -361,3 +361,263 @@ case ANALYSIS_DISK: {
     }
     break;
   }
+
+    
+  case ANALYSIS_CLUMP_FIND: {
+    if (ImGui::Button("Run Clumps finder")) 
+      clumpFind->showWindow();
+				
+#ifdef CLUMP_DATA_READ    
+    ImGui::Text("create clump data for continuous snapshots");
+				
+    static int method = 0;  
+				
+    // ラジオボタン
+    ImGui::RadioButton("FOF",       &method, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Dendrogram",&method, 1);
+				
+    static int nsnapshots = 10;
+    static char outputFileName[255]="clump_data.hdf5";
+    static char outputFolderPath[255]="./output/";
+    ImGui::InputInt("number of snapshots##FOF", &nsnapshots);
+    ImGui::InputText("Output File Name##FOF", outputFileName, IM_ARRAYSIZE(outputFileName));
+    ImGui::InputText("Output Folder##FOF", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
+				
+    char filename[512];
+    snprintf(filename, sizeof(filename), "%s/%s", outputFolderPath, outputFileName);
+				
+    ImGui::SameLine();
+    if (ImGui::Button("default path")) {
+      strcpy(outputFolderPath, fileInfo->folderPath);
+    }
+				
+    if(ImGui::Button("generate clump data")){
+      int savedStep = fileInfo->currentStep;
+					
+      clumpFind->initialize_prev_nodes();      
+      for(int i=0;i<nsnapshots;i++){
+	fileInfo->currentStep = savedStep;
+	if(i > 0) fileInfo->currentStep += i;
+	
+	int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+	fileInfo->loadNewSnapshot(newFileIndex, Part);            
+	
+	if(Part->particleBlock.particles.size() == 0)
+	  continue;
+	
+	clumpFind->do_FOF_and_output_clump_data(method, Part->particleBlock.particles, Part->particleBlock.header, filename, newFileIndex);
+      }
+					
+      fileInfo->currentStep = savedStep;
+      fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+      
+      int initstep = fileInfo->currentFileIndex;
+      int dstep = fileInfo->skipStep;
+      std::string fname(filename);
+      clumpFind->give_stellar_id_to_clumps(initstep, nsnapshots, dstep, fname);
+    }
+				
+    if(ImGui::Button("show clump list"))
+      clumpFind->showClumpListWindow();
+				
+    if(ImGui::Button("show clump chain list")){
+      std::string fname(filename);
+      clumpFind->showWindowClumpChainList(fileInfo->initialIndex, nsnapshots, fileInfo->skipStep, fname);
+    }
+#endif
+    break;
+  }
+
+    ImGui::Text("create projection maps for continuous snapshots");
+				
+    static int nsnapshots = 10;
+    static char outputFileFormat[255]="image_%04d.png";
+    static char outputFolderPath[255]="./output";
+    static char outputFileName[255]="output.mp4";
+    ImGui::InputInt("number of snapshots##render", &nsnapshots);
+    ImGui::InputText("Output File Format##render", outputFileFormat, IM_ARRAYSIZE(outputFileFormat));
+    ImGui::InputText("Output Folder##render", outputFolderPath, IM_ARRAYSIZE(outputFolderPath));
+    ImGui::InputText("Output Name of Movie##render", outputFileName, IM_ARRAYSIZE(outputFolderPath));
+				
+    static bool flagFaceOn = false;
+    ImGui::Checkbox("show face-on view", &flagFaceOn);
+				
+    static bool flagSinkCenter = false, flagSinkCenterMassive = false, flagMassCenter = false;
+    static int particleID_center = 0;
+    static float rcrit_for_MassCenter = 0., ncrit_for_MassCenter = 0.;
+    ImGui::Checkbox("follow the center around the particle", &flagSinkCenter);
+    if(flagSinkCenter){
+      ImGui::Checkbox("the most massive sink particle", &flagSinkCenterMassive);
+      if(flagSinkCenterMassive == false)
+	ImGui::InputInt("particle ID", &particleID_center);	
+					
+      ImGui::Checkbox("mass center around the particle", &flagMassCenter);
+      if(flagMassCenter){
+	ImGui::InputFloat("distance from the particle", &rcrit_for_MassCenter);
+	ImGui::InputFloat("the minimum density", &ncrit_for_MassCenter);
+      }
+    }
+				
+    if(ImGui::Button("generate maps")){
+      int savedStep = fileInfo->currentStep;
+					
+      namespace fs = std::filesystem;
+      const fs::path dir = "ffmpeg_frames";
+					
+      try {
+	auto ensure_dir = [](const fs::path& p) {
+	  if (fs::exists(p)) {
+	    if (!fs::is_directory(p)) {
+	      throw fs::filesystem_error("Path exists but is not a directory", p,
+					 std::make_error_code(std::errc::not_a_directory));
+	    }
+	  } else {
+	    fs::create_directories(p);
+	  }
+	};
+						
+	ensure_dir(dir);
+	ensure_dir(outputFolderPath);
+						
+	if (!fs::exists(dir)) {
+	  fs::create_directory(dir);
+	  std::cout << "Directory created: " << dir << std::endl;
+	}
+						
+	if (!fs::exists(outputFolderPath)) {
+	  fs::create_directory(outputFolderPath);
+	  std::cout << "Directory created: " << outputFolderPath << std::endl;
+	}
+						
+	int count_i = 0;
+	for(int i=0;i<nsnapshots;i++){
+	  fileInfo->currentStep = savedStep;
+	  if(i > 0) fileInfo->currentStep += i;
+							
+	  int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+	  fileInfo->loadNewSnapshot(newFileIndex, Part);            
+							
+	  if(Part->particleBlock.particles.size() == 0)
+	    continue;
+							
+	  char filename_format[512];
+	  snprintf(filename_format, sizeof(filename_format), "%s/%s", outputFolderPath, outputFileFormat);
+							
+	  char filename[512];
+	  snprintf(filename, sizeof(filename), filename_format, newFileIndex);
+							
+	  int flag_use_amvector = 0;
+	  if(i==0 && flagFaceOn)
+	    flag_use_amvector = 1;
+							
+	  int flag_center = 0;
+#ifdef CLUMP_DATA_READ
+	  if(Part->flag_follow_clump_center)
+	    flag_center = 1;
+#endif
+	  if(Part->flag_follow_particle_ID)
+	    flag_center = 1;
+							
+	  // まず、カメラターゲットを pos_center 配列に格納しておく
+	  float pos_center[3] = {
+	    camCtx.cameraTarget[0],
+	    camCtx.cameraTarget[1],
+	    camCtx.cameraTarget[2]
+	  };
+							
+	  if(flagSinkCenter){
+	    double pos_init[3];
+	    bool flag_found = false;
+	    if(flagSinkCenterMassive == false){
+	      for(auto &p : Part->particleBlock.particles){
+		if(p.ID == particleID_center){
+		  pos_init[0] = p.pos[0];
+		  pos_init[1] = p.pos[1];
+		  pos_init[2] = p.pos[2];
+		  flag_found = true;
+		}
+		if(flag_found)
+		  break;
+	      }
+	    }
+								
+	    if(flagSinkCenterMassive || (flag_found == false)){
+	      double mass_max = 0.;
+	      for(auto &p : Part->particleBlock.particles){
+		if(p.type < 3)
+		  continue;
+										
+		if(mass_max < p.mass){
+		  pos_init[0] = p.pos[0];
+		  pos_init[1] = p.pos[1];
+		  pos_init[2] = p.pos[2];
+		  flag_found = true;
+		  mass_max = p.mass;
+		}
+	      }
+	    }
+								
+	    if(flag_found){
+	      pos_center[0] = pos_init[0];
+	      pos_center[1] = pos_init[1];
+	      pos_center[2] = pos_init[2];
+	      flag_center = 1;
+	    }
+								
+	    if(flag_found && flagMassCenter){
+	      double pos_temp[3] = {0.,0.,0.}, weight = 0.;
+	      for(auto &p : Part->particleBlock.particles){
+		if(p.type == 1 || p.type == 2)
+		  continue;
+										
+		if(p.type == 0 && p.density < ncrit_for_MassCenter)
+		  continue;
+										
+		double dist2 =
+		  (pos_init[0] - p.pos[0])*(pos_init[0] - p.pos[0])
+		  + (pos_init[1] - p.pos[1])*(pos_init[1] - p.pos[1])
+		  + (pos_init[2] - p.pos[2])*(pos_init[2] - p.pos[2]);
+										
+		if(dist2 > rcrit_for_MassCenter * rcrit_for_MassCenter)
+		  continue;
+										
+		double mass = p.mass;
+		pos_temp[0] += mass * p.pos[0];
+		pos_temp[1] += mass * p.pos[1];
+		pos_temp[2] += mass * p.pos[2];
+		weight += mass;
+	      }
+									
+	      pos_center[0] = pos_temp[0] / weight;
+	      pos_center[1] = pos_temp[1] / weight;
+	      pos_center[2] = pos_temp[2] / weight;
+	      flag_center = 1;
+	    }
+	  }
+	  
+	  projectionMap2D->set_projection_parameters(Part->particleBlock.particles, flag_use_amvector, flag_center ? pos_center : nullptr, -1.0f,
+						     std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), -1, -1, "");
+							
+	  projectionMap2D->make_density_map(Part, filename);
+							
+	  char linkname[512];
+	  snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i);
+	  count_i++;
+							
+	  std::filesystem::remove(linkname);
+	  std::filesystem::create_symlink(std::filesystem::absolute(filename), linkname);
+	}
+						
+	// ffmpeg を呼び出す（mp4 形式、30fps）
+	std::string ffmpegCommand =
+	  "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png -vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p " + std::string(outputFolderPath) + "/" + std::string(outputFileName);
+	std::system(ffmpegCommand.c_str());
+	fs::remove_all("ffmpeg_frames");
+						
+	fileInfo->currentStep = savedStep;
+	fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;    	
+      } catch (const fs::filesystem_error& e) {
+	std::cerr << "Error creating directory: " << e.what() << std::endl;
+      }
+    }

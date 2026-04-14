@@ -15,6 +15,7 @@
 #include "FileIO/file_io.h"
 #include "ui_state.h"
 #include "object.h"
+#include "make_2D_projection_map.h"
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -541,7 +542,7 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
   }
 
   request.runRequested = false;
-
+  
   BuildIsoContourGeometry(particles,
                           request.selectedQuantity,
                           request.isoLevel,
@@ -569,4 +570,244 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
 
   particles.computeStellarDensity(sel, request.overwriteHsml);
   particles.particlesDirty = true;
+}
+
+#ifdef CLUMP_DATA_READ
+#include "FindClumps/find_clumps.h" 
+void ExecuteClumpBatchRequest(ParticleArray& particles,
+                              FileInfo& fileInfo,
+                              FindClump& clumpFind,
+                              ClumpBatchRequestState& request,
+                              ClumpBatchResultState& result)
+{
+  if (!request.runRequested) {
+    return;
+  }
+  request.runRequested = false;
+
+  result = ClumpBatchResultState{};
+
+  char filename[512];
+  std::snprintf(filename, sizeof(filename), "%s/%s",
+                request.outputFolderPath,
+                request.outputFileName);
+
+  std::snprintf(result.outputPath, sizeof(result.outputPath), "%s", filename);
+
+  const int savedStep = fileInfo.currentStep;
+
+  clumpFind.initialize_prev_nodes();
+
+  for (int i = 0; i < request.nSnapshots; ++i) {
+    fileInfo.currentStep = savedStep + i;
+
+    const int newFileIndex =
+      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+
+    fileInfo.loadNewSnapshot(newFileIndex, &particles);
+
+    if (particles.particleBlock.particles.empty()) {
+      continue;
+    }
+
+    clumpFind.do_FOF_and_output_clump_data(request.method,
+                                           particles.particleBlock.particles,
+                                           particles.particleBlock.header,
+                                           filename,
+                                           newFileIndex);
+
+    result.processedSnapshots++;
+  }
+
+  fileInfo.currentStep = savedStep;
+  fileInfo.currentFileIndex =
+    fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+
+  const int initstep = fileInfo.currentFileIndex;
+  const int dstep = fileInfo.skipStep;
+  clumpFind.give_stellar_id_to_clumps(initstep,
+                                      request.nSnapshots,
+                                      dstep,
+                                      std::string(filename));
+
+  result.completed = true;
+}
+#endif
+
+void ExecuteProjectionMovieRequest(ParticleArray& particles,
+                                   FileInfo& fileInfo,
+                                   ProjectionMapGenerator& projectionMap,
+                                   const CameraContext& camera,
+                                   ProjectionMovieRequestState& request,
+                                   ProjectionMovieResultState& result)
+{
+  if (!request.runRequested) {
+    return;
+  }
+  request.runRequested = false;
+
+  result = ProjectionMovieResultState{};
+
+  namespace fs = std::filesystem;
+  const fs::path dir = "ffmpeg_frames";
+
+  try {
+    auto ensure_dir = [](const fs::path& p) {
+      if (fs::exists(p)) {
+        if (!fs::is_directory(p)) {
+          throw fs::filesystem_error("Path exists but is not a directory", p,
+                                     std::make_error_code(std::errc::not_a_directory));
+        }
+      } else {
+        fs::create_directories(p);
+      }
+    };
+
+    ensure_dir(dir);
+    ensure_dir(request.outputFolderPath);
+
+    const int savedStep = fileInfo.currentStep;
+    int count_i = 0;
+
+    for (int i = 0; i < request.nSnapshots; ++i) {
+      fileInfo.currentStep = savedStep + i;
+
+      const int newFileIndex =
+        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+
+      fileInfo.loadNewSnapshot(newFileIndex, &particles);
+      if (particles.particleBlock.particles.empty()) {
+        continue;
+      }
+
+      char filename_format[512];
+      std::snprintf(filename_format, sizeof(filename_format), "%s/%s",
+                    request.outputFolderPath,
+                    request.outputFileFormat);
+
+      char filename[512];
+      std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
+
+      int flag_use_amvector = (i == 0 && request.faceOn) ? 1 : 0;
+
+      int flag_center = 0;
+      float pos_center[3] = {
+        camera.cameraTarget[0],
+        camera.cameraTarget[1],
+        camera.cameraTarget[2]
+      };
+
+#ifdef CLUMP_DATA_READ
+      if (particles.flag_follow_clump_center)
+        flag_center = 1;
+#endif
+      if (particles.flag_follow_particle_ID)
+        flag_center = 1;
+
+      if (request.followSinkCenter) {
+        double pos_init[3] = {0., 0., 0.};
+        bool found = false;
+
+        if (!request.followMostMassiveSink) {
+          for (const auto& p : particles.particleBlock.particles) {
+            if (p.ID == request.particleIdCenter) {
+              pos_init[0] = p.pos[0];
+              pos_init[1] = p.pos[1];
+              pos_init[2] = p.pos[2];
+              found = true;
+              break;
+            }
+          }
+        }
+
+        if (request.followMostMassiveSink || !found) {
+          double mass_max = 0.0;
+          for (const auto& p : particles.particleBlock.particles) {
+            if (p.type < 3) continue;
+            if (p.mass > mass_max) {
+              pos_init[0] = p.pos[0];
+              pos_init[1] = p.pos[1];
+              pos_init[2] = p.pos[2];
+              mass_max = p.mass;
+              found = true;
+            }
+          }
+        }
+
+        if (found) {
+          pos_center[0] = pos_init[0];
+          pos_center[1] = pos_init[1];
+          pos_center[2] = pos_init[2];
+          flag_center = 1;
+        }
+
+        if (found && request.useMassCenter) {
+          double pos_temp[3] = {0., 0., 0.};
+          double weight = 0.0;
+
+          for (const auto& p : particles.particleBlock.particles) {
+            if (p.type == 1 || p.type == 2) continue;
+            if (p.type == 0 && p.density < request.massCenterMinDensity) continue;
+
+            const double dx = pos_init[0] - p.pos[0];
+            const double dy = pos_init[1] - p.pos[1];
+            const double dz = pos_init[2] - p.pos[2];
+            const double dist2 = dx*dx + dy*dy + dz*dz;
+
+            if (dist2 > request.massCenterRadius * request.massCenterRadius) continue;
+
+            pos_temp[0] += p.mass * p.pos[0];
+            pos_temp[1] += p.mass * p.pos[1];
+            pos_temp[2] += p.mass * p.pos[2];
+            weight += p.mass;
+          }
+
+          if (weight > 0.0) {
+            pos_center[0] = pos_temp[0] / weight;
+            pos_center[1] = pos_temp[1] / weight;
+            pos_center[2] = pos_temp[2] / weight;
+            flag_center = 1;
+          }
+        }
+      }
+
+      projectionMap.set_projection_parameters(particles.particleBlock.particles,
+                                              flag_use_amvector,
+                                              flag_center ? pos_center : nullptr,
+                                              -1.0f,
+                                              std::numeric_limits<float>::quiet_NaN(),
+                                              std::numeric_limits<float>::quiet_NaN(),
+                                              -1, -1, "");
+
+      projectionMap.make_density_map(&particles, filename);
+
+      char linkname[512];
+      std::snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i++);
+      fs::remove(linkname);
+      fs::create_symlink(fs::absolute(filename), linkname);
+
+      result.processedSnapshots++;
+    }
+
+    std::string ffmpegCommand =
+      "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png "
+      "-vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" "
+      "-c:v libx264 -pix_fmt yuv420p " +
+      std::string(request.outputFolderPath) + "/" + std::string(request.outputMovieName);
+
+    std::system(ffmpegCommand.c_str());
+    fs::remove_all("ffmpeg_frames");
+
+    fileInfo.currentStep = savedStep;
+    fileInfo.currentFileIndex =
+      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+
+    std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
+                  "%s/%s", request.outputFolderPath, request.outputMovieName);
+
+    result.completed = true;
+  }
+  catch (const std::exception& e) {
+    std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
+  }
 }

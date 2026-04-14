@@ -195,9 +195,6 @@ struct SettingsUIContext {
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
   AnalysisDerivedState* analysis = nullptr;
-#ifdef ISO_CONTOUR
-  IsoContourGeometryState* isoContour = nullptr;
-#endif
 };
 
 void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt);

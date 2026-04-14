@@ -77,6 +77,31 @@ struct IsoContourRequestState {
 };
 #endif
 
+struct ClumpBatchRequestState {
+  int method = 0;                  // 0: FOF, 1: Dendrogram
+  int nSnapshots = 10;
+  char outputFileName[255] = "clump_data.hdf5";
+  char outputFolderPath[255] = "./output/";
+  bool runRequested = false;
+};
+
+struct ProjectionMovieRequestState {
+  int nSnapshots = 10;
+  char outputFileFormat[255] = "image_%04d.png";
+  char outputFolderPath[255] = "./output";
+  char outputMovieName[255] = "output.mp4";
+
+  bool faceOn = false;
+  bool followSinkCenter = false;
+  bool followMostMassiveSink = false;
+  int particleIdCenter = 0;
+  bool useMassCenter = false;
+  float massCenterRadius = 0.0f;
+  float massCenterMinDensity = 0.0f;
+
+  bool runRequested = false;
+};
+
 struct AnalysisRequestRuntimeState {
   StellarDensityRequestState stellarDensity;
 
@@ -94,19 +119,13 @@ struct AnalysisRequestRuntimeState {
   StreamlinePreviewRequestState streamlinePreview;
   StreamlineBuildRequestState streamlineBuild;
 #endif
-};
 
-#ifdef ISO_CONTOUR
-struct IsoContourGeometryState {
-  TrackingVector<float> verts;
-  TrackingVector<unsigned> inds;
-
-  void clear() {
-    verts.clear();
-    inds.clear();
-  }
-};
+#ifdef CLUMP_DATA_READ
+  ClumpBatchRequestState clumpBatch;
 #endif
+
+  ProjectionMovieRequestState projectionMovie;
+};
 
 struct AppDataState {
   ParticleArray* particles = nullptr;
@@ -129,9 +148,6 @@ struct AppDerivedState {
   SceneManagers scene;
   OverlayState overlay;
   AnalysisDerivedState analysis;
-#ifdef ISO_CONTOUR
-  IsoContourGeometryState isoContour;
-#endif
 };
 
 struct AppState {

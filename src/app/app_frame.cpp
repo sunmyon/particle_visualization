@@ -38,9 +38,7 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
   ctx.particleVisual = &view.particleVisual;
   ctx.services       = &services;
   ctx.analysis       = &derived.analysis;
-#ifdef ISO_CONTOUR
-  ctx.isoContour     = &derived.isoContour;
-#endif
+
   return ctx;
 }
 
@@ -99,19 +97,46 @@ static void DrawAuxiliaryPanels(const AppDataState& data,
   DrawTopParticlesUI(data.particles, view.camera);
 }
 
-static void UpdateUI(const AppDataState& data,
-                     AppViewState& view,
-                     AppRuntimeState& runtime,
-                     AppDerivedState& derived,
-                     AppServices& services)
+static void DrawMainUI(const AppDataState& data,
+		       AppViewState& view,
+		       AppRuntimeState& runtime,
+		       AppDerivedState& derived,
+		       AppServices& services)
 {
   ShowTime(data.particles->particleBlock.header.time);
-
   DrawSettingsPanels(data, view, runtime, derived, services);
+}
+
+static void DrawToolWindows(const AppDataState& data,
+                            AppViewState& view,
+                            AppRuntimeState& runtime,
+                            AppDerivedState& derived,
+                            AppServices& services)
+{
   DrawClumpPanels(data, services);
   DrawFileDialogPanels(data);
   ApplyMaskIfRequested(data);
   DrawAuxiliaryPanels(data, view);
+
+  DrawRadialProfileUI(*services.radialProfile, data.particles->particleBlock, data.particles->UnitMass_in_g, data.particles->UnitLength_in_cm, data.particles->UnitTime_in_s);
+  
+  DrawProjectionMapUI(*services.projectionMap2D,
+                      data.particles,
+                      view.camera,
+                      runtime.render.cuboidAnnotations,
+                      data.fileInfo->currentFileIndex);
+
+#ifdef HAVE_HDF5
+  DrawHaloesUI(data.particles, view.camera, data.fileInfo);
+#endif
+  
+  Histogram2DContext histCtx;
+  histCtx.cameraCenter = &view.camera.cameraTarget;
+  
+  auto visibleHulls = derived.analysis.convexHulls.visibleHulls();
+  histCtx.convexHulls = &visibleHulls;
+
+  DrawHistogram2DUI(*services.histogram2D, data.particles->particleBlock, histCtx);
 }
 
 static void UpdateExternalInputs(AppServices& services,
@@ -780,7 +805,7 @@ static void UpdateRenderResources(const AppDataState& data,
                              rs);
 
 #ifdef ISO_CONTOUR
-  UpdateIsoContourRenderResources(derived.isoContour,
+  UpdateIsoContourRenderResources(derived.analysis.isoContour,
                                   runtime.render,
                                   rs);
 #endif
@@ -799,7 +824,8 @@ static void UpdateRenderResources(const AppDataState& data,
 static void ExecuteAnalysisRequests(AppDataState& data,
                                     AppRuntimeState& runtime,
                                     AppDerivedState& derived,
-                                    AppServices& services)
+                                    AppServices& services,
+				    const CameraContext& camera)
 {
 #ifdef GEOMETRICAL_ANALYSIS
   ExecuteSingleDiskAnalysisRequest(*data.particles,
@@ -837,14 +863,29 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #endif
 
   ExecuteStellarDensityRequest(*data.particles,
-                             runtime.analysis.stellarDensity);
+			       runtime.analysis.stellarDensity);
 
 #ifdef ISO_CONTOUR
   ExecuteIsoContourRequest(*data.particles,
 			   runtime.analysis.isoContour,
-			   derived.isoContour,
+			   derived.analysis.isoContour,
 			   runtime.render.isocontour);
 #endif
+
+#ifdef CLUMP_DATA_READ
+  ExecuteClumpBatchRequest(*data.particles,
+			   *data.fileInfo,
+			   *services.clumpFind,
+			   runtime.analysis.clumpBatch,
+			   derived.analysis.clumpBatch);
+#endif
+  
+  ExecuteProjectionMovieRequest(*data.particles,
+				*data.fileInfo,
+				*services.projectionMap2D,
+				camera,
+				runtime.analysis.projectionMovie,
+				derived.analysis.projectionMovie);
 }
 
 void RunFrame(AppState& app,
@@ -853,15 +894,21 @@ void RunFrame(AppState& app,
 {
   BeginFrame(app.runtime, window);
 
-  UpdateUI(app.data,
-           app.view,
-           app.runtime,
-           app.derived,
-           app.services);
+  DrawMainUI(app.data,
+	     app.view,
+	     app.runtime,
+	     app.derived,
+	     app.services);
 
+  DrawToolWindows(app.data,
+		  app.view,
+		  app.runtime,
+		  app.derived,
+		  app.services);
+  
   UpdateExternalInputs(app.services, *app.data.particles);
 
-  ExecuteAnalysisRequests(app.data, app.runtime, app.derived, app.services);
+  ExecuteAnalysisRequests(app.data, app.runtime, app.derived, app.services, app.view.camera);
   
   RebuildDerivedState(app.data,
                       app.view,
