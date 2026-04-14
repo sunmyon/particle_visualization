@@ -99,11 +99,11 @@ static void DrawCameraPlacementSection(ParticleArray* P, CameraContext& camCtx, 
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
 #endif
-static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt);
-static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& rt);
+static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
+static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
 static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
 
-void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt) {
+void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
   DrawCameraInfoSection(*ctx.camCtx);
@@ -111,13 +111,13 @@ void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt) {
   DrawFileNavigationSection(ctx.fileInfo, ctx.P);
   DrawNormalizationSection(ctx.P);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
-  DrawCameraPlacementSection(ctx.P, *ctx.camCtx, rt);
+  DrawCameraPlacementSection(ctx.P, *ctx.camCtx, rt.settings);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
 #endif
-  DrawAnalysisSection(ctx, rt);
-  DrawRenderingSection(ctx, rt);
-  DrawOtherSettingsSection(ctx.P, ctx.fileInfo, rt, *ctx.render);
+  DrawAnalysisSection(ctx, rt.analysis);
+  DrawRenderingSection(ctx, rt.analysis);
+  DrawOtherSettingsSection(ctx.P, ctx.fileInfo, rt.settings, rt.render);
 
   ImGui::End();
 }
@@ -634,7 +634,7 @@ static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeStat
 }
 #endif
 
-static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt){
+static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt){
   if (!ImGui::CollapsingHeader("Analysis"))
     return;
 
@@ -652,7 +652,6 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
   auto* ellipsoid     = services->ellipsoid.get();
 #endif
   auto* render = ctx.render;
-  auto* scene = ctx.scene;
   auto* analysis = ctx.analysis;
   
   enum AnalysisMode {
@@ -789,36 +788,33 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 #endif
     break;
   }
-			
+
   case ANALYSIS_STELLAR_DENSITY: {
-    static bool selType[6] = { false, false, false, true, true, true };
-				
+    auto& req = rt.stellarDensity;
+
     ImGui::Text("Particle types to include:");
-    ImGui::Checkbox("Type 0##stellar_density", &selType[0]); ImGui::SameLine();
-    ImGui::Checkbox("Type 1##stellar_density", &selType[1]); ImGui::SameLine();
-    ImGui::Checkbox("Type 2##stellar_density", &selType[2]);
-    ImGui::Checkbox("Type 3##stellar_density", &selType[3]); ImGui::SameLine();
-    ImGui::Checkbox("Type 4##stellar_density", &selType[4]); ImGui::SameLine();
-    ImGui::Checkbox("Type 5##stellar_density", &selType[5]);
-				
-    static bool flag_overwrite_hsml = false;
-    ImGui::Checkbox("overwrite hsml##stellar_density", &flag_overwrite_hsml);
-				
+    ImGui::Checkbox("Type 0##stellar_density", &req.selectedTypes[0]); ImGui::SameLine();
+    ImGui::Checkbox("Type 1##stellar_density", &req.selectedTypes[1]); ImGui::SameLine();
+    ImGui::Checkbox("Type 2##stellar_density", &req.selectedTypes[2]);
+    ImGui::Checkbox("Type 3##stellar_density", &req.selectedTypes[3]); ImGui::SameLine();
+    ImGui::Checkbox("Type 4##stellar_density", &req.selectedTypes[4]); ImGui::SameLine();
+    ImGui::Checkbox("Type 5##stellar_density", &req.selectedTypes[5]);
+
+    ImGui::Checkbox("overwrite hsml##stellar_density", &req.overwriteHsml);
+
     if (ImGui::Button("Select 3,4,5##stellar_density")) {
-      for (int t = 0; t < 6; ++t) selType[t] = false;
-      selType[3] = selType[4] = selType[5] = true;
+      for (int t = 0; t < 6; ++t) req.selectedTypes[t] = false;
+      req.selectedTypes[3] = true;
+      req.selectedTypes[4] = true;
+      req.selectedTypes[5] = true;
     }
-				
+
     if (ImGui::Button("Compute stellar density##stellar_density")) {
-      std::array<bool,6> sel{};
-      for (int t=0;t<6;++t) sel[t] = selType[t];
-					
-      Part->computeStellarDensity(sel, flag_overwrite_hsml);
-      Part->particlesDirty = true;  // グローバルなフラグをtrueに設定
+      req.runRequested = true;
     }
+
     break;
-  }
-			
+  }			
 			
 #ifdef HAVE_HDF5
   case ANALYSIS_HALO_CATALOGUE: {
@@ -837,303 +833,100 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, SettingsRuntimeState& rt
 			
 #ifdef GEOMETRICAL_ANALYSIS
   case ANALYSIS_DISK: {
-    static int queryID_disk=0;
-    ImGui::InputInt("Particle ID1##disk", &queryID_disk);
-    ImGui::SliderFloat("Opacity##disk", &render->disks.opacity, 0.0f, 1.0f); 
-				
-    DiskRadiusFinder::Params param_disk;
-				
-    if (ImGui::Button("Find a disk around the paritlce")) {
-      bool flag_found = false;
-      for(auto &p : Part->particleBlock.particles){
-	if(p.ID == queryID_disk){
-	  param_disk.mass = p.mass;
-	  for(int k=0;k<3;k++){
-	    param_disk.center[k] = p.pos[k];
-	    param_disk.v_center[k] = p.vel[k];
-	  }
-	  flag_found = true;
-	}
-						
-	if(flag_found)
-	  break;
-      }
+    auto& singleReq = rt.disk;
+    auto& singleRes = ctx.analysis->disk;
+    
+    ImGui::SeparatorText("Single disk analysis");
 
-      if (flag_found) {
-	param_disk.G = Part->GravConst_internal;
-	param_disk.max_shell = 100;
-	param_disk.scale_fac = Part->originalMax / Part->desiredMax;
-	
-	DiskObject disk;
-	disk.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	disk.opacity = render->disks.opacity;
-	disk.tag = "main_disk";
-	
-	scene->disk.clearGroup("main_disk");
-	
-	if (diskFinder->compute(Part->particleBlock.particles, param_disk, disk)) {
-	  scene->disk.add(disk);
-	}
-      }      
+    ImGui::InputInt("Particle ID1##disk", &singleReq.targetParticleId);
+    ImGui::SliderFloat("Opacity##disk", &render->disks.opacity, 0.0f, 1.0f);
+
+    if (ImGui::Button("Find a disk around the particle")) {
+      singleReq.runRequested = true;
     }
-				
+
     if (ImGui::Button("disable disks")) {
-      scene->disk.clear();
+      singleReq.clearRequested = true;
     }
-				
-    static char fname_input[255]="binary_fragmentation_ellipticity_all_w_mode.txt";
-    static char fname_output[255]="binary_fragmentation_disks.txt";
-    ImGui::InputText("Read target from text file##disk", fname_input, IM_ARRAYSIZE(fname_input));
-    ImGui::InputText("Output target from text file##disk", fname_output, IM_ARRAYSIZE(fname_output));
-				
-    if(ImGui::Button("calc disk radius from text file")){
-      struct Row { int idx, idA, idB, snap; };      
-      std::vector<Row> rows;
-      {
-	std::ifstream fin(fname_input);
-	if (!fin) { std::cerr << "cannot open " << fname_input << '\n'; return; }
-						
-	std::string line;
-	Row r;
-	while (std::getline(fin, line))
-	  {
-	    if (line.empty() || line[0] == '#')      // ← # 行はスキップ
-	      continue;
-							
-	    std::istringstream iss(line);
-	    if (iss >> r.idx >> r.idA >> r.idB >> r.snap)
-	      rows.push_back(r);                   // 正しく読めた行だけ追加
-	    else
-	      std::cerr << "parse error: " << line << '\n';
-	  }
-      }
-					
-      bool flag_first0 = true;
-      for (auto& r : rows){
-	if(r.snap < 0)
-	  continue;
-						
-	FILE *fp_out;
-	if(flag_first0){
-	  fp_out = std::fopen(fname_output, "w");
-	  fprintf(fp_out, "#index idA idB t_disk\n");	  
-	  flag_first0 = false; 
-	}else{
-	  fp_out = std::fopen(fname_output, "a");
-	}
-						
-	double time_disk = -1., time_not_disk = -1.;
-	char fname_evolution[255];
-	snprintf(fname_evolution, sizeof(fname_evolution), "binary_evolution_%d.txt" ,r.idx);
-						
-	bool flag_first = true;
-	double dist_disk=0., r_disk1=0., r_disk2=0.;
-						
-	int snap_init = r.snap;
-	snap_init = static_cast<int>(r.snap / fileInfo->skipStep) * fileInfo->skipStep;
-						
-	int snap_disk = -1, snap_not_disk = snap_init;
-						
-	for (int i=0;i<100;i++) {
-	  int snap = snap_init + fileInfo->skipStep * i;	  
-	  fileInfo->loadNewSnapshot(snap, Part);
-	  if(Part->particleBlock.particles.size() == 0)
-	    continue;
-							
-	  double r1, r2;
-	  float pos1[3], pos2[3];
-	  bool flag_found_binary = true;
-	  for(int i=0;i<2;i++){
-	    int id;
-	    float *pos;
-	    double *r_disk;
-	    if(i==0){
-	      id = r.idA;
-	      pos = pos1;
-	      r_disk = &r1;
-	    }else{
-	      id = r.idB;
-	      pos = pos2;
-	      r_disk = &r2;
-	    }
-								
-	    DiskRadiusFinder::Params param_disk0;
-	    bool flag_found = false;
-	    for(auto &p : Part->particleBlock.particles){
-	      if(p.ID == id){
-		if(p.type != 0){
-		  param_disk0.mass = p.mass;
-		  for(int k=0;k<3;k++){
-		    param_disk0.center[k] = pos[k] = p.pos[k];
-		    param_disk0.v_center[k] = p.vel[k];
-		  }
-		  flag_found = true;
-		}else
-		  break;
-	      }
-									
-	      if(flag_found)
-		break;
-	    }
 
-	    if (flag_found) {
-	      param_disk0.G = Part->GravConst_internal;
-	      param_disk0.max_shell = 100;
-	      param_disk0.scale_fac = Part->originalMax / Part->desiredMax;
-	      
-	      DiskObject disk;
-	      disk.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	      disk.opacity = render->disks.opacity;
-	      disk.tag = "main_disk";
-	      
-	      if (diskFinder->compute(Part->particleBlock.particles, param_disk, disk)) 
-		*r_disk = disk.radius;
-	    }else
-	      flag_found_binary = false;	      
-	  }
-							
-	  if(flag_found_binary == false)
-	    continue;
-							
-	  FILE *fp_evo;
-	  if(flag_first){
-	    fp_evo = std::fopen(fname_evolution, "w");
-	    flag_first = false;
-	    time_not_disk = Part->particleBlock.header.time;
-	    snap_not_disk = snap;
-	  }else
-	    fp_evo = std::fopen(fname_evolution, "a");
-							
-	  if (!fp_evo) { std::cerr << "cannot open " << fname_output << '\n'; return; }
-							
-	  if (flag_first) {                       /* ← ① ヘッダは最初だけ */
-	    std::fprintf(fp_out, "index ID1 ID2 snap n a b c\n");
-	    flag_first = false;
-	  }
-							
-	  double dist2 = (pos1[0] - pos2[0])*(pos1[0] - pos2[0]) + (pos1[1] - pos2[1])*(pos1[1] - pos2[1]) + (pos1[2] - pos2[2])*(pos1[2] - pos2[2]);
-	  bool flag_disk = (sqrt(dist2) < r1 + r2?1:0);
-	  double scale_fac = Part->originalMax / Part->desiredMax;
-							
-	  std::fprintf(fp_evo, "%d %g %g %g %g %d\n"
-		       , snap, Part->particleBlock.header.time, sqrt(dist2)*scale_fac, r1*scale_fac, r2*scale_fac, static_cast<int>(flag_disk));
-	  std::fclose(fp_evo);
-							
-	  if(flag_disk){
-	    time_disk = Part->particleBlock.header.time;
-	    dist_disk = sqrt(dist2) * scale_fac;
-	    snap_disk = snap;
-	    r_disk1 = r1 * scale_fac;
-	    r_disk2 = r2 * scale_fac;	    
-	    break;
-	  }else{
-	    time_not_disk = Part->particleBlock.header.time;
-	    snap_not_disk = snap;
-	  }
-	}
-						
-	std::fprintf(fp_out, "%d %d %d %g %d %g %g %g %g %d\n", r.idx, r.idA, r.idB, time_disk, snap_disk, dist_disk, r_disk1, r_disk2, time_not_disk, snap_not_disk);
-	std::fclose(fp_out);
-      }
+    if (singleRes.valid) {
+      ImGui::Text("Disk radius: %g", singleRes.radius);
     }
+
+    auto& batchReq  = rt.diskBatch;
+    auto& batchRes  = ctx.analysis->diskBatch;    
+    ImGui::SeparatorText("Batch disk analysis");
+
+    ImGui::InputText("Read target from text file##disk",
+		     batchReq.inputFile,
+		     IM_ARRAYSIZE(batchReq.inputFile));
+    ImGui::InputText("Output target from text file##disk",
+		     batchReq.outputFile,
+		     IM_ARRAYSIZE(batchReq.outputFile));
+
+    if (ImGui::Button("calc disk radius from text file")) {
+      batchReq.runRequested = true;
+    }
+
+    if (batchRes.completed) {
+      ImGui::Text("Processed rows: %d", batchRes.processedRows);
+    }
+
     break;
   }
-			
+
   case ANALYSIS_ISO_DENSITY: {
-    static int queryID1=0, queryID2=0;
-    ImGui::InputInt("Particle ID1", &queryID1);
-    ImGui::InputInt("Particle ID2", &queryID2); 
-    ImGui::SliderFloat("Opacity##contour_ellipse", &render->ellipsoids.opacity, 0.0f, 1.0f); 
-				
-    if (ImGui::Button("Fit Iso-density ellipsoid")) {
-      scene->ellipsoid.clearGroup("analysis_ellipsoid");
-      
-      EllipsoidObject obj;
-      if (ellipsoid->computeEllipse(Part->particleBlock.particles, queryID1, queryID2, obj)) {
-	obj.opacity = render->ellipsoids.opacity;
-	obj.color = glm::vec3(1.0f);
-	obj.tag = "analysis_ellipsoid";
-	obj.renderMode = EllipsoidRenderMode::Solid;
-	
-	scene->ellipsoid.add(obj);
-      }      
-    }
-				
-    if (ImGui::Button("disable Ellipsoid")) {
-      scene->ellipsoid.clearGroup("analysis_ellipsoid");
-    }
-				
-    static char fname_input[255]="binary_fragmentation.txt";
-    static char fname_output[255]="binary_fragmentation_output.txt";
-    ImGui::InputText("Read target from text file", fname_input, IM_ARRAYSIZE(fname_input));
-    ImGui::InputText("Output target from text file", fname_output, IM_ARRAYSIZE(fname_output));
-				
-    if(ImGui::Button("ellipsoidal fit from text file")){
-      struct Row { int idx, idA, idB, snap; };      
-      std::vector<Row> rows;
-      {
-	std::ifstream fin(fname_input);
-	if (!fin) { std::cerr << "cannot open " << fname_input << '\n'; return; }
-						
-	std::string line;
-	Row r;
-	while (std::getline(fin, line))
-	  {
-	    if (line.empty() || line[0] == '#')      // ← # 行はスキップ
-	      continue;
-							
-	    std::istringstream iss(line);
-	    if (iss >> r.idx >> r.idA >> r.idB >> r.snap)
-	      rows.push_back(r);                   // 正しく読めた行だけ追加
-	    else
-	      std::cerr << "parse error: " << line << '\n';
-	  }
-      }
-					
-      bool flag_first = true;
-      for (auto& r : rows){
-	if(r.snap < 0)
-	  continue;
-						
-	fileInfo->loadNewSnapshot(r.snap, Part);
-	if(Part->particleBlock.particles.size() == 0)
-	  continue;        
+    auto& singleReq = rt.ellipsoid;
+    auto& singleRes = ctx.analysis->ellipsoid;
+    auto& batchReq  = rt.ellipsoidBatch;
+    auto& batchRes  = ctx.analysis->ellipsoidBatch;
 
-	EllipsoidObject obj;
-	bool flag_ellipse = ellipsoid->computeEllipse(Part->particleBlock.particles, r.idA, r.idB, obj);
-	if(flag_ellipse == false)
-	  continue;
-	
-	FILE *fp_out;
-	if(flag_first)
-	  fp_out = std::fopen(fname_output, "a");
-	else
-	  fp_out = std::fopen(fname_output, "a");
-						
-	if (!fp_out) { std::cerr << "cannot open " << fname_output << '\n'; return; }
-						
-	if (flag_first) {                       /* ← ① ヘッダは最初だけ */
-	  std::fprintf(fp_out, "index ID1 ID2 snap n a b c\n");
-	  flag_first = false;
-	}
-	
-	double a = obj.radii.x;
-	double b = obj.radii.y;
-	double c = obj.radii.z;
-	double n = ellipsoid->getDensityThreshold();	
-	std::fprintf(fp_out, "%d %d %d %d %g %g %g %g\n", r.idx, r.idA, r.idB, r.snap, n, a, b, c);
-	std::fclose(fp_out);
-      }
-					
+    ImGui::SeparatorText("Single ellipsoid analysis");
+
+    ImGui::InputInt("Particle ID1", &singleReq.particleId1);
+    ImGui::InputInt("Particle ID2", &singleReq.particleId2);
+    ImGui::SliderFloat("Opacity##contour_ellipse", &render->ellipsoids.opacity, 0.0f, 1.0f);
+
+    if (ImGui::Button("Fit Iso-density ellipsoid")) {
+      singleReq.runRequested = true;
     }
+
+    if (ImGui::Button("disable Ellipsoid")) {
+      singleReq.clearRequested = true;
+    }
+
+    if (singleRes.valid) {
+      ImGui::Text("a=%g b=%g c=%g",
+		  singleRes.ellipsoid.radii.x,
+		  singleRes.ellipsoid.radii.y,
+		  singleRes.ellipsoid.radii.z);
+    }
+
+    ImGui::SeparatorText("Batch ellipsoid analysis");
+
+    ImGui::InputText("Read target from text file",
+		     batchReq.inputFile,
+		     IM_ARRAYSIZE(batchReq.inputFile));
+    ImGui::InputText("Output target from text file",
+		     batchReq.outputFile,
+		     IM_ARRAYSIZE(batchReq.outputFile));
+
+    if (ImGui::Button("ellipsoidal fit from text file")) {
+      batchReq.runRequested = true;
+    }
+
+    if (batchRes.completed) {
+      ImGui::Text("Processed rows: %d", batchRes.processedRows);
+    }
+
     break;
-  }
+  }			
 #endif      
   }
 }
 
 
-static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& rt){
+static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt){
   if (!ImGui::CollapsingHeader("Rendering"))
     return;
 
@@ -1153,7 +946,6 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
   auto& volume = services->volume;
 #endif
   auto* render = ctx.render;
-  auto* scene = ctx.scene;
 #ifdef ISO_CONTOUR
   auto* isoContour = ctx.isoContour;
 #endif
@@ -1407,120 +1199,87 @@ static void DrawRenderingSection(SettingsUIContext& ctx, SettingsRuntimeState& r
 			
 #ifdef STREAM_LINE
   case RENDER_STREAM_LINE: {
-    static int n_seeds=1;
+    auto& previewReq = rt.streamlinePreview;
+    auto& buildReq   = rt.streamlineBuild;
+
     ImGui::Text("Seed setup");
-    ImGui::InputInt("number of seed points", &n_seeds);
-				
-    static float seed_center[3] = {0.,0.,0.}, seed_len[3] = {100.,100.,100.}, seed_opacity = 0.1;
-    bool seedRegionDirty = false;
-				
-    if (ImGui::InputFloat3("Center of the region to place seed points", seed_center, "%.3f")){
-      seedRegionDirty = true;
+    ImGui::InputInt("number of seed points", &buildReq.nSeeds);
+
+    bool previewDirty = false;
+
+    if (ImGui::InputFloat3("Center of the region to place seed points",
+			   previewReq.seedCenter, "%.3f")) {
+      previewDirty = true;
     }
-    
-    // 2) Side‐length: rebuild when changed
-    if (ImGui::InputFloat3("side len", seed_len, "%.3f")) {
-      seedRegionDirty = true;
+
+    if (ImGui::InputFloat3("side len",
+			   previewReq.seedSize, "%.3f")) {
+      previewDirty = true;
     }
-				
-    // 3) Opacity: rebuild when changed
-    if (ImGui::SliderFloat("opacity##cubic", &seed_opacity, 0.f, 1.f, "%.2f")) {
-      seedRegionDirty = true;
+
+    if (ImGui::SliderFloat("opacity##cubic",
+			   &previewReq.opacity, 0.f, 1.f, "%.2f")) {
+      previewDirty = true;
     }
-				
-    // 4) If either length or opacity changed, re‐create exactly one cube
-    if (seedRegionDirty) {
-      UpdateSeedRegionPreview(*streamLine, scene->cube, *render, seed_center, seed_len, seed_opacity);
-      seedRegionDirty = false;
+
+    if (previewDirty) {
+      previewReq.updateRequested = true;
     }
-				
-    static bool flag_limit_stream_region = false;
-    static float sl_center[3]={0.,0.,0.}, sl_len[3]={0.,0.,0.};
-				
-    ImGui::Text("Stream line setting");    
-    ImGui::Checkbox("limit stream lines in box", &flag_limit_stream_region);
-    if(flag_limit_stream_region){
-      bool flag_reset_region = false;
-      if(ImGui::InputFloat3("center of stream line region", sl_center, "%.3f")){
-	flag_reset_region = true;
-      }
-					
-      if(ImGui::InputFloat3("side len##stream line", sl_len, "%.3f")){
-	flag_reset_region = true;
-      }
-					
-      if(flag_reset_region){
-	if(sl_len[0] > 0. && sl_len[1] > 0. && sl_len[2] > 0.){
-	  streamLine->setStreamRegionByHand(sl_center, sl_len);
-	}else{
-	  streamLine->disableStreamRegion();
-	}
-      }
-    }else
-      streamLine->disableStreamRegion();
+
+    ImGui::Text("Stream line setting");
+
+    if (ImGui::Checkbox("limit stream lines in box", &buildReq.limitRegion)) {
+      //Just change the request state here.
+    }
+
+    if (buildReq.limitRegion) {
+      ImGui::InputFloat3("center of stream line region",
+			 buildReq.regionCenter, "%.3f");
+      ImGui::InputFloat3("side len##stream line",
+			 buildReq.regionSize, "%.3f");
+    }
 
     if (ImGui::Button("Build stream lines")) {
-      streamLine->setRegionFromParticleData(Part->particleBlock.particles);
-      streamLine->setStreamRegionFromParticleData(Part->particleBlock.particles);
-
-      streamLine->setSeeds(Part->particleBlock.particles, n_seeds);
-      float degree = 10.f;
-
-      scene->line.clearGroup("streamline");
-
-      auto lines = streamLine->build(Part->particleBlock,  degree);
-
-      for (auto& line : lines) {
-	line.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	line.opacity = 1.0;
-	line.tag = "streamline";
-	scene->line.add(line);
-      }
+      buildReq.runRequested = true;
     }
 
     if (ImGui::Button("disable Grid & Mesh")) {
-      scene->line.clearGroup("streamline");
+      buildReq.clearRequested = true;
     }
-				
+
     break;
-  }
+  }    
 #endif
-			
+
 #ifdef ISO_CONTOUR
   case RENDER_ISO_CONTOUR: {
-    static float isoLevel = 0.;
-				
-    ImGui::InputFloat("Threshold value for iso-contour", &isoLevel);
+    auto& req = rt.isoContour;
+
+    ImGui::InputFloat("Threshold value for iso-contour", &req.isoLevel);
     ImGui::SliderFloat("Opacity", &render->isocontour.opacity, 0.0f, 1.0f);
-				
-    static int max_treelevel = 15;
-    ImGui::SliderInt("Maximum level of OctTree", &max_treelevel, 5, 20);
-				
-    static QuantityId selectedVar_iso = QuantityId::Density;
-    if (ImGui::BeginCombo("Quantity for Iso-Contour", QuantityLabel(selectedVar_iso))) {
+    ImGui::SliderInt("Maximum level of OctTree", &req.maxTreeLevel, 5, 20);
+
+    if (ImGui::BeginCombo("Quantity for Iso-Contour",
+			  QuantityLabel(req.selectedQuantity))) {
       for (int q = 0; q < Part->particleBlock.nUIQ; ++q) {
 	QuantityId cand = Part->particleBlock.uiQ[q];
-	bool is_selected = (cand == selectedVar_iso);
-	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) selectedVar_iso = cand;
+	bool is_selected = (cand == req.selectedQuantity);
+	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
+	  req.selectedQuantity = cand;
+	}
 	if (is_selected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
     }
-				
-    if (ImGui::Button("Build OctTree & Mesh")) {
-      BuildIsoContourGeometry(*Part,
-			      selectedVar_iso,
-			      isoLevel,
-			      max_treelevel,
-			      *isoContour);
 
-      render->isocontour.show = true;
-      render->isocontour.cpuUpdated = true;
+    if (ImGui::Button("Build OctTree & Mesh")) {
+      req.runRequested = true;
     }
-								
+
     if (ImGui::Button("disable Grid & Mesh")) {
-      render->isocontour.show = false;
-    }    
+      req.clearRequested = true;
+    }
+
     break;
   }
 #endif

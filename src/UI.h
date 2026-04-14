@@ -194,11 +194,10 @@ struct SettingsUIContext {
   ParticleVisualConfig* particleVisual = nullptr;
   AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
-  SceneManagers* scene = nullptr;
-  AnalysisState* analysis = nullptr;
+  AnalysisDerivedState* analysis = nullptr;
 #ifdef ISO_CONTOUR
   IsoContourGeometryState* isoContour = nullptr;
 #endif
 };
 
-void ShowSettingsUI(SettingsUIContext& ctx, SettingsRuntimeState& rt);
+void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt);

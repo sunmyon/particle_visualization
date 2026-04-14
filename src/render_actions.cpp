@@ -22,33 +22,6 @@
 #include "VolumeRendering/OpacityComputer.hpp"
 #endif
 
-#ifdef STREAM_LINE
-void UpdateSeedRegionPreview(StreamlineComputer& streamLine,
-			     CubeManager& cubeManager,
-			     RenderRuntimeState& render,
-			     float seed_center[3],
-			     float seed_len[3],
-			     float seed_opacity)
-{
-  cubeManager.clearGroup("seedRegion");
-
-  if (seed_len[0] > 0.f && seed_len[1] > 0.f && seed_len[2] > 0.f) {
-    cubeManager.addCube(
-      glm::vec3(seed_center[0], seed_center[1], seed_center[2]),
-      glm::vec3(0.5f * seed_len[0], 0.5f * seed_len[1], 0.5f * seed_len[2]),
-      glm::quat{1, 0, 0, 0},
-      seed_opacity,
-      "seedRegion"
-    );
-    streamLine.setRegionByHand(seed_center, seed_len);
-  } else {
-    streamLine.disableRegion();
-  }
-
-  render.cubes.cpuUpdated = true;
-}
-#endif
-
 #ifdef VOLUME_RENDERING
 void PrepareVolumeRendering(ParticleArray& part,
                             lbvh::MortonBuilder& bvh,

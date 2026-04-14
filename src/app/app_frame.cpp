@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include "app/app_state.h"
+#include "app/app_analysis_execution.h"
 #include "app/app_callbacks.h"
 #include "render/render_system.h"
 
@@ -27,7 +28,6 @@
 
 static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
                                                AppViewState& view,
-                                               AppRuntimeState& runtime,
                                                AppDerivedState& derived,
                                                AppServices& services)
 {
@@ -37,8 +37,6 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
   ctx.camCtx         = &view.camera;
   ctx.particleVisual = &view.particleVisual;
   ctx.services       = &services;
-  ctx.render         = &runtime.render;
-  ctx.scene          = &derived.scene;
   ctx.analysis       = &derived.analysis;
 #ifdef ISO_CONTOUR
   ctx.isoContour     = &derived.isoContour;
@@ -53,8 +51,8 @@ static void DrawSettingsPanels(const AppDataState& data,
                                AppServices& services)
 {
   SettingsUIContext settingsCtx =
-      MakeSettingsUIContext(data, view, runtime, derived, services);
-  ShowSettingsUI(settingsCtx, runtime.settings);
+    MakeSettingsUIContext(data, view, derived, services);
+  ShowSettingsUI(settingsCtx, runtime);
   ShowCameraSettingsUI();
 }
 
@@ -151,6 +149,99 @@ static void UpdateOverlayState(ParticleArray& particles,
   }
 }
 
+#ifdef GEOMETRICAL_ANALYSIS
+static void RebuildDiskDerivedState(DiskAnalysisResultState& result,
+                                    RenderLayerState& diskRenderState,
+                                    DiskManager& disks)
+{
+  if (!result.cpuUpdated) {
+    return;
+  }
+
+  disks.clearGroup("main_disk");
+
+  if (result.valid) {
+    DiskObject disk = result.disk;
+    disk.opacity = diskRenderState.opacity;
+    disk.color   = glm::vec3(1.0f);
+    disk.tag     = "main_disk";
+    disks.add(disk);
+    diskRenderState.show = true;
+  }
+
+  diskRenderState.cpuUpdated = true;
+  result.cpuUpdated = false;
+}
+
+static void RebuildEllipsoidDerivedState(EllipsoidAnalysisResultState& result,
+                                         RenderLayerState& ellipsoidState,
+                                         EllipsoidManager& ellipsoids)
+{
+  if (!result.cpuUpdated) {
+    return;
+  }
+
+  ellipsoids.clearGroup("analysis_ellipsoid");
+
+  if (result.valid) {
+    EllipsoidObject obj = result.ellipsoid;
+    obj.opacity = ellipsoidState.opacity;
+    obj.color   = glm::vec3(1.0f);
+    obj.tag     = "analysis_ellipsoid";
+    obj.renderMode = EllipsoidRenderMode::Solid;
+    ellipsoids.add(obj);
+    ellipsoidState.show = true;
+  } else {
+    ellipsoidState.show = false;
+  }
+
+  ellipsoidState.cpuUpdated = true;
+  result.cpuUpdated = false;
+}
+#endif
+
+#ifdef STREAM_LINE
+static void RebuildStreamlinePreviewDerivedState(StreamlinePreviewResultState& result,
+                                                 RenderLayerState& cubeRenderState,
+                                                 CubeManager& cubes)
+{
+  if (!result.cpuUpdated) {
+    return;
+  }
+
+  cubes.clearGroup("streamline_seed_region");
+
+  if (result.valid) {
+    CubeObject cube = result.cube;
+    cube.tag = "streamline_seed_region";
+    cubes.add(cube);
+    cubeRenderState.show = true;
+  }
+
+  cubeRenderState.cpuUpdated = true;
+  result.cpuUpdated = false;
+}
+
+static void RebuildStreamlineDerivedState(StreamlineBuildResultState& result,
+                                          RenderLayerState& lineRenderState,
+                                          LineManager& lines)
+{
+  if (!result.cpuUpdated) {
+    return;
+  }
+
+  lines.clearGroup("streamline");
+
+  for (auto& line : result.lines) {
+    lines.add(line);
+  }
+
+  lineRenderState.show = !result.lines.empty();
+  lineRenderState.cpuUpdated = true;
+  result.cpuUpdated = false;
+}
+#endif
+
 static void PropagateDirtyFlags(const ParticleArray& particles,
                                 RenderSystem& rs)
 {
@@ -240,7 +331,7 @@ static void UpdateConvexHullDerivedState(ParticleArray& particles,
                                          ConvexHullGenerator& convexHull,
                                          RenderLayerState& polyhedraState,
 					 PolyhedronManager& polyhedra,
-                                         AnalysisState& analysis)
+                                         AnalysisDerivedState& analysis)
 {
   if (!clumpFind.checkClumpComputation()) {
     return;
@@ -627,6 +718,26 @@ static void RebuildDerivedState(AppDataState& data,
                                 AppDerivedState& derived,
                                 AppServices& services)
 {
+#ifdef GEOMETRICAL_ANALYSIS
+  RebuildDiskDerivedState(derived.analysis.disk,
+			  runtime.render.disks,
+			  derived.scene.disk);
+
+  RebuildEllipsoidDerivedState(derived.analysis.ellipsoid,
+			       runtime.render.ellipsoids,
+			       derived.scene.ellipsoid);
+#endif
+
+#ifdef STREAM_LINE
+  RebuildStreamlinePreviewDerivedState(derived.analysis.streamlinePreview,
+				       runtime.render.cubes,
+				       derived.scene.cube);
+  
+  RebuildStreamlineDerivedState(derived.analysis.streamlineBuild,
+				runtime.render.lines,
+				derived.scene.line);
+#endif
+  
   UpdateOverlayState(*data.particles,
                      view.camera,
                      runtime.render.particleLabels,
@@ -685,6 +796,57 @@ static void UpdateRenderResources(const AppDataState& data,
                                         rs);
 }
 
+static void ExecuteAnalysisRequests(AppDataState& data,
+                                    AppRuntimeState& runtime,
+                                    AppDerivedState& derived,
+                                    AppServices& services)
+{
+#ifdef GEOMETRICAL_ANALYSIS
+  ExecuteSingleDiskAnalysisRequest(*data.particles,
+                                   *services.diskFinder,
+                                   runtime.analysis.disk,
+                                   derived.analysis.disk);
+  
+  ExecuteDiskBatchRequest(*data.particles,
+                          *data.fileInfo,
+                          *services.diskFinder,
+                          runtime.render.disks,
+                          runtime.analysis.diskBatch,
+                          derived.analysis.diskBatch);
+
+  ExecuteSingleEllipsoidAnalysisRequest(*data.particles,
+                                        *services.ellipsoid,
+                                        runtime.analysis.ellipsoid,
+                                        derived.analysis.ellipsoid);
+  
+  ExecuteEllipsoidBatchRequest(*data.particles,
+                               *data.fileInfo,
+                               *services.ellipsoid,
+                               runtime.analysis.ellipsoidBatch,
+                               derived.analysis.ellipsoidBatch);
+#endif
+
+#ifdef STREAM_LINE
+  ExecuteStreamlinePreviewRequest(runtime.analysis.streamlinePreview,
+				  derived.analysis.streamlinePreview);
+  
+  ExecuteStreamlineBuildRequest(*data.particles,
+				*services.streamLine,
+				runtime.analysis.streamlineBuild,
+				derived.analysis.streamlineBuild);
+#endif
+
+  ExecuteStellarDensityRequest(*data.particles,
+                             runtime.analysis.stellarDensity);
+
+#ifdef ISO_CONTOUR
+  ExecuteIsoContourRequest(*data.particles,
+			   runtime.analysis.isoContour,
+			   derived.isoContour,
+			   runtime.render.isocontour);
+#endif
+}
+
 void RunFrame(AppState& app,
               RenderSystem& render,
               WindowContext& window)
@@ -699,12 +861,14 @@ void RunFrame(AppState& app,
 
   UpdateExternalInputs(app.services, *app.data.particles);
 
+  ExecuteAnalysisRequests(app.data, app.runtime, app.derived, app.services);
+  
   RebuildDerivedState(app.data,
                       app.view,
                       app.runtime,
                       app.derived,
                       app.services);
-
+  
   UpdateRenderResources(app.data,
                         app.view,
                         app.runtime,

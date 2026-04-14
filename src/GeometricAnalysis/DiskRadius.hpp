@@ -9,6 +9,7 @@
 #include <cmath>
 #include <algorithm>
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>

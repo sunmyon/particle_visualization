@@ -13,19 +13,20 @@ void UpdateCuboidTransformArcball(glm::vec3 &center, glm::quat &cuboidTransform
 				  , float lastX, float lastY, float xpos, float ypos
 				  , const glm::mat4 &view, const glm::vec3 &pivotWorld);
 
-struct Cube {
-  glm::vec3 position;       // Center position of the cube
-  glm::vec3 size;           // Half-extents along each axis (width/2, height/2, depth/2)
+struct CubeObject {
+  glm::vec3 center;       // Center position of the cube
+  glm::vec3 halfSize;           // Half-extents along each axis (width/2, height/2, depth/2)
   glm::quat orientation;    // Rotation quaternion
   float opacity;
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
   std::string tag;          // Group identifier
   
   // Convenience: compute model matrix for this cube
   glm::mat4 modelMatrix() const {
     glm::mat4 M(1.0f);
-    M = glm::translate(M, position);
+    M = glm::translate(M, center);
     M = M * glm::mat4_cast(orientation);
-    M = glm::scale(M, size * 2.0f);
+    M = glm::scale(M, halfSize * 2.0f);
 
     return M;
   }
@@ -33,48 +34,44 @@ struct Cube {
 
 class CubeManager {
 public:
-    CubeManager() = default;
-    ~CubeManager() = default;
+  CubeManager() = default;
+  ~CubeManager() = default;
 
-    CubeManager(const CubeManager&) = delete;
-    CubeManager& operator=(const CubeManager&) = delete;
+  CubeManager(const CubeManager&) = delete;
+  CubeManager& operator=(const CubeManager&) = delete;
 
-    CubeManager(CubeManager&&) = default;
-    CubeManager& operator=(CubeManager&&) = default;
+  CubeManager(CubeManager&&) = default;
+  CubeManager& operator=(CubeManager&&) = default;
 
-    void addCube(const glm::vec3& position,
-                 const glm::vec3& size,
-                 const glm::quat& orientation = glm::quat{1,0,0,0},
-                 const float& opacity = 0.5f,
-                 const std::string& tag = "default") {
-      cubes_.push_back({ position, size, orientation, opacity, tag });
+  void add(const CubeObject& cube) {
+    cubes_.push_back(cube);
+  }
+  
+  void clearGroup(const std::string& tag) {
+    cubes_.erase(
+		 std::remove_if(cubes_.begin(), cubes_.end(),
+				[&](const CubeObject& c){ return c.tag == tag; }),
+		 cubes_.end());
+  }
+
+  void removeCube(size_t index) {
+    if (index < cubes_.size()) {
+      cubes_.erase(cubes_.begin() + index);
     }
+  }
 
-    void clearGroup(const std::string& tag) {
-      cubes_.erase(
-        std::remove_if(cubes_.begin(), cubes_.end(),
-                       [&](const Cube& c){ return c.tag == tag; }),
-        cubes_.end());
-    }
+  void clear() {
+    cubes_.clear();
+  }
 
-    void removeCube(size_t index) {
-      if (index < cubes_.size()) {
-        cubes_.erase(cubes_.begin() + index);
-      }
-    }
+  const std::vector<CubeObject>& getCubes() const {
+    return cubes_;
+  }
 
-    void clear() {
-      cubes_.clear();
-    }
-
-    const std::vector<Cube>& getCubes() const {
-      return cubes_;
-    }
-
-    bool show() const { return !cubes_.empty(); }
+  bool show() const { return !cubes_.empty(); }
 
 private:
-    std::vector<Cube> cubes_;
+  std::vector<CubeObject> cubes_;
 };
 
 enum class EllipsoidRenderMode {

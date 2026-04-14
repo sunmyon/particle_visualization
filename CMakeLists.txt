@@ -79,6 +79,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
+  ${SRC_DIR}/app/app_analysis_execution.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
   ${SRC_DIR}/render/render_programs.cpp
