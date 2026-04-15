@@ -723,7 +723,7 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
 
 
-void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo){
+void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo, CameraContext& cam){
   if(!showWindowClumpFinder) return;    
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -880,10 +880,10 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
 		   i, count, mass, pos[0], pos[1], pos[2], radius);
 	  if (ImGui::Selectable(label, false)) {
 	    // クリックされたらカメラをクランプの重心に移動
-	    float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-	    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-	    camCtx.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
-	    camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+	    float dist = glm::length(cam.cameraPos - cam.cameraTarget);
+	    glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+	    cam.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
+	    cam.cameraPos = cam.cameraTarget - direction * dist;
 	  }
 
 #ifdef USE_CONVEX_HULL

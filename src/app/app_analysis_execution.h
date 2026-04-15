@@ -67,3 +67,15 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
                                    const CameraContext& camera,
                                    ProjectionMovieRequestState& request,
                                    ProjectionMovieResultState& result);
+
+void ExecuteFileNavigationRequests(FileInfo& fileInfo,
+				   ParticleArray& particles,
+				   FileNavigationRuntimeState& rt);
+
+void ExecuteCameraPlacementRequests(ParticleArray& particles,
+				    CameraContext& camCtx,
+				    SettingsRuntimeState& rt);
+
+void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+				    CameraContext& camCtx,
+				    int currentFileIndex);

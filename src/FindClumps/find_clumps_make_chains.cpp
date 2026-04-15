@@ -11,7 +11,7 @@
 #include "implot.h"
 
 #ifdef CLUMP_DATA_READ
-void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo) {
+void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo, CameraContext& cam) {
   if (!showWindowClumpList) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -79,10 +79,10 @@ void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, File
         ImGui::TableSetColumnIndex(0);
         if (ImGui::Selectable(label, false)) {
           // 行全体がクリックされた場合、カメラ移動などの処理
-          float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-          glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-          camCtx.cameraTarget = glm::vec3(cp.Pos[0], cp.Pos[1], cp.Pos[2]);
-          camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+          float dist = glm::length(cam.cameraPos - cam.cameraTarget);
+          glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+          cam.cameraTarget = glm::vec3(cp.Pos[0], cp.Pos[1], cp.Pos[2]);
+          cam.cameraPos = cam.cameraTarget - direction * dist;
         }
 
         // 右側の列：ラジオボタンで選択
@@ -544,7 +544,7 @@ TrackingVector<FindClump::clump_properties> FindClump::calc_chain_properties(Tra
 }
 
 
-void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo){
+void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam){
   if(!flagShowWindowClumpChainList)
     return;
 
@@ -555,10 +555,11 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
     clumpChain = make_clump_evolution_chain(clumpChainInitFileIndex, clumpChainNsnapshots, clumpChainDFileIndex, clumpChainFileName);
     clumpChainProps = calc_chain_properties(clumpChain);
 
+    double unit_mass_in_msun = P->units.mass_msun / P->units.hubble;
     for(auto &clump : clumpChainProps){
-      clump.mstar *= (P->UnitMass_in_msolar/P->Hubble);
-      clump.mstar_maximum *= (P->UnitMass_in_msolar/P->Hubble);
-      clump.mass_maximum *= (P->UnitMass_in_msolar/P->Hubble);
+      clump.mstar *= unit_mass_in_msun;
+      clump.mstar_maximum *= unit_mass_in_msun;
+      clump.mass_maximum *= unit_mass_in_msun;
     }
     
     flagClumpChainComputed = true;
@@ -663,17 +664,17 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 
       ImGui::SameLine();
       if(ImGui::Button("from fixed viewpoint")){
-	camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, -1.0f);
+	cam.cameraPos = cam.cameraTarget + glm::vec3(0.0f, 0.0f, -1.0f);
 
 	glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f); // 仮のアップベクトル
-	glm::vec3 forward = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);       
+	glm::vec3 forward = glm::normalize(cam.cameraTarget - cam.cameraPos);       
 	glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
 	glm::vec3 up = glm::normalize(glm::cross(right, forward));
 	
-	glm::mat4 viewMatrix = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, up);
+	glm::mat4 viewMatrix = glm::lookAt(cam.cameraPos, cam.cameraTarget, up);
 	glm::mat3 rotationMatrix = glm::mat3(viewMatrix);
-	camCtx.distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-	camCtx.cameraOrientation = glm::quat_cast(rotationMatrix);
+	cam.distance = glm::length(cam.cameraPos - cam.cameraTarget);
+	cam.cameraOrientation = glm::quat_cast(rotationMatrix);
       }
       
       ImGui::Text("current snapshot index: %d (init=%d now=%d step=%d) time=%g\n"
@@ -692,10 +693,10 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	
 	fileinfo.loadNewSnapshot(snapshot, P);
 	    
-	float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-	glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-	camCtx.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
-	camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+	float dist = glm::length(cam.cameraPos - cam.cameraTarget);
+	glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+	cam.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
+	cam.cameraPos = cam.cameraTarget - direction * dist;
 	    
 	flag_button_pushed = false;
       }

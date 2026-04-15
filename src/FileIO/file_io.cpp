@@ -129,44 +129,14 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
       loadBatch(newFileIndex, batchSize, skipStep, P);	
   }
 
+  snapshotUpdated = true;
   currentFileIndex = newFileIndex;
+  
   printf("currentStep=%d newFileIndex=%d currentBatchStart=%d\n", currentStep, newFileIndex, currentBatchStart);
-
+  
 #ifdef CLUMP_DATA_READ
   P->flag_renew_clumpList = true;
-  if(P->flag_follow_clump_center){    
-    ClumpData targetClump = P->Clumps[P->TargetClumpID];
-    int flag = P->readClumpData(currentFileIndex);
-
-    if(flag){
-      P->flag_follow_clump_center = false;
-      return;
-    }
-    
-    float target_pos_new[3];
-    targetClump.get_next_clump_position(P->Clumps, target_pos_new);
-        
-    float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-    camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
-    camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
-  }
 #endif
-  
-  if(P->flag_follow_particle_ID){
-    float target_pos_new[3];
-    bool flag = P->findParticleID(P->TargetParticleID, target_pos_new);
-
-    if(flag == false){
-      P->flag_follow_particle_ID = false;
-      return;
-    }
-    
-    float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-    camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
-    camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
-  }
 }
 
 
@@ -642,10 +612,10 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   TIME_FUNCTION();
 
-  outBlock.header.UnitLength_in_cm = UnitLength_in_cm;
-  outBlock.header.UnitMass_in_g = UnitMass_in_g;
-  outBlock.header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
-  outBlock.header.HubbleParam = Hubble;
+  outBlock.header.UnitLength_in_cm = units.length_cm;
+  outBlock.header.UnitMass_in_g = units.mass_g;
+  outBlock.header.UnitVelocity_in_cm_per_s = units.velocity_cm_per_s;
+  outBlock.header.HubbleParam = units.hubble;
   
   // 1) フルパスを組み立て
   char fileName[512];
@@ -877,12 +847,12 @@ void ParticleArray::swap_particles(TrackingVector<ParticleBlock>& batchP, int ib
 
   // 8) 以降あなたのユニット・フラグ更新はそのまま
   if (particleBlock.header.flag_hdf5 == true) {
-    UnitLength_in_cm   = particleBlock.header.UnitLength_in_cm;
-    UnitMass_in_g      = particleBlock.header.UnitMass_in_g;
-    UnitVelocity_in_cm_per_s = particleBlock.header.UnitVelocity_in_cm_per_s;
-    Hubble             = particleBlock.header.HubbleParam;
-    useComovingCorrdinate = particleBlock.header.flag_comoving;
-    setUnits();
+    units.length_cm   = particleBlock.header.UnitLength_in_cm;
+    units.mass_g      = particleBlock.header.UnitMass_in_g;
+    units.velocity_cm_per_s  = particleBlock.header.UnitVelocity_in_cm_per_s;
+    units.hubble                = particleBlock.header.HubbleParam;
+    units.useComovingCoordinate = particleBlock.header.flag_comoving;
+    units.updateDerived();
   }
 
   flag_mask.resize(particleBlock.particles.size(), 0);
@@ -993,13 +963,13 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, boo
   TrackingVector<float> out_dists_sqr(N_neighbours);
 
   double cosmofac = 1.;
-  if(useComovingCorrdinate)
+  if(units.useComovingCoordinate)
     cosmofac = particleBlock.header.time;
 
   if(cosmofac < 1.e-2 || cosmofac > 1.)
     cosmofac = 1.;
 
-  double hubble = Hubble;
+  double hubble = units.hubble;
   if(hubble < 0.1 || hubble > 1.0)
     hubble = 1.;
   
@@ -1043,16 +1013,16 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, boo
     
     int original_index = cloud.particles[i].index;
     if(flag_star)
-      particles[original_index].density = totalMass * UnitMass_in_msolar
-	/ area / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_pc, 2.) * hubble;
+      particles[original_index].density = totalMass * units.mass_msun
+	/ area / std::pow(originalMax / desiredMax * cosmofac * units.length_pc, 2.) * units.hubble;
     else
-      particles[original_index].density = density * UnitMass_in_msolar * 1.998e33 / std::pow(originalMax / desiredMax * cosmofac * UnitLength_in_cm, 3.) * hubble * hubble;
+      particles[original_index].density = density * units.mass_g / std::pow(originalMax / desiredMax * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
 
     if(flag_overwrite_hsml)
       particles[original_index].Hsml = h;
     
-    printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g %g\n"
-	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * UnitLength_in_cm, hubble, Hubble);
+    printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
+	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * units.length_cm, units.hubble);
   }
 }
 

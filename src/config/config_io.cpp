@@ -244,18 +244,21 @@ bool loadConfig(const std::string& filename,
     else if (startsWith(line, "currentStep=")) {
       fileInfo->currentStep = std::stoi(line.substr(std::strlen("currentStep=")));
     }
-    else if (startsWith(line, "UnitMass_in_msolar=")) {
-      P->UnitMass_in_msolar = std::stof(line.substr(std::strlen("UnitMass_in_msolar=")));
+    else if (startsWith(line, "UnitMass_in_g=")) {
+      P->units.mass_g = std::stod(line.substr(std::strlen("UnitMass_in_g=")));
     }
-    else if (startsWith(line, "UnitLength_in_pc=")) {
-      P->UnitLength_in_pc = std::stof(line.substr(std::strlen("UnitLength_in_pc=")));
+    else if (startsWith(line, "UnitLength_in_cm=")) {
+      P->units.length_cm = std::stod(line.substr(std::strlen("UnitLength_in_cm=")));
+    }
+    else if (startsWith(line, "UnitVelocity_in_cm_per_s=")) {
+      P->units.velocity_cm_per_s = std::stod(line.substr(std::strlen("UnitVelocity_in_cm_per_s=")));
     }
     else if (startsWith(line, "Hubble=")) {
-      P->Hubble = std::stof(line.substr(std::strlen("Hubble=")));
+      P->units.hubble = std::stof(line.substr(std::strlen("Hubble=")));
     }
-    else if (startsWith(line, "useComovingCorrdinate=")) {
-      P->useComovingCorrdinate =
-        std::stof(line.substr(std::strlen("useComovingCorrdinate=")));
+    else if (startsWith(line, "useComovingCoordinate=")) {
+      P->units.useComovingCoordinate =
+        std::stof(line.substr(std::strlen("useComovingCoordinate=")));
     }
   }
 
@@ -318,10 +321,11 @@ bool saveConfig(const std::string& filename,
   outfile << "NormalizationFactor=" << P->desiredMax << "\n";
   outfile << "skipStep=" << fileInfo->skipStep << "\n";
   outfile << "currentStep=" << fileInfo->currentStep << "\n";
-  outfile << "UnitMass_in_msolar=" << P->UnitMass_in_msolar << "\n";
-  outfile << "UnitLength_in_pc=" << P->UnitLength_in_pc << "\n";
-  outfile << "Hubble=" << P->Hubble << "\n";
-  outfile << "useComovingCorrdinate=" << P->useComovingCorrdinate << "\n";
+  outfile << "UnitMass_in_g=" << P->units.mass_g << "\n";
+  outfile << "UnitLength_in_cm=" << P->units.length_cm << "\n";
+  outfile << "UnitVelocity_in_cm_per_s=" << P->units.length_cm << "\n";
+  outfile << "Hubble=" << P->units.hubble << "\n";
+  outfile << "useComovingCoordinate=" << P->units.useComovingCoordinate << "\n";
 
   outfile.close();
   return true;

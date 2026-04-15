@@ -267,8 +267,6 @@ private:
   int clumpChainDFileIndex;
   std::string clumpChainFileName;
   
-  CameraContext& camCtx;  
-
   struct ParticleCloud {
     TrackingVector<ParticleDataFiltered> pts;
 
@@ -340,11 +338,9 @@ private:
   TrackingVector<clump_properties> calc_chain_properties(TrackingVector<TrackingVector<clump_evolution_info *>>& clumpChain);
   
 public:
-  FindClump(CameraContext& cam):
-    camCtx(cam)
-  {}
+  FindClump() = default;
   
-  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo);
+  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo, CameraContext& cam);
   
   int get_nclumps() const{
     return nodeList.size();
@@ -387,7 +383,7 @@ public:
 
   void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
   
-  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo);
+  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo, CameraContext& cam);
   
   void showClumpListWindow(){
     showWindowClumpList = true;
@@ -408,7 +404,7 @@ public:
   }
   
   void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname);
-  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo);  
+  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam);  
 };
 
 

@@ -55,19 +55,23 @@ static void DrawSettingsPanels(const AppDataState& data,
 }
 
 static void DrawClumpPanels(const AppDataState& data,
-                            AppServices& services)
+                            AppServices& services,
+			    CameraContext& camera)
 {
   services.clumpFind->ShowFindClumpsUI(data.particles->particleBlock.particles,
                                        data.particles->particleBlock.header,
-                                       *data.fileInfo);
+                                       *data.fileInfo,
+				       camera);
 
 #ifdef CLUMP_DATA_READ
   services.clumpFind->ReadAndShowClumpsUI(data.particles,
                                           data.fileInfo->currentFileIndex,
-                                          *data.fileInfo);
+                                          *data.fileInfo,
+					  camera);
   services.clumpFind->showClumpChainList(data.particles,
                                          services.projectionMap2D.get(),
-                                         *data.fileInfo);
+                                         *data.fileInfo,
+					 camera);
 #endif
 }
 
@@ -113,12 +117,12 @@ static void DrawToolWindows(const AppDataState& data,
                             AppDerivedState& derived,
                             AppServices& services)
 {
-  DrawClumpPanels(data, services);
+  DrawClumpPanels(data, services, view.camera);
   DrawFileDialogPanels(data);
   ApplyMaskIfRequested(data);
   DrawAuxiliaryPanels(data, view);
 
-  DrawRadialProfileUI(*services.radialProfile, data.particles->particleBlock, data.particles->UnitMass_in_g, data.particles->UnitLength_in_cm, data.particles->UnitTime_in_s);
+  DrawRadialProfileUI(*services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, data.particles->units);
   
   DrawProjectionMapUI(*services.projectionMap2D,
                       data.particles,
@@ -825,7 +829,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                     AppRuntimeState& runtime,
                                     AppDerivedState& derived,
                                     AppServices& services,
-				    const CameraContext& camera)
+				    CameraContext& camera)
 {
 #ifdef GEOMETRICAL_ANALYSIS
   ExecuteSingleDiskAnalysisRequest(*data.particles,
@@ -886,6 +890,22 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				camera,
 				runtime.analysis.projectionMovie,
 				derived.analysis.projectionMovie);
+
+  ExecuteFileNavigationRequests(*data.fileInfo,
+				*data.particles,
+				runtime.settings.fileNavigation);
+
+  ExecuteCameraPlacementRequests(*data.particles,
+				 camera,
+				 runtime.settings);
+
+  if (data.fileInfo->snapshotUpdated) {
+    ExecutePostSnapshotLoadActions(*data.particles,
+				   camera,
+				   data.fileInfo->currentFileIndex);
+    
+    data.fileInfo->clearSnapshotUpdated();
+  }
 }
 
 void RunFrame(AppState& app,

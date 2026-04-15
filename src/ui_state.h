@@ -2,10 +2,42 @@
 
 #include <glm/vec3.hpp>
 
+struct FileNavigationRequestState {
+  bool applySkipStepRequested = false;
+  bool loadSelectedSnapshotRequested = false;
+  bool loadPreviousRequested = false;
+  bool loadNextRequested = false;
+  bool loadBatchRequested = false;
+  bool reloadRequested = false;
+  bool openFormatDialogRequested = false;
+  bool generateTestDataRequested = false;
+};
+
+struct FileNavigationRuntimeState {
+  int tempSkipStep = 1;
+  FileNavigationRequestState request;
+};
+
+struct CameraPlacementRequestState {
+  bool setCenterRequested = false;
+  bool setProjectionRequested = false;
+  bool applyCullingRequested = false;
+  bool clearCullingRequested = false;
+
+  float centerInput[3] = {0.0f, 0.0f, 0.0f};
+  bool inputIsOriginal = true;
+
+  int currentView = 0;
+  float rollAngle = 0.0f;
+};
+
 struct SettingsRuntimeState {
   float radiusCullingSphere = 1.0f;
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
+
+  FileNavigationRuntimeState fileNavigation;
+  CameraPlacementRequestState cameraPlacement;
 };
 
 struct RenderLayerState {

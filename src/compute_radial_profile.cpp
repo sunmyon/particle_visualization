@@ -7,9 +7,12 @@
 #include <cmath>
 #include <vector>
 
+#include "core/physics_constants.h"
+
 RadialProfileResult
 RadialProfileComputer::compute(const ParticleBlock& partblock,
-                               const RadialProfileParams& params)
+                               const RadialProfileParams& params,
+			       const glm::vec3& cam_center)
 {
   RadialProfileResult result;
   result.valid = false;
@@ -37,7 +40,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
     }
   }
 
-  glm::vec3 center = params.useOriginal ? (camCenter / normalizationFactor) : camCenter;
+  glm::vec3 center = params.useOriginal ? (cam_center / normalizationFactor) : cam_center;
 
   auto getPos = [&](const ParticleData& p) -> glm::vec3 {
     return params.useOriginal
@@ -243,7 +246,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
         double mv = (double)profile[i];
         double mdot = (dr_shell != 0.0) ? (mv / dr_shell) : 0.0;
 
-        profile[i] = (float)(mdot * UnitMass_in_msolar / UnitTime_in_yr);
+        profile[i] = (float)(mdot * units_.mdot_in_msun_per_yr());
         r_old = r_edge;
 
         if (params.flagAbsolute && profile[i] < 0.0f) profile[i] = -profile[i];
@@ -266,7 +269,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
         double mv = (double)profile[i];
         double mdot = (dr_shell != 0.0) ? (mv / dr_shell) : 0.0;
 
-        profile[i] = (float)(mdot * UnitMass_in_msolar / UnitTime_in_yr);
+        profile[i] = (float)(mdot * units_.mdot_in_msun_per_yr());
 
         if (params.flagAbsolute && profile[i] < 0.0f) profile[i] = -profile[i];
       }

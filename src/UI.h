@@ -1,6 +1,8 @@
 #pragma once
 
 #include <deque>
+#include <glm/glm.hpp>
+
 #include "ui_state.h"
 #include "app/analysis_state.h"
 #include "app/app_state.h"
@@ -10,6 +12,7 @@
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
+#include "core/units.h"
 
 struct RadialProfileUIState {
   bool open = false;
@@ -23,9 +26,8 @@ struct RadialProfileUIState {
 void OpenRadialProfileUI();
 void DrawRadialProfileUI(RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
-                         double unitmass_in_g,
-                         double unitlength_in_cm,
-                         double unittime_in_s);
+			 const glm::vec3& cam_center,
+			 UnitSystem& units);
 
 
 struct Histogram2DUIState {

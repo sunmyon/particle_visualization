@@ -323,7 +323,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
       } else if (params.starQuantity == StarQuantity::Density) {
 	pp.val = p.density;
       } else if (params.starQuantity == StarQuantity::Flux) {
-	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->UnitMass_in_msolar, params.flux);
+	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->units.mass_msun, params.flux);
       } else {
 	pp.val = 1.0f;
       }

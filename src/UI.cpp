@@ -36,14 +36,13 @@ void OpenRadialProfileUI() {
 
 void DrawRadialProfileUI(RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
-                         double unitmass_in_g,
-                         double unitlength_in_cm,
-                         double unittime_in_s)
+			 const glm::vec3& cam_center,
+			 UnitSystem& units)
 {
   auto& state = gRadialProfileUIState;
   if (!state.open) return;
 
-  computer.setUnits(unitmass_in_g, unitlength_in_cm, unittime_in_s);
+  computer.setUnits(units);
 
   ImGui::Begin("Radial Profile", &state.open);
 
@@ -106,7 +105,7 @@ void DrawRadialProfileUI(RadialProfileComputer& computer,
   ImGui::InputFloat("Maximum Radius (cut)", &state.params.rmax, 0.0f, 0.0f, "%g");
 
   if (ImGui::Button("Compute profile")) {
-    state.result = computer.compute(partblock, state.params);
+    state.result = computer.compute(partblock, state.params, cam_center);
 
     if (state.params.autorange) {
       state.params.xmin = state.result.xmin;
@@ -882,11 +881,11 @@ void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
 
     char label[512];
     std::snprintf(label, sizeof(label),
-                  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g H=%g",
-                  p.ID, p.mass * (P->UnitMass_in_msolar / P->Hubble),
+                  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g",
+                  p.ID, p.mass * (P->units.mass_msun / P->units.hubble),
                   p.pos[0], p.pos[1], p.pos[2],
                   p.vel[0], p.vel[1], p.vel[2],
-                  p.originalHsml, p.density, p.temperature, P->Hubble);
+                  p.originalHsml, p.density, p.temperature);
 
     if (ImGui::Selectable(label, state.historySel == (int)i)) {
       float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
@@ -954,7 +953,7 @@ void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
     char label[512];
     std::snprintf(label, sizeof(label),
                   "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
-                  state.filtered[i].ID, state.filtered[i].mass * (P->UnitMass_in_msolar / P->Hubble),
+                  state.filtered[i].ID, state.filtered[i].mass * (P->units.mass_msun / P->units.hubble),
                   state.filtered[i].pos[0], state.filtered[i].pos[1], state.filtered[i].pos[2],
                   state.filtered[i].vel[0], state.filtered[i].vel[1], state.filtered[i].vel[2],
                   state.filtered[i].originalHsml,
@@ -1016,7 +1015,7 @@ void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
 
     for (const auto& p : state.filtered) {
       float value = p.getValue(var);
-      value *= (P->UnitMass_in_msolar / P->Hubble);
+      value *= (P->units.mass_msun / P->units.hubble);
 
       if (value == 0.0f) continue;
       if (!func(p)) continue;
@@ -1041,7 +1040,7 @@ void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
 
     for (const auto& p : state.filtered) {
       float value = p.getValue(var);
-      value *= (P->UnitMass_in_msolar / P->Hubble);
+      value *= (P->units.mass_msun / P->units.hubble);
 
       if (value == 0.0f) continue;
       if (!func(p)) continue;

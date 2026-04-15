@@ -343,9 +343,9 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
     float fH2 = 0.0f;
     blk.readSoAAs(soa_views::H2Abundance, (size_t)ipart, fH2);
 
-    const double mu = 1.0 / (1.0 + XHe + felec - fH2);
+    const double mu = 1.0 / (1.0 + physics_constants::XHe + felec - fH2);
     const float beta = (float)(
-			       8.0 * M_PI * BOLTZMANN * p.temperature * p.density * mu / B2
+			       8.0 * M_PI * physics_constants::boltzmann_cgs * p.temperature * p.density * mu / B2
 			       );
     return beta;
   }

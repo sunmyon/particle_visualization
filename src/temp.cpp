@@ -621,3 +621,213 @@ case ANALYSIS_DISK: {
 	std::cerr << "Error creating directory: " << e.what() << std::endl;
       }
     }
+
+  // **skipStep の調整**
+  static int tempSkipStep = fileInfo->skipStep;
+  if (ImGui::InputInt("Skip Step", &tempSkipStep, 1, 100)) {
+    int newStep = std::round((fileInfo->currentFileIndex - fileInfo->initialIndex) / static_cast<float>(tempSkipStep));
+    fileInfo->currentStep = std::max(0, newStep);
+    fileInfo->skipStep = tempSkipStep;
+			
+    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+    if (!fileInfo->isLoading)
+      fileInfo->loadBatch(newFileIndex, fileInfo->batchSize, fileInfo->skipStep, Part);      
+			
+    fileInfo->currentFileIndex = newFileIndex;
+  }
+		
+  // **スライダーで `fileInfo->currentFileIndex` を選択**
+  if (ImGui::InputInt("Select File Index", &fileInfo->currentStep, 1, 10)) {
+    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+    fileInfo->loadNewSnapshot(newFileIndex, Part);      
+  }
+		
+  // **前のファイル**
+  if (ImGui::Button("Previous File") && fileInfo->currentStep > 0) {
+    fileInfo->currentStep--;
+			
+    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+    fileInfo->loadNewSnapshot(newFileIndex, Part);            
+  }
+		
+  ImGui::SameLine();
+		
+  // **次のファイル**
+  if (ImGui::Button("Next File")) {
+    fileInfo->currentStep++;
+			
+    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+    fileInfo->loadNewSnapshot(newFileIndex, Part);            
+  }
+		
+  if(ImGui::InputInt("Batch Size", &fileInfo->batchSize)){
+    if (!fileInfo->isLoading)
+      fileInfo->loadBatch(fileInfo->currentStep, fileInfo->batchSize, fileInfo->skipStep, Part);      
+  }
+		
+  ImGui::EndDisabled();
+		
+  // **ロード状況を表示**
+  if (fileInfo->isLoading) {
+    ImGui::Text("Loading...");
+  }
+		
+  if (ImGui::Button("Reload")) {
+    if (!fileInfo->isLoading) {
+      int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
+				
+      fileInfo->loadBatch(fileInfo->currentStep, fileInfo->batchSize, fileInfo->skipStep, Part);      
+      std::cout << "Reloaded files starting at file " << newFileIndex << std::endl;
+    }
+  }
+		
+  if (ImGui::Button("Edit Data Format")) {
+#ifdef HAVE_HDF5
+    if (fileInfo->useHDF5 || fileInfo->getFormatMode() == static_cast<int>(FileFormat::HDF5))
+      fileInfo->showHDF5Dialog();
+    else
+#endif
+      fileInfo->showDialog();      
+  }
+		
+  static const char* FileFormatNames[] = {
+    "Auto", "HDF5", "Binary", "Gadget", "Framed"
+  };
+  // FileFormat::_Count と同じ長さにしておく
+  static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames), 
+		"FileFormatNames needs to match FileFormat::_Count");
+		
+  int fmtIdx = fileInfo->getFormatMode();
+  // シンプルに Combo で切り替え
+  if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
+    // ユーザーが選び直したら enum に戻す
+    fileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
+  }
+		
+  if (ImGui::Button("Mask Settings...")) {
+    OpenMaskUI();
+  }
+  
+  if (ImGui::Button("Generate test data")) {
+    fileInfo->generateTestData(Part);      
+  }
+
+static void DrawCameraPlacementSection(ParticleArray* Part, CameraContext& camCtx, SettingsRuntimeState& rt){
+  if (!ImGui::CollapsingHeader("Set camera pos"))
+    return;
+  
+  static float centerInput[3] = {0.0f, 0.0f, 0.0f};
+  static bool inputIsOriginal = true;
+  ImGui::InputFloat3("Center Coordinates", centerInput, "%.3f");
+  ImGui::Checkbox("Input in Original Coordinates", &inputIsOriginal);
+  if (ImGui::Button("Set Center")) {
+    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+			
+    if (inputIsOriginal) {
+      // 入力された座標は original 座標なので、正規化に使用している倍率をかけて normalized 座標に変換
+      camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]) * Part->normalizationFactor;
+    } else {
+      camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]);
+    }
+    
+    camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
+  }
+		
+  static int currentView = 0;
+  const char* viewDirections[] = {
+    "View from +X", "View from -X",
+    "View from +Y", "View from -Y",
+    "View from +Z", "View from -Z"
+  };
+  ImGui::Combo("Projection Direction", &currentView, viewDirections, IM_ARRAYSIZE(viewDirections));
+		
+  static float rollAngle = 0.0f; // ロール角度（度単位）
+  ImGui::SliderFloat("Roll Angle (deg)", &rollAngle, -180.0f, 180.0f, "%.1f");
+		
+  if (ImGui::Button("Set Projection")) {
+    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+			
+    switch (currentView) {
+    case 0: // +X
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(distance, 0.0f, 0.0f);
+      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 1: // -X
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(-distance, 0.0f, 0.0f);
+      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 2: // +Y
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, distance, 0.0f);
+      camCtx.cameraUp = glm::vec3(0.0f, 0.0f, -1.0f); // Z軸を上方向に
+      break;
+    case 3: // -Y
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, -distance, 0.0f);
+      camCtx.cameraUp = glm::vec3(0.0f, 0.0f, 1.0f); // 反対Z軸を上方向に
+      break;
+    case 4: // +Z
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, distance);
+      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 5: // -Z
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, -distance);
+      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    }
+			
+    // 視線方向ベクトルを取得
+    glm::vec3 viewDir = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
+    // 回転クォータニオン生成（右手系、正の角度で反時計回り）
+    glm::quat rollQuat = glm::angleAxis(glm::radians(rollAngle), viewDir);
+    // Upベクトルに適用
+    camCtx.cameraUp = rollQuat * camCtx.cameraUp;
+			
+    // ビュー行列を更新
+    glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
+			
+    // クォータニオンも更新（必要な場合）
+    camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
+  }
+		
+  ImGui::InputFloat("Culling radius", &rt.radiusCullingSphere);    
+  if(ImGui::Button("Culling sphere region")){
+    for(size_t i=0;i<Part->particleBlock.particles.size();i++){
+      auto &p = Part->particleBlock.particles[i];
+      uint8_t flag_mask = 0;
+      if(glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) > rt.radiusCullingSphere)
+	flag_mask = 1;
+				
+      Part->flag_mask[i] = flag_mask;
+    }
+			
+    Part->particlesDirty = true; 
+  }
+		
+  if(ImGui::Button("disable Culling")){
+    for(size_t i=0;i<Part->particleBlock.particles.size();i++)
+      Part->flag_mask[i] = 0;            
+    Part->particlesDirty = true; 
+  }  
+}
+
+  double UnitLength_in_pc = 1.;
+  double UnitMass_in_msolar = 1.;
+  double Hubble = 1.;
+
+  double GravConst_internal = 6.6743e-8;
+  bool useComovingCorrdinate = true;
+
+  double UnitVelocity_in_cm_per_s = 1.e5; // km/s
+  double UnitLength_in_cm = 3.08e18; //pc
+  double UnitMass_in_g = 1.98e33; //Msun
+  double UnitTime_in_s = 3.08e13;
+  double UnitTime_in_yr = 0.97e6;
+
+  static constexpr double yr_in_sec = 3.15576e7;
+  static constexpr double msolar_in_g = 1.989e33;
+  static constexpr double au_in_cm = 1.49598e13;
+  static constexpr double pc_in_cm = 3.085678e18;
+  static constexpr double kpc_in_cm = 3.085678e21;
+  static constexpr double Mpc_in_cm = 3.085678e24;
+  static constexpr double GravConst = 6.6743e-8;
+

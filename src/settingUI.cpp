@@ -72,32 +72,32 @@ namespace {
 
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P);
+static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt);
 static void DrawNormalizationSection(ParticleArray* P);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
-static void DrawCameraPlacementSection(ParticleArray* P, CameraContext& camCtx, SettingsRuntimeState& rt);
+static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
 #endif
 static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
 static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
-static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
+static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
 
 void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo, ctx.P);
+  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation);
   DrawNormalizationSection(ctx.P);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
-  DrawCameraPlacementSection(ctx.P, *ctx.camCtx, rt.settings);
+  DrawCameraPlacementSection(ctx.P, rt.settings);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
 #endif
   DrawAnalysisSection(ctx, rt.analysis);
   DrawRenderingSection(ctx, rt.analysis);
-  DrawOtherSettingsSection(ctx.P, ctx.fileInfo, rt.settings, rt.render);
+  DrawOtherSettingsSection(ctx.P->units, ctx.fileInfo, rt.settings, rt.render);
 
   ImGui::End();
 }
@@ -180,7 +180,7 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
   }    
 }
 
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part){
+static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
   
@@ -309,103 +309,73 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part){
       ImGuiFileDialog::Instance()->Close();
     }
 #endif
-		
+  
   fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
   ImGui::Text("File: %s", fileInfo->filePath);
   ImGui::Text("Current File: %d", fileInfo->currentFileIndex);
 		
   ImGui::BeginDisabled(fileInfo->isLoading);
-		
-  // **skipStep の調整**
-  static int tempSkipStep = fileInfo->skipStep;
-  if (ImGui::InputInt("Skip Step", &tempSkipStep, 1, 100)) {
-    int newStep = std::round((fileInfo->currentFileIndex - fileInfo->initialIndex) / static_cast<float>(tempSkipStep));
-    fileInfo->currentStep = std::max(0, newStep);
-    fileInfo->skipStep = tempSkipStep;
-			
-    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-    if (!fileInfo->isLoading)
-      fileInfo->loadBatch(newFileIndex, fileInfo->batchSize, fileInfo->skipStep, Part);      
-			
-    fileInfo->currentFileIndex = newFileIndex;
+
+  if (rt.tempSkipStep <= 0) {
+    rt.tempSkipStep = fileInfo->skipStep;
   }
-		
-  // **スライダーで `fileInfo->currentFileIndex` を選択**
+
+  if (ImGui::InputInt("Skip Step", &rt.tempSkipStep, 1, 100)) {
+    rt.request.applySkipStepRequested = true;
+  }
+
   if (ImGui::InputInt("Select File Index", &fileInfo->currentStep, 1, 10)) {
-    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-    fileInfo->loadNewSnapshot(newFileIndex, Part);      
+    rt.request.loadSelectedSnapshotRequested = true;
   }
-		
-  // **前のファイル**
+
   if (ImGui::Button("Previous File") && fileInfo->currentStep > 0) {
-    fileInfo->currentStep--;
-			
-    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-    fileInfo->loadNewSnapshot(newFileIndex, Part);            
+    rt.request.loadPreviousRequested = true;
   }
-		
+
   ImGui::SameLine();
-		
-  // **次のファイル**
+
   if (ImGui::Button("Next File")) {
-    fileInfo->currentStep++;
-			
-    int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-    fileInfo->loadNewSnapshot(newFileIndex, Part);            
+    rt.request.loadNextRequested = true;
   }
-		
-  if(ImGui::InputInt("Batch Size", &fileInfo->batchSize)){
-    if (!fileInfo->isLoading)
-      fileInfo->loadBatch(fileInfo->currentStep, fileInfo->batchSize, fileInfo->skipStep, Part);      
+
+  if (ImGui::InputInt("Batch Size", &fileInfo->batchSize)) {
+    rt.request.loadBatchRequested = true;
   }
-		
+
   ImGui::EndDisabled();
-		
-  // **ロード状況を表示**
+
   if (fileInfo->isLoading) {
     ImGui::Text("Loading...");
   }
-		
+
   if (ImGui::Button("Reload")) {
-    if (!fileInfo->isLoading) {
-      int newFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-				
-      fileInfo->loadBatch(fileInfo->currentStep, fileInfo->batchSize, fileInfo->skipStep, Part);      
-      std::cout << "Reloaded files starting at file " << newFileIndex << std::endl;
-    }
+    rt.request.reloadRequested = true;
   }
-		
+
   if (ImGui::Button("Edit Data Format")) {
-#ifdef HAVE_HDF5
-    if (fileInfo->useHDF5 || fileInfo->getFormatMode() == static_cast<int>(FileFormat::HDF5))
-      fileInfo->showHDF5Dialog();
-    else
-#endif
-      fileInfo->showDialog();      
+    rt.request.openFormatDialogRequested = true;
   }
-		
+
   static const char* FileFormatNames[] = {
     "Auto", "HDF5", "Binary", "Gadget", "Framed"
   };
-  // FileFormat::_Count と同じ長さにしておく
-  static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames), 
-		"FileFormatNames needs to match FileFormat::_Count");
-		
+  static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
+                "FileFormatNames needs to match FileFormat::_Count");
+
   int fmtIdx = fileInfo->getFormatMode();
-  // シンプルに Combo で切り替え
   if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
-    // ユーザーが選び直したら enum に戻す
     fileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
   }
-		
+
   if (ImGui::Button("Mask Settings...")) {
     OpenMaskUI();
   }
-  
+
   if (ImGui::Button("Generate test data")) {
-    fileInfo->generateTestData(Part);      
+    rt.request.generateTestDataRequested = true;
   }
 }
+  
 
 static void DrawNormalizationSection(ParticleArray* Part) {
   if (!ImGui::CollapsingHeader("Normalization"))
@@ -440,104 +410,44 @@ static void DrawSinkIdSection(const CameraContext& camCtx,
   }
 }
 
-static void DrawCameraPlacementSection(ParticleArray* Part, CameraContext& camCtx, SettingsRuntimeState& rt){
+static void DrawCameraPlacementSection(ParticleArray* Part,
+                                       SettingsRuntimeState& rt)
+{
   if (!ImGui::CollapsingHeader("Set camera pos"))
     return;
-  
-  static float centerInput[3] = {0.0f, 0.0f, 0.0f};
-  static bool inputIsOriginal = true;
-  ImGui::InputFloat3("Center Coordinates", centerInput, "%.3f");
-  ImGui::Checkbox("Input in Original Coordinates", &inputIsOriginal);
+
+  auto& req = rt.cameraPlacement;
+
+  ImGui::InputFloat3("Center Coordinates", req.centerInput, "%.3f");
+  ImGui::Checkbox("Input in Original Coordinates", &req.inputIsOriginal);
+
   if (ImGui::Button("Set Center")) {
-    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-			
-    if (inputIsOriginal) {
-      // 入力された座標は original 座標なので、正規化に使用している倍率をかけて normalized 座標に変換
-      camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]) * Part->normalizationFactor;
-    } else {
-      camCtx.cameraTarget = glm::vec3(centerInput[0], centerInput[1], centerInput[2]);
-    }
-    
-    camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
+    req.setCenterRequested = true;
   }
-		
-  static int currentView = 0;
+
   const char* viewDirections[] = {
     "View from +X", "View from -X",
     "View from +Y", "View from -Y",
     "View from +Z", "View from -Z"
   };
-  ImGui::Combo("Projection Direction", &currentView, viewDirections, IM_ARRAYSIZE(viewDirections));
-		
-  static float rollAngle = 0.0f; // ロール角度（度単位）
-  ImGui::SliderFloat("Roll Angle (deg)", &rollAngle, -180.0f, 180.0f, "%.1f");
-		
-  if (ImGui::Button("Set Projection")) {
-    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-			
-    switch (currentView) {
-    case 0: // +X
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(distance, 0.0f, 0.0f);
-      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-      break;
-    case 1: // -X
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(-distance, 0.0f, 0.0f);
-      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-      break;
-    case 2: // +Y
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, distance, 0.0f);
-      camCtx.cameraUp = glm::vec3(0.0f, 0.0f, -1.0f); // Z軸を上方向に
-      break;
-    case 3: // -Y
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, -distance, 0.0f);
-      camCtx.cameraUp = glm::vec3(0.0f, 0.0f, 1.0f); // 反対Z軸を上方向に
-      break;
-    case 4: // +Z
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, distance);
-      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-      break;
-    case 5: // -Z
-      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, -distance);
-      camCtx.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-      break;
-    }
-			
-    // 視線方向ベクトルを取得
-    glm::vec3 viewDir = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
-    // 回転クォータニオン生成（右手系、正の角度で反時計回り）
-    glm::quat rollQuat = glm::angleAxis(glm::radians(rollAngle), viewDir);
-    // Upベクトルに適用
-    camCtx.cameraUp = rollQuat * camCtx.cameraUp;
-			
-    // ビュー行列を更新
-    glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
-			
-    // クォータニオンも更新（必要な場合）
-    camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
-  }
-		
-  ImGui::InputFloat("Culling radius", &rt.radiusCullingSphere);    
-  if(ImGui::Button("Culling sphere region")){
-    for(size_t i=0;i<Part->particleBlock.particles.size();i++){
-      auto &p = Part->particleBlock.particles[i];
-      uint8_t flag_mask = 0;
-      if(glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) > rt.radiusCullingSphere)
-	flag_mask = 1;
-				
-      Part->flag_mask[i] = flag_mask;
-    }
-			
-    Part->particlesDirty = true; 
-  }
-		
-  if(ImGui::Button("disable Culling")){
-    for(size_t i=0;i<Part->particleBlock.particles.size();i++)
-      Part->flag_mask[i] = 0;            
-    Part->particlesDirty = true; 
-  }  
-}
+  ImGui::Combo("Projection Direction", &req.currentView, viewDirections, IM_ARRAYSIZE(viewDirections));
 
+  ImGui::SliderFloat("Roll Angle (deg)", &req.rollAngle, -180.0f, 180.0f, "%.1f");
+
+  if (ImGui::Button("Set Projection")) {
+    req.setProjectionRequested = true;
+  }
+
+  ImGui::InputFloat("Culling radius", &rt.radiusCullingSphere);
+
+  if (ImGui::Button("Culling sphere region")) {
+    req.applyCullingRequested = true;
+  }
+
+  if (ImGui::Button("disable Culling")) {
+    req.clearCullingRequested = true;
+  }
+}
 
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py){
@@ -1087,44 +997,62 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
   }
 }
 
-static void DrawOtherSettingsSection(ParticleArray* Part, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render){
-  if(!ImGui::CollapsingHeader("Other settings"))
+
+static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render)
+{
+  if (!ImGui::CollapsingHeader("Other settings"))
     return;
-  
+
   bool unitChanged = false;
-  if(ImGui::CollapsingHeader("Units")){
-    unitChanged |= ImGui::InputDouble("UnitLength_in_cm"   , &Part->UnitLength_in_cm   , 0.,0., "%g");
-    unitChanged |= ImGui::InputDouble("UnitMass_in_msun"   , &Part->UnitMass_in_g      , 0.,0., "%g");
-    unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s", &Part->UnitVelocity_in_cm_per_s, 0.,0., "%g");
-    unitChanged |= ImGui::InputDouble("Hubble"             , &Part->Hubble, 0.,0., "%g");
-    unitChanged |= ImGui::Checkbox("ComovingCorrdinate", &Part->useComovingCorrdinate);
-			
-    ImGui::SeparatorText("Presets");      
-    if (ImGui::Button("AU"))   { Part->UnitLength_in_cm = Part->au_in_cm;      unitChanged = true; }
+  if (ImGui::CollapsingHeader("Units")) {
+    unitChanged |= ImGui::InputDouble("UnitLength_in_cm",
+                                      &units.length_cm,
+                                      0., 0., "%g");
+    unitChanged |= ImGui::InputDouble("UnitMass_in_g",
+                                      &units.mass_g,
+                                      0., 0., "%g");
+    unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s",
+                                      &units.velocity_cm_per_s,
+                                      0., 0., "%g");
+    unitChanged |= ImGui::InputDouble("Hubble",
+                                      &units.hubble,
+                                      0., 0., "%g");
+    unitChanged |= ImGui::Checkbox("ComovingCoordinate",
+                                   &units.useComovingCoordinate);
+
+    ImGui::SeparatorText("Presets");
+
+    if (ImGui::Button("AU"))   { units.setLengthToAU();      unitChanged = true; }
     ImGui::SameLine();
-    if (ImGui::Button("pc"))   { Part->UnitLength_in_cm = Part->pc_in_cm;      unitChanged = true; }
+    if (ImGui::Button("pc"))   { units.setLengthToPC();      unitChanged = true; }
     ImGui::SameLine();
-    if (ImGui::Button("kpc"))  { Part->UnitLength_in_cm = Part->kpc_in_cm;     unitChanged = true; }
+    if (ImGui::Button("kpc"))  { units.setLengthToKPC();     unitChanged = true; }
     ImGui::SameLine();
-    if (ImGui::Button("Mpc"))  { Part->UnitLength_in_cm = Part->Mpc_in_cm;     unitChanged = true; }
-			
-    if (ImGui::Button("Msun"))   { Part->UnitMass_in_g   = Part->msolar_in_g;    unitChanged = true; }
+    if (ImGui::Button("Mpc"))  { units.setLengthToMPC();     unitChanged = true; }
+
+    if (ImGui::Button("Msun")) {
+      units.setMassToSolar();
+      unitChanged = true;
+    }
     ImGui::SameLine();
-    if (ImGui::Button("1e10 Msun")){ Part->UnitMass_in_g   = 1.e10*Part->msolar_in_g; unitChanged = true; }
+    if (ImGui::Button("1e10 Msun")) {
+      units.setMassTo1e10Solar();
+      unitChanged = true;
+    }
   }
-		
-  if(unitChanged){
-    Part->setUnits();
-    fileInfo->setUnit(Part);
+
+  if (unitChanged) {
+    units.updateDerived();
+    fileInfo->setUnit(units);
   }
-		
-  if(ImGui::CollapsingHeader("Zoom Range")){
+
+  if (ImGui::CollapsingHeader("Zoom Range")) {
     ImGui::InputFloat("Min Zoom", &rt.minZoom, 0.0f, 0.0f, "%g");
     ImGui::InputFloat("Max Zoom", &rt.maxZoom, 0.0f, 0.0f, "%g");
   }
-		
-  if(ImGui::CollapsingHeader("Cross Marker"))
-    ImGui::SliderFloat("Cross Marker Size", &render.crossGizmo.size, 0.01f, 1.0f); 
-}
 
+  if (ImGui::CollapsingHeader("Cross Marker")) {
+    ImGui::SliderFloat("Cross Marker Size", &render.crossGizmo.size, 0.01f, 1.0f);
+  }
+}
 

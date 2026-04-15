@@ -57,12 +57,12 @@ bool InitPlatform(WindowContext& window,
   return true;
 }
 
-static void InitAppServices(AppServices& services, CameraContext& camera)
+static void InitAppServices(AppServices& services)
 {
-  services.radialProfile   = std::make_unique<RadialProfileComputer>(camera.cameraTarget);
+  services.radialProfile   = std::make_unique<RadialProfileComputer>();
   services.histogram2D     = std::make_unique<Histogram2DComputer>();
   services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
-  services.clumpFind       = std::make_unique<FindClump>(camera);
+  services.clumpFind       = std::make_unique<FindClump>();
 #ifdef USE_CONVEX_HULL
   services.convexHull      = std::make_unique<ConvexHullGenerator>();
 #endif
@@ -82,10 +82,10 @@ static void InitAppServices(AppServices& services, CameraContext& camera)
 void InitApplication(AppState& app, RenderSystem& render)
 {
   InitRenderPrograms(render.programs);
-  InitAppServices(app.services, app.view.camera);
+  InitAppServices(app.services);
 
-  app.data.fileInfo  = new FileInfo(app.view.camera);
-  app.data.particles = new ParticleArray(app.view.camera);
+  app.data.fileInfo  = new FileInfo();
+  app.data.particles = new ParticleArray();
 
   InitRenderSystem(render);
 }
@@ -106,7 +106,8 @@ void LoadInitialData(AppState& app)
     app.data.fileInfo->setMaskConfig(cfg);
   }
 
-  app.data.fileInfo->setUnit(app.data.particles);
+  app.data.particles->units.updateDerived();
+  app.data.fileInfo->setUnit(app.data.particles->units);
 
   const int newFileIndex =
     app.data.fileInfo->initialIndex +

@@ -63,7 +63,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
     return;
   }
 
-  param.G         = particles.GravConst_internal;
+  param.G         = particles.units.grav_const_internal;
   param.max_shell = 100;
   param.scale_fac = particles.originalMax / particles.desiredMax;
 
@@ -210,7 +210,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
           break;
         }
 
-        param.G         = particles.GravConst_internal;
+        param.G         = particles.units.grav_const_internal;
         param.max_shell = 100;
         param.scale_fac = particles.originalMax / particles.desiredMax;
 
@@ -809,5 +809,229 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
   }
   catch (const std::exception& e) {
     std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
+  }
+}
+
+void ExecuteFileNavigationRequests(FileInfo& fileInfo,
+				   ParticleArray& particles,
+				   FileNavigationRuntimeState& rt)
+{
+  auto& req = rt.request;
+
+  if (req.applySkipStepRequested) {
+    if (rt.tempSkipStep > 0) {
+      int newStep = std::round(
+        (fileInfo.currentFileIndex - fileInfo.initialIndex) /
+        static_cast<float>(rt.tempSkipStep)
+      );
+      fileInfo.currentStep = std::max(0, newStep);
+      fileInfo.skipStep = rt.tempSkipStep;
+
+      int newFileIndex =
+        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+
+      if (!fileInfo.isLoading) {
+        fileInfo.loadBatch(newFileIndex,
+                           fileInfo.batchSize,
+                           fileInfo.skipStep,
+                           &particles);
+      }
+
+      fileInfo.currentFileIndex = newFileIndex;
+    }
+
+    req.applySkipStepRequested = false;
+  }
+
+  if (req.loadSelectedSnapshotRequested) {
+    int newFileIndex =
+      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+    fileInfo.loadNewSnapshot(newFileIndex, &particles);
+    req.loadSelectedSnapshotRequested = false;
+  }
+
+  if (req.loadPreviousRequested) {
+    if (fileInfo.currentStep > 0) {
+      fileInfo.currentStep--;
+      int newFileIndex =
+        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      fileInfo.loadNewSnapshot(newFileIndex, &particles);
+    }
+    req.loadPreviousRequested = false;
+  }
+
+  if (req.loadNextRequested) {
+    fileInfo.currentStep++;
+    int newFileIndex =
+      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+    fileInfo.loadNewSnapshot(newFileIndex, &particles);
+    req.loadNextRequested = false;
+  }
+
+  if (req.loadBatchRequested) {
+    if (!fileInfo.isLoading) {
+      int newFileIndex =
+        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      fileInfo.loadBatch(newFileIndex,
+                         fileInfo.batchSize,
+                         fileInfo.skipStep,
+                         &particles);
+      fileInfo.currentFileIndex = newFileIndex;
+    }
+    req.loadBatchRequested = false;
+  }
+
+  if (req.reloadRequested) {
+    if (!fileInfo.isLoading) {
+      int newFileIndex =
+        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      fileInfo.loadBatch(newFileIndex,
+                         fileInfo.batchSize,
+                         fileInfo.skipStep,
+                         &particles);
+      fileInfo.currentFileIndex = newFileIndex;
+    }
+    req.reloadRequested = false;
+  }
+
+  if (req.openFormatDialogRequested) {
+#ifdef HAVE_HDF5
+    if (fileInfo.useHDF5 || fileInfo.getFormatMode() == static_cast<int>(FileFormat::HDF5))
+      fileInfo.showHDF5Dialog();
+    else
+#endif
+      fileInfo.showDialog();
+
+    req.openFormatDialogRequested = false;
+  }
+
+  if (req.generateTestDataRequested) {
+    fileInfo.generateTestData(&particles);
+    req.generateTestDataRequested = false;
+  }
+}
+
+void ExecuteCameraPlacementRequests(ParticleArray& particles,
+				    CameraContext& camCtx,
+				    SettingsRuntimeState& rt)
+{
+  auto& req = rt.cameraPlacement;
+
+  if (req.setCenterRequested) {
+    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+    glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+
+    if (req.inputIsOriginal) {
+      camCtx.cameraTarget =
+        glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]) *
+        particles.normalizationFactor;
+    } else {
+      camCtx.cameraTarget =
+        glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]);
+    }
+
+    camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
+    req.setCenterRequested = false;
+  }
+
+  if (req.setProjectionRequested) {
+    float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+
+    switch (req.currentView) {
+    case 0:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(distance, 0.0f, 0.0f);
+      camCtx.cameraUp  = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 1:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(-distance, 0.0f, 0.0f);
+      camCtx.cameraUp  = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 2:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, distance, 0.0f);
+      camCtx.cameraUp  = glm::vec3(0.0f, 0.0f, -1.0f);
+      break;
+    case 3:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, -distance, 0.0f);
+      camCtx.cameraUp  = glm::vec3(0.0f, 0.0f, 1.0f);
+      break;
+    case 4:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, distance);
+      camCtx.cameraUp  = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    case 5:
+      camCtx.cameraPos = camCtx.cameraTarget + glm::vec3(0.0f, 0.0f, -distance);
+      camCtx.cameraUp  = glm::vec3(0.0f, 1.0f, 0.0f);
+      break;
+    }
+
+    glm::vec3 viewDir = glm::normalize(camCtx.cameraTarget - camCtx.cameraPos);
+    glm::quat rollQuat = glm::angleAxis(glm::radians(req.rollAngle), viewDir);
+    camCtx.cameraUp = rollQuat * camCtx.cameraUp;
+
+    glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
+    camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
+
+    req.setProjectionRequested = false;
+  }
+
+  if (req.applyCullingRequested) {
+    for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
+      auto& p = particles.particleBlock.particles[i];
+      uint8_t flag_mask = 0;
+      if (glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) >
+          rt.radiusCullingSphere) {
+        flag_mask = 1;
+      }
+      particles.flag_mask[i] = flag_mask;
+    }
+    particles.particlesDirty = true;
+    req.applyCullingRequested = false;
+  }
+
+  if (req.clearCullingRequested) {
+    for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
+      particles.flag_mask[i] = 0;
+    }
+    particles.particlesDirty = true;
+    req.clearCullingRequested = false;
+  }
+}
+
+
+void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+				    CameraContext& camCtx,
+				    int currentFileIndex)
+{
+#ifdef CLUMP_DATA_READ
+  if (particles.flag_follow_clump_center) {
+    ClumpData targetClump = particles.Clumps[particles.TargetClumpID];
+    int flag = particles.readClumpData(currentFileIndex);
+
+    if (flag) {
+      particles.flag_follow_clump_center = false;
+    } else {
+      float target_pos_new[3];
+      targetClump.get_next_clump_position(particles.Clumps, target_pos_new);
+
+      float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+      camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
+      camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+    }
+  }
+#endif
+
+  if (particles.flag_follow_particle_ID) {
+    float target_pos_new[3];
+    bool found = particles.findParticleID(particles.TargetParticleID, target_pos_new);
+
+    if (!found) {
+      particles.flag_follow_particle_ID = false;
+    } else {
+      float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+      camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
+      camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+    }
   }
 }

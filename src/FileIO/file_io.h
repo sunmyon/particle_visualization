@@ -4,6 +4,7 @@
 #include "data/header_info.h"
 #include "core/physics_constants.h"
 #include "core/PerfTimer.h"
+#include "core/units.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1256,8 +1257,7 @@ public:
     
     factor_density_ = 1.;
     if(header.flag_density_in_cgs == false){
-      const double proton_mass = 1.67e-24;
-      factor_density_ = header.HubbleParam * header.HubbleParam * header.UnitMass_in_g / pow(header.UnitLength_in_cm, 3) / proton_mass;
+      factor_density_ = header.HubbleParam * header.HubbleParam * header.UnitMass_in_g / pow(header.UnitLength_in_cm, 3) / physics_constants::proton_mass_cgs;
       if(header.flag_comoving)
 	factor_density_ /= pow(header.time, 3);
     }
@@ -1269,7 +1269,7 @@ public:
 	factor_Bfield_ /= pow(header.time, 2);
     }
 
-    factor_IntEnergy_ = header.UnitVelocity_in_cm_per_s*header.UnitVelocity_in_cm_per_s * PROTONMASS / BOLTZMANN;    
+    factor_IntEnergy_ = header.UnitVelocity_in_cm_per_s*header.UnitVelocity_in_cm_per_s * physics_constants::proton_mass_cgs / physics_constants::boltzmann_cgs;    
     
     return true;
   }
@@ -2217,7 +2217,6 @@ public:
   };
   
 private:
-  CameraContext& camCtx;
   FileFormat readFileFormat = FileFormat::Auto;
   
   // バッチ管理用変数
@@ -2226,7 +2225,7 @@ private:
 #ifdef HAVE_HDF5
   bool showHDF5MappingDialog = false;
 #endif
-  
+
   bool showFormatDialog = false;
   std::vector<FieldSpec> formatTokensEdit; // 編集用一時コピー
   
@@ -2243,27 +2242,23 @@ private:
 #endif
   
   void initDefaultFormatTokens();
-
-  double UnitLength_in_cm;
-  double UnitMass_in_g;
-  double UnitVelocity_in_cm_per_s;
-  double Hubble;
+  UnitSystem units;
 
   MaskConfig currentMaskConfig;
   bool       enableMask = false; // mask を使うか（UIでON/OFF）
   
 public:
-  FileInfo(CameraContext& cam):
-    camCtx(cam)
-  {
+  FileInfo(){
     initDefaultFormatTokens();
   }
 
-  void setUnit(ParticleArray *P){
-    UnitLength_in_cm = P->UnitLength_in_cm;
-    UnitMass_in_g = P->UnitMass_in_g;
-    UnitVelocity_in_cm_per_s = P->UnitVelocity_in_cm_per_s;
-    Hubble = P->Hubble;
+  bool snapshotUpdated = false;
+  void clearSnapshotUpdated() {
+    snapshotUpdated = false;
+  }
+  
+  void setUnit(UnitSystem& units_input){
+    units = units_input;
   }
   
   void loadNewSnapshot(int newindex, ParticleArray* P);

@@ -4,16 +4,14 @@
 #include "clump_data.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
+#include "core/units.h"
 
 class ParticleArray {
 private:
-  CameraContext& camCtx;  
   int particleBlock_index; //current index in batch file list
   
 public:
-  ParticleArray(CameraContext& cam):
-    camCtx(cam)
-  {};
+  ParticleArray() = default;
 
   float originalMax = 0.0f;
   float desiredMax = 1.0f;         // ユーザー指定の目標値（例: 1, 10, 100, ...）
@@ -26,27 +24,12 @@ public:
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMin;
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMax;
 
-  double UnitLength_in_pc = 1.;
-  double UnitMass_in_msolar = 1.;
-  double Hubble = 1.;
-
-  double GravConst_internal = 6.6743e-8;
-  bool useComovingCorrdinate = true;
-
-  double UnitVelocity_in_cm_per_s = 1.e5; // km/s
-  double UnitLength_in_cm = 3.08e18; //pc
-  double UnitMass_in_g = 1.98e33; //Msun
-  double UnitTime_in_s = 3.08e13;
-  double UnitTime_in_yr = 0.97e6;
-
-  static constexpr double yr_in_sec = 3.15576e7;
-  static constexpr double msolar_in_g = 1.989e33;
-  static constexpr double au_in_cm = 1.49598e13;
-  static constexpr double pc_in_cm = 3.085678e18;
-  static constexpr double kpc_in_cm = 3.085678e21;
-  static constexpr double Mpc_in_cm = 3.085678e24;
-  static constexpr double GravConst = 6.6743e-8;
-
+  UnitSystem units;
+  
+  void setUnits(){
+    units.updateDerived();
+  }
+  
   ParticleBlock particleBlock;
     
   TrackingVector<uint8_t> flag_mask;
@@ -120,7 +103,6 @@ public:
       Haloes[ih].GroupPos[2] = cz;
     }
   };
-
   
   TrackingVector<ClumpData> Clumps;
   std::string fname_clump_file;
@@ -164,13 +146,4 @@ public:
   void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml);
 
   int readClumpData(int snapshotIndex);
-
-  void setUnits(){
-    UnitLength_in_pc = UnitLength_in_cm / pc_in_cm;
-    UnitMass_in_msolar = UnitMass_in_g / msolar_in_g;    
-    UnitTime_in_s = UnitLength_in_cm / UnitVelocity_in_cm_per_s;
-    UnitTime_in_yr = UnitTime_in_s / yr_in_sec;
-    
-    GravConst_internal = GravConst / std::pow(UnitLength_in_cm, 3) * UnitMass_in_g * std::pow(UnitTime_in_s, 2);
-  }
 };
