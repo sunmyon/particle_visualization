@@ -20,26 +20,32 @@ extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          const glm::mat4& view,
                                          const glm::vec3& pivot);
 
-namespace {
-  RadialProfileUIState gRadialProfileUIState;
-  Histogram2DUIState   gHistogram2DUIState;
-  ProjectionMapUIState gProjectionMapUIState;
-  TopParticlesUIState gTopParticlesUIState;
-  HaloesUIState gHaloesUIState;
-  MaskUIState gMaskUIState;
+void OpenRadialProfileUI(RadialProfileUIState& state) {
+  state.open = true;
 }
 
-void OpenRadialProfileUI() {
-  gRadialProfileUIState.open = true;
+void OpenHistogram2DUI(Histogram2DUIState& state){
+  state.open = true;
 }
 
+void OpenProjectionMapUI(ProjectionMapUIState& state){
+  state.open = true;
+}
 
-void DrawRadialProfileUI(RadialProfileComputer& computer,
+void OpenHaloesUI(HaloesUIState& state){
+  state.open = true;
+}
+
+void OpenMaskUI(MaskUIState& state){
+  state.open = true;
+}
+
+void DrawRadialProfileUI(RadialProfileUIState& state,
+			 RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
 			 UnitSystem& units)
 {
-  auto& state = gRadialProfileUIState;
   if (!state.open) return;
 
   computer.setUnits(units);
@@ -141,15 +147,11 @@ void DrawRadialProfileUI(RadialProfileComputer& computer,
   ImGui::End();
 }
 
-void OpenHistogram2DUI() {
-  gHistogram2DUIState.open = true;
-}
-
-void DrawHistogram2DUI(Histogram2DComputer& computer,
+void DrawHistogram2DUI(Histogram2DUIState& state,
+		       Histogram2DComputer& computer,
                        ParticleBlock& partblock,
 		       const Histogram2DContext& ctx)
 {
-  auto& state = gHistogram2DUIState;
   if (!state.open) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
@@ -359,17 +361,13 @@ namespace {
   }
 }
 
-void OpenProjectionMapUI() {
-  gProjectionMapUIState.open = true;
-}
-
-void DrawProjectionMapUI(ProjectionMapGenerator& generator,
+void DrawProjectionMapUI(ProjectionMapUIState& state,
+			 ProjectionMapGenerator& generator,
                          ParticleArray* P,
                          CameraContext& camCtx,
 			 RenderLayerState& cuboidAnnotationState,
                          int indexfile)
 {
-  auto& state = gProjectionMapUIState;
   if (!state.open) return;
 
   auto& params = generator.params;
@@ -799,8 +797,7 @@ void DrawProjectionMapUI(ProjectionMapGenerator& generator,
 }
 
 
-void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
-  auto& state = gTopParticlesUIState;
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx) {
   const int histSizeMax = 10;
 
   ImGui::Begin("Particles Info");
@@ -1120,14 +1117,9 @@ void DrawTopParticlesUI(ParticleArray* P, CameraContext& camCtx) {
   ImGui::End();
 }
 
-void OpenHaloesUI() {
-  gHaloesUIState.open = true;
-}
-
-void DrawHaloesUI(ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo)
+void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo)
 {
 #ifdef HAVE_HDF5
-  auto& state = gHaloesUIState;
   if (!state.open) return;
   
   ImGui::SetNextWindowSize(ImVec2(980, 620), ImGuiCond_Appearing);
@@ -1414,176 +1406,67 @@ void DrawHaloesUI(ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo)
 #endif
 }
 
-void OpenMaskUI() {
-  gMaskUIState.open = true;
-}
-
-bool DrawMaskWindow() {
-  if (!gMaskUIState.open) return false;
+bool DrawMaskWindow(MaskUIState& state) {
+  if (!state.open) return false;
 
   bool changed = false;
   bool apply = false;
 
   // ★第二引数に &ui.showWindow を渡すと × で閉じられる
-  if (!ImGui::Begin("Mask Settings", &gMaskUIState.open)) {
+  if (!ImGui::Begin("Mask Settings", &state.open)) {
     ImGui::End();
     return false;
   }
 
-  changed |= ImGui::Checkbox("Enable Sphere", &gMaskUIState.enableSphere);
-  changed |= ImGui::DragFloat3("Center", gMaskUIState.center, 0.1f);
-  changed |= ImGui::DragFloat("Radius", &gMaskUIState.radius, 0.1f, 0.0f, 1e30f);
+  changed |= ImGui::Checkbox("Enable Sphere", &state.enableSphere);
+  changed |= ImGui::DragFloat3("Center", state.center, 0.1f);
+  changed |= ImGui::DragFloat("Radius", &state.radius, 0.1f, 0.0f, 1e30f);
 
-  int om = (int)gMaskUIState.outsideMode;
+  int om = (int)state.outsideMode;
   changed |= ImGui::Combo("Outside Mode", &om, "Drop\0Thin\0KeepAll\0");
-  gMaskUIState.outsideMode = (MaskUIState::OutsideMode)om;
+  state.outsideMode = (MaskUIState::OutsideMode)om;
 
-  if (gMaskUIState.outsideMode == MaskUIState::OutsideMode::Thin) {
-    changed |= ImGui::DragInt("Outside Stride", &gMaskUIState.outsideStride, 1.0f, 1, 1000000);
+  if (state.outsideMode == MaskUIState::OutsideMode::Thin) {
+    changed |= ImGui::DragInt("Outside Stride", &state.outsideStride, 1.0f, 1, 1000000);
   }
 
   ImGui::Separator();
   ImGui::Text("Particle Type Policy");
   const char* typeNames[6] = {"Gas(0)","DM(1)","Type2","Type3","Star(4)","BH(5)"};
   for (int t=0; t<6; ++t) {
-    int tm = (int)gMaskUIState.typeMode[t];
+    int tm = (int)state.typeMode[t];
     ImGui::PushID(t);
     changed |= ImGui::Combo(typeNames[t], &tm, "Off\0On (NoThin)\0On (ThinOK)\0");
-    gMaskUIState.typeMode[t] = (MaskUIState::TypeMode)tm;
+    state.typeMode[t] = (MaskUIState::TypeMode)tm;
     ImGui::PopID();
   }
 
   ImGui::Separator();
-  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &gMaskUIState.enableMaxParticles);
-  if (gMaskUIState.enableMaxParticles) {
-    changed |= ImGui::DragInt("Max Particles", &gMaskUIState.maxParticles, 1000.0f, 1, 1000000000);
+  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &state.enableMaxParticles);
+  if (state.enableMaxParticles) {
+    changed |= ImGui::DragInt("Max Particles", &state.maxParticles, 1000.0f, 1, 1000000000);
   }
 
   ImGui::Separator();
-  changed |= ImGui::Checkbox("Auto Apply", &gMaskUIState.autoApply);
+  changed |= ImGui::Checkbox("Auto Apply", &state.autoApply);
 
   // Apply/Close ボタン
   if (ImGui::Button("Apply")) {
-    gMaskUIState.revision++;
+    state.revision++;
     apply = true;
   }
   ImGui::SameLine();
   if (ImGui::Button("Close")) {
-    gMaskUIState.open = false; // 明示的に閉じる
+    state.open = false; // 明示的に閉じる
   }
 
   ImGui::End();
 
-  if (!apply && changed && gMaskUIState.autoApply) {
-    gMaskUIState.revision++;
+  if (!apply && changed && state.autoApply) {
+    state.revision++;
     apply = true;
   }
   return apply; // ★「設定が反映された」トリガとして true
-}
-
-MaskConfig MakeMaskConfigFromUI(){
-  MaskConfig cfg;
-  cfg.enableSphere = gMaskUIState.enableSphere;
-  cfg.center[0] = gMaskUIState.center[0];
-  cfg.center[1] = gMaskUIState.center[1];
-  cfg.center[2] = gMaskUIState.center[2];
-  cfg.radius = (double)gMaskUIState.radius;
-
-  cfg.outsideStride = (uint64_t)std::max(1, gMaskUIState.outsideStride);
-  switch(gMaskUIState.outsideMode){
-    case MaskUIState::OutsideMode::Drop:    cfg.outsideMode = MaskConfig::OutsideMode::Drop; break;
-    case MaskUIState::OutsideMode::Thin:    cfg.outsideMode = MaskConfig::OutsideMode::Thin; break;
-    case MaskUIState::OutsideMode::KeepAll: cfg.outsideMode = MaskConfig::OutsideMode::KeepAll; break;
-  }
-
-  for(int t=0;t<6;t++){
-    switch(gMaskUIState.typeMode[t]){
-      case MaskUIState::TypeMode::Off:      cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOff; break;
-      case MaskUIState::TypeMode::On_NoThin:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_NoThin; break;
-      case MaskUIState::TypeMode::On_ThinOK:cfg.typePolicy[t] = MaskConfig::ThinPolicy::ReadOn_ThinOK; break;
-    }
-  }
-
-  cfg.enableMaxParticles = gMaskUIState.enableMaxParticles;
-  cfg.maxParticles = (gMaskUIState.enableMaxParticles && gMaskUIState.maxParticles>0) ? (size_t)gMaskUIState.maxParticles : 0;
-
-  return cfg;
-}
-
-void ExportMaskConfigState(ConfigMaskState& outState)
-{
-  outState = ConfigMaskState{};
-  outState.valid = true;
-
-  outState.enableSphere = gMaskUIState.enableSphere;
-  outState.center[0] = gMaskUIState.center[0];
-  outState.center[1] = gMaskUIState.center[1];
-  outState.center[2] = gMaskUIState.center[2];
-  outState.radius = gMaskUIState.radius;
-
-  switch (gMaskUIState.outsideMode) {
-    case MaskUIState::OutsideMode::Drop:
-      outState.outsideMode = ConfigMaskState::OutsideMode::Drop; break;
-    case MaskUIState::OutsideMode::Thin:
-      outState.outsideMode = ConfigMaskState::OutsideMode::Thin; break;
-    case MaskUIState::OutsideMode::KeepAll:
-      outState.outsideMode = ConfigMaskState::OutsideMode::KeepAll; break;
-  }
-
-  outState.outsideStride = (unsigned long long)std::max(1, gMaskUIState.outsideStride);
-
-  for (int t = 0; t < 6; ++t) {
-    switch (gMaskUIState.typeMode[t]) {
-      case MaskUIState::TypeMode::Off:
-        outState.typeMode[t] = ConfigMaskState::TypeMode::Off; break;
-      case MaskUIState::TypeMode::On_NoThin:
-        outState.typeMode[t] = ConfigMaskState::TypeMode::On_NoThin; break;
-      case MaskUIState::TypeMode::On_ThinOK:
-        outState.typeMode[t] = ConfigMaskState::TypeMode::On_ThinOK; break;
-    }
-  }
-
-  outState.enableMaxParticles = gMaskUIState.enableMaxParticles;
-  outState.maxParticles = gMaskUIState.maxParticles;
-}
-
-void ApplyMaskConfigState(const ConfigMaskState& state)
-{
-  if (!state.valid) return;
-  
-  gMaskUIState.enableSphere = state.enableSphere;
-  gMaskUIState.center[0] = (float)state.center[0];
-  gMaskUIState.center[1] = (float)state.center[1];
-  gMaskUIState.center[2] = (float)state.center[2];
-  gMaskUIState.radius = (float)state.radius;
-
-  switch (state.outsideMode) {
-    case ConfigMaskState::OutsideMode::Drop:
-      gMaskUIState.outsideMode = MaskUIState::OutsideMode::Drop; break;
-    case ConfigMaskState::OutsideMode::Thin:
-      gMaskUIState.outsideMode = MaskUIState::OutsideMode::Thin; break;
-    case ConfigMaskState::OutsideMode::KeepAll:
-      gMaskUIState.outsideMode = MaskUIState::OutsideMode::KeepAll; break;
-  }
-
-  gMaskUIState.outsideStride = (int)std::max<unsigned long long>(1, state.outsideStride);
-
-  for (int t = 0; t < 6; ++t) {
-    switch (state.typeMode[t]) {
-      case ConfigMaskState::TypeMode::Off:
-        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::Off; break;
-      case ConfigMaskState::TypeMode::On_NoThin:
-        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::On_NoThin; break;
-      case ConfigMaskState::TypeMode::On_ThinOK:
-        gMaskUIState.typeMode[t] = MaskUIState::TypeMode::On_ThinOK; break;
-    }
-  }
-
-  gMaskUIState.enableMaxParticles = state.enableMaxParticles;
-  gMaskUIState.maxParticles = state.maxParticles;
-
-  // 読み込み後に自動反映したいなら
-  gMaskUIState.revision++;
 }
 
 void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,

@@ -72,15 +72,15 @@ namespace {
 
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt);
+static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawNormalizationSection(ParticleArray* P);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
 #endif
-static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
-static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt);
+static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
+static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
 
 void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
@@ -88,15 +88,15 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
 
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation);
+  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation, rt.toolWindows);
   DrawNormalizationSection(ctx.P);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, rt.settings);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
 #endif
-  DrawAnalysisSection(ctx, rt.analysis);
-  DrawRenderingSection(ctx, rt.analysis);
+  DrawAnalysisSection(ctx, rt.analysis, rt.toolWindows);
+  DrawRenderingSection(ctx, rt.analysis, rt.toolWindows);
   DrawOtherSettingsSection(ctx.P->units, ctx.fileInfo, rt.settings, rt.render);
 
   ImGui::End();
@@ -180,7 +180,7 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
   }    
 }
 
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt){
+static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
   
@@ -368,7 +368,7 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
   }
 
   if (ImGui::Button("Mask Settings...")) {
-    OpenMaskUI();
+    OpenMaskUI(tools.mask);
   }
 
   if (ImGui::Button("Generate test data")) {
@@ -524,7 +524,7 @@ static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeStat
 }
 #endif
 
-static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt){
+static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools){
   if (!ImGui::CollapsingHeader("Analysis"))
     return;
 
@@ -590,12 +590,12 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   switch (analysisMode) {  
   case ANALYSIS_RADIAL_PROFILE: {
     if (ImGui::Button("Compute radial profile"))
-      OpenRadialProfileUI();
+      OpenRadialProfileUI(tools.radialProfile);
     break;
   }
   case ANALYSIS_2D_HISTOGRAM: {
     if (ImGui::Button("Compute 2D histogram"))
-      OpenHistogram2DUI();
+      OpenHistogram2DUI(tools.histogram2D);
     break;
   }
   case ANALYSIS_CLUMP_FIND: {
@@ -685,7 +685,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 #ifdef HAVE_HDF5
   case ANALYSIS_HALO_CATALOGUE: {
     if(ImGui::Button("Load Halo"))
-      OpenHaloesUI();
+      OpenHaloesUI(tools.haloes);
     break;
   }
 #endif
@@ -791,7 +791,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 }
 
 
-static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt){
+static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools){
   if (!ImGui::CollapsingHeader("Rendering"))
     return;
 
@@ -846,7 +846,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
   switch (renderingMode) {
   case RENDER_PROJECTION_MAP: {
     if (ImGui::Button("make projection map"))
-      OpenProjectionMapUI();    
+      OpenProjectionMapUI(tools.projectionMap);    
     
     auto& movieReq = rt.projectionMovie;
     auto& movieRes = ctx.analysis->projectionMovie;

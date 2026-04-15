@@ -5,6 +5,7 @@
 #include "core/physics_constants.h"
 #include "core/PerfTimer.h"
 #include "core/units.h"
+#include "app/ui_state.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -298,33 +299,6 @@ static inline void assignCoreFT(ParticleData& p, FieldType ft, const T* v){
   }
 }
 
-
-struct MaskConfig {
-  // sphere
-  bool   enableSphere = false;
-  double center[3] = {0,0,0};
-  double radius = 0.0;
-
-  enum class OutsideMode { Drop, Thin, KeepAll };
-  OutsideMode outsideMode = OutsideMode::Drop;
-  uint64_t outsideStride = 10;
-
-  // type policy
-  enum class ThinPolicy : uint8_t { ReadOff, ReadOn_NoThin, ReadOn_ThinOK };
-  ThinPolicy typePolicy[6] = {
-    ThinPolicy::ReadOn_ThinOK,
-    ThinPolicy::ReadOn_ThinOK,
-    ThinPolicy::ReadOn_NoThin,
-    ThinPolicy::ReadOn_NoThin,
-    ThinPolicy::ReadOn_NoThin,
-    ThinPolicy::ReadOn_NoThin
-  };
-
-  // max particles (ID thinning)
-  bool   enableMaxParticles = false;
-  size_t maxParticles = 0;
-};
-
 struct CoreSample {
   double   pos[3];
   uint64_t id;
@@ -333,16 +307,16 @@ struct CoreSample {
 
 class ParticleMask {
 public:
-  explicit ParticleMask(MaskConfig cfg): cfg_(cfg){ rebuildNeeds_(); }
+  explicit ParticleMask(MaskUIState cfg): cfg_(cfg){ rebuildNeeds_(); }
 
   bool needPos() const { return need_pos_; }
   bool needID()  const { return need_id_; }
 
   bool typeEnabled(int t) const {
-    return cfg_.typePolicy[t] != MaskConfig::ThinPolicy::ReadOff;
+    return cfg_.typeMode[t] != MaskUIState::TypeMode::Off;
   }
   bool typeThinOK(int t) const {
-    return cfg_.typePolicy[t] == MaskConfig::ThinPolicy::ReadOn_ThinOK;
+    return cfg_.typeMode[t] == MaskUIState::TypeMode::On_ThinOK;
   }
 
   // thin 候補数（= ThinOK の粒子数）から stride を決める
@@ -369,8 +343,8 @@ public:
       const bool inside = (dx*dx+dy*dy+dz*dz) <= r2;
 
       if(!inside){
-        if(cfg_.outsideMode == MaskConfig::OutsideMode::Drop) return false;
-        if(cfg_.outsideMode == MaskConfig::OutsideMode::Thin){
+        if(cfg_.outsideMode == MaskUIState::OutsideMode::Drop) return false;
+        if(cfg_.outsideMode == MaskUIState::OutsideMode::Thin){
           if(!keep_by_stride_(c.id, cfg_.outsideStride)) return false;
         }
       }
@@ -389,17 +363,17 @@ public:
     if (cfg_.enableMaxParticles && cfg_.maxParticles > 0) return true;
     // type off が一つでもあれば active
     for (int t=0; t<6; ++t) {
-      if (cfg_.typePolicy[t] == MaskConfig::ThinPolicy::ReadOff) return true;
+      if (cfg_.typeMode[t] == MaskUIState::TypeMode::Off) return true;
     }
     // sphereがONのときのみoutsideModeが意味を持つのでここでは見ない
     return false;
   }
   
   uint64_t idStride() const { return id_stride_; }
-  const MaskConfig& config() const { return cfg_; }
+  const MaskUIState& config() const { return cfg_; }
 
 private:
-  MaskConfig cfg_;
+  MaskUIState cfg_;
   uint64_t id_stride_ = 1;
 
   bool need_pos_ = false;
@@ -407,7 +381,7 @@ private:
 
   void rebuildNeeds_(){
     need_pos_ = cfg_.enableSphere;
-    const bool need_id_for_outside = (cfg_.enableSphere && cfg_.outsideMode==MaskConfig::OutsideMode::Thin);
+    const bool need_id_for_outside = (cfg_.enableSphere && cfg_.outsideMode==MaskUIState::OutsideMode::Thin);
     const bool need_id_for_limit   = (cfg_.enableMaxParticles && cfg_.maxParticles>0);
     need_id_ = need_id_for_outside || need_id_for_limit;
   }
@@ -2244,7 +2218,7 @@ private:
   void initDefaultFormatTokens();
   UnitSystem units;
 
-  MaskConfig currentMaskConfig;
+  MaskUIState currentMaskConfig;
   bool       enableMask = false; // mask を使うか（UIでON/OFF）
   
 public:
@@ -2291,7 +2265,7 @@ public:
   };
 #endif
 
-  void setMaskConfig(const MaskConfig& cfg){
+  void setMaskConfig(const MaskUIState& cfg){
     currentMaskConfig = cfg;
     enableMask = true;
   } 

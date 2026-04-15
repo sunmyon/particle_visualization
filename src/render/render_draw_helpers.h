@@ -2,7 +2,7 @@
 
 #include "render/object_renderer.h"
 #include "render/render_resources.h"
-#include "ui_state.h"
+#include "app/runtime_state.h"
 
 template<typename BuildFunc, typename ManagerT, typename RenderDataT>
 inline void RebuildIfNeeded(bool& cpuUpdated,

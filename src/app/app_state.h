@@ -2,11 +2,12 @@
 
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
-#include "ui_state.h"
 #include "scene_manager.h"
 #include "particle_visual_config.h"
+#include "runtime_state.h"
 #include "overlay_state.h"
 #include "analysis_state.h"
+#include "ui_state.h"
 #include "render/gizmo_renderer.h"
 #include "interaction/interaction_utils.h"
 
@@ -142,6 +143,7 @@ struct AppRuntimeState {
   SettingsRuntimeState settings;
   RenderRuntimeState render;
   AnalysisRequestRuntimeState analysis;
+  ToolWindowUIState toolWindows;
 };
 
 struct AppDerivedState {

@@ -83,22 +83,22 @@ static void DrawFileDialogPanels(const AppDataState& data)
 #endif
 }
 
-static void ApplyMaskIfRequested(const AppDataState& data)
+static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& data)
 {
-  const bool applied = DrawMaskWindow();
+  const bool applied = DrawMaskWindow(tools.mask);
   if (!applied) {
     return;
   }
 
-  MaskConfig cfg = MakeMaskConfigFromUI();
-  data.fileInfo->setMaskConfig(cfg);
+  data.fileInfo->setMaskConfig(tools.mask);
 }
 
 
-static void DrawAuxiliaryPanels(const AppDataState& data,
+static void DrawAuxiliaryPanels(ToolWindowUIState& tools,
+				const AppDataState& data,
                                 AppViewState& view)
 {
-  DrawTopParticlesUI(data.particles, view.camera);
+  DrawTopParticlesUI(tools.topParticles, data.particles, view.camera);
 }
 
 static void DrawMainUI(const AppDataState& data,
@@ -117,21 +117,24 @@ static void DrawToolWindows(const AppDataState& data,
                             AppDerivedState& derived,
                             AppServices& services)
 {
+  auto &tools = runtime.toolWindows;
+  
   DrawClumpPanels(data, services, view.camera);
   DrawFileDialogPanels(data);
-  ApplyMaskIfRequested(data);
-  DrawAuxiliaryPanels(data, view);
+  ApplyMaskIfRequested(tools, data);
+  DrawAuxiliaryPanels(tools, data, view);
 
-  DrawRadialProfileUI(*services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, data.particles->units);
+  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, data.particles->units);
   
-  DrawProjectionMapUI(*services.projectionMap2D,
+  DrawProjectionMapUI(tools.projectionMap, 
+		      *services.projectionMap2D,
                       data.particles,
                       view.camera,
                       runtime.render.cuboidAnnotations,
                       data.fileInfo->currentFileIndex);
 
 #ifdef HAVE_HDF5
-  DrawHaloesUI(data.particles, view.camera, data.fileInfo);
+  DrawHaloesUI(tools.haloes, data.particles, view.camera, data.fileInfo);
 #endif
   
   Histogram2DContext histCtx;
@@ -140,7 +143,7 @@ static void DrawToolWindows(const AppDataState& data,
   auto visibleHulls = derived.analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
 
-  DrawHistogram2DUI(*services.histogram2D, data.particles->particleBlock, histCtx);
+  DrawHistogram2DUI(tools.histogram2D, *services.histogram2D, data.particles->particleBlock, histCtx);
 }
 
 static void UpdateExternalInputs(AppServices& services,

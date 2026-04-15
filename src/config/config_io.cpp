@@ -9,6 +9,7 @@
 
 #include "FileIO/file_io.h"
 #include "particle_visual_config.h"
+#include "app/ui_state.h"
 
 // ------------------------------
 static inline bool startsWith(const std::string& s, const std::string& prefix) {
@@ -97,13 +98,13 @@ bool loadConfig(const std::string& filename,
                 ParticleArray* P,
                 FileInfo* fileInfo,
                 ParticleVisualConfig* visualCfg,
-                ConfigMaskState* outMaskState)
+                MaskUIState* outMaskState)
 {
   std::ifstream infile(filename);
   if (!infile.is_open()) return false;
 
   if (outMaskState) {
-    *outMaskState = ConfigMaskState{};
+    *outMaskState = MaskUIState{};
   }
 
   std::string line;
@@ -161,46 +162,39 @@ bool loadConfig(const std::string& filename,
     }
     else if (startsWith(line, "Mask_EnableSphere=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->enableSphere = (std::stoi(line.substr(std::strlen("Mask_EnableSphere="))) != 0);
       }
     }
     else if (startsWith(line, "Mask_CenterX=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->center[0] = std::stod(line.substr(std::strlen("Mask_CenterX=")));
       }
     }
     else if (startsWith(line, "Mask_CenterY=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->center[1] = std::stod(line.substr(std::strlen("Mask_CenterY=")));
       }
     }
     else if (startsWith(line, "Mask_CenterZ=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->center[2] = std::stod(line.substr(std::strlen("Mask_CenterZ=")));
       }
     }
     else if (startsWith(line, "Mask_Radius=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->radius = std::stod(line.substr(std::strlen("Mask_Radius=")));
       }
     }
     else if (startsWith(line, "Mask_OutsideMode=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         int v = std::stoi(line.substr(std::strlen("Mask_OutsideMode=")));
-        if (v == 0) outMaskState->outsideMode = ConfigMaskState::OutsideMode::Drop;
-        else if (v == 1) outMaskState->outsideMode = ConfigMaskState::OutsideMode::Thin;
-        else outMaskState->outsideMode = ConfigMaskState::OutsideMode::KeepAll;
+        if (v == 0) outMaskState->outsideMode = MaskUIState::OutsideMode::Drop;
+        else if (v == 1) outMaskState->outsideMode = MaskUIState::OutsideMode::Thin;
+        else outMaskState->outsideMode = MaskUIState::OutsideMode::KeepAll;
       }
     }
     else if (startsWith(line, "Mask_OutsideStride=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->outsideStride =
           (unsigned long long)std::stoull(line.substr(std::strlen("Mask_OutsideStride=")));
       }
@@ -212,25 +206,22 @@ bool loadConfig(const std::string& filename,
         if (eq != std::string::npos) {
           int type = std::stoi(line.substr(9, eq - 9));
           if (type >= 0 && type < 6) {
-            outMaskState->valid = true;
             int v = std::stoi(line.substr(eq + 1));
-            if (v == 0) outMaskState->typeMode[type] = ConfigMaskState::TypeMode::Off;
-            else if (v == 1) outMaskState->typeMode[type] = ConfigMaskState::TypeMode::On_NoThin;
-            else outMaskState->typeMode[type] = ConfigMaskState::TypeMode::On_ThinOK;
+            if (v == 0) outMaskState->typeMode[type] = MaskUIState::TypeMode::Off;
+            else if (v == 1) outMaskState->typeMode[type] = MaskUIState::TypeMode::On_NoThin;
+            else outMaskState->typeMode[type] = MaskUIState::TypeMode::On_ThinOK;
           }
         }
       }
     }
     else if (startsWith(line, "Mask_EnableMaxParticles=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->enableMaxParticles =
           (std::stoi(line.substr(std::strlen("Mask_EnableMaxParticles="))) != 0);
       }
     }
     else if (startsWith(line, "Mask_MaxParticles=")) {
       if (outMaskState) {
-        outMaskState->valid = true;
         outMaskState->maxParticles =
           std::stoi(line.substr(std::strlen("Mask_MaxParticles=")));
       }
@@ -271,7 +262,7 @@ bool saveConfig(const std::string& filename,
                 const ParticleArray* P,
                 const FileInfo* fileInfo,
                 const ParticleVisualConfig* visualCfg,
-                const ConfigMaskState* maskState)
+                const MaskUIState* maskState)
 {
   std::ofstream outfile(filename);
   if (!outfile.is_open()) return false;
@@ -294,7 +285,7 @@ bool saveConfig(const std::string& filename,
     outfile << "ParticleType" << i << "_Quantity=" << quantityToString(cfg.selectedQuantity) << "\n";
   }
 
-  if (maskState && maskState->valid) {
+  if (maskState) {
     outfile << "Mask_EnableSphere=" << (maskState->enableSphere ? 1 : 0) << "\n";
     outfile << "Mask_CenterX=" << maskState->center[0] << "\n";
     outfile << "Mask_CenterY=" << maskState->center[1] << "\n";
@@ -302,15 +293,15 @@ bool saveConfig(const std::string& filename,
     outfile << "Mask_Radius=" << maskState->radius << "\n";
 
     int outsideMode = 2;
-    if (maskState->outsideMode == ConfigMaskState::OutsideMode::Drop) outsideMode = 0;
-    else if (maskState->outsideMode == ConfigMaskState::OutsideMode::Thin) outsideMode = 1;
+    if (maskState->outsideMode == MaskUIState::OutsideMode::Drop) outsideMode = 0;
+    else if (maskState->outsideMode == MaskUIState::OutsideMode::Thin) outsideMode = 1;
     outfile << "Mask_OutsideMode=" << outsideMode << "\n";
     outfile << "Mask_OutsideStride=" << maskState->outsideStride << "\n";
 
     for (int t = 0; t < 6; ++t) {
       int tm = 1;
-      if (maskState->typeMode[t] == ConfigMaskState::TypeMode::Off) tm = 0;
-      else if (maskState->typeMode[t] == ConfigMaskState::TypeMode::On_ThinOK) tm = 2;
+      if (maskState->typeMode[t] == MaskUIState::TypeMode::Off) tm = 0;
+      else if (maskState->typeMode[t] == MaskUIState::TypeMode::On_ThinOK) tm = 2;
       outfile << "Mask_Type" << t << "=" << tm << "\n";
     }
 

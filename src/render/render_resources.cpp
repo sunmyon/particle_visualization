@@ -1,7 +1,7 @@
 #include <vector>
 
 #include "particle_visual_config.h"
-#include "ui_state.h"
+#include "app/runtime_state.h"
 #include "render_resources.h"
 #include "particle_renderer.h"
 #include "object_renderer.h"

@@ -1,5 +1,6 @@
 #include "app/app_lifecycle.h"
 #include "app/app_callbacks.h"
+#include "config/config_io.h"
 
 #include <iostream>
 #include <memory>
@@ -94,16 +95,12 @@ void InitApplication(AppState& app, RenderSystem& render)
 
 void LoadInitialData(AppState& app)
 {
-  ConfigMaskState maskState;
   if (loadConfig("config.txt",
                  app.data.particles,
                  app.data.fileInfo,
                  &app.view.particleVisual,
-                 &maskState)) {
-    ApplyMaskConfigState(maskState);
-
-    MaskConfig cfg = MakeMaskConfigFromUI();
-    app.data.fileInfo->setMaskConfig(cfg);
+                 &app.runtime.toolWindows.mask)) {
+    app.data.fileInfo->setMaskConfig(app.runtime.toolWindows.mask);
   }
 
   app.data.particles->units.updateDerived();
@@ -131,13 +128,11 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   DestroyRenderSystem(rs);
   DestroyRenderPrograms(rs.programs);
 
-  ConfigMaskState maskState;
-  ExportMaskConfigState(maskState);
   saveConfig("config.txt",
              app.data.particles,
              app.data.fileInfo,
              &app.view.particleVisual,
-             &maskState);
+             &app.runtime.toolWindows.mask);
 
 #ifndef NONATIVEFILEDIALOG
   NFD_Quit();
