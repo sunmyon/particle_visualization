@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include "implot.h"
 
+#include "app/runtime_state.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "object.h"
@@ -12,6 +13,10 @@
 #include "render/colormap_defs.h"
 #include "render/gizmo_renderer.h"
 #include "data/particle_array.h"
+
+#include "make_2D_projection_map.h"
+#include "compute_radial_profile.h"
+#include "compute_2D_histogram.h"
 
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,

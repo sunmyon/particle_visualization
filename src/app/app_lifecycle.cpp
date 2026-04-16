@@ -99,8 +99,8 @@ void LoadInitialData(AppState& app)
                  app.data.particles,
                  app.data.fileInfo,
                  &app.view.particleVisual,
-                 &app.runtime.toolWindows.mask)) {
-    app.data.fileInfo->setMaskConfig(app.runtime.toolWindows.mask);
+                 &app.ui.toolWindows.mask)) {
+    app.data.fileInfo->setMaskConfig(app.ui.toolWindows.mask);
   }
 
   app.data.particles->units.updateDerived();
@@ -132,7 +132,7 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
              app.data.particles,
              app.data.fileInfo,
              &app.view.particleVisual,
-             &app.runtime.toolWindows.mask);
+             &app.ui.toolWindows.mask);
 
 #ifndef NONATIVEFILEDIALOG
   NFD_Quit();

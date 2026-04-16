@@ -12,6 +12,8 @@
 #include "render/render_system.h"
 
 #include "UI.h"
+#include "settingUI.h"
+
 #include "render/frame_matrices.h"
 #include "render/render_draw_helpers.h"
 #include "render/render_resources.h"
@@ -19,6 +21,7 @@
 #include "imgui_context.h"
 #include "window_context.h"
 #include "FindClumps/find_clumps.h"
+#include "make_2D_projection_map.h"
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
@@ -29,6 +32,7 @@
 static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
                                                AppViewState& view,
                                                AppDerivedState& derived,
+					       AppUIState& ui,
                                                AppServices& services)
 {
   SettingsUIContext ctx;
@@ -38,7 +42,8 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
   ctx.particleVisual = &view.particleVisual;
   ctx.services       = &services;
   ctx.analysis       = &derived.analysis;
-
+  ctx.windows        = &ui.toolWindows;
+  
   return ctx;
 }
 
@@ -46,10 +51,11 @@ static void DrawSettingsPanels(const AppDataState& data,
                                AppViewState& view,
                                AppRuntimeState& runtime,
                                AppDerivedState& derived,
+			       AppUIState& ui,
                                AppServices& services)
 {
   SettingsUIContext settingsCtx =
-    MakeSettingsUIContext(data, view, derived, services);
+    MakeSettingsUIContext(data, view, derived, ui, services);
   ShowSettingsUI(settingsCtx, runtime);
   ShowCameraSettingsUI();
 }
@@ -105,19 +111,21 @@ static void DrawMainUI(const AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AppDerivedState& derived,
+		       AppUIState& ui,
 		       AppServices& services)
 {
   ShowTime(data.particles->particleBlock.header.time);
-  DrawSettingsPanels(data, view, runtime, derived, services);
+  DrawSettingsPanels(data, view, runtime, derived, ui, services);
 }
 
 static void DrawToolWindows(const AppDataState& data,
                             AppViewState& view,
                             AppRuntimeState& runtime,
+			    AppUIState& ui,
                             AppDerivedState& derived,
                             AppServices& services)
 {
-  auto &tools = runtime.toolWindows;
+  auto &tools = ui.toolWindows;
   
   DrawClumpPanels(data, services, view.camera);
   DrawFileDialogPanels(data);
@@ -921,11 +929,13 @@ void RunFrame(AppState& app,
 	     app.view,
 	     app.runtime,
 	     app.derived,
+	     app.ui,
 	     app.services);
 
   DrawToolWindows(app.data,
 		  app.view,
 		  app.runtime,
+		  app.ui,
 		  app.derived,
 		  app.services);
   

@@ -1,4 +1,5 @@
 #include "UI.h"
+#include "settingUI.h"
 #include "app/app_services.h"
 #include "render_actions.h"
 
@@ -88,15 +89,15 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
 
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation, rt.toolWindows);
+  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
   DrawNormalizationSection(ctx.P);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, rt.settings);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
 #endif
-  DrawAnalysisSection(ctx, rt.analysis, rt.toolWindows);
-  DrawRenderingSection(ctx, rt.analysis, rt.toolWindows);
+  DrawAnalysisSection(ctx, rt.analysis, *ctx.windows);
+  DrawRenderingSection(ctx, rt.analysis, *ctx.windows);
   DrawOtherSettingsSection(ctx.P->units, ctx.fileInfo, rt.settings, rt.render);
 
   ImGui::End();
