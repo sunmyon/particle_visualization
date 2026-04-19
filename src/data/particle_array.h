@@ -142,7 +142,7 @@ public:
     particlesDirty = true;  // グローバルなフラグをtrueに設定
   };
   
-  void swap_particles(TrackingVector<ParticleBlock>& batchP, int ibatch, int flag_reset);
+  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock);
   void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml);
 
   int readClumpData(int snapshotIndex);

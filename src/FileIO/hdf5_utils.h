@@ -1,6 +1,8 @@
 #pragma once
 #include <H5Cpp.h>
 #include <stdexcept>
+#include <vector>
+#include <iostream>
 
 struct H5SilenceErrors {
   H5E_auto2_t old_func = nullptr;

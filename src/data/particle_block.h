@@ -203,40 +203,17 @@ struct ParticleBlock {
   std::array<QuantityId, kMaxQ> allQ;
   std::array<QuantityId, kMaxQ> uiQ;
 
-  void rebuildQuantities() {
-    nAllQ = 0; nUIQ = 0;
-
-    auto pushAll = [&](QuantityId q){ allQ[nAllQ++] = q; };
-    auto pushUI  = [&](QuantityId q){ uiQ[nUIQ++]  = q; };
-
-    for (auto q : {QuantityId::Density, QuantityId::Temperature,
-                   QuantityId::Mass, QuantityId::Hsml}) {
-      pushAll(q);
-      pushUI(q);
-    }
-
-    // --- 内部用（UIに出さないが all には入れる）---
-    for (auto q : {QuantityId::PosX, QuantityId::PosY, QuantityId::PosZ, QuantityId::Radius, QuantityId::VRad}) {
-      pushAll(q);
-    }
-
-    auto push_if_has = [&](const auto& view, QuantityId q) {
-      if (hasSoAAs(view)) {
-	pushAll(q);
-	pushUI(q);
-      }
-    };
-
-    push_if_has(soa_views::Bfield,            QuantityId::B);
-    push_if_has(soa_views::Bfield,            QuantityId::Beta);
-    push_if_has(soa_views::Metallicity,       QuantityId::Metallicity);
-    push_if_has(soa_views::ElectronAbundance, QuantityId::ElectronAbundance);
-    push_if_has(soa_views::H2Abundance,       QuantityId::H2Abundance);
-    push_if_has(soa_views::HDAbundance,       QuantityId::HDAbundance);
-    push_if_has(soa_views::J21,               QuantityId::J21);
-    push_if_has(soa_views::Val1,              QuantityId::Val);
-    push_if_has(soa_views::Val2,              QuantityId::Val2);    
-  }
+  void rebuildQuantities();
+  
+public:
+  struct BuildResult {
+    float valueMin[kMaxQ][kNumTypes];
+    float valueMax[kMaxQ][kNumTypes];
+    float originalMax = 0.0f;
+  };
+  
+  BuildResult rebuild(float desiredMax);  
+  static ParticleBlock makeTestParticleBlock();
 };
 
 inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size_t ipart, VectorId v, float out[3]) {

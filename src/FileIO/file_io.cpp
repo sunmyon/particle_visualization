@@ -1,7 +1,7 @@
 #include "interaction/camera.h"
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
 #include "FileIO/file_io.h"
+#include "FileIO/hdf5_reader.h"
+#include "FileIO/binary_reader.h"
 
 #include <imgui.h>
 #include "implot.h"
@@ -16,7 +16,6 @@
 #include <thread>
 #include <fstream>
 #include <cstring>
-#include <random>
 
 #include "core/PerfTimer.h"
 
@@ -36,99 +35,33 @@ TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
 }
 
 void FileInfo::generateTestData(ParticleArray *P){
-  std::mt19937_64 rng(12345);
-  std::uniform_real_distribution<double> ud(-1.0, 1.0);
-
-  const int n_side = 50;
-  const double x_min = -50.;
-  const double x_max = 50.;
-  const double xlen = 100.;
-  double dx = xlen / static_cast<double>(n_side);
-
-  double amp = 0.001;
-  double Omega = 100.;
-  
-  HeaderInfo header;
-  header.npart = n_side * n_side * n_side;
-  header.time = 0.;
-  header.boxSize = xlen;
-  header.flag_comoving = 0;
-  header.flag_hdf5 = 0;
-
-  TrackingVector<ParticleData> particles;
-  particles.reserve(n_side * n_side * n_side);
-  
-  for (int i = 0; i < n_side; i++) {
-    double x = x_min + dx * i;    
-
-    for (int j = 0; j < n_side; j++) {
-      double y = x_min + dx * j;
-      
-      for (int k = 0; k < n_side; k++) {
-	double z = x_min + dx * k;
-
-	double rx = ud(rng);
-	double ry = ud(rng);
-	double rz = ud(rng);
-
-	double x_out = x + amp * rx;
-	double y_out = y + amp * ry;
-	double z_out = z + amp * rz;
-	
-	double r2 = x_out * x_out + y_out * y_out + z_out * z_out;
-
-	ParticleData p;
-	p.pos[0] = x_out;  p.pos[1] = y_out;  p.pos[2] = z_out;
-	p.original_pos[0] = x_out;  p.original_pos[1] = y_out;  p.original_pos[2] = z_out;
-
-	p.vel[0] = x_out;
-	p.vel[1] = y_out;
-	p.vel[2] = z_out;
-
-	double v_rot_x = -Omega * y_out;
-        double v_rot_y =  Omega * x_out;
-        double v_rot_z =  0.0;
-	
-	p.vel[0] += v_rot_x;
-	p.vel[1] += v_rot_y;
-	p.vel[2] += v_rot_z;
-	
-	p.Hsml = dx;
-	p.originalHsml = dx;
-
-	p.mass = 1.;
-	p.density = 1.;
-	p.temperature = 1.;
-	p.type = 0;
-
-	p.ID = particles.size();
-	
-	particles.push_back(p);
-      }
-    }
-  }
-
-  batchParticleBlocks.resize(1);
-  batchParticleBlocks[0].particles = std::move(particles);
-  batchParticleBlocks[0].header = header;
-  
-  P->swap_particles(batchParticleBlocks, 0, 1);  
+  ParticleBlock block = ParticleBlock::makeTestParticleBlock();
+  P->setParticleBlock(std::move(block), nullptr);
 }
 
 void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
   TIME_FUNCTION();
+  
+  bool found = false;
+  {
+    std::lock_guard<std::mutex> lock(g_dataMutex);
+    for (auto it = prefetchCache.begin(); it != prefetchCache.end(); ++it) {
+      if (it->fileIndex == newFileIndex) {
+        ParticleBlock oldBlock;
+        P->setParticleBlock(std::move(it->block), &oldBlock);
+        prefetchCache.erase(it);
 
-  if (newFileIndex >= currentBatchStart &&
-      newFileIndex < currentBatchStart + batchSize * skipStep) {
-    int batchIndex = (newFileIndex - currentBatchStart) / skipStep;
-    if (batchIndex >= 0 && batchIndex < batchSize) 
-      P->swap_particles(batchParticleBlocks, batchIndex, 0);
-    
-  } else {
-    if (!isLoading)
-      loadBatch(newFileIndex, batchSize, skipStep, P);	
+        found = true;
+        break;
+      }
+    }
   }
 
+  if (!found) {
+    if (!isLoading)
+      loadBatch(newFileIndex, batchSize, skipStep, P);
+  }
+  
   snapshotUpdated = true;
   currentFileIndex = newFileIndex;
   
@@ -141,41 +74,40 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
 
 
 void FileInfo::syncLoadFirstFile(int targetFile, ParticleArray *P) {
-  ParticleBlock pBlock;  
-  if (loadSingleFile(targetFile, pBlock)) {
-    {
-      std::lock_guard<std::mutex> lock(g_dataMutex);
-      batchParticleBlocks.resize(1);
-      batchParticleBlocks[0] = std::move(pBlock);
-    }
+  ParticleBlock newBlock;
 
-    P->swap_particles(batchParticleBlocks, 0, 1);
-  } else {
-    P->particleBlock.particles = TrackingVector<ParticleData>{};   
+  if (!loadSingleFile(targetFile, newBlock)) {
+    P->particleBlock.clear();
     std::cerr << "Failed to load first file: " << targetFile << std::endl;
+    return;
   }
+
+  ParticleBlock oldBlock;
+  const bool hadOld = P->setParticleBlock(std::move(newBlock), &oldBlock);
+  std::lock_guard<std::mutex> lock(g_dataMutex);
+
+  prefetchCache.clear();
 }
 
-// 残りのファイルを非同期に読み込む関数（インデックス1以降）
 void FileInfo::asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep) {
-  // バッチのサイズが1以上であることが前提
-  // ここでは1つ目以外のファイルを読み込みます
-  TrackingVector<ParticleBlock> newBatch(batchSize - 1);
-  for (int i = 1; i < batchSize; i++) {
+  TrackingVector<PrefetchEntry> loaded;
+
+  for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;
-    ParticleBlock pBlock;
-    if (loadSingleFile(fileNumber, pBlock)) {
-      newBatch[i - 1] = std::move(pBlock);
-    } else {
-      newBatch[i - 1] = {};
+
+    ParticleBlock block;
+    if (loadSingleFile(fileNumber, block)) {
+      PrefetchEntry e;
+      e.fileIndex = fileNumber;
+      e.block = std::move(block);
+      loaded.push_back(std::move(e));
     }
   }
+
   {
     std::lock_guard<std::mutex> lock(g_dataMutex);
-    // バッチの先頭はすでに設定済みなので、残りを後ろに追加するか、必要に応じてスワップする
-    for (size_t i = 0; i < newBatch.size(); i++) {
-      // ここでは単純に後ろに追加する例
-      batchParticleBlocks.push_back(std::move(newBatch[i]));
+    for (auto& e : loaded) {
+      prefetchCache.push_back(std::move(e));
     }
   }
 }
@@ -255,29 +187,29 @@ int ParticleArray::readClumpData(int snapshotIndex){
 void FileInfo::initDefaultFormatTokens() {
     formatTokens.clear();
     FieldSpec token;
-    token.label = "position"; token.type = DataType::Float; token.count = 3;
+    token.key = FieldKey::Position; token.type = DataType::Float; token.count = 3;
     formatTokens.push_back(token);
-    token.label = "velocity"; token.type = DataType::Float; token.count = 3;
+    token.key = FieldKey::Velocity; token.type = DataType::Float; token.count = 3;
     formatTokens.push_back(token);
-    token.label = "type"; token.type = DataType::Int32; token.count = 1;
+    token.key = FieldKey::Type; token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "ID"; token.type = DataType::Int32; token.count = 1;
+    token.key = FieldKey::ID; token.type = DataType::Int32; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "Hsml"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Hsml; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "density"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Density; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "temperature"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Temperature; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "dummy"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Dummy; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "value"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Value; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "value2"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Value2; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
-    token.label = "dummy"; token.type = DataType::Float; token.count = 4;
+    token.key = FieldKey::Dummy; token.type = DataType::Float; token.count = 4;
     formatTokens.push_back(token);
-    token.label = "mass"; token.type = DataType::Float; token.count = 1;
+    token.key = FieldKey::Mass; token.type = DataType::Float; token.count = 1;
     formatTokens.push_back(token);
 
     formatTokens_hdf5 = formatTokens;
@@ -297,16 +229,13 @@ void FileInfo::DrawFormatDialog() {
     return;
   }
 
-  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "mass", "density", "temperature",  "value", "value2", "Metallicity", "type", "ID", "dummy",
-				   "ElectronAbundance", "H2Abundance", "HDAbundance", "J21"};
-    
   for (size_t i = 0; i < formatTokensEdit.size(); i++) {
     ImGui::PushID(i);
 
     char buf[128];
     std::snprintf(buf, sizeof(buf), "%s, %s, count=%d",
-		  formatTokensEdit[i].label.c_str(),
-		  (formatTokensEdit[i].type == DataType::Float) ? "float" : (formatTokensEdit[i].type == DataType::Int32) ? "int": "double",
+		  GetFieldKeyDisplayName(formatTokensEdit[i].key),
+		  GetDataTypeDisplayName(formatTokensEdit[i].type),
 		  formatTokensEdit[i].count);
 
     // リスト内の項目として表示（Selectable を使う）
@@ -319,7 +248,9 @@ void FileInfo::DrawFormatDialog() {
     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
       {
 	// 現在の項目インデックスを payload として送る
-	ImGui::SetDragDropPayload("DND_FORMAT_TOKEN", &i, sizeof(int));
+	int payloadIndex = static_cast<int>(i);
+	ImGui::SetDragDropPayload("DND_FORMAT_TOKEN", &payloadIndex, sizeof(payloadIndex));
+
 	ImGui::Text("Moving %s", buf);
 	ImGui::EndDragDropSource();
       }
@@ -366,99 +297,39 @@ void FileInfo::DrawFormatDialog() {
 	  }
 	ImGui::EndDragDropTarget();
       }
-	
-    // ----- ラベルの選択（InputText の代わりにドロップダウンを利用） -----
-    // 現在のラベルが候補リストのどれに対応するか調べる
-    int currentLabelIndex = 0;
-    for (int j = 0; j < IM_ARRAYSIZE(availableLabels); ++j) {
-      if (formatTokensEdit[i].label ==  availableLabels[j]) {
-	currentLabelIndex = j;
-	break;
+
+    if (ImGui::BeginCombo("##fieldKeyCombo",
+			  GetFieldKeyDisplayName(formatTokensEdit[i].key))) {
+      for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+	FieldKey key = kAvailableFieldKeys[n];
+	bool is_selected = (formatTokensEdit[i].key == key);
+
+	if (ImGui::Selectable(GetFieldKeyDisplayName(key), is_selected)) {
+	  formatTokensEdit[i].key = key;
+	  ApplyDefaultFieldSpec(formatTokensEdit[i]);
+	}
+	if (is_selected) ImGui::SetItemDefaultFocus();
       }
+      ImGui::EndCombo();
     }
-    // ドロップダウン（コンボボックス）でラベルを選択
-    if (ImGui::Combo("Label", &currentLabelIndex, availableLabels, IM_ARRAYSIZE(availableLabels))) {
-      // 選択が変更された場合、トークンのラベルを更新
-      formatTokensEdit[i].label = availableLabels[currentLabelIndex];
-      // ここで、選択されたラベルに応じて型を自動的に設定する例
-      if (strcmp(availableLabels[currentLabelIndex], "type") == 0) {
-	// 例: "type" が選ばれたら整数型にする
-	formatTokensEdit[i].type = DataType::Int32;
-	formatTokensEdit[i].count = 1;
-      }
-	    
-      if (strcmp(availableLabels[currentLabelIndex], "ID") == 0) {
-	// 例: "type" が選ばれたら整数型にする
-	formatTokensEdit[i].type = DataType::Int32;;
-	formatTokensEdit[i].count = 1;
-      }
 
-      if (strcmp(availableLabels[currentLabelIndex], "density") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
+    if (ImGui::BeginCombo("Type", GetDataTypeDisplayName(formatTokensEdit[i].type))) {
+      for (int n = 0; n < kNumDataTypeChoices; ++n) {
+	DataType type = kDataTypeChoices[n].type;
+	bool is_selected = (formatTokensEdit[i].type == type);
 
-      if (strcmp(availableLabels[currentLabelIndex], "temperature") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
+	if (ImGui::Selectable(kDataTypeChoices[n].name, is_selected)) {
+	  formatTokensEdit[i].type = type;
+	}
+	if (is_selected) ImGui::SetItemDefaultFocus();
       }
-
-      if (strcmp(availableLabels[currentLabelIndex], "Bfield") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 3;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "Metallicity") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
-	    
-      if (strcmp(availableLabels[currentLabelIndex], "value") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "value2") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "position") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 3;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "velocity") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 3;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "mass") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
-
-      if (strcmp(availableLabels[currentLabelIndex], "dummy") == 0) {
-	// 例: "value" が選ばれたら浮動小数点型にする
-	formatTokensEdit[i].type = DataType::Float;
-	formatTokensEdit[i].count = 1;
-      }
+      ImGui::EndCombo();
     }
-	
-    const char* types[] = { "float", "int", "int64", "double" };
-    int currentType = static_cast<int>(formatTokensEdit[i].type);
-    ImGui::Combo("Type", &currentType, types, IM_ARRAYSIZE(types));
-    formatTokensEdit[i].type = static_cast<DataType>(currentType);	
+
     ImGui::InputInt("Count", &formatTokensEdit[i].count);
+    if (formatTokensEdit[i].count < 0)
+      formatTokensEdit[i].count = 0;
+    
     if (ImGui::Button("Delete")) {
       formatTokensEdit.erase(formatTokensEdit.begin() + i);
       ImGui::PopID();
@@ -471,9 +342,8 @@ void FileInfo::DrawFormatDialog() {
     
   if (ImGui::Button("Add Token")) {
     FieldSpec newToken;
-    newToken.label = "dummy";
-    newToken.type = DataType::Float;
-    newToken.count = 1;
+    newToken.key = FieldKey::Dummy;
+    ApplyDefaultFieldSpec(newToken);
     formatTokensEdit.push_back(newToken);
   }
   if (ImGui::Button("OK")) {
@@ -498,19 +368,11 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     return;
   }
 
-  for (auto &tok : formatTokensEdit) 
-    if (tok.displayName.empty()) 
-      FieldSpec::SetDefaultDisplayName(tok);
-  
-  const char* availableLabels[] = {"position", "velocity", "Bfield", "Hsml", "Volume", "mass", "density", "temperature",  "value", "value2", "ID", "internalenergy",
-				   "ElectronAbundance", "H2Abundance", "HDAbundance", "J21", "Gamma", "Metallicity"};
-
-  // テーブルを使って列をそろえる
   if (ImGui::BeginTable("FieldTable", 6,
 			ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
-    ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
     ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 100.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
@@ -526,49 +388,53 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 
       // Label 列：ドロップダウン＋自由入力
       ImGui::TableNextColumn();
-      if (ImGui::BeginCombo("##labelCombo", formatTokensEdit[i].label.c_str())) {
-	for (int n = 0; n < IM_ARRAYSIZE(availableLabels); n++) {
-	  bool is_selected = (formatTokensEdit[i].label == availableLabels[n]);
-	  if (ImGui::Selectable(availableLabels[n], is_selected)) {
-	    formatTokensEdit[i].label = availableLabels[n];
-	    if (strcmp(availableLabels[n], "ID") == 0)
-	      formatTokensEdit[i].type = DataType::Int32;
-	    else
-	      formatTokensEdit[i].type = DataType::Float;
-	    
-	    FieldSpec::SetDefaultDisplayName(formatTokensEdit[i]);
-	  }
-	  if (is_selected) ImGui::SetItemDefaultFocus();
+      if (ImGui::BeginCombo("##fieldKeyCombo",
+                            GetFieldKeyDisplayName(formatTokensEdit[i].key))) {
+        for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+          FieldKey key = kAvailableFieldKeys[n];
+          bool is_selected = (formatTokensEdit[i].key == key);
+
+          if (ImGui::Selectable(GetFieldKeyDisplayName(key), is_selected)) {
+            formatTokensEdit[i].key = key;
+            ApplyDefaultFieldSpec(formatTokensEdit[i]);
+          }
+          if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      {
+	ImGui::PushItemWidth(-1);
+	char buf[128];
+	std::snprintf(buf, sizeof(buf), "%s", formatTokensEdit[i].sourceName.c_str());
+      
+	if (ImGui::InputText("##sourceName", buf, IM_ARRAYSIZE(buf))) {
+	  formatTokensEdit[i].sourceName = buf;
 	}
-	ImGui::EndCombo();
-      }
-
-      // DisplayName (手入力)
-      ImGui::TableNextColumn();
-      ImGui::PushItemWidth(-1);
-      char buf[128];
-      std::snprintf(buf, sizeof(buf), "%s", formatTokensEdit[i].displayName.c_str());
       
-      if (ImGui::InputText("##displayName", buf, IM_ARRAYSIZE(buf))) {
-	formatTokensEdit[i].displayName = buf;
+	ImGui::PopItemWidth();
       }
-      
-      ImGui::PopItemWidth();
-
-      // Type 列
-      const char* types[] = { "float", "int", "int64", "double" };
+            
       ImGui::TableNextColumn();
-      int currentType = static_cast<int>(formatTokensEdit[i].type);
-      if (ImGui::Combo("##type", &currentType, types, IM_ARRAYSIZE(types))) {
-	formatTokensEdit[i].type = static_cast<DataType>(currentType);
+      if (ImGui::BeginCombo("##typeCombo",
+                            GetDataTypeDisplayName(formatTokensEdit[i].type))) {
+        for (int n = 0; n < kNumDataTypeChoices; ++n) {
+          DataType type = kDataTypeChoices[n].type;
+          bool is_selected = (formatTokensEdit[i].type == type);
+
+          if (ImGui::Selectable(kDataTypeChoices[n].name, is_selected)) {
+            formatTokensEdit[i].type = type;
+          }
+          if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
       }
 
-      // Count 列
       ImGui::TableNextColumn();
       ImGui::InputInt("##count", &formatTokensEdit[i].count, 1, 10);
       if (formatTokensEdit[i].count < 1) formatTokensEdit[i].count = 1;
 
-      // Delete ボタン
       ImGui::TableNextColumn();
       if (ImGui::Button("-", ImVec2(24,24))) {
 	formatTokensEdit.erase(formatTokensEdit.begin() + i);
@@ -586,10 +452,8 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
   // フィールド追加ボタン
   if (ImGui::Button("Add field")) {
     FieldSpec newToken;
-    newToken.label = "dummy";
-    newToken.type  = DataType::Float;
-    newToken.count = 1;
-    newToken.displayName.clear();
+    newToken.key = FieldKey::Dummy;
+    ApplyDefaultFieldSpec(newToken);
     formatTokensEdit.push_back(newToken);
   }
   ImGui::SameLine();
@@ -605,7 +469,6 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
     
   ImGui::End();
 }
-
 #endif
 
 
@@ -702,19 +565,18 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
     return false;
   }
   
-  IOPlan plan = buildPlanFromToks(format);
   {
     TIME_SCOPE("parse header");
 
     bool ok = false;
     if (enableMask) {
       ParticleMask pmask{currentMaskConfig};
-      ok = reader->readRangeMasked(outBlock, 0, reader->particleCount(),
-				   format, plan, pmask);
+      ok = reader->readRange(outBlock, 0, reader->particleCount(),
+			     format, &pmask);
     }
 
     if (!ok) {
-      ok = reader->readAll(outBlock, format, plan);
+      ok = reader->readAll(outBlock, format);
     }
     
     if (!ok) {
@@ -726,139 +588,6 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   reader->close();
   	
   return true;
-}
-
-
-void ParticleArray::swap_particles(TrackingVector<ParticleBlock>& batchP, int ibatch, int flag_reset) {
-  TIME_FUNCTION();
-
-  float newMin[kMaxQ][kNumTypes];
-  float newMax[kMaxQ][kNumTypes];
-
-  float maxVal = 0.0f;
-
-  ParticleBlock& newParticleBlock = batchP[ibatch];
-  TrackingVector<ParticleData>& newParticles = newParticleBlock.particles;
-
-  // 1) 今回の block に応じて「有効 quantity リスト」を確定
-  newParticleBlock.rebuildQuantities();
-
-  if (!newParticles.empty()) {
-    // 2) 初期化（有効分だけでOK）
-    for (int q = 0; q < newParticleBlock.nUIQ; ++q) {
-      for (int t = 0; t < kNumTypes; ++t) {
-	newMin[q][t] = std::numeric_limits<float>::max();
-	newMax[q][t] = -std::numeric_limits<float>::max();
-      }
-    }
-
-    int npart_type[kNumTypes] = {0,0,0,0,0,0};
-
-#pragma omp parallel
-    {
-      float localMax = 0.0f;
-      float localMin[kMaxQ][kNumTypes], localMaxV[kMaxQ][kNumTypes];
-      int   local_npart_type[kNumTypes] = {0};
-
-      // thread-local init（有効分だけ）
-      for (int q = 0; q < newParticleBlock.nUIQ; ++q) {
-        for (int t = 0; t < kNumTypes; ++t) {
-          localMin[q][t]  = std::numeric_limits<float>::max();
-          localMaxV[q][t] = -std::numeric_limits<float>::max();
-        }
-      }
-
-#pragma omp for
-      for (int i = 0; i < (int)newParticles.size(); ++i) {
-        ParticleData& p = newParticles[i];
-        int type = p.type;
-        local_npart_type[type]++;
-
-        // maxVal 用
-        float m = std::max(std::fabs(p.original_pos[0]),
-			   std::max(std::fabs(p.original_pos[1]), std::fabs(p.original_pos[2])));
-        if (m > localMax) localMax = m;
-
-        // pos/Hsml の初期化（あなたの元コード踏襲）
-        for (int k = 0; k < 3; ++k) p.pos[k] = p.original_pos[k];
-        p.Hsml = p.originalHsml;
-        p.flag_stress = 0;
-
-        // min/max 更新（有効 quantity 分だけ）
-        for (int q = 0; q < newParticleBlock.nUIQ; ++q) {
-          float v = getScalarValue(newParticleBlock, p, i, newParticleBlock.uiQ[q]);
-          localMin[q][type]  = std::min(localMin[q][type],  v);
-          localMaxV[q][type] = std::max(localMaxV[q][type], v);
-        }
-      }
-
-#pragma omp critical
-      {
-        if (localMax > maxVal) maxVal = localMax;
-
-        for (int t = 0; t < kNumTypes; ++t) npart_type[t] += local_npart_type[t];
-
-        for (int q = 0; q < newParticleBlock.nUIQ; ++q)
-          for (int t = 0; t < kNumTypes; ++t) {
-            newMin[q][t] = std::min(newMin[q][t], localMin[q][t]);
-            newMax[q][t] = std::max(newMax[q][t], localMaxV[q][t]);
-          }
-      }
-    } // omp parallel
-
-    // 3) スケーリング（maxVal 確定後）
-    if (maxVal > 0.0f) {
-      float invMaxVal = desiredMax / maxVal;
-#pragma omp parallel for
-      for (int i = 0; i < (int)newParticles.size(); ++i) {
-        ParticleData& p = newParticles[i];
-        for (int k = 0; k < 3; ++k) p.pos[k] *= invMaxVal;
-        p.Hsml *= invMaxVal;
-      }
-    }
-
-    // 4) type に粒子がいない場合の min/max を 0 に（あなたの元コード踏襲）
-    for (int q = 0; q < newParticleBlock.nUIQ; ++q) {
-      for (int t = 0; t < kNumTypes; ++t) {
-        if (npart_type[t] == 0) {
-          newMin[q][t] = 0.0f;
-          newMax[q][t] = 0.0f;
-        }
-      }
-    }
-  } // newParticles not empty
-
-  // 5) 古いブロックを戻す（元コード踏襲）
-  if (flag_reset == 0)
-    batchP[particleBlock_index] = std::move(particleBlock);
-
-  // 6) 新しいブロックを採用
-  particleBlock = std::move(newParticleBlock);
-  particleBlock_index = ibatch;
-
-  // 7) particleValueMin/Max に格納（有効分だけ上書き）
-  for (int q = 0; q < particleBlock.nUIQ; ++q)
-    for (int t = 0; t < kNumTypes; ++t) {
-      particleValueMin[q][t] = newMin[q][t];
-      particleValueMax[q][t] = newMax[q][t];
-    }
-
-  originalMax = maxVal;
-
-  // 8) 以降あなたのユニット・フラグ更新はそのまま
-  if (particleBlock.header.flag_hdf5 == true) {
-    units.length_cm   = particleBlock.header.UnitLength_in_cm;
-    units.mass_g      = particleBlock.header.UnitMass_in_g;
-    units.velocity_cm_per_s  = particleBlock.header.UnitVelocity_in_cm_per_s;
-    units.hubble                = particleBlock.header.HubbleParam;
-    units.useComovingCoordinate = particleBlock.header.flag_comoving;
-    units.updateDerived();
-  }
-
-  flag_mask.resize(particleBlock.particles.size(), 0);
-
-  particlesDirty = true;
-  flagParticleIndexDirty = true;
 }
 
 
@@ -1025,7 +754,6 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, boo
 	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * units.length_cm, units.hubble);
   }
 }
-
 
   /// ── 補助関数 ─────────────────────────────────────────────
   /// 指定された変数名から Particle の値を取得する

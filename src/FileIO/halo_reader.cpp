@@ -1,5 +1,6 @@
 #ifdef HAVE_HDF5
 #include "FileIO/file_io.h"
+#include "FileIO/hdf5_utils.h"
 #include "H5Cpp.h"
 
 #include <hdf5.h>    // H5Lexists, H5P_DEFAULT

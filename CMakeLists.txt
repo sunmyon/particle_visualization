@@ -92,8 +92,11 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/render_resources.cpp
   ${SRC_DIR}/interaction/interaction_utils.cpp
   ${SRC_DIR}/config/config_io.cpp
+  ${SRC_DIR}/data/particle_block.cpp
+  ${SRC_DIR}/data/particle_array.cpp
+  ${SRC_DIR}/FileIO/hdf5_reader.cpp
+  ${SRC_DIR}/FileIO/halo_reader.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
-	${SRC_DIR}/FileIO/file_io_hdf5.cpp
   ${SRC_DIR}/FindClumps/find_clumps.cpp
   ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
   ${SRC_DIR}/FindClumps/find_clumps_make_chains.cpp

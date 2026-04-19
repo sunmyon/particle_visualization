@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include "data/data_type.h"
 
 class ParticleData {
 public:
@@ -22,7 +23,6 @@ public:
   float getValue(const std::string &var) const;  
 };
 
-
 struct AoSExtensionBuffer {
   size_t stride = 0;               // bytes per particle
   std::vector<uint8_t> bytes;      // size = stride * N
@@ -39,23 +39,6 @@ struct AoSExtensionBuffer {
     return bytes.data() + i * stride;
   }
 };
-
-enum class DataType : uint8_t {
-  Float = 0,
-  Int32 = 1,
-  Int64 = 2,
-  Double = 3
-};
-
-static inline size_t dataTypeSize(DataType t) {
-  switch (t) {
-    case DataType::Float:  return 4;
-    case DataType::Int32:  return 4;
-    case DataType::Int64:  return 8;
-    case DataType::Double: return 8;
-  }
-  return 0;
-}
 
 struct SoAField {
   DataType type{};
@@ -74,15 +57,6 @@ struct SoAField {
     return bytes.data() + i * (size_t)comps * dataTypeSize(type);
   }
 };
-
-
-template<typename T>
-static inline DataType toDataType();
-
-template<> inline DataType toDataType<float>()  { return DataType::Float; }
-template<> inline DataType toDataType<double>() { return DataType::Double; }
-template<> inline DataType toDataType<int32_t>(){ return DataType::Int32; }
-template<> inline DataType toDataType<int64_t>(){ return DataType::Int64; }
 
 static constexpr const char* kBfieldKey = "Bfield";
 static constexpr const char* kMetallicityKey = "Metallicity";

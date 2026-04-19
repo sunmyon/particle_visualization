@@ -46,7 +46,7 @@ static void saveTokenList(std::ofstream& outfile,
 {
   outfile << countKey << "=" << tokens.size() << "\n";
   for (size_t i = 0; i < tokens.size(); i++) {
-    outfile << tokens[i].label << ","
+    outfile << GetFieldKeyDisplayName(tokens[i].key) << ","
             << dataTypeToString(tokens[i].type) << ","
             << tokens[i].count << "\n";
   }
@@ -70,10 +70,10 @@ static void loadTokenList(std::ifstream& infile,
     if (!std::getline(iss, tokenCountStr)) continue;
 
     FieldSpec ft;
-    ft.label = trim(tokenLabel);
+    ft.key   = GetFieldKeyFromDisplayName(trim(tokenLabel));
     ft.type  = stringToDataType(trim(tokenType));
     ft.count = std::stoi(trim(tokenCountStr));
-    FieldSpec::SetDefaultDisplayName(ft);
+    ft.sourceName = GetDefaultHDF5SourceName(ft.key);
 
     outTokens.push_back(ft);
   }
