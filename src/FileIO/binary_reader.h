@@ -1,7 +1,21 @@
 #pragma once
+#pragma once
+#include "FileIO/particle_reader.h"
+#include "FileIO/file_mask.h"
+#include "core/PerfTimer.h"
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <fstream>
 #include "FileIO/file_layout.h"
-#include "FileIO/file_mask.h"
 
 class BinaryReader final : public IParticleReader {
   std::ifstream file_;

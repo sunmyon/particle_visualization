@@ -8,6 +8,7 @@
 /**** needed for Im32U ****/
 class FileInfo;
 class ProjectionMapGenerator;
+struct SnapshotSource;
 
 class StructureNode {
 public:
@@ -340,7 +341,7 @@ private:
 public:
   FindClump() = default;
   
-  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo, CameraContext& cam);
+  void ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, const SnapshotSource& fileinfo, CameraContext& cam);
   
   int get_nclumps() const{
     return nodeList.size();
@@ -383,7 +384,7 @@ public:
 
   void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
   
-  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo, CameraContext& cam);
+  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& fileinfo, CameraContext& cam);
   
   void showClumpListWindow(){
     showWindowClumpList = true;

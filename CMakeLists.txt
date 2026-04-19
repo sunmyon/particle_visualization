@@ -98,6 +98,9 @@ set(SOURCES_CPP
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
   ${SRC_DIR}/FileIO/halo_reader.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
+  ${SRC_DIR}/FileIO/file_format_dialog.cpp
+  ${SRC_DIR}/FileIO/snapshot_loader.cpp
+  ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp
   ${SRC_DIR}/FindClumps/find_clumps.cpp
   ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
   ${SRC_DIR}/FindClumps/find_clumps_make_chains.cpp

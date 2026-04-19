@@ -66,13 +66,14 @@ static void DrawClumpPanels(const AppDataState& data,
 {
   services.clumpFind->ShowFindClumpsUI(data.particles->particleBlock.particles,
                                        data.particles->particleBlock.header,
-                                       *data.fileInfo,
+                                       data.fileInfo->getSource(),
 				       camera);
 
+  const auto& src = data.fileInfo->getSource();
 #ifdef CLUMP_DATA_READ
   services.clumpFind->ReadAndShowClumpsUI(data.particles,
-                                          data.fileInfo->currentFileIndex,
-                                          *data.fileInfo,
+                                          src.currentFileIndex,
+                                          data.fileInfo->getSource(),
 					  camera);
   services.clumpFind->showClumpChainList(data.particles,
                                          services.projectionMap2D.get(),
@@ -83,10 +84,7 @@ static void DrawClumpPanels(const AppDataState& data,
 
 static void DrawFileDialogPanels(const AppDataState& data)
 {
-  data.fileInfo->DrawFormatDialog();
-#ifdef HAVE_HDF5
-  data.fileInfo->ShowHDF5FieldMappingDialog();
-#endif
+  data.fileInfo->drawDialogs();
 }
 
 static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& data)
@@ -133,13 +131,14 @@ static void DrawToolWindows(const AppDataState& data,
   DrawAuxiliaryPanels(tools, data, view);
 
   DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, data.particles->units);
-  
+
+  const auto& src = data.fileInfo->getSource();
   DrawProjectionMapUI(tools.projectionMap, 
 		      *services.projectionMap2D,
                       data.particles,
                       view.camera,
                       runtime.render.cuboidAnnotations,
-                      data.fileInfo->currentFileIndex);
+                      src.currentFileIndex);
 
 #ifdef HAVE_HDF5
   DrawHaloesUI(tools.haloes, data.particles, view.camera, data.fileInfo);
@@ -911,9 +910,10 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				 runtime.settings);
 
   if (data.fileInfo->snapshotUpdated) {
+    const auto& src = data.fileInfo->getSource();
     ExecutePostSnapshotLoadActions(*data.particles,
 				   camera,
-				   data.fileInfo->currentFileIndex);
+				   src.currentFileIndex);
     
     data.fileInfo->clearSnapshotUpdated();
   }

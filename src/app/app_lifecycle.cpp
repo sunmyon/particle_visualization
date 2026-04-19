@@ -106,14 +106,10 @@ void LoadInitialData(AppState& app)
   app.data.particles->units.updateDerived();
   app.data.fileInfo->setUnit(app.data.particles->units);
 
-  const int newFileIndex =
-    app.data.fileInfo->initialIndex +
-    app.data.fileInfo->currentStep * app.data.fileInfo->skipStep;
-
-  app.data.fileInfo->loadBatch(newFileIndex,
-                          app.data.fileInfo->batchSize,
-                          app.data.fileInfo->skipStep,
-                          app.data.particles);
+  const auto& src = app.data.fileInfo->getSource();
+  
+  const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)

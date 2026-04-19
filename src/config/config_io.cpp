@@ -108,27 +108,28 @@ bool loadConfig(const std::string& filename,
   }
 
   std::string line;
+  auto& src = fileInfo->editSource();
   while (std::getline(infile, line)) {
     line = trim(line);
     if (line.empty()) continue;
 
     if (startsWith(line, "FileFormat=")) {
       std::string val = line.substr(std::strlen("FileFormat="));
-      std::strncpy(fileInfo->fileFormat, val.c_str(), sizeof(fileInfo->fileFormat) - 1);
-      fileInfo->fileFormat[sizeof(fileInfo->fileFormat) - 1] = '\0';
+      std::strncpy(src.fileFormat, val.c_str(), sizeof(src.fileFormat) - 1);
+      src.fileFormat[sizeof(src.fileFormat) - 1] = '\0';
     }
     else if (startsWith(line, "FolderPath=")) {
       std::string val = line.substr(std::strlen("FolderPath="));
-      std::strncpy(fileInfo->folderPath, val.c_str(), sizeof(fileInfo->folderPath) - 1);
-      fileInfo->folderPath[sizeof(fileInfo->folderPath) - 1] = '\0';
+      std::strncpy(src.folderPath, val.c_str(), sizeof(src.folderPath) - 1);
+      src.folderPath[sizeof(src.folderPath) - 1] = '\0';
     }
     else if (startsWith(line, "TokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("TokenCount=")));
-      loadTokenList(infile, tokenCount, fileInfo->formatTokens);
+      loadTokenList(infile, tokenCount, src.formatTokens);
     }
     else if (startsWith(line, "HDF5TokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("HDF5TokenCount=")));
-      loadTokenList(infile, tokenCount, fileInfo->formatTokens_hdf5);
+      loadTokenList(infile, tokenCount, src.formatTokens_hdf5);
     }
     else if (startsWith(line, "ParticleType")) {
       // ParticleType0_Size=...
@@ -230,10 +231,10 @@ bool loadConfig(const std::string& filename,
       P->desiredMax = std::stof(line.substr(std::strlen("NormalizationFactor=")));
     }
     else if (startsWith(line, "skipStep=")) {
-      fileInfo->skipStep = std::stoi(line.substr(std::strlen("skipStep=")));
+      src.skipStep = std::stoi(line.substr(std::strlen("skipStep=")));
     }
     else if (startsWith(line, "currentStep=")) {
-      fileInfo->currentStep = std::stoi(line.substr(std::strlen("currentStep=")));
+      src.currentStep = std::stoi(line.substr(std::strlen("currentStep=")));
     }
     else if (startsWith(line, "UnitMass_in_g=")) {
       P->units.mass_g = std::stod(line.substr(std::strlen("UnitMass_in_g=")));
@@ -267,11 +268,12 @@ bool saveConfig(const std::string& filename,
   std::ofstream outfile(filename);
   if (!outfile.is_open()) return false;
 
-  outfile << "FileFormat=" << fileInfo->fileFormat << "\n";
-  outfile << "FolderPath=" << fileInfo->folderPath << "\n";
+  auto& src = fileInfo->getSource();
+  outfile << "FileFormat=" << src.fileFormat << "\n";
+  outfile << "FolderPath=" << src.folderPath << "\n";
 
-  saveTokenList(outfile, "TokenCount", fileInfo->formatTokens);
-  saveTokenList(outfile, "HDF5TokenCount", fileInfo->formatTokens_hdf5);
+  saveTokenList(outfile, "TokenCount", src.formatTokens);
+  saveTokenList(outfile, "HDF5TokenCount", src.formatTokens_hdf5);
 
   for (int i = 0; i < 6; i++) {
     const auto& cfg = visualCfg->types[i];
@@ -310,8 +312,8 @@ bool saveConfig(const std::string& filename,
   }
 
   outfile << "NormalizationFactor=" << P->desiredMax << "\n";
-  outfile << "skipStep=" << fileInfo->skipStep << "\n";
-  outfile << "currentStep=" << fileInfo->currentStep << "\n";
+  outfile << "skipStep=" << src.skipStep << "\n";
+  outfile << "currentStep=" << src.currentStep << "\n";
   outfile << "UnitMass_in_g=" << P->units.mass_g << "\n";
   outfile << "UnitLength_in_cm=" << P->units.length_cm << "\n";
   outfile << "UnitVelocity_in_cm_per_s=" << P->units.length_cm << "\n";

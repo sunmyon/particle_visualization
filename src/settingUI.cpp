@@ -29,51 +29,9 @@ struct PullDownItem {
   int mode;
 };
 
-namespace {
-  std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
-  {
-    size_t dotPos = filename.find_last_of('.');
-    std::string basename = (dotPos == std::string::npos) ? filename : filename.substr(0, dotPos);
-    std::string extension = (dotPos == std::string::npos) ? "" : filename.substr(dotPos); 
-
-    // 最後の数字がある位置を探す
-    size_t pos = basename.find_last_of("0123456789");
-    if (pos == std::string::npos)
-      return std::make_pair(filename, 0); // 数字が見つからなければそのまま返す
-
-    // 数字部分の開始位置を後ろから辿って求める
-    size_t numEnd = pos;
-    size_t numStart = pos;
-    while (numStart > 0 && std::isdigit(basename[numStart - 1])) {
-      numStart--;
-    }
-    size_t numLen = numEnd - numStart + 1;
-
-    // ファイル名の前半部分（数字部分以前）を取得
-    std::string prefix = basename.substr(0, numStart);
-    // この例では数字部分以降の文字列は取り除く（必要に応じて拡張子などを扱えます）
-    std::string suffix = "";
-
-    // 桁数に合わせたフォーマット指定子を作成（例: 3桁なら "%03d"）
-    std::string formatSpecifier = "%" + std::string("0") + std::to_string(numLen) + "d";
-
-    std::string newFormat = prefix + formatSpecifier + suffix + extension;
-
-    // 数字部分を整数に変換
-    int fileNumber = -1;
-    try {
-      fileNumber = std::stoi(basename.substr(numStart, numLen));
-    } catch (const std::exception& e) {
-      fileNumber = -1;
-    }
-    
-    return std::make_pair(newFormat, fileNumber);
-  }
-}
-
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
+static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawNormalizationSection(ParticleArray* P);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt);
@@ -89,7 +47,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
 
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
+  DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
   DrawNormalizationSection(ctx.P);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, rt.settings);
@@ -181,17 +139,19 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
   }    
 }
 
-static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
+static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
+
+  auto& src = source;
   
-  ImGui::InputText("Folder", fileInfo->folderPath, IM_ARRAYSIZE(fileInfo->folderPath));
-  ImGui::InputText("File Format", fileInfo->fileFormat, IM_ARRAYSIZE(fileInfo->fileFormat));
-  ImGui::InputInt("initialIndex", &fileInfo->initialIndex);
+  ImGui::InputText("Folder", src.folderPath, IM_ARRAYSIZE(src.folderPath));
+  ImGui::InputText("File Format", src.fileFormat, IM_ARRAYSIZE(src.fileFormat));
+  ImGui::InputInt("initialIndex", &src.initialIndex);
 		
   char fileNameOnly[255];
-  std::snprintf(fileNameOnly, sizeof(fileNameOnly), fileInfo->fileFormat, fileInfo->initialIndex);
-  std::snprintf(fileInfo->filePath, sizeof(fileInfo->filePath), "%s/%s", fileInfo->folderPath, fileNameOnly);
+  std::snprintf(fileNameOnly, sizeof(fileNameOnly), src.fileFormat, src.initialIndex);
+  std::snprintf(src.filePath, sizeof(src.filePath), "%s/%s", src.folderPath, fileNameOnly);
 		
   if (ImGui::Button("Browse Files")) {
 #ifndef NONATIVEFILEDIALOG
@@ -206,49 +166,14 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
     //args.filterCount = 1;
     args.filterList  = nullptr; 
     args.filterCount = 0;    
-    args.defaultPath = fileInfo->folderPath[0] ? fileInfo->folderPath : nullptr;
+    args.defaultPath = src.folderPath[0] ? src.folderPath : nullptr;
 
     nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
-
     if (result == NFD_OKAY) {
-      std::strncpy(fileInfo->filePath, outPath, IM_ARRAYSIZE(fileInfo->filePath));
-      fileInfo->filePath[IM_ARRAYSIZE(fileInfo->filePath) - 1] = '\0';
+      fileInfo.applySelectedFilePath(outPath);
       NFD_FreePathU8(outPath);
-
-      // フォルダ部分を抽出
-      char* lastSlash = std::strrchr(fileInfo->filePath, '/');
-#ifdef _WIN32
-      char* lastBackslash = std::strrchr(fileInfo->filePath, '\\');
-      if (!lastSlash || (lastBackslash && lastBackslash > lastSlash)) {
-        lastSlash = lastBackslash;
-      }
-#endif
-
-      if (lastSlash) {
-        size_t folderLen = static_cast<size_t>(lastSlash - fileInfo->filePath + 1);
-        std::strncpy(fileInfo->folderPath, fileInfo->filePath, folderLen);
-        fileInfo->folderPath[folderLen] = '\0';
-      }
-
-      char* filename = fileInfo->filePath;
-      if (lastSlash) filename = lastSlash + 1;
-      
-#ifdef HAVE_HDF5
-      fileInfo->useHDF5 = false;
-      char* dot = std::strrchr(filename, '.');
-      if (dot) {
-        std::string ext(dot);
-        if (ext == ".hdf5" || ext == ".h5")
-          fileInfo->useHDF5 = true;
-      }
-#endif
-      auto res = convertFilenameToFormatAndExtractNumber(filename);
-      std::strncpy(fileInfo->fileFormat, res.first.c_str(), IM_ARRAYSIZE(fileInfo->fileFormat));
-      fileInfo->fileFormat[IM_ARRAYSIZE(fileInfo->fileFormat) - 1] = '\0';
-      fileInfo->initialIndex = res.second;
     }
     else if (result == NFD_CANCEL) {
-      // do nothing
     }
     else {
       std::cerr << "Error: " << NFD_GetError() << std::endl;
@@ -256,8 +181,8 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
 #else
     IGFD::FileDialogConfig config;
     // 初期ディレクトリの設定（"path" メンバー）
-    //config.path = fileInfo->filePath;
-    config.path = fileInfo->folderPath;
+    //config.path = src.filePath;
+    config.path = src.folderPath;
     // 必要なら初期のファイル名を設定（空の場合はユーザー入力待ち）
     config.fileName = "output"; 
     // その他、選択可能なファイル数などの設定はデフォルトのままでOK
@@ -271,37 +196,7 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
       if (ImGuiFileDialog::Instance()->IsOk())
 	{
 	  std::string selectedFile = ImGuiFileDialog::Instance()->GetFilePathName();
-	  std::string currentFolder = ImGuiFileDialog::Instance()->GetCurrentPath();
-	  std::strncpy(fileInfo->filePath, selectedFile.c_str(), IM_ARRAYSIZE(fileInfo->filePath));
-	  fileInfo->filePath[IM_ARRAYSIZE(fileInfo->filePath)-1] = '\0';
-				
-	  // 1. フォルダ部分を抽出
-	  char* lastSlash = std::strrchr(fileInfo->filePath, '/');
-	  if (lastSlash) {
-	    size_t folderLen = lastSlash - fileInfo->filePath + 1; // '/'を含む
-	    std::strncpy(fileInfo->folderPath, fileInfo->filePath, folderLen);
-	    fileInfo->folderPath[folderLen] = '\0';	    
-	  }
-				
-	  char *filename = fileInfo->filePath;
-	  if(lastSlash)
-	    filename = lastSlash + 1;
-				
-#ifdef HAVE_HDF5
-	  // 2. ファイル形式（拡張子）の抽出
-	  fileInfo->useHDF5 = false;
-	  char* dot = std::strrchr(filename, '.');
-	  if (dot) {
-	    std::string ext(dot);
-	    if (ext == ".hdf5") 
-	      fileInfo->useHDF5 = true;	  
-	  }
-#endif
-				
-	  auto res = convertFilenameToFormatAndExtractNumber(filename);       
-	  std::strncpy(fileInfo->fileFormat, res.first.c_str(), IM_ARRAYSIZE(fileInfo->fileFormat));
-	  fileInfo->fileFormat[IM_ARRAYSIZE(fileInfo->fileFormat) - 1] = '\0'; 
-	  fileInfo->initialIndex = res.second;	
+	  fileInfo.applySelectedFilePath(selectedFile.c_str());
 	}
       else
 	{
@@ -311,25 +206,25 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
     }
 #endif
   
-  fileInfo->currentFileIndex = fileInfo->initialIndex + fileInfo->currentStep * fileInfo->skipStep;
-  ImGui::Text("File: %s", fileInfo->filePath);
-  ImGui::Text("Current File: %d", fileInfo->currentFileIndex);
+  src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+  ImGui::Text("File: %s", src.filePath);
+  ImGui::Text("Current File: %d", src.currentFileIndex);
 		
-  ImGui::BeginDisabled(fileInfo->isLoading);
+  ImGui::BeginDisabled(fileInfo.isLoading());
 
   if (rt.tempSkipStep <= 0) {
-    rt.tempSkipStep = fileInfo->skipStep;
+    rt.tempSkipStep = src.skipStep;
   }
 
   if (ImGui::InputInt("Skip Step", &rt.tempSkipStep, 1, 100)) {
     rt.request.applySkipStepRequested = true;
   }
 
-  if (ImGui::InputInt("Select File Index", &fileInfo->currentStep, 1, 10)) {
+  if (ImGui::InputInt("Select File Index", &src.currentStep, 1, 10)) {
     rt.request.loadSelectedSnapshotRequested = true;
   }
 
-  if (ImGui::Button("Previous File") && fileInfo->currentStep > 0) {
+  if (ImGui::Button("Previous File") && src.currentStep > 0) {
     rt.request.loadPreviousRequested = true;
   }
 
@@ -339,13 +234,13 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
     rt.request.loadNextRequested = true;
   }
 
-  if (ImGui::InputInt("Batch Size", &fileInfo->batchSize)) {
+  if (ImGui::InputInt("Batch Size", &src.batchSize)) {
     rt.request.loadBatchRequested = true;
   }
 
   ImGui::EndDisabled();
 
-  if (fileInfo->isLoading) {
+  if (fileInfo.isLoading()) {
     ImGui::Text("Loading...");
   }
 
@@ -363,9 +258,9 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
   static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
                 "FileFormatNames needs to match FileFormat::_Count");
 
-  int fmtIdx = fileInfo->getFormatMode_int();
+  int fmtIdx = fileInfo.getFormatMode_int();
   if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
-    fileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
+    fileInfo.setFormatMode(static_cast<FileFormat>(fmtIdx));
   }
 
   if (ImGui::Button("Mask Settings...")) {
@@ -531,7 +426,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
-  FileInfo* fileInfo = ctx.fileInfo;
+  auto& source = ctx.fileInfo->editSource();
   auto* services = ctx.services;
   auto* radialProfile = services->radialProfile.get();
   auto* histogram2D   = services->histogram2D.get();
@@ -624,7 +519,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     ImGui::SameLine();
     if (ImGui::Button("default path")) {
       std::strncpy(batchReq.outputFolderPath,
-		   fileInfo->folderPath,
+		   source.folderPath,
 		   IM_ARRAYSIZE(batchReq.outputFolderPath));
       batchReq.outputFolderPath[IM_ARRAYSIZE(batchReq.outputFolderPath) - 1] = '\0';
     }
@@ -649,9 +544,9 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
       std::string fname(batchReq.outputFolderPath);
       fname += "/";
       fname += batchReq.outputFileName;
-      clumpFind->showWindowClumpChainList(fileInfo->initialIndex,
+      clumpFind->showWindowClumpChainList(source.initialIndex,
 					  batchReq.nSnapshots,
-					  fileInfo->skipStep,
+					  source.skipStep,
 					  fname);
     }
 #endif
@@ -798,7 +693,6 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
 
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
-  FileInfo* fileInfo = ctx.fileInfo;
 
   auto* services = ctx.services;
   auto* render = ctx.render;

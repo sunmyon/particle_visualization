@@ -12,7 +12,7 @@
 #include "implot.h"
 
 #ifdef CLUMP_DATA_READ
-void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, FileInfo& fileinfo, CameraContext& cam) {
+void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& src, CameraContext& cam) {
   if (!showWindowClumpList) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -23,7 +23,7 @@ void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, File
 
   ImGui::SameLine();
   if (ImGui::Button("path")) {
-    strcpy(buf, fileinfo.folderPath);
+    strcpy(buf, src.folderPath);
   }
 
   if(P->flag_renew_clumpList){
@@ -554,6 +554,8 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
   if(!flagShowWindowClumpChainList)
     return;
 
+  auto& src = fileinfo.getSource();
+  
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
   ImGui::Begin("Clump chain lists", &flagShowWindowClumpChainList, ImGuiWindowFlags_None);
   
@@ -684,12 +686,12 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
       }
       
       ImGui::Text("current snapshot index: %d (init=%d now=%d step=%d) time=%g\n"
-		  , fileinfo.initialIndex + (selected_chain.first_snapshot + i_snapshot) * fileinfo.skipStep
-		  , selected_chain.first_snapshot, selected_chain.first_snapshot + i_snapshot, fileinfo.skipStep
+		  , src.initialIndex + (selected_chain.first_snapshot + i_snapshot) * src.skipStep
+		  , selected_chain.first_snapshot, selected_chain.first_snapshot + i_snapshot, src.skipStep
 		  , P->particleBlock.header.time);
       
       if(flag_button_pushed){
-	int snapshot = fileinfo.initialIndex + (selected_chain.first_snapshot + i_snapshot) * fileinfo.skipStep;
+	int snapshot = src.initialIndex + (selected_chain.first_snapshot + i_snapshot) * src.skipStep;
 
 	float pos[3];
 
@@ -831,7 +833,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	  if(i==0)
 	    flag_use_amvector = 1;
 
-	  int snapshot = fileinfo.initialIndex + (selected_chain.first_snapshot + i) * fileinfo.skipStep;	  
+	  int snapshot = src.initialIndex + (selected_chain.first_snapshot + i) * src.skipStep;	  
 	  fileinfo.loadNewSnapshot(snapshot, P);
 	
 	  float pos_center[3];	  

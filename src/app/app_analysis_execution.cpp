@@ -165,11 +165,12 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
     bool firstEvolution = true;
     double dist_disk = 0.0, r_disk1 = 0.0, r_disk2 = 0.0;
 
-    int snap_init = static_cast<int>(r.snap / fileInfo.skipStep) * fileInfo.skipStep;
+    auto& src = fileInfo.editSource();
+    int snap_init = static_cast<int>(r.snap / src.skipStep) * src.skipStep;
     int snap_disk = -1, snap_not_disk = snap_init;
 
     for (int istep = 0; istep < 100; ++istep) {
-      int snap = snap_init + fileInfo.skipStep * istep;
+      int snap = snap_init + src.skipStep * istep;
       fileInfo.loadNewSnapshot(snap, &particles);
 
       if (particles.particleBlock.particles.empty()) {
@@ -595,15 +596,16 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
   std::snprintf(result.outputPath, sizeof(result.outputPath), "%s", filename);
 
-  const int savedStep = fileInfo.currentStep;
+  auto& src = fileInfo.editSource();
+  const int savedStep = src.currentStep;
 
   clumpFind.initialize_prev_nodes();
 
   for (int i = 0; i < request.nSnapshots; ++i) {
-    fileInfo.currentStep = savedStep + i;
+    src.currentStep = savedStep + i;
 
     const int newFileIndex =
-      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      src.initialIndex + src.currentStep * src.skipStep;
 
     fileInfo.loadNewSnapshot(newFileIndex, &particles);
 
@@ -620,12 +622,12 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
     result.processedSnapshots++;
   }
 
-  fileInfo.currentStep = savedStep;
-  fileInfo.currentFileIndex =
-    fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+  src.currentStep = savedStep;
+  src.currentFileIndex =
+    src.initialIndex + src.currentStep * src.skipStep;
 
-  const int initstep = fileInfo.currentFileIndex;
-  const int dstep = fileInfo.skipStep;
+  const int initstep = src.currentFileIndex;
+  const int dstep = src.skipStep;
   clumpFind.give_stellar_id_to_clumps(initstep,
                                       request.nSnapshots,
                                       dstep,
@@ -667,14 +669,15 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
     ensure_dir(dir);
     ensure_dir(request.outputFolderPath);
 
-    const int savedStep = fileInfo.currentStep;
+    auto& src = fileInfo.editSource();
+    const int savedStep = src.currentStep;
     int count_i = 0;
 
     for (int i = 0; i < request.nSnapshots; ++i) {
-      fileInfo.currentStep = savedStep + i;
+      src.currentStep = savedStep + i;
 
       const int newFileIndex =
-        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+        src.initialIndex + src.currentStep * src.skipStep;
 
       fileInfo.loadNewSnapshot(newFileIndex, &particles);
       if (particles.particleBlock.particles.empty()) {
@@ -799,9 +802,9 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
     std::system(ffmpegCommand.c_str());
     fs::remove_all("ffmpeg_frames");
 
-    fileInfo.currentStep = savedStep;
-    fileInfo.currentFileIndex =
-      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+    src.currentStep = savedStep;
+    src.currentFileIndex =
+      src.initialIndex + src.currentStep * src.skipStep;
 
     std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
                   "%s/%s", request.outputFolderPath, request.outputMovieName);
@@ -818,27 +821,25 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   FileNavigationRuntimeState& rt)
 {
   auto& req = rt.request;
-
+  auto& src = fileInfo.editSource();
+  
   if (req.applySkipStepRequested) {
     if (rt.tempSkipStep > 0) {
       int newStep = std::round(
-        (fileInfo.currentFileIndex - fileInfo.initialIndex) /
+        (src.currentFileIndex - src.initialIndex) /
         static_cast<float>(rt.tempSkipStep)
       );
-      fileInfo.currentStep = std::max(0, newStep);
-      fileInfo.skipStep = rt.tempSkipStep;
+      src.currentStep = std::max(0, newStep);
+      src.skipStep = rt.tempSkipStep;
 
       int newFileIndex =
-        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+        src.initialIndex + src.currentStep * src.skipStep;
 
-      if (!fileInfo.isLoading) {
-        fileInfo.loadBatch(newFileIndex,
-                           fileInfo.batchSize,
-                           fileInfo.skipStep,
-                           &particles);
+      if (!fileInfo.isLoading()) {
+	fileInfo.loadNewSnapshot(newFileIndex, &particles);
       }
 
-      fileInfo.currentFileIndex = newFileIndex;
+      src.currentFileIndex = newFileIndex;
     }
 
     req.applySkipStepRequested = false;
@@ -846,58 +847,52 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 
   if (req.loadSelectedSnapshotRequested) {
     int newFileIndex =
-      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      src.initialIndex + src.currentStep * src.skipStep;
     fileInfo.loadNewSnapshot(newFileIndex, &particles);
     req.loadSelectedSnapshotRequested = false;
   }
 
   if (req.loadPreviousRequested) {
-    if (fileInfo.currentStep > 0) {
-      fileInfo.currentStep--;
+    if (src.currentStep > 0) {
+      src.currentStep--;
       int newFileIndex =
-        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+        src.initialIndex + src.currentStep * src.skipStep;
       fileInfo.loadNewSnapshot(newFileIndex, &particles);
     }
     req.loadPreviousRequested = false;
   }
 
   if (req.loadNextRequested) {
-    fileInfo.currentStep++;
+    src.currentStep++;
     int newFileIndex =
-      fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
+      src.initialIndex + src.currentStep * src.skipStep;
     fileInfo.loadNewSnapshot(newFileIndex, &particles);
     req.loadNextRequested = false;
   }
 
   if (req.loadBatchRequested) {
-    if (!fileInfo.isLoading) {
+    if (!fileInfo.isLoading()) {
       int newFileIndex =
-        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
-      fileInfo.loadBatch(newFileIndex,
-                         fileInfo.batchSize,
-                         fileInfo.skipStep,
-                         &particles);
-      fileInfo.currentFileIndex = newFileIndex;
+        src.initialIndex + src.currentStep * src.skipStep;
+      fileInfo.loadNewSnapshot(newFileIndex, &particles);
+      src.currentFileIndex = newFileIndex;
     }
     req.loadBatchRequested = false;
   }
 
   if (req.reloadRequested) {
-    if (!fileInfo.isLoading) {
+    if (!fileInfo.isLoading()) {
       int newFileIndex =
-        fileInfo.initialIndex + fileInfo.currentStep * fileInfo.skipStep;
-      fileInfo.loadBatch(newFileIndex,
-                         fileInfo.batchSize,
-                         fileInfo.skipStep,
-                         &particles);
-      fileInfo.currentFileIndex = newFileIndex;
+        src.initialIndex + src.currentStep * src.skipStep;
+      fileInfo.loadNewSnapshot(newFileIndex, &particles);
+      src.currentFileIndex = newFileIndex;
     }
     req.reloadRequested = false;
   }
 
   if (req.openFormatDialogRequested) {
 #ifdef HAVE_HDF5
-    if (fileInfo.useHDF5 || fileInfo.getFormatMode() == FileFormat::HDF5)
+    if (src.useHDF5 || fileInfo.getFormatMode() == FileFormat::HDF5)
       fileInfo.showHDF5Dialog();
     else
 #endif

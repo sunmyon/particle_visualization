@@ -1,3 +1,0 @@
-if (loadConfig("config.txt", P, gFileInfo, &gParticleVisualConfig, &maskState)) {
-  ApplyMaskConfigState(maskState);
-  }1;95;0c

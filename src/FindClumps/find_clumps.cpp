@@ -2,7 +2,8 @@
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_IO.h"
 #include "interaction/camera.h"
-#include "FileIO/file_io.h"
+
+#include "FileIO/snapshot_source.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -723,7 +724,7 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
 
 
-void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, FileInfo& fileinfo, CameraContext& cam){
+void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, const SnapshotSource& src, CameraContext& cam){
   if(!showWindowClumpFinder) return;    
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -791,8 +792,8 @@ void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles
   ImGui::InputText("output file name", buf, IM_ARRAYSIZE(buf));    
 
   char fdir[256];
-  strncpy(fdir, fileinfo.folderPath, sizeof(fdir)-1);
-  int snapshotIndex = fileinfo.currentFileIndex;
+  strncpy(fdir, src.folderPath, sizeof(fdir)-1);
+  int snapshotIndex = src.currentFileIndex;
 
   char temp[513];
   snprintf(temp, sizeof(temp), "%s/%s", fdir, buf);
