@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <iostream>
 #include "core/tracking_vector.h"
 
 class ClumpData {
@@ -77,5 +78,18 @@ public:
     next_pos[2] = clump_in_next_snapshot[max_index].Pos[2];
   }
 
-  float getValue(const std::string &var) const;  
+  float getValue(const std::string &var) const{
+    if (var == "Density")
+      return density;
+    else if (var == "Temperature")
+      return temperature;
+    else if (var == "ClumpMass")
+      return mass;
+    else if (var == "StellarMass")
+      return stellar_mass;
+    else {
+      std::cerr << "getValue: Unknown variable \"" << var << "\". Returning 0." << std::endl;
+      return 0.0f;
+    }
+  }  
 };

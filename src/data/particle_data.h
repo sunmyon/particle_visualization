@@ -1,6 +1,9 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <iostream>
+#include <glm/glm.hpp>
+
 #include "data/data_type.h"
 
 class ParticleData {
@@ -20,7 +23,30 @@ public:
   uint8_t   flag_stress;
   int   ID;
 
-  float getValue(const std::string &var) const;  
+  float getValue(const std::string &var) const{
+    if (var == "x")
+      return pos[0];
+    else if (var == "y")
+      return pos[1];
+    else if (var == "z")
+      return pos[2];
+    else if (var == "r") {
+      // r は粒子位置の原点からの距離として計算（必要に応じて別の中心からの距離に変更可能）
+      return glm::length(glm::vec3(pos[0], pos[1], pos[2]));
+    }
+    else if (var == "Density")
+      return density;
+    else if (var == "Temperature")
+      return temperature;
+    else if (var == "Hsml")
+      return Hsml;
+    else if (var == "Mass")
+      return mass;
+    else {
+      std::cerr << "getValue: Unknown variable \"" << var << "\". Returning 0." << std::endl;
+      return 0.0f;
+    }
+  }
 };
 
 struct AoSExtensionBuffer {

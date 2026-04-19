@@ -4,7 +4,6 @@
 #include "FileIO/binary_reader.h"
 
 #include <imgui.h>
-#include "implot.h"
 
 #include <chrono>
 #include <iomanip>
@@ -18,6 +17,74 @@
 #include <cstring>
 
 #include "core/PerfTimer.h"
+
+namespace {
+  struct ReaderSelection {
+    std::unique_ptr<IParticleReader> reader;
+    std::vector<FieldSpec> format;
+    std::string fullPath;
+  };
+
+  ReaderSelection makeReaderSelection(const FileInfo& info, int fileNumber) {
+    ReaderSelection sel;
+
+    char fileName[512];
+    std::snprintf(fileName, sizeof(fileName), info.fileFormat, fileNumber);
+    sel.fullPath = std::string(info.folderPath) + fileName;
+
+    std::string ext;
+    auto pos = sel.fullPath.find_last_of('.');
+    if (pos != std::string::npos) {
+      ext = sel.fullPath.substr(pos);
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
+
+    switch (info.getFormatMode()) {
+    case FileFormat::Auto:
+#ifdef HAVE_HDF5
+      if (ext == ".h5" || ext == ".hdf5") {
+        sel.reader = std::make_unique<HDF5Reader>();
+        sel.format = info.formatTokens_hdf5;
+        break;
+      }
+#endif
+#ifdef USE_MMAP
+      sel.reader = std::make_unique<MMapReader>();
+#else
+      sel.reader = std::make_unique<BinaryReader>();
+#endif
+      sel.format = info.formatTokens;
+      break;
+
+#ifdef HAVE_HDF5
+    case FileFormat::HDF5:
+      sel.reader = std::make_unique<HDF5Reader>();
+      sel.format = info.formatTokens_hdf5;
+      break;
+#endif
+
+    case FileFormat::Binary:
+#ifdef USE_MMAP
+      sel.reader = std::make_unique<MMapReader>();
+#else
+      sel.reader = std::make_unique<BinaryReader>();
+#endif
+      sel.format = info.formatTokens;
+      break;
+
+    case FileFormat::Gadget:
+      break;
+
+    case FileFormat::Framed:
+      break;
+
+    default:
+      break;
+    }
+
+    return sel;
+  }
+}
 
 TrackingVector<int> FileInfo::getStarParticleID(int indexFile){
   ParticleBlock p_block;
@@ -42,22 +109,18 @@ void FileInfo::generateTestData(ParticleArray *P){
 void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
   TIME_FUNCTION();
   
-  bool found = false;
+  bool foundInCache = false;
+  ParticleBlock block;
   {
     std::lock_guard<std::mutex> lock(g_dataMutex);
-    for (auto it = prefetchCache.begin(); it != prefetchCache.end(); ++it) {
-      if (it->fileIndex == newFileIndex) {
-        ParticleBlock oldBlock;
-        P->setParticleBlock(std::move(it->block), &oldBlock);
-        prefetchCache.erase(it);
-
-        found = true;
-        break;
-      }
-    }
+    if (prefetchCache.pop(newFileIndex, block)) {
+      ParticleBlock oldBlock;
+      P->setParticleBlock(std::move(block), &oldBlock);
+      foundInCache = true;
+    }    
   }
 
-  if (!found) {
+  if (!foundInCache) {
     if (!isLoading)
       loadBatch(newFileIndex, batchSize, skipStep, P);
   }
@@ -65,124 +128,72 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
   snapshotUpdated = true;
   currentFileIndex = newFileIndex;
   
-  printf("currentStep=%d newFileIndex=%d currentBatchStart=%d\n", currentStep, newFileIndex, currentBatchStart);
+  printf("currentStep=%d newFileIndex=%d\n", currentStep, newFileIndex);
   
 #ifdef CLUMP_DATA_READ
   P->flag_renew_clumpList = true;
 #endif
 }
 
-
-void FileInfo::syncLoadFirstFile(int targetFile, ParticleArray *P) {
+bool FileInfo::syncLoadFirstFile(int targetFile, ParticleArray *P) {
   ParticleBlock newBlock;
 
   if (!loadSingleFile(targetFile, newBlock)) {
     P->particleBlock.clear();
     std::cerr << "Failed to load first file: " << targetFile << std::endl;
-    return;
+    return false;
   }
 
   ParticleBlock oldBlock;
-  const bool hadOld = P->setParticleBlock(std::move(newBlock), &oldBlock);
-  std::lock_guard<std::mutex> lock(g_dataMutex);
+  P->setParticleBlock(std::move(newBlock), &oldBlock);
 
+  std::lock_guard<std::mutex> lock(g_dataMutex);
   prefetchCache.clear();
+
+  return true;
 }
 
-void FileInfo::asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep) {
-  TrackingVector<PrefetchEntry> loaded;
+void FileInfo::asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep, int generation) {
+  TrackingVector<std::pair<int, ParticleBlock>> loaded;
 
   for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;
-
     ParticleBlock block;
+    
     if (loadSingleFile(fileNumber, block)) {
-      PrefetchEntry e;
-      e.fileIndex = fileNumber;
-      e.block = std::move(block);
-      loaded.push_back(std::move(e));
+      loaded.push_back({fileNumber, std::move(block)});
     }
   }
 
   {
     std::lock_guard<std::mutex> lock(g_dataMutex);
+    if (prefetchGeneration.load() != generation) return;
     for (auto& e : loaded) {
-      prefetchCache.push_back(std::move(e));
+      prefetchCache.push(e.first, std::move(e.second));
     }
   }
 }
-
 
 void FileInfo::loadBatch(int targetFile, int batchSize, int skipStep, ParticleArray *P) {
+  const int gen = ++prefetchGeneration;
+  prefetchRunning = true;
   isLoading = true;
 
-  syncLoadFirstFile(targetFile, P);
-  currentBatchStart = targetFile;  // 新たなバッチの開始位置
-    
-  std::future<void> asyncLoader = std::async(std::launch::async,
-					     &FileInfo::asyncLoadRemainingFiles, this,
-					     targetFile, batchSize, skipStep);
-
-  isLoading = false;
-}
-
-
-#ifdef CLUMP_DATA_READ
-#include "FindClumps/find_clumps_IO.h"
-int ParticleArray::readClumpData(int snapshotIndex){
-  uint32_t mask = (L_TIME | L_CLUMP_ID | L_CLUMP_NEXT_ID | L_CLUMP_SIZE | L_CLUMP_OFFSET
-		   | L_CLUMP_STELLAR_COUNT | L_CLUMP_STELLAR_ID | L_CLUMP_STELLAR_MASS
-		   | L_CLUMP_POSITION | L_CLUMP_DENSITY
-		   | L_CLUMP_TEMPERATURE | L_CLUMP_MASS
-		   | L_PARTICLE_IDS);
-  ClumpInfoIO in;
-  
-  bool flag = ClumpIO::readSnapshot(fname_clump_file, snapshotIndex, mask, in);
-  if(flag == false)
-    return 1;
-
-  size_t nClumps = in.clump_id.size();
-  Clumps={};
-  
-  // 各 clump の情報を ClumpData にセットし、sorted_particle_ids から該当する粒子IDリストを抽出
-  for (size_t i = 0; i < nClumps; i++) {
-    ClumpData cd;
-    cd.clumpID = in.clump_id[i];
-    if(in.clump_next_id.size())
-      cd.nextClumpID = in.clump_next_id[i];
-
-    cd.count = in.clump_size[i];
-    cd.offset = in.clump_offset[i];
-
-    for(int k=0;k<3;k++){
-      cd.originalPos[k] = in.clump_position[i * 3 + k];
-      cd.Pos[k] = cd.originalPos[k] * desiredMax / originalMax;
-    }
-       
-    cd.density = in.clump_density[i];
-    cd.temperature = in.clump_temperature[i];    
-    cd.mass = in.clump_mass[i];
-
-    cd.stellar_mass = in.clump_stellar_mass[i];
-    cd.stellar_count = in.clump_stellar_count[i];
-    cd.stellar_id = in.clump_stellar_id[i];
-    
-    // 各クラスタに属する粒子IDを取得: offset と size を使って sorted_particle_ids から切り出し
-    int off = in.clump_offset[i];
-    int sz = in.clump_size[i];
-    for (int j = 0; j < sz; j++) {
-      if (off + j < static_cast<int>(in.particle_ids.size()))
-	cd.IDs.push_back(in.particle_ids[off + j]);
-      else
-	throw std::runtime_error("Invalid offset/size: exceeds sorted_particle_ids size");
-    }
-
-    Clumps.push_back(cd);
+  if (!syncLoadFirstFile(targetFile, P)) {
+    prefetchRunning = false;
+    isLoading = false;
+    return;
   }
-
-  return 0;
+  
+  prefetchFuture = std::async(std::launch::async,
+                              [this, targetFile, batchSize, skipStep, gen]() {
+                                asyncLoadRemainingFiles(targetFile, batchSize, skipStep, gen);
+                                if (prefetchGeneration.load() == gen) {
+                                  prefetchRunning = false;
+                                  isLoading = false;
+                                }
+                              });
 }
-#endif
 
 void FileInfo::initDefaultFormatTokens() {
     formatTokens.clear();
@@ -214,7 +225,6 @@ void FileInfo::initDefaultFormatTokens() {
 
     formatTokens_hdf5 = formatTokens;
 } 
-
 
 // ------------------------------
 // データフォーマット編集ダイアログ
@@ -471,7 +481,6 @@ void FileInfo::ShowHDF5FieldMappingDialog() {
 }
 #endif
 
-
 bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   TIME_FUNCTION();
 
@@ -479,340 +488,43 @@ bool FileInfo::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   outBlock.header.UnitMass_in_g = units.mass_g;
   outBlock.header.UnitVelocity_in_cm_per_s = units.velocity_cm_per_s;
   outBlock.header.HubbleParam = units.hubble;
-  
-  // 1) フルパスを組み立て
-  char fileName[512];
-  std::snprintf(fileName, sizeof(fileName), fileFormat, fileNumber);
-  std::string fullPath = std::string(folderPath) + fileName;
 
-  // 拡張子が .h5/.hdf5 なら HDF5
-  std::string ext;
-  auto pos = fullPath.find_last_of('.');
-  if (pos != std::string::npos) {
-    ext = fullPath.substr(pos);
-    // 小文字化しておくと堅牢
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-  } else {
-    ext.clear();  // ドットなし
+  ReaderSelection sel = makeReaderSelection(*this, fileNumber);
+  if (!sel.reader) {
+    std::cerr << "Failed to select reader for file #" << fileNumber << "\n";
+    return false;
   }
 
-  std::unique_ptr<IParticleReader> reader;  
-  std::vector<FieldSpec> format;
-  
-  switch (readFileFormat) {
-  case FileFormat::Auto:  
-    // 2) 拡張子／useHDF5 フラグでリーダーの種類を決定
-#ifdef HAVE_HDF5
-    if (ext == ".h5" || ext == ".hdf5") {
-      reader = std::make_unique<HDF5Reader>();
-      format = formatTokens_hdf5;
-    }
-#endif
+  if (!sel.reader->tryFixAndCheckBinary(sel.fullPath, outBlock.header, sel.format)) {
+    std::cerr << "the format is incorrect\n";
+    return false;
+  }
+
+  if (!sel.reader->open(sel.fullPath, outBlock.header)) {
+    std::cerr << "failed to open the file: " << sel.fullPath << "\n";
+    return false;
+  }
     
-    if(!reader){
-#ifdef USE_MMAP
-      reader = std::make_unique<MMapReader>();
-#else
-      reader = std::make_unique<BinaryReader>();
-#endif
-      format = formatTokens;
-    }    
-    break;
-  
-#ifdef HAVE_HDF5
-  case FileFormat::HDF5: {
-    reader = std::make_unique<HDF5Reader>();
-    format = formatTokens_hdf5;
-    break;
-  }
-#endif
-
-  case FileFormat::Binary: {
-#ifdef USE_MMAP
-    reader = std::make_unique<MMapReader>();
-#else
-    reader = std::make_unique<BinaryReader>();
-#endif
-    format = formatTokens;
-    break;
-  }
-
-  case FileFormat::Gadget: {
-    //reader = std::make_unique<BlockwiseReader>();    
-    //format = formatToken;
-    break;
-  }
-
-  case FileFormat::Framed: {
-    //reader = std::make_unique<FramedBinaryReader>();
-    //format = formatToken;
-    break;
-  }
-  default: {
-    std::cerr<<"Unknown FileFormat\n";
-    return false;
-  }
-  }
-
-  // npart を reader が知るなら outBlock.resize(npart) を呼ぶ必要はなく、readAll 内で確保でもOK
-  if(!reader->tryFixAndCheckBinary(fullPath, outBlock.header, format)){
-    std::cerr<<"the format is incorrect\n";
-    return false;
-  }
-
-  if (!reader->open(fullPath, outBlock.header)){
-    std::cerr<<"failed to open the file: "<< fullPath << "\n";
-    return false;
-  }
-  
   {
     TIME_SCOPE("parse header");
 
     bool ok = false;
     if (enableMask) {
       ParticleMask pmask{currentMaskConfig};
-      ok = reader->readRange(outBlock, 0, reader->particleCount(),
-			     format, &pmask);
+      ok = sel.reader->readRange(outBlock, 0, sel.reader->particleCount(),
+				 sel.format, &pmask);
     }
 
     if (!ok) {
-      ok = reader->readAll(outBlock, format);
+      ok = sel.reader->readAll(outBlock, sel.format);
     }
-    
+
+    sel.reader->close();    
     if (!ok) {
-      std::cerr << "Failed to read particle data: " << fullPath << "\n";
-      reader->close();
+      std::cerr << "Failed to read particle data: " << sel.fullPath << "\n";
       return false;
     }
   }
-  reader->close();
   	
   return true;
-}
-
-
-#include <nanoflann.hpp>
-
-namespace{
-  // 星粒子の構造体
-  struct starParticle {
-    float pos[3];
-    double mass;
-    int type;
-    int index;
-    double density; // 密度を格納するフィールド
-    // 他のメンバ...
-  };
-
-  // nanoflann用のデータコンテナ
-  struct StarParticleCloud {
-    TrackingVector<starParticle> particles;
-
-    // kd-tree インターフェース
-    inline size_t kdtree_get_point_count() const { return particles.size(); }
-    
-    // 指定インデックスの次元 dim の値を返す
-    inline float kdtree_get_pt(const size_t idx, const size_t dim) const {
-      return particles[idx].pos[dim];
-    }
-    
-    // バウンディングボックスは省略（falseを返す）
-    template <class BBOX>
-    bool kdtree_get_bbox(BBOX & /*bb*/) const { return false; }
-  };
-
-  // kd-treeの型定義（3次元用）
-  typedef nanoflann::KDTreeSingleIndexAdaptor<
-    nanoflann::L2_Simple_Adaptor<float, StarParticleCloud>,
-    StarParticleCloud,
-    3 /* dim */
-    > KDTreeType;
-}
-
-
-static inline double cubic_spline_W(double r, double h) {
-  const double q = r / h;
-  const double sigma = 1.0 / (M_PI * h * h * h);
-  if (q < 1.0) {
-    return sigma * (1.0 - 1.5 * q * q + 0.75 * q * q * q);
-  } else if (q < 2.0) {
-    const double term = 2.0 - q;
-    return sigma * (0.25 * term * term * term);
-  } else {
-    return 0.0;
-  }
-}
-
-
-  // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
-  // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
-void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml)
-{
-  const int N_neighbours = 32;
-
-  bool flag_star = false;
-  if(selType[3] == true || selType[4] == true || selType[5] == true)
-    flag_star = true;
-
-  TrackingVector<ParticleData> & particles = particleBlock.particles;
-  
-  // type >= 3 の粒子のみを抽出
-  TrackingVector<starParticle> filtered;
-  for (size_t i=0;i<particles.size();i++)
-    {
-      const ParticleData& p = particles[i];
-
-      const int t = (int)p.type;
-      if (t < 0 || t >= 6) continue;
-      if (!selType[t]) continue;
-
-      struct starParticle sp;
-      sp.type = p.type;
-      sp.pos[0] = p.pos[0];
-      sp.pos[1] = p.pos[1];
-      sp.pos[2] = p.pos[2];
-      sp.mass = p.mass;
-      sp.index = i;
-	
-      filtered.push_back(sp);      
-    }
-  
-  TrackingVector<double> densities(filtered.size(), 0.0);
-
-  // データコンテナにコピー（必要に応じて参照やポインタを使ってもよい）
-  StarParticleCloud cloud;
-  cloud.particles = filtered;
-    
-  // kd-treeの構築
-  KDTreeType kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
-  kdTree.buildIndex();
-
-  // knnSearch の結果を格納するためのコンテナ
-  TrackingVector<KDTreeType::IndexType> ret_indexes(N_neighbours);
-  TrackingVector<float> out_dists_sqr(N_neighbours);
-
-  double cosmofac = 1.;
-  if(units.useComovingCoordinate)
-    cosmofac = particleBlock.header.time;
-
-  if(cosmofac < 1.e-2 || cosmofac > 1.)
-    cosmofac = 1.;
-
-  double hubble = units.hubble;
-  if(hubble < 0.1 || hubble > 1.0)
-    hubble = 1.;
-  
-  nanoflann::SearchParameters params;
-  // 各粒子について近傍を探索
-  for (size_t i = 0; i < cloud.particles.size(); i++) {
-    const auto& pi = cloud.particles[i];
-    float query_pt[3] = {
-      cloud.particles[i].pos[0],
-      cloud.particles[i].pos[1],
-      cloud.particles[i].pos[2]
-    };
-
-    size_t num_results = kdTree.knnSearch(&query_pt[0], N_neighbours, ret_indexes.data(), out_dists_sqr.data());    
-    if (num_results == 0)
-      continue;
-
-    double h = std::sqrt(out_dists_sqr[num_results - 1]);
-    if (h <= 0) continue;
-
-    double totalMass = 0., density = 0.;
-
-    for (size_t j = 0; j < num_results; j++)
-      {
-	size_t idx = ret_indexes[j];
-	
-	const auto& pj = cloud.particles[idx];
-
-	double dx = pi.pos[0] - pj.pos[0];
-	double dy = pi.pos[1] - pj.pos[1];
-	double dz = pi.pos[2] - pj.pos[2];
-	double r = std::sqrt(dx*dx + dy*dy + dz*dz);
-	double m = pj.mass;
-
-	totalMass += m;
-	density += m * cubic_spline_W(r, h);	    	  
-      }
-        
-    // 面積 = π * r^2
-    double area = M_PI * h * h;
-    
-    int original_index = cloud.particles[i].index;
-    if(flag_star)
-      particles[original_index].density = totalMass * units.mass_msun
-	/ area / std::pow(originalMax / desiredMax * cosmofac * units.length_pc, 2.) * units.hubble;
-    else
-      particles[original_index].density = density * units.mass_g / std::pow(originalMax / desiredMax * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
-
-    if(flag_overwrite_hsml)
-      particles[original_index].Hsml = h;
-    
-    printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
-	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * units.length_cm, units.hubble);
-  }
-}
-
-  /// ── 補助関数 ─────────────────────────────────────────────
-  /// 指定された変数名から Particle の値を取得する
-float ParticleData::getValue(const std::string &var) const{
-  if (var == "x")
-    return pos[0];
-  else if (var == "y")
-    return pos[1];
-  else if (var == "z")
-    return pos[2];
-  else if (var == "r") {
-    // r は粒子位置の原点からの距離として計算（必要に応じて別の中心からの距離に変更可能）
-    return glm::length(glm::vec3(pos[0], pos[1], pos[2]));
-  }
-  else if (var == "Density")
-    return density;
-  else if (var == "Temperature")
-    return temperature;
-  else if (var == "Hsml")
-    return Hsml;
-  else if (var == "Mass")
-    return mass;
-  else {
-    std::cerr << "getValue: Unknown variable \"" << var << "\". Returning 0." << std::endl;
-    return 0.0f;
-  }
-}
-
-
-float HaloData::getHaloValue(const std::string &var) const{
-  if (var == "Mass")
-    return GroupMass;
-  else if (var == "GasMass")
-    return GroupMassType[0];
-  else if (var == "StellarMass")
-    return GroupMassType[3] + GroupMassType[4] + GroupMassType[5];
-  else if (var == "GasMetallicity")
-    return GroupMetallicity[0];
-  else if (var == "StellarMetallicity")
-    return GroupMetallicity[1];
-  else {
-    std::cerr << "getValue: Unknown variable \"" << var << "\". Returning 0." << std::endl;
-    return 0.0f;
-  }
-}
-
-/// ── 補助関数 ─────────────────────────────────────────────
-/// 指定された変数名から Particle の値を取得する
-float ClumpData::getValue(const std::string &var) const{
-  if (var == "Density")
-    return density;
-  else if (var == "Temperature")
-    return temperature;
-  else if (var == "ClumpMass")
-    return mass;
-  else if (var == "StellarMass")
-    return stellar_mass;
-  else {
-    std::cerr << "getValue: Unknown variable \"" << var << "\". Returning 0." << std::endl;
-    return 0.0f;
-  }
 }

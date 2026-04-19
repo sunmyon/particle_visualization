@@ -363,7 +363,7 @@ static void DrawFileNavigationSection(FileInfo* fileInfo, ParticleArray* Part, F
   static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
                 "FileFormatNames needs to match FileFormat::_Count");
 
-  int fmtIdx = fileInfo->getFormatMode();
+  int fmtIdx = fileInfo->getFormatMode_int();
   if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
     fileInfo->setFormatMode(static_cast<FileFormat>(fmtIdx));
   }

@@ -94,6 +94,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/config/config_io.cpp
   ${SRC_DIR}/data/particle_block.cpp
   ${SRC_DIR}/data/particle_array.cpp
+  ${SRC_DIR}/data/clump_loader.cpp
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
   ${SRC_DIR}/FileIO/halo_reader.cpp
 	${SRC_DIR}/FileIO/file_io.cpp

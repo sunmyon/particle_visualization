@@ -5,6 +5,7 @@
 
 #include "FileIO/file_io.h"
 #include "interaction/camera.h"
+#include "data/clump_loader.h"
 
 #include <imgui.h>
 
@@ -38,13 +39,18 @@ void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, File
 
     P->flag_renew_clumpList = false;
   }
-  
+
   static bool flagReadClumpFile = false;
   if(ImGui::Button("read clump list")){
     P->fname_clump_file = buf;
-    int flag = P->readClumpData(currentFileIndex);
 
-    if(flag == 0){
+    auto clumps = loadClumpData(P->fname_clump_file.c_str(),
+				currentFileIndex,
+				P->desiredMax,
+				P->originalMax);
+
+    if(!clumps.empty()){
+      P->Clumps = std::move(clumps);
       showEvolve.resize(P->Clumps.size(), false);
       flagReadClumpFile = true;
     }

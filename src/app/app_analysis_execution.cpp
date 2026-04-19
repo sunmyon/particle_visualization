@@ -13,6 +13,7 @@
 #include "app/analysis_state.h"
 #include "app/runtime_state.h"
 #include "data/particle_array.h"
+#include "data/clump_loader.h"
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "make_2D_projection_map.h"
@@ -896,7 +897,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 
   if (req.openFormatDialogRequested) {
 #ifdef HAVE_HDF5
-    if (fileInfo.useHDF5 || fileInfo.getFormatMode() == static_cast<int>(FileFormat::HDF5))
+    if (fileInfo.useHDF5 || fileInfo.getFormatMode() == FileFormat::HDF5)
       fileInfo.showHDF5Dialog();
     else
 #endif
@@ -1003,13 +1004,20 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    int currentFileIndex)
 {
 #ifdef CLUMP_DATA_READ
-  if (particles.flag_follow_clump_center) {
+  if (particles.flag_follow_clump_center) {    
     ClumpData targetClump = particles.Clumps[particles.TargetClumpID];
-    int flag = particles.readClumpData(currentFileIndex);
 
-    if (flag) {
+    TrackingVector<ClumpData> newClumps =
+      loadClumpData(particles.fname_clump_file.c_str(),
+		    currentFileIndex,
+		    particles.desiredMax,
+		    particles.originalMax);
+
+    if (newClumps.empty()) {
       particles.flag_follow_clump_center = false;
     } else {
+      particles.Clumps = std::move(newClumps);
+
       float target_pos_new[3];
       targetClump.get_next_clump_position(particles.Clumps, target_pos_new);
 

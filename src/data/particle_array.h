@@ -145,5 +145,7 @@ public:
   bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock);
   void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml);
 
-  int readClumpData(int snapshotIndex);
+  void setClumps(TrackingVector<ClumpData>&& newClumps) {
+    Clumps = std::move(newClumps);
+  }
 };
