@@ -156,8 +156,7 @@ public:
   HeaderInfo Header;
   bool flagFontLoaded = false;
   bool showWindowSelectFont = false;
-  double originalMax = 1.0;
-  double desiredMax = 1.0;
+  double scale_to_phys = 1.0;
   glm::quat cuboidTransform = glm::quat(1.f,0.f,0.f,0.f);
   glm::vec3 center = glm::vec3(0.f);
   glm::vec3 planeNormal = glm::vec3(0.f,0.f,1.f);

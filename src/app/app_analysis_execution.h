@@ -7,13 +7,16 @@ class DiskRadiusFinder;
 class ParticleArray;
 class FileInfo;
 struct RenderLayerState;
+struct NormalizationContext;
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
+				      NormalizationContext& normalization,
                                       DiskRadiusFinder& diskFinder,
                                       DiskAnalysisRequestState& request,
                                       DiskAnalysisResultState& result);
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
+			     NormalizationContext& normalization,
                              FileInfo& fileInfo,
                              DiskRadiusFinder& diskFinder,
                              const RenderLayerState& diskRenderState,
@@ -26,6 +29,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
                                            EllipsoidAnalysisResultState& result);
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+				  NormalizationContext& normalization,
                                   FileInfo& fileInfo,
                                   EllipseFitter& ellipsoidFitter,
                                   EllipsoidAnalysisBatchRequestState& request,
@@ -51,10 +55,12 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
 #endif
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
+				  const NormalizationContext& normalization,
                                   StellarDensityRequestState& request);
 
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
+			      NormalizationContext& normalization,			      
                               FileInfo& fileInfo,
                               FindClump& clumpFind,
                               ClumpBatchRequestState& request,
@@ -62,6 +68,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 #endif
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
+				   NormalizationContext& normalization,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
                                    const CameraContext& camera,
@@ -70,12 +77,15 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   ParticleArray& particles,
+				   NormalizationContext& normalization,
 				   FileNavigationRuntimeState& rt);
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,
+				    NormalizationContext& normalization,
 				    CameraContext& camCtx,
 				    SettingsRuntimeState& rt);
 
 void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+				    NormalizationContext& normalization,
 				    CameraContext& camCtx,
 				    int currentFileIndex);

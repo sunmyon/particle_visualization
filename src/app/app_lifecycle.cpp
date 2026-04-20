@@ -1,5 +1,8 @@
 #include "app/app_lifecycle.h"
 #include "app/app_callbacks.h"
+#include "config/config_apply.h"
+#include "config/config_data.h"
+#include "config/config_extract.h"
 #include "config/config_io.h"
 
 #include <iostream>
@@ -95,12 +98,14 @@ void InitApplication(AppState& app, RenderSystem& render)
 
 void LoadInitialData(AppState& app)
 {
-  if (loadConfig("config.txt",
-                 app.data.particles,
-                 app.data.fileInfo,
-                 &app.view.particleVisual,
-                 &app.ui.toolWindows.mask.config)) {
-    app.data.fileInfo->setMaskConfig(app.ui.toolWindows.mask.config);
+  ConfigData config;
+  if (LoadConfigFile("config.txt", config)) {
+    ApplyConfigData(config,
+                    *app.data.fileInfo,
+                    app.data.particles->units,
+		    app.runtime.settings.normalization.desiredMax,
+                    app.view.particleVisual,
+                    app.ui.toolWindows.mask.config);
   }
 
   app.data.particles->units.updateDerived();
@@ -109,7 +114,7 @@ void LoadInitialData(AppState& app)
   const auto& src = app.data.fileInfo->getSource();
   
   const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles);
+  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.runtime.settings.normalization);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
@@ -124,11 +129,13 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   DestroyRenderSystem(rs);
   DestroyRenderPrograms(rs.programs);
 
-  saveConfig("config.txt",
-             app.data.particles,
-             app.data.fileInfo,
-             &app.view.particleVisual,
-             &app.ui.toolWindows.mask.config);
+  const ConfigData config =
+    ExtractConfigData(*app.data.fileInfo,
+                      app.data.particles->units,
+		      app.runtime.settings.normalization.desiredMax,
+                      app.view.particleVisual,
+                      app.ui.toolWindows.mask.config);
+  SaveConfigFile("config.txt", config);
 
 #ifndef NONATIVEFILEDIALOG
   NFD_Quit();

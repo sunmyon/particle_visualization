@@ -9,6 +9,7 @@
 class FileInfo;
 class ProjectionMapGenerator;
 struct SnapshotSource;
+struct NormalizationContext;
 
 class StructureNode {
 public:
@@ -384,7 +385,7 @@ public:
 
   void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
   
-  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& fileinfo, CameraContext& cam);
+  void ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& fileinfo, CameraContext& cam, const NormalizationContext& normalization);
   
   void showClumpListWindow(){
     showWindowClumpList = true;
@@ -405,7 +406,7 @@ public:
   }
   
   void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname);
-  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam);  
+  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization);  
 };
 
 

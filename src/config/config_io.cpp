@@ -7,9 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "FileIO/file_io.h"
-#include "particle_visual_config.h"
-#include "app/ui_state.h"
+#include "config_data.h"
 
 // ------------------------------
 static inline bool startsWith(const std::string& s, const std::string& prefix) {
@@ -94,42 +92,39 @@ static QuantityId quantityFromString(const std::string& s) {
 }
 
 // ------------------------------
-bool loadConfig(const std::string& filename,
-                ParticleArray* P,
-                FileInfo* fileInfo,
-                ParticleVisualConfig* visualCfg,
-                ParticleMaskConfig* outMaskState)
+bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
 {
   std::ifstream infile(filename);
   if (!infile.is_open()) return false;
 
-  if (outMaskState) {
-    *outMaskState = ParticleMaskConfig{};
-  }
+  outConfig = ConfigData{};
 
   std::string line;
-  auto& src = fileInfo->editSource();
   while (std::getline(infile, line)) {
     line = trim(line);
     if (line.empty()) continue;
 
     if (startsWith(line, "FileFormat=")) {
-      std::string val = line.substr(std::strlen("FileFormat="));
-      std::strncpy(src.fileFormat, val.c_str(), sizeof(src.fileFormat) - 1);
-      src.fileFormat[sizeof(src.fileFormat) - 1] = '\0';
+      outConfig.persistent.fileFormatPattern =
+        line.substr(std::strlen("FileFormat="));
     }
     else if (startsWith(line, "FolderPath=")) {
-      std::string val = line.substr(std::strlen("FolderPath="));
-      std::strncpy(src.folderPath, val.c_str(), sizeof(src.folderPath) - 1);
-      src.folderPath[sizeof(src.folderPath) - 1] = '\0';
+      outConfig.persistent.folderPath =
+        line.substr(std::strlen("FolderPath="));
+    }
+    else if (startsWith(line, "ReadFormat=")) {
+      const int format = std::stoi(line.substr(std::strlen("ReadFormat=")));
+      if (format >= 0 && format < static_cast<int>(FileFormat::_Count)) {
+        outConfig.persistent.readFormat = static_cast<FileFormat>(format);
+      }
     }
     else if (startsWith(line, "TokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("TokenCount=")));
-      loadTokenList(infile, tokenCount, src.formatTokens);
+      loadTokenList(infile, tokenCount, outConfig.persistent.formatTokens);
     }
     else if (startsWith(line, "HDF5TokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("HDF5TokenCount=")));
-      loadTokenList(infile, tokenCount, src.formatTokens_hdf5);
+      loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensHdf5);
     }
     else if (startsWith(line, "ParticleType")) {
       // ParticleType0_Size=...
@@ -141,7 +136,7 @@ bool loadConfig(const std::string& filename,
       if (type < 0 || type >= 6) continue;
 
       std::string key = line.substr(pos + 1);
-      auto& cfg = visualCfg->types[type];
+      auto& cfg = outConfig.persistent.visual.types[type];
 
       if (startsWith(key, "Size=")) {
         cfg.pointSize = std::stof(key.substr(5));
@@ -162,121 +157,115 @@ bool loadConfig(const std::string& filename,
       }
     }
     else if (startsWith(line, "Mask_EnableSphere=")) {
-      if (outMaskState) {
-        outMaskState->enableSphere = (std::stoi(line.substr(std::strlen("Mask_EnableSphere="))) != 0);
-      }
+      outConfig.persistent.mask.enableSphere =
+        (std::stoi(line.substr(std::strlen("Mask_EnableSphere="))) != 0);
     }
     else if (startsWith(line, "Mask_CenterX=")) {
-      if (outMaskState) {
-        outMaskState->center[0] = std::stod(line.substr(std::strlen("Mask_CenterX=")));
-      }
+      outConfig.persistent.mask.center[0] =
+        std::stod(line.substr(std::strlen("Mask_CenterX=")));
     }
     else if (startsWith(line, "Mask_CenterY=")) {
-      if (outMaskState) {
-        outMaskState->center[1] = std::stod(line.substr(std::strlen("Mask_CenterY=")));
-      }
+      outConfig.persistent.mask.center[1] =
+        std::stod(line.substr(std::strlen("Mask_CenterY=")));
     }
     else if (startsWith(line, "Mask_CenterZ=")) {
-      if (outMaskState) {
-        outMaskState->center[2] = std::stod(line.substr(std::strlen("Mask_CenterZ=")));
-      }
+      outConfig.persistent.mask.center[2] =
+        std::stod(line.substr(std::strlen("Mask_CenterZ=")));
     }
     else if (startsWith(line, "Mask_Radius=")) {
-      if (outMaskState) {
-        outMaskState->radius = std::stod(line.substr(std::strlen("Mask_Radius=")));
-      }
+      outConfig.persistent.mask.radius =
+        std::stod(line.substr(std::strlen("Mask_Radius=")));
     }
     else if (startsWith(line, "Mask_OutsideMode=")) {
-      if (outMaskState) {
-        int v = std::stoi(line.substr(std::strlen("Mask_OutsideMode=")));
-        if (v == 0) outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::Drop;
-        else if (v == 1) outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::Thin;
-        else outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::KeepAll;
-      }
+      int v = std::stoi(line.substr(std::strlen("Mask_OutsideMode=")));
+      if (v == 0) outConfig.persistent.mask.outsideMode = ParticleMaskConfig::OutsideMode::Drop;
+      else if (v == 1) outConfig.persistent.mask.outsideMode = ParticleMaskConfig::OutsideMode::Thin;
+      else outConfig.persistent.mask.outsideMode = ParticleMaskConfig::OutsideMode::KeepAll;
     }
     else if (startsWith(line, "Mask_OutsideStride=")) {
-      if (outMaskState) {
-        outMaskState->outsideStride =
-          (unsigned long long)std::stoull(line.substr(std::strlen("Mask_OutsideStride=")));
-      }
+      outConfig.persistent.mask.outsideStride =
+        static_cast<int>(std::stoull(line.substr(std::strlen("Mask_OutsideStride="))));
     }
     else if (startsWith(line, "Mask_Type")) {
       // Mask_Type0=0/1/2
-      if (outMaskState) {
-        size_t eq = line.find('=');
-        if (eq != std::string::npos) {
-          int type = std::stoi(line.substr(9, eq - 9));
-          if (type >= 0 && type < 6) {
-            int v = std::stoi(line.substr(eq + 1));
-            if (v == 0) outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::Off;
-            else if (v == 1) outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::On_NoThin;
-            else outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::On_ThinOK;
-          }
+      size_t eq = line.find('=');
+      if (eq != std::string::npos) {
+        int type = std::stoi(line.substr(9, eq - 9));
+        if (type >= 0 && type < 6) {
+          int v = std::stoi(line.substr(eq + 1));
+          if (v == 0) outConfig.persistent.mask.typeMode[type] = ParticleMaskConfig::TypeMode::Off;
+          else if (v == 1) outConfig.persistent.mask.typeMode[type] = ParticleMaskConfig::TypeMode::On_NoThin;
+          else outConfig.persistent.mask.typeMode[type] = ParticleMaskConfig::TypeMode::On_ThinOK;
         }
       }
     }
     else if (startsWith(line, "Mask_EnableMaxParticles=")) {
-      if (outMaskState) {
-        outMaskState->enableMaxParticles =
-          (std::stoi(line.substr(std::strlen("Mask_EnableMaxParticles="))) != 0);
-      }
+      outConfig.persistent.mask.enableMaxParticles =
+        (std::stoi(line.substr(std::strlen("Mask_EnableMaxParticles="))) != 0);
     }
     else if (startsWith(line, "Mask_MaxParticles=")) {
-      if (outMaskState) {
-        outMaskState->maxParticles =
-          std::stoi(line.substr(std::strlen("Mask_MaxParticles=")));
-      }
+      outConfig.persistent.mask.maxParticles =
+        std::stoi(line.substr(std::strlen("Mask_MaxParticles=")));
     }
     else if (startsWith(line, "NormalizationFactor=")) {
-      P->desiredMax = std::stof(line.substr(std::strlen("NormalizationFactor=")));
+      outConfig.persistent.normalizationFactor =
+        std::stof(line.substr(std::strlen("NormalizationFactor=")));
+    }
+    else if (startsWith(line, "initialIndex=")) {
+      outConfig.session.initialIndex = std::stoi(line.substr(std::strlen("initialIndex=")));
+    }
+    else if (startsWith(line, "currentFileIndex=")) {
+      outConfig.session.currentFileIndex = std::stoi(line.substr(std::strlen("currentFileIndex=")));
     }
     else if (startsWith(line, "skipStep=")) {
-      src.skipStep = std::stoi(line.substr(std::strlen("skipStep=")));
+      outConfig.session.skipStep = std::stoi(line.substr(std::strlen("skipStep=")));
     }
     else if (startsWith(line, "currentStep=")) {
-      src.currentStep = std::stoi(line.substr(std::strlen("currentStep=")));
+      outConfig.session.currentStep = std::stoi(line.substr(std::strlen("currentStep=")));
+    }
+    else if (startsWith(line, "batchSize=")) {
+      outConfig.session.batchSize = std::stoi(line.substr(std::strlen("batchSize=")));
     }
     else if (startsWith(line, "UnitMass_in_g=")) {
-      P->units.mass_g = std::stod(line.substr(std::strlen("UnitMass_in_g=")));
+      outConfig.persistent.units.mass_g =
+        std::stod(line.substr(std::strlen("UnitMass_in_g=")));
     }
     else if (startsWith(line, "UnitLength_in_cm=")) {
-      P->units.length_cm = std::stod(line.substr(std::strlen("UnitLength_in_cm=")));
+      outConfig.persistent.units.length_cm =
+        std::stod(line.substr(std::strlen("UnitLength_in_cm=")));
     }
     else if (startsWith(line, "UnitVelocity_in_cm_per_s=")) {
-      P->units.velocity_cm_per_s = std::stod(line.substr(std::strlen("UnitVelocity_in_cm_per_s=")));
+      outConfig.persistent.units.velocity_cm_per_s =
+        std::stod(line.substr(std::strlen("UnitVelocity_in_cm_per_s=")));
     }
     else if (startsWith(line, "Hubble=")) {
-      P->units.hubble = std::stof(line.substr(std::strlen("Hubble=")));
+      outConfig.persistent.units.hubble =
+        std::stof(line.substr(std::strlen("Hubble=")));
     }
     else if (startsWith(line, "useComovingCoordinate=")) {
-      P->units.useComovingCoordinate =
+      outConfig.persistent.units.useComovingCoordinate =
         std::stof(line.substr(std::strlen("useComovingCoordinate=")));
     }
   }
 
-  infile.close();
   return true;
 }
 
 // ------------------------------
-bool saveConfig(const std::string& filename,
-                const ParticleArray* P,
-                const FileInfo* fileInfo,
-                const ParticleVisualConfig* visualCfg,
-                const ParticleMaskConfig* maskState)
+bool SaveConfigFile(const std::string& filename, const ConfigData& config)
 {
   std::ofstream outfile(filename);
   if (!outfile.is_open()) return false;
 
-  auto& src = fileInfo->getSource();
-  outfile << "FileFormat=" << src.fileFormat << "\n";
-  outfile << "FolderPath=" << src.folderPath << "\n";
+  outfile << "FileFormat=" << config.persistent.fileFormatPattern << "\n";
+  outfile << "FolderPath=" << config.persistent.folderPath << "\n";
+  outfile << "ReadFormat=" << static_cast<int>(config.persistent.readFormat) << "\n";
 
-  saveTokenList(outfile, "TokenCount", src.formatTokens);
-  saveTokenList(outfile, "HDF5TokenCount", src.formatTokens_hdf5);
+  saveTokenList(outfile, "TokenCount", config.persistent.formatTokens);
+  saveTokenList(outfile, "HDF5TokenCount", config.persistent.formatTokensHdf5);
 
   for (int i = 0; i < 6; i++) {
-    const auto& cfg = visualCfg->types[i];
+    const auto& cfg = config.persistent.visual.types[i];
     outfile << "ParticleType" << i << "_Size=" << cfg.pointSize << "\n";
     outfile << "ParticleType" << i << "_Min=" << cfg.colorMin << "\n";
     outfile << "ParticleType" << i << "_Max=" << cfg.colorMax << "\n";
@@ -287,39 +276,41 @@ bool saveConfig(const std::string& filename,
     outfile << "ParticleType" << i << "_Quantity=" << quantityToString(cfg.selectedQuantity) << "\n";
   }
 
-  if (maskState) {
-    outfile << "Mask_EnableSphere=" << (maskState->enableSphere ? 1 : 0) << "\n";
-    outfile << "Mask_CenterX=" << maskState->center[0] << "\n";
-    outfile << "Mask_CenterY=" << maskState->center[1] << "\n";
-    outfile << "Mask_CenterZ=" << maskState->center[2] << "\n";
-    outfile << "Mask_Radius=" << maskState->radius << "\n";
+  const auto& maskState = config.persistent.mask;
+  outfile << "Mask_EnableSphere=" << (maskState.enableSphere ? 1 : 0) << "\n";
+  outfile << "Mask_CenterX=" << maskState.center[0] << "\n";
+  outfile << "Mask_CenterY=" << maskState.center[1] << "\n";
+  outfile << "Mask_CenterZ=" << maskState.center[2] << "\n";
+  outfile << "Mask_Radius=" << maskState.radius << "\n";
 
-    int outsideMode = 2;
-    if (maskState->outsideMode == ParticleMaskConfig::OutsideMode::Drop) outsideMode = 0;
-    else if (maskState->outsideMode == ParticleMaskConfig::OutsideMode::Thin) outsideMode = 1;
-    outfile << "Mask_OutsideMode=" << outsideMode << "\n";
-    outfile << "Mask_OutsideStride=" << maskState->outsideStride << "\n";
+  int outsideMode = 2;
+  if (maskState.outsideMode == ParticleMaskConfig::OutsideMode::Drop) outsideMode = 0;
+  else if (maskState.outsideMode == ParticleMaskConfig::OutsideMode::Thin) outsideMode = 1;
+  outfile << "Mask_OutsideMode=" << outsideMode << "\n";
+  outfile << "Mask_OutsideStride=" << maskState.outsideStride << "\n";
 
-    for (int t = 0; t < 6; ++t) {
-      int tm = 1;
-      if (maskState->typeMode[t] == ParticleMaskConfig::TypeMode::Off) tm = 0;
-      else if (maskState->typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK) tm = 2;
-      outfile << "Mask_Type" << t << "=" << tm << "\n";
-    }
-
-    outfile << "Mask_EnableMaxParticles=" << (maskState->enableMaxParticles ? 1 : 0) << "\n";
-    outfile << "Mask_MaxParticles=" << maskState->maxParticles << "\n";
+  for (int t = 0; t < 6; ++t) {
+    int tm = 1;
+    if (maskState.typeMode[t] == ParticleMaskConfig::TypeMode::Off) tm = 0;
+    else if (maskState.typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK) tm = 2;
+    outfile << "Mask_Type" << t << "=" << tm << "\n";
   }
 
-  outfile << "NormalizationFactor=" << P->desiredMax << "\n";
-  outfile << "skipStep=" << src.skipStep << "\n";
-  outfile << "currentStep=" << src.currentStep << "\n";
-  outfile << "UnitMass_in_g=" << P->units.mass_g << "\n";
-  outfile << "UnitLength_in_cm=" << P->units.length_cm << "\n";
-  outfile << "UnitVelocity_in_cm_per_s=" << P->units.length_cm << "\n";
-  outfile << "Hubble=" << P->units.hubble << "\n";
-  outfile << "useComovingCoordinate=" << P->units.useComovingCoordinate << "\n";
+  outfile << "Mask_EnableMaxParticles=" << (maskState.enableMaxParticles ? 1 : 0) << "\n";
+  outfile << "Mask_MaxParticles=" << maskState.maxParticles << "\n";
 
-  outfile.close();
+  outfile << "NormalizationFactor=" << config.persistent.normalizationFactor << "\n";
+  outfile << "initialIndex=" << config.session.initialIndex << "\n";
+  outfile << "currentFileIndex=" << config.session.currentFileIndex << "\n";
+  outfile << "skipStep=" << config.session.skipStep << "\n";
+  outfile << "currentStep=" << config.session.currentStep << "\n";
+  outfile << "batchSize=" << config.session.batchSize << "\n";
+  outfile << "UnitMass_in_g=" << config.persistent.units.mass_g << "\n";
+  outfile << "UnitLength_in_cm=" << config.persistent.units.length_cm << "\n";
+  outfile << "UnitVelocity_in_cm_per_s=" << config.persistent.units.velocity_cm_per_s << "\n";
+  outfile << "Hubble=" << config.persistent.units.hubble << "\n";
+  outfile << "useComovingCoordinate=" << config.persistent.units.useComovingCoordinate << "\n";
+
   return true;
 }
+

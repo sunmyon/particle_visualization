@@ -80,6 +80,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
   ${SRC_DIR}/app/app_analysis_execution.cpp
+  ${SRC_DIR}/app/app_data_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
   ${SRC_DIR}/render/render_programs.cpp
@@ -92,6 +93,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/render_resources.cpp
   ${SRC_DIR}/interaction/interaction_utils.cpp
   ${SRC_DIR}/config/config_io.cpp
+  ${SRC_DIR}/config/config_apply.cpp
+  ${SRC_DIR}/config/config_extract.cpp
   ${SRC_DIR}/data/particle_block.cpp
   ${SRC_DIR}/data/particle_array.cpp
   ${SRC_DIR}/data/clump_loader.cpp

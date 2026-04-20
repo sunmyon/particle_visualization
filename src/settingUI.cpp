@@ -1,6 +1,7 @@
 #include "UI.h"
 #include "settingUI.h"
 #include "app/app_services.h"
+#include "app/app_data_actions.h"
 #include "render_actions.h"
 
 #include "interaction/camera.h"
@@ -33,7 +34,7 @@ struct PullDownItem {
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
 static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
-static void DrawNormalizationSection(ParticleArray* P);
+static void DrawNormalizationSection(ParticleArray* P, NormalizationContext& ctx);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt);
 #ifdef PYTHON_BRIDGE
@@ -49,7 +50,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
   DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
-  DrawNormalizationSection(ctx.P);
+  DrawNormalizationSection(ctx.P, rt.settings.normalization);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, rt.settings);
 #ifdef PYTHON_BRIDGE
@@ -277,18 +278,20 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
     rt.request.generateTestDataRequested = true;
   }
 }
-  
 
-static void DrawNormalizationSection(ParticleArray* Part) {
+
+
+static void DrawNormalizationSection(ParticleArray* Part, NormalizationContext& normalization) {
   if (!ImGui::CollapsingHeader("Normalization"))
     return;
 
-  ImGui::InputFloat("Desired Maximum", &Part->desiredMax, 0.f, 0.f, "%g");
-  if (ImGui::Button("Normalize Positions"))
-    Part->rescalePositions();
+  ImGui::InputFloat("Desired Maximum", &normalization.desiredMax, 0.f, 0.f, "%g");
+  if (ImGui::Button("Normalize Positions")){
+    NormalizeParticlePositions(*Part, normalization);
+  }
 
-  ImGui::Text("Original max coordinate: %.3g", Part->originalMax);
-  ImGui::Text("Max coordinate is normalized to: %.3f", Part->desiredMax);
+  ImGui::Text("Original max coordinate: %.3g", normalization.originalMax);
+  ImGui::Text("Max coordinate is normalized to: %.3f", normalization.desiredMax);
 }
 
 static void DrawSinkIdSection(const CameraContext& camCtx,

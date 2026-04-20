@@ -259,7 +259,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     if(count > 0){
       float len_zoom = params.lenZoomRegion;
       if(params.flagScaleOriginalCoordinateZoomRegion)
-	len_zoom *= (desiredMax /originalMax);      
+	len_zoom *= scale_to_phys;
       
       //center.x = 0.5 * (xmax_zoom[0] + xmin_zoom[0]);
       //center.y = 0.5 * (xmax_zoom[1] + xmin_zoom[1]);
@@ -1344,7 +1344,7 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
     {
       double arrowLenX_scaled = params.arrowLenX;
       if(params.flagScaleOriginalCoordinate)
-	arrowLenX_scaled *= (desiredMax /originalMax);
+	arrowLenX_scaled *= scale_to_phys;
 
       int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / map.cell_size);
 	

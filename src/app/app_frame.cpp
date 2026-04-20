@@ -9,6 +9,7 @@
 #include "app/app_state.h"
 #include "app/app_analysis_execution.h"
 #include "app/app_callbacks.h"
+#include "app/normalization_config.h"
 #include "render/render_system.h"
 
 #include "UI.h"
@@ -62,6 +63,7 @@ static void DrawSettingsPanels(const AppDataState& data,
 }
 
 static void DrawClumpPanels(const AppDataState& data,
+			    NormalizationContext& normalization,
                             AppServices& services,
 			    CameraContext& camera)
 {
@@ -75,11 +77,14 @@ static void DrawClumpPanels(const AppDataState& data,
   services.clumpFind->ReadAndShowClumpsUI(data.particles,
                                           src.currentFileIndex,
                                           data.fileInfo->getSource(),
-					  camera);
+					  camera,
+					  normalization);
+  
   services.clumpFind->showClumpChainList(data.particles,
                                          services.projectionMap2D.get(),
                                          *data.fileInfo,
-					 camera);
+					 camera,
+					 normalization);
 #endif
 }
 
@@ -132,23 +137,24 @@ static void DrawToolWindows(const AppDataState& data,
 {
   auto &tools = ui.toolWindows;
   
-  DrawClumpPanels(data, services, view.camera);
+  DrawClumpPanels(data, runtime.settings.normalization, services, view.camera);
   DrawFileDialogPanels(data, ui);
   ApplyMaskIfRequested(tools, data);
   DrawAuxiliaryPanels(tools, data, view);
 
-  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, data.particles->units);
+  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, runtime.settings.normalization, data.particles->units);
 
   const auto& src = data.fileInfo->getSource();
   DrawProjectionMapUI(tools.projectionMap, 
 		      *services.projectionMap2D,
                       data.particles,
+		      runtime.settings.normalization,
                       view.camera,
                       runtime.render.cuboidAnnotations,
                       src.currentFileIndex);
 
 #ifdef HAVE_HDF5
-  DrawHaloesUI(tools.haloes, data.particles, view.camera, data.fileInfo);
+  DrawHaloesUI(tools.haloes, data.particles, view.camera, data.fileInfo, runtime.settings.normalization);
 #endif
   
   Histogram2DContext histCtx;
@@ -850,11 +856,13 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 {
 #ifdef GEOMETRICAL_ANALYSIS
   ExecuteSingleDiskAnalysisRequest(*data.particles,
+				   runtime.settings.normalization,
                                    *services.diskFinder,
                                    runtime.analysis.disk,
                                    derived.analysis.disk);
   
   ExecuteDiskBatchRequest(*data.particles,
+			  runtime.settings.normalization,
                           *data.fileInfo,
                           *services.diskFinder,
                           runtime.render.disks,
@@ -867,6 +875,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                         derived.analysis.ellipsoid);
   
   ExecuteEllipsoidBatchRequest(*data.particles,
+			       runtime.settings.normalization,
                                *data.fileInfo,
                                *services.ellipsoid,
                                runtime.analysis.ellipsoidBatch,
@@ -884,6 +893,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #endif
 
   ExecuteStellarDensityRequest(*data.particles,
+			       runtime.settings.normalization, 
 			       runtime.analysis.stellarDensity);
 
 #ifdef ISO_CONTOUR
@@ -895,6 +905,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
 #ifdef CLUMP_DATA_READ
   ExecuteClumpBatchRequest(*data.particles,
+			   runtime.settings.normalization,
 			   *data.fileInfo,
 			   *services.clumpFind,
 			   runtime.analysis.clumpBatch,
@@ -902,6 +913,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #endif
   
   ExecuteProjectionMovieRequest(*data.particles,
+				runtime.settings.normalization,
 				*data.fileInfo,
 				*services.projectionMap2D,
 				camera,
@@ -910,15 +922,18 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
   ExecuteFileNavigationRequests(*data.fileInfo,
 				*data.particles,
+				runtime.settings.normalization,
 				runtime.settings.fileNavigation);
 
   ExecuteCameraPlacementRequests(*data.particles,
+				 runtime.settings.normalization,
 				 camera,
 				 runtime.settings);
 
   if (data.fileInfo->snapshotUpdated) {
     const auto& src = data.fileInfo->getSource();
     ExecutePostSnapshotLoadActions(*data.particles,
+				   runtime.settings.normalization,
 				   camera,
 				   src.currentFileIndex);
     

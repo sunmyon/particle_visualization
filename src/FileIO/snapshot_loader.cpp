@@ -131,7 +131,7 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   return true;
 }
 
-bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P) {
+bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, NormalizationContext& normalization) {
   ParticleBlock newBlock;
   if (!loadSingleFile(targetFile, newBlock)) {
     P->particleBlock.clear();
@@ -140,7 +140,7 @@ bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P) {
   }
 
   ParticleBlock oldBlock;
-  P->setParticleBlock(std::move(newBlock), &oldBlock);
+  P->setParticleBlock(std::move(newBlock), &oldBlock, normalization);
   return true;
 }
 
@@ -158,7 +158,7 @@ TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile) {
   return IDs;
 }
 
-void SnapshotLoader::generateTestData(ParticleArray* P) {
+void SnapshotLoader::generateTestData(ParticleArray* P, NormalizationContext& normalization) {
   ParticleBlock block = ParticleBlock::makeTestParticleBlock();
-  P->setParticleBlock(std::move(block), nullptr);
+  P->setParticleBlock(std::move(block), nullptr, normalization);
 }

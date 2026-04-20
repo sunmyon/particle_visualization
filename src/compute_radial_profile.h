@@ -6,7 +6,7 @@
 
 #include "data/particle_block.h"
 #include "core/tracking_vector.h"
-#include "core/quantity.h"  // QuantityId, QuantityLabel, getScalarValue(...) がある前提
+#include "core/quantity.h"
 #include "core/units.h"
 
 // --- X axis mode for 1D profile ---
@@ -50,6 +50,7 @@ struct RadialProfileResult {
   bool valid = false;
 };
 
+struct NormalizationContext;
 class RadialProfileComputer {
 public:
   RadialProfileComputer() = default;
@@ -58,6 +59,7 @@ public:
   }
 
   RadialProfileResult compute(const ParticleBlock& partblock,
+			      const NormalizationContext& normalization,
                               const RadialProfileParams& params,
 			      const glm::vec3& cam_center);
 

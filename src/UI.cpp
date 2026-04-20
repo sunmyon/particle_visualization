@@ -6,6 +6,7 @@
 #include "implot.h"
 
 #include "app/runtime_state.h"
+#include "app/normalization_config.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "object.h"
@@ -49,6 +50,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 			 RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
+			 NormalizationContext& normalization,
 			 UnitSystem& units)
 {
   if (!state.open) return;
@@ -116,7 +118,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   ImGui::InputFloat("Maximum Radius (cut)", &state.params.rmax, 0.0f, 0.0f, "%g");
 
   if (ImGui::Button("Compute profile")) {
-    state.result = computer.compute(partblock, state.params, cam_center);
+    state.result = computer.compute(partblock, normalization, state.params, cam_center);
 
     if (state.params.autorange) {
       state.params.xmin = state.result.xmin;
@@ -369,6 +371,7 @@ namespace {
 void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 ProjectionMapGenerator& generator,
                          ParticleArray* P,
+			 NormalizationContext& normalization,
                          CameraContext& camCtx,
 			 RenderLayerState& cuboidAnnotationState,
                          int indexfile)
@@ -382,9 +385,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("make projectoin map", &state.open, ImGuiWindowFlags_None);
 
-  generator.originalMax = P->originalMax;
-  generator.desiredMax  = P->desiredMax;
-
+  generator.scale_to_phys = normalization.toPhysicalScale();
   // -----------------------------
   // side length
   // -----------------------------
@@ -393,7 +394,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
   if (state.useOriginalCoordinate) {
     for (int k = 0; k < 3; k++) {
-      params.xlen[k] = state.xlen_input[k] * generator.desiredMax / generator.originalMax;
+      params.xlen[k] = state.xlen_input[k] * generator.scale_to_phys;
     }
   } else {
     for (int k = 0; k < 3; k++) {
@@ -1122,7 +1123,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
   ImGui::End();
 }
 
-void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo)
+void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo, NormalizationContext& normalization)
 {
 #ifdef HAVE_HDF5
   if (!state.open) return;
@@ -1210,9 +1211,10 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
     glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
 
     float pos[3];
-    pos[0] = h.GroupPos[0] * P->desiredMax / P->originalMax;
-    pos[1] = h.GroupPos[1] * P->desiredMax / P->originalMax;
-    pos[2] = h.GroupPos[2] * P->desiredMax / P->originalMax;
+    float scale = normalization.toPhysicalScale();
+    pos[0] = h.GroupPos[0] * scale;
+    pos[1] = h.GroupPos[1] * scale;
+    pos[2] = h.GroupPos[2] * scale;
 
     camCtx.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
     camCtx.cameraPos    = camCtx.cameraTarget - direction * distance;

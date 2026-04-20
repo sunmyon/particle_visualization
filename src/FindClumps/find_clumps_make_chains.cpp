@@ -6,13 +6,14 @@
 #include "FileIO/file_io.h"
 #include "interaction/camera.h"
 #include "data/clump_loader.h"
+#include "app/normalization_config.h"
 
 #include <imgui.h>
 
 #include "implot.h"
 
 #ifdef CLUMP_DATA_READ
-void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& src, CameraContext& cam) {
+void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, const SnapshotSource& src, CameraContext& cam, const NormalizationContext& normalization) {
   if (!showWindowClumpList) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
@@ -46,8 +47,7 @@ void FindClump::ReadAndShowClumpsUI(ParticleArray *P, int currentFileIndex, cons
 
     auto clumps = loadClumpData(P->fname_clump_file.c_str(),
 				currentFileIndex,
-				P->desiredMax,
-				P->originalMax);
+				normalization.toNormalizedScale());
 
     if(!clumps.empty()){
       P->Clumps = std::move(clumps);
@@ -550,7 +550,7 @@ TrackingVector<FindClump::clump_properties> FindClump::calc_chain_properties(Tra
 }
 
 
-void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam){
+void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization){
   if(!flagShowWindowClumpChainList)
     return;
 
@@ -694,12 +694,12 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	int snapshot = src.initialIndex + (selected_chain.first_snapshot + i_snapshot) * src.skipStep;
 
 	float pos[3];
-
-	pos[0] = ch[i_snapshot]->pos[0] * P->desiredMax / P->originalMax;
-	pos[1] = ch[i_snapshot]->pos[1] * P->desiredMax / P->originalMax;
-	pos[2] = ch[i_snapshot]->pos[2] * P->desiredMax / P->originalMax;
+	float scale_from_phys = normalization.toNormalizedScale();
+	pos[0] = ch[i_snapshot]->pos[0] * scale_from_phys;
+	pos[1] = ch[i_snapshot]->pos[1] * scale_from_phys;
+	pos[2] = ch[i_snapshot]->pos[2] * scale_from_phys;
 	
-	fileinfo.loadNewSnapshot(snapshot, P);
+	fileinfo.loadNewSnapshot(snapshot, P, normalization);
 	    
 	float dist = glm::length(cam.cameraPos - cam.cameraTarget);
 	glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -834,12 +834,13 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	    flag_use_amvector = 1;
 
 	  int snapshot = src.initialIndex + (selected_chain.first_snapshot + i) * src.skipStep;	  
-	  fileinfo.loadNewSnapshot(snapshot, P);
+	  fileinfo.loadNewSnapshot(snapshot, P, normalization);
 	
-	  float pos_center[3];	  
-	  pos_center[0] = ch[i]->pos[0] * P->desiredMax / P->originalMax;
-	  pos_center[1] = ch[i]->pos[1] * P->desiredMax / P->originalMax;
-	  pos_center[2] = ch[i]->pos[2] * P->desiredMax / P->originalMax;
+	  float pos_center[3];
+	  float scale_from_phys = normalization.toNormalizedScale();	    
+	  pos_center[0] = ch[i]->pos[0] * scale_from_phys;
+	  pos_center[1] = ch[i]->pos[1] * scale_from_phys;
+	  pos_center[2] = ch[i]->pos[2] * scale_from_phys;
 
 	  char fname_output[512];
 	  snprintf(fname_output, sizeof(fname_output), "%s/image_clump%d_%04zu.png", fdir, selected_chain_index, i);

@@ -7,6 +7,7 @@ struct UnitSystem;
 struct ParticleBlock;
 struct CameraContext;
 struct RenderLayerState;
+struct NormalizationContext;
 class ParticleArray;
 
 class RadialProfileComputer;
@@ -15,6 +16,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 			 RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
+			 NormalizationContext& normalization,
 			 UnitSystem& units);
 
 class Histogram2DComputer;
@@ -30,6 +32,7 @@ void OpenProjectionMapUI(ProjectionMapUIState& state);
 void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 ProjectionMapGenerator& generator,
                          ParticleArray* P,
+			 NormalizationContext& normalization,
                          CameraContext& camCtx,
 			 RenderLayerState& cuboidAnnotationState,
                          int fileindex);
@@ -38,7 +41,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
 
 class FileInfo;
 void OpenHaloesUI(HaloesUIState& state);
-void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo);
+void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo, NormalizationContext& normalization);
 
 void OpenMaskUI(MaskUIState& state);
 bool DrawMaskWindow(MaskUIState& state);

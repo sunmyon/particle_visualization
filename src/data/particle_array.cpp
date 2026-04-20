@@ -1,7 +1,21 @@
 #include "data/particle_array.h"
 #include "core/PerfTimer.h"
+#include "app/normalization_config.h"
 
-bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock) {
+void ParticleArray::rescalePositions(NormalizationContext& ctx){
+  float scale = ctx.toNormalizedScale();
+
+  for (ParticleData &p : particleBlock.particles) {
+    p.pos[0] = p.original_pos[0] * scale;
+    p.pos[1] = p.original_pos[1] * scale;
+    p.pos[2] = p.original_pos[2] * scale;
+    p.Hsml = p.originalHsml * scale;
+  }
+      
+  particlesDirty = true;  // グローバルなフラグをtrueに設定
+};
+
+bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, NormalizationContext& ctx) {
   TIME_FUNCTION();
 
   bool hadOld = !particleBlock.particles.empty();
@@ -10,7 +24,7 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
   }
   particleBlock = std::move(newBlock);
 
-  auto stats = particleBlock.rebuild(desiredMax);
+  auto stats = particleBlock.rebuild(ctx.desiredMax);
 
   for (int q = 0; q < particleBlock.nUIQ; ++q) {
     for (int t = 0; t < kNumTypes; ++t) {
@@ -20,6 +34,7 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
   }
 
   originalMax = stats.originalMax;
+  ctx.originalMax = stats.originalMax;
 
   if (particleBlock.header.flag_hdf5) {
     units.length_cm = particleBlock.header.UnitLength_in_cm;
@@ -92,7 +107,7 @@ static inline double cubic_spline_W(double r, double h) {
 
   // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
   // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
-void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml)
+void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml, const NormalizationContext& ctx)
 {
   const int N_neighbours = 32;
 
@@ -185,19 +200,20 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, boo
         
     // 面積 = π * r^2
     double area = M_PI * h * h;
+    double scale = ctx.toPhysicalScale();
     
     int original_index = cloud.particles[i].index;
     if(flag_star)
       particles[original_index].density = totalMass * units.mass_msun
-	/ area / std::pow(originalMax / desiredMax * cosmofac * units.length_pc, 2.) * units.hubble;
+	/ area / std::pow(scale * cosmofac * units.length_pc, 2.) * units.hubble;
     else
-      particles[original_index].density = density * units.mass_g / std::pow(originalMax / desiredMax * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
+      particles[original_index].density = density * units.mass_g / std::pow(scale * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
 
     if(flag_overwrite_hsml)
       particles[original_index].Hsml = h;
     
     printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
-	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, originalMax / desiredMax * cosmofac * units.length_cm, units.hubble);
+	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, scale * cosmofac * units.length_cm, units.hubble);
   }
 }
 

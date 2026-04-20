@@ -1,15 +1,14 @@
 #pragma once
 
-#include "app_config.h"
-
-struct ParticleArray;
-struct CameraContext;
-class ProjectionMapGenerator;
-
-// gFileInfo の実型名に合わせて直してください
+struct ConfigData;
 class FileInfo;
+class ParticleArray;
+struct ParticleVisualConfig;
+struct ParticleMaskConfig;
+struct UnitSystem;
 
-AppConfig ExtractConfig(const ParticleArray& P,
-                        const CameraContext& camCtx,
-                        const FileInfo& fileInfo,
-                        const ProjectionMapGenerator* projection = nullptr);
+ConfigData ExtractConfigData(const FileInfo& fileInfo,
+                             const UnitSystem& units,
+			     const float desired_max,
+                             const ParticleVisualConfig& visual,
+                             const ParticleMaskConfig& mask);

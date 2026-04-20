@@ -4,7 +4,7 @@
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "data/particle_mask_config.h"
-#include "FileIO/file_format_types.h"
+#include "app/file_format_dialog_state.h"
 
 struct RadialProfileUIState {
   bool open = false;
@@ -113,14 +113,6 @@ struct MaskUIState {
   uint64_t revision = 0;
   
   ParticleMaskConfig config;
-};
-
-struct FileFormatDialogState {
-#ifdef HAVE_HDF5
-  bool showHDF5MappingDialog = false;
-#endif
-  bool showFormatDialog = false;
-  std::vector<FieldSpec> formatTokensEdit;
 };
 
 struct ToolWindowUIState {

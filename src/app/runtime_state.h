@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/vec3.hpp>
+#include "app/normalization_config.h"
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -147,6 +148,7 @@ struct SettingsRuntimeState {
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
 
+  NormalizationContext normalization;
   FileNavigationRuntimeState fileNavigation;
   CameraPlacementRequestState cameraPlacement;
 };

@@ -20,8 +20,8 @@ public:
     snapshotUpdated = false;
   }
   
-  void loadNewSnapshot(int newindex, ParticleArray* P);
-  void generateTestData(ParticleArray *P);
+  void loadNewSnapshot(int newindex, ParticleArray* P, NormalizationContext& normalization);
+  void generateTestData(ParticleArray *P, NormalizationContext& normalization);
   
   void applySelectedFilePath(const char* fullPath);
   

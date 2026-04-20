@@ -6,7 +6,7 @@ SnapshotPrefetchController::SnapshotPrefetchController(SnapshotSource& source,
                                                        SnapshotLoader& loader)
   : source_(source), loader_(loader) {}
 
-void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P) {
+void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, NormalizationContext& normalization) {
   TIME_FUNCTION();
 
   bool foundInCache = false;
@@ -15,14 +15,14 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
     std::lock_guard<std::mutex> lock(prefetch_.mutex);
     if (prefetch_.cache.pop(newFileIndex, block)) {
       ParticleBlock oldBlock;
-      P->setParticleBlock(std::move(block), &oldBlock);
+      P->setParticleBlock(std::move(block), &oldBlock, normalization);
       foundInCache = true;
     }
   }
 
   if (!foundInCache) {
     if (!isLoading_) {
-      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P);
+      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, normalization);
     }
   }
 
@@ -35,8 +35,8 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
 #endif
 }
 
-bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P) {
-  if (!loader_.loadFirstFileIntoArray(targetFile, P)) {
+bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization) {
+  if (!loader_.loadFirstFileIntoArray(targetFile, P, normalization)) {
     return false;
   }
 
@@ -74,12 +74,13 @@ void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
 void SnapshotPrefetchController::loadBatch(int targetFile,
                                            int batchSize,
                                            int skipStep,
-                                           ParticleArray* P) {
+                                           ParticleArray* P,
+					   NormalizationContext& normalization) {
   const int gen = ++prefetch_.generation;
   prefetch_.running = true;
   isLoading_ = true;
 
-  if (!syncLoadFirstFile(targetFile, P)) {
+  if (!syncLoadFirstFile(targetFile, P, normalization)) {
     prefetch_.running = false;
     isLoading_ = false;
     return;

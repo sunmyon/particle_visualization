@@ -6,6 +6,8 @@
 #include "interaction/camera.h"
 #include "core/units.h"
 
+struct NormalizationContext;
+
 class ParticleArray {
 private:
   int particleBlock_index; //current index in batch file list
@@ -13,14 +15,13 @@ private:
 public:
   ParticleArray() = default;
 
-  float originalMax = 0.0f;
-  float desiredMax = 1.0f;         // ユーザー指定の目標値（例: 1, 10, 100, ...）
-  float normalizationFactor = 1.0f;  // 適用された倍率
+  void rescalePositions(NormalizationContext& ctx);  
   
   bool particlesDirty = true;
   bool velocityDirty = true;
   bool flagParticleIndexDirty = true;
-
+  float originalMax = 1.;
+  
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMin;
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMax;
 
@@ -122,28 +123,9 @@ public:
     pos[0] = p.pos[0]; pos[1] = p.pos[1]; pos[2] = p.pos[2];
     return true;
   }
-  
-  void rescalePositions(){
-    if (originalMax > 0) {
-      float scale = desiredMax / originalMax;
-      
-      for (ParticleData &p : particleBlock.particles) {
-	p.pos[0] = p.original_pos[0] * scale;
-	p.pos[1] = p.original_pos[1] * scale;
-	p.pos[2] = p.original_pos[2] * scale;
-	p.Hsml = p.originalHsml * scale;
-      }
-      
-      normalizationFactor = scale;
-    } else {
-      normalizationFactor = 1.0f;
-    }
-
-    particlesDirty = true;  // グローバルなフラグをtrueに設定
-  };
-  
-  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock);
-  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml);
+    
+  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, NormalizationContext& ctx);
+  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml, const NormalizationContext& ctx);
 
   void setClumps(TrackingVector<ClumpData>&& newClumps) {
     Clumps = std::move(newClumps);

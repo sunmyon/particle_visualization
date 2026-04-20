@@ -1,7 +1,7 @@
 #pragma once
 
 #include "FileIO/snapshot_source.h"
-#include "app/ui_state.h"
+#include "app/file_format_dialog_state.h"
 
 void OpenBinaryFormatDialog(FileFormatDialogState& state,
                             const SnapshotSource& source);

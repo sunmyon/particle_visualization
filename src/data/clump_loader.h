@@ -6,6 +6,5 @@
 TrackingVector<ClumpData>
 loadClumpData(const char* fname_clump_file,
               int snapshotIndex,
-              float desiredMax,
-              float originalMax);
+              float scale_from_phys);
 #endif

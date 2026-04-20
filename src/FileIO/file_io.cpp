@@ -90,12 +90,12 @@ void FileInfo::applySelectedFilePath(const char* fullPath) {
   src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
 }
 
-void FileInfo::generateTestData(ParticleArray *P){
-  loader.generateTestData(P);
+void FileInfo::generateTestData(ParticleArray *P, NormalizationContext& normalization){
+  loader.generateTestData(P, normalization);
 }
 
-void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
-  prefetchController.loadNewSnapshot(newFileIndex, P);
+void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P, NormalizationContext& normalization){
+  prefetchController.loadNewSnapshot(newFileIndex, P, normalization);
   snapshotUpdated = true;
 }
 

@@ -7,8 +7,7 @@
 TrackingVector<ClumpData>
 loadClumpData(const char* fname_clump_file,
               int snapshotIndex,
-              float desiredMax,
-              float originalMax)
+              const float scale_from_phys)
 {
   uint32_t mask = (L_TIME | L_CLUMP_ID | L_CLUMP_NEXT_ID | L_CLUMP_SIZE | L_CLUMP_OFFSET
                    | L_CLUMP_STELLAR_COUNT | L_CLUMP_STELLAR_ID | L_CLUMP_STELLAR_MASS
@@ -36,7 +35,7 @@ loadClumpData(const char* fname_clump_file,
 
     for (int k = 0; k < 3; k++) {
       cd.originalPos[k] = in.clump_position[i * 3 + k];
-      cd.Pos[k] = cd.originalPos[k] * desiredMax / originalMax;
+      cd.Pos[k] = cd.originalPos[k] * scale_from_phys;
     }
 
     cd.density = in.clump_density[i];

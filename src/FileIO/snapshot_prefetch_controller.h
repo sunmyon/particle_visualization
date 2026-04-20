@@ -4,20 +4,22 @@
 #include "FileIO/snapshot_source.h"
 #include "FileIO/snapshot_loader.h"
 
+struct NormalizationContext;
+
 class SnapshotPrefetchController {
 public:
   SnapshotPrefetchController(SnapshotSource& source, SnapshotLoader& loader);
 
-  void loadNewSnapshot(int newFileIndex, ParticleArray* P);
+  void loadNewSnapshot(int newFileIndex, ParticleArray* P, NormalizationContext& normalization);
 
   bool isLoading() const {
     return isLoading_;
   }
 
 private:
-  bool syncLoadFirstFile(int targetFile, ParticleArray* P);
+  bool syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization);
   void asyncLoadRemainingFiles(int targetFile, int batchSize, int skipStep, int generation);
-  void loadBatch(int targetFile, int batchSize, int skipStep, ParticleArray* P);
+  void loadBatch(int targetFile, int batchSize, int skipStep, ParticleArray* P, NormalizationContext& normalization);
 
 private:
   SnapshotSource& source_;
