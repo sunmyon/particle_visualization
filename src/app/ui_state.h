@@ -111,8 +111,6 @@ struct MaskUIState {
   bool open = false;
   bool autoApply = true;
   uint64_t revision = 0;
-  
-  ParticleMaskConfig config;
 };
 
 struct ToolWindowUIState {

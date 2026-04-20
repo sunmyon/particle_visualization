@@ -2,7 +2,6 @@
 
 #include "data/header_info.h"
 #include "core/units.h"
-#include "data/particle_mask_config.h"
 
 #include "FileIO/file_format_types.h"
 
@@ -30,9 +29,6 @@ public:
 
   UnitSystem units;
 
-  ParticleMaskConfig currentMaskConfig;
-  bool enableMask = false;
-
   void setFormatMode(FileFormat form) {
     readFileFormat = form;
   }
@@ -47,15 +43,6 @@ public:
 
   void setUnit(const UnitSystem& units_input) {
     units = units_input;
-  }
-
-  void setMaskConfig(const ParticleMaskConfig& cfg) {
-    currentMaskConfig = cfg;
-    enableMask = true;
-  }
-
-  void disableMask() {
-    enableMask = false;
   }
 
   void initDefaultFormatTokens() {

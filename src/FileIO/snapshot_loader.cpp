@@ -3,6 +3,7 @@
 #include "FileIO/hdf5_reader.h"
 #include "FileIO/binary_reader.h"
 #include "core/PerfTimer.h"
+#include "app/input_filter_config.h"
 
 #include <algorithm>
 #include <cctype>
@@ -82,7 +83,7 @@ namespace {
 SnapshotLoader::SnapshotLoader(SnapshotSource& source)
   : source_(source) {}
 
-bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
+bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
   outBlock.header.UnitLength_in_cm         = source_.units.length_cm;
@@ -110,13 +111,11 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   {
     TIME_SCOPE("parse header");
 
-    if (source_.enableMask) {
-      ParticleMask pmask{source_.currentMaskConfig};
+    if (filter.enabled) {
+      ParticleMask pmask{filter.mask};
       ok = sel.reader->readRange(outBlock, 0, sel.reader->particleCount(),
                                  sel.format, &pmask);
-    }
-
-    if (!ok) {
+    }else{
       ok = sel.reader->readAll(outBlock, sel.format);
     }
   }
@@ -131,9 +130,9 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock) {
   return true;
 }
 
-bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, NormalizationContext& normalization) {
+bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
   ParticleBlock newBlock;
-  if (!loadSingleFile(targetFile, newBlock)) {
+  if (!loadSingleFile(targetFile, newBlock, filter)) {
     P->particleBlock.clear();
     std::cerr << "Failed to load first file: " << targetFile << std::endl;
     return false;
@@ -144,9 +143,9 @@ bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, No
   return true;
 }
 
-TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile) {
+TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const InputFilterConfig& filter) {
   ParticleBlock p_block;
-  loadSingleFile(indexFile, p_block);
+  loadSingleFile(indexFile, p_block, filter);
 
   TrackingVector<int> IDs;
   for (auto& p : p_block.particles) {

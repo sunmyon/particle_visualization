@@ -3,6 +3,9 @@
 #include "FileIO/snapshot_loader.h"
 #include "FileIO/snapshot_prefetch_controller.h"
 
+struct NormalizationContext;
+struct InputFilterConfig;
+
 class FileInfo{
 private:
   SnapshotSource source;
@@ -20,7 +23,7 @@ public:
     snapshotUpdated = false;
   }
   
-  void loadNewSnapshot(int newindex, ParticleArray* P, NormalizationContext& normalization);
+  void loadNewSnapshot(int newindex, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter);
   void generateTestData(ParticleArray *P, NormalizationContext& normalization);
   
   void applySelectedFilePath(const char* fullPath);
@@ -33,12 +36,8 @@ public:
     source.setUnit(units_input);
   }
 
-  void setMaskConfig(const ParticleMaskConfig& cfg){
-    source.setMaskConfig(cfg);
-  }
-
-  TrackingVector<int> getStarParticleID(int indexFile){
-    return loader.getStarParticleID(indexFile);
+  TrackingVector<int> getStarParticleID(int indexFile, const InputFilterConfig& filter){
+    return loader.getStarParticleID(indexFile, filter);
   }
 
   void setFormatMode(FileFormat form){

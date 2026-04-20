@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "FileIO/file_io.h"
+#include "app/input_filter_config.h"
 
 namespace {
   std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
@@ -94,8 +95,8 @@ void FileInfo::generateTestData(ParticleArray *P, NormalizationContext& normaliz
   loader.generateTestData(P, normalization);
 }
 
-void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P, NormalizationContext& normalization){
-  prefetchController.loadNewSnapshot(newFileIndex, P, normalization);
+void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P, NormalizationContext& normalization, const InputFilterConfig& filter){
+  prefetchController.loadNewSnapshot(newFileIndex, P, normalization, filter);
   snapshotUpdated = true;
 }
 

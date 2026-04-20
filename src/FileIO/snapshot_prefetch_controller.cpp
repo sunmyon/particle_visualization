@@ -1,12 +1,13 @@
 #include "FileIO/snapshot_prefetch_controller.h"
 
 #include "core/PerfTimer.h"
+#include "app/input_filter_config.h"
 
 SnapshotPrefetchController::SnapshotPrefetchController(SnapshotSource& source,
                                                        SnapshotLoader& loader)
   : source_(source), loader_(loader) {}
 
-void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, NormalizationContext& normalization) {
+void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
   bool foundInCache = false;
@@ -22,7 +23,7 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
 
   if (!foundInCache) {
     if (!isLoading_) {
-      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, normalization);
+      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, normalization, filter);
     }
   }
 
@@ -35,8 +36,8 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
 #endif
 }
 
-bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization) {
-  if (!loader_.loadFirstFileIntoArray(targetFile, P, normalization)) {
+bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
+  if (!loader_.loadFirstFileIntoArray(targetFile, P, normalization, filter)) {
     return false;
   }
 
@@ -49,14 +50,16 @@ bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray
 void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
                                                          int batchSize,
                                                          int skipStep,
-                                                         int generation) {
+                                                         int generation,
+							 const InputFilterConfig& filter
+							 ) {
   TrackingVector<std::pair<int, ParticleBlock>> loaded;
 
   for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;
     ParticleBlock block;
 
-    if (loader_.loadSingleFile(fileNumber, block)) {
+    if (loader_.loadSingleFile(fileNumber, block, filter)) {
       loaded.push_back({fileNumber, std::move(block)});
     }
   }
@@ -75,20 +78,21 @@ void SnapshotPrefetchController::loadBatch(int targetFile,
                                            int batchSize,
                                            int skipStep,
                                            ParticleArray* P,
-					   NormalizationContext& normalization) {
+					   NormalizationContext& normalization,
+					   const InputFilterConfig& filter) {
   const int gen = ++prefetch_.generation;
   prefetch_.running = true;
   isLoading_ = true;
 
-  if (!syncLoadFirstFile(targetFile, P, normalization)) {
+  if (!syncLoadFirstFile(targetFile, P, normalization, filter)) {
     prefetch_.running = false;
     isLoading_ = false;
     return;
   }
 
   prefetch_.future = std::async(std::launch::async,
-                                [this, targetFile, batchSize, skipStep, gen]() {
-                                  asyncLoadRemainingFiles(targetFile, batchSize, skipStep, gen);
+                                [this, targetFile, batchSize, skipStep, gen, filter]() {
+                                  asyncLoadRemainingFiles(targetFile, batchSize, skipStep, gen, filter);
                                   if (prefetch_.generation.load() == gen) {
                                     prefetch_.running = false;
                                     isLoading_ = false;

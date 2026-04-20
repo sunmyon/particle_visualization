@@ -64,6 +64,7 @@ static void DrawSettingsPanels(const AppDataState& data,
 
 static void DrawClumpPanels(const AppDataState& data,
 			    NormalizationContext& normalization,
+			    const InputFilterConfig& filter,
                             AppServices& services,
 			    CameraContext& camera)
 {
@@ -84,7 +85,8 @@ static void DrawClumpPanels(const AppDataState& data,
                                          services.projectionMap2D.get(),
                                          *data.fileInfo,
 					 camera,
-					 normalization);
+					 normalization,
+					 filter);
 #endif
 }
 
@@ -99,14 +101,12 @@ static void DrawFileDialogPanels(FileInfo& file,
 #endif
 }
 
-static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& data)
+static void ApplyMaskIfRequested(MaskUIState& mask, InputFilterConfig& inputFilter)
 {
-  const bool applied = DrawMaskWindow(tools.mask);
+  const bool applied = DrawMaskWindow(mask, inputFilter.mask);
   if (!applied) {
     return;
   }
-
-  data.fileInfo->setMaskConfig(tools.mask.config);
 }
 
 
@@ -135,9 +135,9 @@ static void DrawToolWindows(const AppDataState& data,
                             AnalysisDerivedState& analysis,
                             AppServices& services)
 {
-  DrawClumpPanels(data, runtime.settings.normalization, services, camera);
+  DrawClumpPanels(data, runtime.settings.normalization, runtime.settings.inputFilter, services, camera);
   DrawFileDialogPanels(*data.fileInfo, tools);
-  ApplyMaskIfRequested(tools, data);
+  ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
   DrawAuxiliaryPanels(tools, data, camera);
 
   DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
@@ -849,7 +849,7 @@ static void UpdateRenderResources(ParticleArray& particles,
 
 static void ExecuteAnalysisRequests(AppDataState& data,
                                     AppRuntimeState& runtime,
-                                    AppDerivedState& derived,
+                                    AnalysisDerivedState& analysis,
                                     AppServices& services,
 				    CameraContext& camera)
 {
@@ -858,37 +858,39 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				   runtime.settings.normalization,
                                    *services.diskFinder,
                                    runtime.analysis.disk,
-                                   derived.analysis.disk);
+                                   analysis.disk);
   
   ExecuteDiskBatchRequest(*data.particles,
 			  runtime.settings.normalization,
+			  runtime.settings.inputFilter,
                           *data.fileInfo,
                           *services.diskFinder,
                           runtime.render.disks,
                           runtime.analysis.diskBatch,
-                          derived.analysis.diskBatch);
+                          analysis.diskBatch);
 
   ExecuteSingleEllipsoidAnalysisRequest(*data.particles,
                                         *services.ellipsoid,
                                         runtime.analysis.ellipsoid,
-                                        derived.analysis.ellipsoid);
+                                        analysis.ellipsoid);
   
   ExecuteEllipsoidBatchRequest(*data.particles,
 			       runtime.settings.normalization,
+			       runtime.settings.inputFilter,
                                *data.fileInfo,
                                *services.ellipsoid,
                                runtime.analysis.ellipsoidBatch,
-                               derived.analysis.ellipsoidBatch);
+                               analysis.ellipsoidBatch);
 #endif
 
 #ifdef STREAM_LINE
   ExecuteStreamlinePreviewRequest(runtime.analysis.streamlinePreview,
-				  derived.analysis.streamlinePreview);
+				  analysis.streamlinePreview);
   
   ExecuteStreamlineBuildRequest(*data.particles,
 				*services.streamLine,
 				runtime.analysis.streamlineBuild,
-				derived.analysis.streamlineBuild);
+				analysis.streamlineBuild);
 #endif
 
   ExecuteStellarDensityRequest(*data.particles,
@@ -898,30 +900,33 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #ifdef ISO_CONTOUR
   ExecuteIsoContourRequest(*data.particles,
 			   runtime.analysis.isoContour,
-			   derived.analysis.isoContour,
+			   analysis.isoContour,
 			   runtime.render.isocontour);
 #endif
 
 #ifdef CLUMP_DATA_READ
   ExecuteClumpBatchRequest(*data.particles,
 			   runtime.settings.normalization,
+			   runtime.settings.inputFilter,
 			   *data.fileInfo,
 			   *services.clumpFind,
 			   runtime.analysis.clumpBatch,
-			   derived.analysis.clumpBatch);
+			   analysis.clumpBatch);
 #endif
   
   ExecuteProjectionMovieRequest(*data.particles,
 				runtime.settings.normalization,
+				runtime.settings.inputFilter,
 				*data.fileInfo,
 				*services.projectionMap2D,
 				camera,
 				runtime.analysis.projectionMovie,
-				derived.analysis.projectionMovie);
+				analysis.projectionMovie);
 
   ExecuteFileNavigationRequests(*data.fileInfo,
 				*data.particles,
 				runtime.settings.normalization,
+				runtime.settings.inputFilter,
 				runtime.settings.fileNavigation);
 
   ExecuteCameraPlacementRequests(*data.particles,
@@ -962,7 +967,7 @@ void RunFrame(AppState& app,
   
   UpdateExternalInputs(app.services, *app.data.particles);
 
-  ExecuteAnalysisRequests(app.data, app.runtime, app.derived, app.services, app.view.camera);
+  ExecuteAnalysisRequests(app.data, app.runtime, app.derived.analysis, app.services, app.view.camera);
   
   RebuildDerivedState(*app.data.particles,
                       app.view.camera,

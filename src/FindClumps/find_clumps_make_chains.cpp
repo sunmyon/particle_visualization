@@ -7,6 +7,7 @@
 #include "interaction/camera.h"
 #include "data/clump_loader.h"
 #include "app/normalization_config.h"
+#include "app/input_filter_config.h"
 
 #include <imgui.h>
 
@@ -550,7 +551,7 @@ TrackingVector<FindClump::clump_properties> FindClump::calc_chain_properties(Tra
 }
 
 
-void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization){
+void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization, const InputFilterConfig& filter){
   if(!flagShowWindowClumpChainList)
     return;
 
@@ -699,7 +700,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	pos[1] = ch[i_snapshot]->pos[1] * scale_from_phys;
 	pos[2] = ch[i_snapshot]->pos[2] * scale_from_phys;
 	
-	fileinfo.loadNewSnapshot(snapshot, P, normalization);
+	fileinfo.loadNewSnapshot(snapshot, P, normalization, filter);
 	    
 	float dist = glm::length(cam.cameraPos - cam.cameraTarget);
 	glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -834,7 +835,7 @@ void FindClump::showClumpChainList(ParticleArray *P, ProjectionMapGenerator *pro
 	    flag_use_amvector = 1;
 
 	  int snapshot = src.initialIndex + (selected_chain.first_snapshot + i) * src.skipStep;	  
-	  fileinfo.loadNewSnapshot(snapshot, P, normalization);
+	  fileinfo.loadNewSnapshot(snapshot, P, normalization, filter);
 	
 	  float pos_center[3];
 	  float scale_from_phys = normalization.toNormalizedScale();	    

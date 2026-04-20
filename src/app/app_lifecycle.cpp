@@ -105,7 +105,7 @@ void LoadInitialData(AppState& app)
                     app.data.particles->units,
 		    app.runtime.settings.normalization.desiredMax,
                     app.view.particleVisual,
-                    app.ui.toolWindows.mask.config);
+                    app.runtime.settings.inputFilter.mask);
   }
 
   app.data.particles->units.updateDerived();
@@ -114,7 +114,7 @@ void LoadInitialData(AppState& app)
   const auto& src = app.data.fileInfo->getSource();
   
   const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.runtime.settings.normalization);
+  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.runtime.settings.normalization, app.runtime.settings.inputFilter);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
@@ -134,7 +134,7 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
                       app.data.particles->units,
 		      app.runtime.settings.normalization.desiredMax,
                       app.view.particleVisual,
-                      app.ui.toolWindows.mask.config);
+                      app.runtime.settings.inputFilter.mask);
   SaveConfigFile("config.txt", config);
 
 #ifndef NONATIVEFILEDIALOG

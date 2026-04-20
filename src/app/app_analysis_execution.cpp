@@ -88,6 +88,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
 			     NormalizationContext& normalization,
+			     const InputFilterConfig& filter,
 			     FileInfo& fileInfo,
 			     DiskRadiusFinder& diskFinder,
 			     const RenderLayerState& diskRenderState,
@@ -175,7 +176,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
 
     for (int istep = 0; istep < 100; ++istep) {
       int snap = snap_init + src.skipStep * istep;
-      fileInfo.loadNewSnapshot(snap, &particles, normalization);
+      fileInfo.loadNewSnapshot(snap, &particles, normalization, filter);
 
       if (particles.particleBlock.particles.empty()) {
         continue;
@@ -341,6 +342,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
 				  NormalizationContext& normalization,
+				  const InputFilterConfig& filter,
                                   FileInfo& fileInfo,
                                   EllipseFitter& ellipsoidFitter,
                                   EllipsoidAnalysisBatchRequestState& request,
@@ -394,7 +396,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
       continue;
     }
 
-    fileInfo.loadNewSnapshot(r.snap, &particles, normalization);
+    fileInfo.loadNewSnapshot(r.snap, &particles, normalization, filter);
     if (particles.particleBlock.particles.empty()) {
       continue;
     }
@@ -583,7 +585,8 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
 #ifdef CLUMP_DATA_READ
 #include "FindClumps/find_clumps.h" 
 void ExecuteClumpBatchRequest(ParticleArray& particles,
-			      NormalizationContext& normalization,			      
+			      NormalizationContext& normalization,
+			      const InputFilterConfig& filter,
                               FileInfo& fileInfo,
                               FindClump& clumpFind,
                               ClumpBatchRequestState& request,
@@ -614,7 +617,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
     const int newFileIndex =
       src.initialIndex + src.currentStep * src.skipStep;
 
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
 
     if (particles.particleBlock.particles.empty()) {
       continue;
@@ -646,6 +649,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
 				   NormalizationContext& normalization,
+				   const InputFilterConfig& filter,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
                                    const CameraContext& camera,
@@ -687,7 +691,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       const int newFileIndex =
         src.initialIndex + src.currentStep * src.skipStep;
 
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
       if (particles.particleBlock.particles.empty()) {
         continue;
       }
@@ -826,7 +830,8 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   ParticleArray& particles,
-				   NormalizationContext& normalization,				   
+				   NormalizationContext& normalization,
+				   const InputFilterConfig& filter,
 				   FileNavigationRuntimeState& rt)
 {
   auto& req = rt.request;
@@ -845,7 +850,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
         src.initialIndex + src.currentStep * src.skipStep;
 
       if (!fileInfo.isLoading()) {
-	fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+	fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
       }
 
       src.currentFileIndex = newFileIndex;
@@ -857,7 +862,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
   if (req.loadSelectedSnapshotRequested) {
     int newFileIndex =
       src.initialIndex + src.currentStep * src.skipStep;
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
     req.loadSelectedSnapshotRequested = false;
   }
 
@@ -866,7 +871,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
       src.currentStep--;
       int newFileIndex =
         src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
     }
     req.loadPreviousRequested = false;
   }
@@ -875,7 +880,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
     src.currentStep++;
     int newFileIndex =
       src.initialIndex + src.currentStep * src.skipStep;
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
     req.loadNextRequested = false;
   }
 
@@ -883,7 +888,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
     if (!fileInfo.isLoading()) {
       int newFileIndex =
         src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
       src.currentFileIndex = newFileIndex;
     }
     req.loadBatchRequested = false;
@@ -893,7 +898,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
     if (!fileInfo.isLoading()) {
       int newFileIndex =
         src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization);
+      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
       src.currentFileIndex = newFileIndex;
     }
     req.reloadRequested = false;

@@ -10,6 +10,7 @@ class FileInfo;
 class ProjectionMapGenerator;
 struct SnapshotSource;
 struct NormalizationContext;
+struct InputFilterConfig;
 
 class StructureNode {
 public:
@@ -406,7 +407,7 @@ public:
   }
   
   void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname);
-  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization);  
+  void showClumpChainList(ParticleArray *P, ProjectionMapGenerator *proj, FileInfo& fileinfo, CameraContext& cam, NormalizationContext& normalization, const InputFilterConfig& filter);  
 };
 
 

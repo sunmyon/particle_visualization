@@ -1413,7 +1413,7 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
 #endif
 }
 
-bool DrawMaskWindow(MaskUIState& state) {
+bool DrawMaskWindow(MaskUIState& state, ParticleMaskConfig& mask) {
   if (!state.open) return false;
 
   bool changed = false;
@@ -1425,33 +1425,33 @@ bool DrawMaskWindow(MaskUIState& state) {
     return false;
   }
 
-  changed |= ImGui::Checkbox("Enable Sphere", &state.config.enableSphere);
-  changed |= ImGui::DragFloat3("Center", state.config.center, 0.1f);
-  changed |= ImGui::DragFloat("Radius", &state.config.radius, 0.1f, 0.0f, 1e30f);
+  changed |= ImGui::Checkbox("Enable Sphere", &mask.enableSphere);
+  changed |= ImGui::DragFloat3("Center", mask.center, 0.1f);
+  changed |= ImGui::DragFloat("Radius", &mask.radius, 0.1f, 0.0f, 1e30f);
 
-  int om = (int)state.config.outsideMode;
+  int om = (int)mask.outsideMode;
   changed |= ImGui::Combo("Outside Mode", &om, "Drop\0Thin\0KeepAll\0");
-  state.config.outsideMode = (ParticleMaskConfig::OutsideMode)om;
+  mask.outsideMode = (ParticleMaskConfig::OutsideMode)om;
 
-  if (state.config.outsideMode == ParticleMaskConfig::OutsideMode::Thin) {
-    changed |= ImGui::DragInt("Outside Stride", &state.config.outsideStride, 1.0f, 1, 1000000);
+  if (mask.outsideMode == ParticleMaskConfig::OutsideMode::Thin) {
+    changed |= ImGui::DragInt("Outside Stride", &mask.outsideStride, 1.0f, 1, 1000000);
   }
 
   ImGui::Separator();
   ImGui::Text("Particle Type Policy");
   const char* typeNames[6] = {"Gas(0)","DM(1)","Type2","Type3","Star(4)","BH(5)"};
   for (int t=0; t<6; ++t) {
-    int tm = (int)state.config.typeMode[t];
+    int tm = (int)mask.typeMode[t];
     ImGui::PushID(t);
     changed |= ImGui::Combo(typeNames[t], &tm, "Off\0On (NoThin)\0On (ThinOK)\0");
-    state.config.typeMode[t] = (ParticleMaskConfig::TypeMode)tm;
+    mask.typeMode[t] = (ParticleMaskConfig::TypeMode)tm;
     ImGui::PopID();
   }
 
   ImGui::Separator();
-  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &state.config.enableMaxParticles);
-  if (state.config.enableMaxParticles) {
-    changed |= ImGui::DragInt("Max Particles", &state.config.maxParticles, 1000.0f, 1, 1000000000);
+  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &mask.enableMaxParticles);
+  if (mask.enableMaxParticles) {
+    changed |= ImGui::DragInt("Max Particles", &mask.maxParticles, 1000.0f, 1, 1000000000);
   }
 
   ImGui::Separator();

@@ -44,7 +44,7 @@ void OpenHaloesUI(HaloesUIState& state);
 void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo, NormalizationContext& normalization);
 
 void OpenMaskUI(MaskUIState& state);
-bool DrawMaskWindow(MaskUIState& state);
+bool DrawMaskWindow(MaskUIState& ui, ParticleMaskConfig& mask);
 
 struct ProjectionPreviewUIState {
   void* textureId = nullptr;   // ImTextureID 用
