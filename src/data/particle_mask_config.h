@@ -1,3 +1,4 @@
+#pragma once 
 struct ParticleMaskConfig {
   bool  enableSphere = false;
   float center[3] = {0,0,0};

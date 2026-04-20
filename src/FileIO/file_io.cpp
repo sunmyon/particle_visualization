@@ -99,9 +99,3 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
   snapshotUpdated = true;
 }
 
-void FileInfo::drawDialogs() {
-  DrawBinaryFormatDialog(formatDialog, source);
-#ifdef HAVE_HDF5
-  DrawHDF5FormatDialog(formatDialog, source);
-#endif
-}

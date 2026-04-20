@@ -1,6 +1,10 @@
 #pragma once
 #include "data/data_type.h"
 
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
 
 enum class FileFormat {
   Auto,       // 拡張子から自動判別 (従来の動作)

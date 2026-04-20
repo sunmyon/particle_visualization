@@ -2,14 +2,12 @@
 #include "FileIO/snapshot_source.h"
 #include "FileIO/snapshot_loader.h"
 #include "FileIO/snapshot_prefetch_controller.h"
-#include "FileIO/file_format_dialog.h"
 
 class FileInfo{
 private:
   SnapshotSource source;
   SnapshotLoader loader;
   SnapshotPrefetchController prefetchController;
-  FileFormatDialogState formatDialog;
     
 public:
   FileInfo() : loader(source), prefetchController(source, loader) {}
@@ -25,17 +23,7 @@ public:
   void loadNewSnapshot(int newindex, ParticleArray* P);
   void generateTestData(ParticleArray *P);
   
-#ifdef HAVE_HDF5
-  void showHDF5Dialog(void){
-    formatDialog.openHDF5(source);
-  };
-#endif
-
-  void showDialog(void){
-    formatDialog.openBinary(source);
-  };
   void applySelectedFilePath(const char* fullPath);
-  void drawDialogs();
   
 #ifdef HAVE_HDF5
   HaloCatalog readHaloCatalogFromHDF5(char *fname, bool loadIDs /*=true*/);

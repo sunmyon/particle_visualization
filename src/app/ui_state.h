@@ -4,6 +4,7 @@
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "data/particle_mask_config.h"
+#include "FileIO/file_format_dialog.h"
 
 struct RadialProfileUIState {
   bool open = false;
@@ -121,4 +122,5 @@ struct ToolWindowUIState {
   TopParticlesUIState topParticles;
   HaloesUIState haloes;
   MaskUIState mask;
+  FileFormatDialogState fileFormatDialog;
 };

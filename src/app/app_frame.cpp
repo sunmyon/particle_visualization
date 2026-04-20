@@ -82,9 +82,15 @@ static void DrawClumpPanels(const AppDataState& data,
 #endif
 }
 
-static void DrawFileDialogPanels(const AppDataState& data)
+static void DrawFileDialogPanels(const AppDataState& data,
+                                 AppUIState& ui)
 {
-  data.fileInfo->drawDialogs();
+  DrawBinaryFormatDialog(ui.toolWindows.fileFormatDialog,
+                         data.fileInfo->editSource());
+#ifdef HAVE_HDF5
+  DrawHDF5FormatDialog(ui.toolWindows.fileFormatDialog,
+                       data.fileInfo->editSource());
+#endif
 }
 
 static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& data)
@@ -126,7 +132,7 @@ static void DrawToolWindows(const AppDataState& data,
   auto &tools = ui.toolWindows;
   
   DrawClumpPanels(data, services, view.camera);
-  DrawFileDialogPanels(data);
+  DrawFileDialogPanels(data, ui);
   ApplyMaskIfRequested(tools, data);
   DrawAuxiliaryPanels(tools, data, view);
 

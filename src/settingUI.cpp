@@ -249,7 +249,12 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
   }
 
   if (ImGui::Button("Edit Data Format")) {
-    rt.request.openFormatDialogRequested = true;
+#ifdef READ_HDF5
+    if(sourcer.useHDF5)
+      tools.fileFormatDialog.openHDF5(fileInfo.getSource());
+    else
+#endif
+      tools.fileFormatDialog.openBinary(fileInfo.getSource());    
   }
 
   static const char* FileFormatNames[] = {

@@ -890,17 +890,6 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
     req.reloadRequested = false;
   }
 
-  if (req.openFormatDialogRequested) {
-#ifdef HAVE_HDF5
-    if (src.useHDF5 || fileInfo.getFormatMode() == FileFormat::HDF5)
-      fileInfo.showHDF5Dialog();
-    else
-#endif
-      fileInfo.showDialog();
-
-    req.openFormatDialogRequested = false;
-  }
-
   if (req.generateTestDataRequested) {
     fileInfo.generateTestData(&particles);
     req.generateTestDataRequested = false;

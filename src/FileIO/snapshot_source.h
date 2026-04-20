@@ -2,7 +2,7 @@
 
 #include "data/header_info.h"
 #include "core/units.h"
-#include "app/ui_state.h"
+#include "data/particle_mask_config.h"
 
 #include "FileIO/file_format_types.h"
 
