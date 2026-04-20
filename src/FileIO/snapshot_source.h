@@ -30,7 +30,7 @@ public:
 
   UnitSystem units;
 
-  MaskUIState currentMaskConfig;
+  ParticleMaskConfig currentMaskConfig;
   bool enableMask = false;
 
   void setFormatMode(FileFormat form) {
@@ -49,7 +49,7 @@ public:
     units = units_input;
   }
 
-  void setMaskConfig(const MaskUIState& cfg) {
+  void setMaskConfig(const ParticleMaskConfig& cfg) {
     currentMaskConfig = cfg;
     enableMask = true;
   }

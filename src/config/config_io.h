@@ -12,10 +12,10 @@ bool loadConfig(const std::string& filename,
                 ParticleArray* P,
                 FileInfo* fileInfo,
                 ParticleVisualConfig* visualCfg,
-                MaskUIState* outMaskState = nullptr);
+                ParticleMaskConfig* outMaskState = nullptr);
 
 bool saveConfig(const std::string& filename,
                 const ParticleArray* P,
                 const FileInfo* fileInfo,
                 const ParticleVisualConfig* visualCfg,
-                const MaskUIState* maskState = nullptr);
+                const ParticleMaskConfig* maskState = nullptr);

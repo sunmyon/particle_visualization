@@ -2,18 +2,14 @@
 #include "FileIO/snapshot_source.h"
 #include "FileIO/snapshot_loader.h"
 #include "FileIO/snapshot_prefetch_controller.h"
+#include "FileIO/file_format_dialog.h"
 
 class FileInfo{
 private:
   SnapshotSource source;
   SnapshotLoader loader;
   SnapshotPrefetchController prefetchController;
-  
-#ifdef HAVE_HDF5
-  bool showHDF5MappingDialog = false;
-#endif
-  bool showFormatDialog = false;
-  std::vector<FieldSpec> formatTokensEdit;
+  FileFormatDialogState formatDialog;
     
 public:
   FileInfo() : loader(source), prefetchController(source, loader) {}
@@ -30,15 +26,13 @@ public:
   void generateTestData(ParticleArray *P);
   
 #ifdef HAVE_HDF5
-  void showHDF5Dialog(void){    
-    showHDF5MappingDialog = true;
-    formatTokensEdit = source.formatTokens_hdf5;
+  void showHDF5Dialog(void){
+    formatDialog.openHDF5(source);
   };
 #endif
-  
+
   void showDialog(void){
-    showFormatDialog = true;
-    formatTokensEdit = source.formatTokens;
+    formatDialog.openBinary(source);
   };
   void applySelectedFilePath(const char* fullPath);
   void drawDialogs();
@@ -51,7 +45,7 @@ public:
     source.setUnit(units_input);
   }
 
-  void setMaskConfig(const MaskUIState& cfg){
+  void setMaskConfig(const ParticleMaskConfig& cfg){
     source.setMaskConfig(cfg);
   }
 

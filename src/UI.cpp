@@ -1423,33 +1423,33 @@ bool DrawMaskWindow(MaskUIState& state) {
     return false;
   }
 
-  changed |= ImGui::Checkbox("Enable Sphere", &state.enableSphere);
-  changed |= ImGui::DragFloat3("Center", state.center, 0.1f);
-  changed |= ImGui::DragFloat("Radius", &state.radius, 0.1f, 0.0f, 1e30f);
+  changed |= ImGui::Checkbox("Enable Sphere", &state.config.enableSphere);
+  changed |= ImGui::DragFloat3("Center", state.config.center, 0.1f);
+  changed |= ImGui::DragFloat("Radius", &state.config.radius, 0.1f, 0.0f, 1e30f);
 
-  int om = (int)state.outsideMode;
+  int om = (int)state.config.outsideMode;
   changed |= ImGui::Combo("Outside Mode", &om, "Drop\0Thin\0KeepAll\0");
-  state.outsideMode = (MaskUIState::OutsideMode)om;
+  state.config.outsideMode = (ParticleMaskConfig::OutsideMode)om;
 
-  if (state.outsideMode == MaskUIState::OutsideMode::Thin) {
-    changed |= ImGui::DragInt("Outside Stride", &state.outsideStride, 1.0f, 1, 1000000);
+  if (state.config.outsideMode == ParticleMaskConfig::OutsideMode::Thin) {
+    changed |= ImGui::DragInt("Outside Stride", &state.config.outsideStride, 1.0f, 1, 1000000);
   }
 
   ImGui::Separator();
   ImGui::Text("Particle Type Policy");
   const char* typeNames[6] = {"Gas(0)","DM(1)","Type2","Type3","Star(4)","BH(5)"};
   for (int t=0; t<6; ++t) {
-    int tm = (int)state.typeMode[t];
+    int tm = (int)state.config.typeMode[t];
     ImGui::PushID(t);
     changed |= ImGui::Combo(typeNames[t], &tm, "Off\0On (NoThin)\0On (ThinOK)\0");
-    state.typeMode[t] = (MaskUIState::TypeMode)tm;
+    state.config.typeMode[t] = (ParticleMaskConfig::TypeMode)tm;
     ImGui::PopID();
   }
 
   ImGui::Separator();
-  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &state.enableMaxParticles);
-  if (state.enableMaxParticles) {
-    changed |= ImGui::DragInt("Max Particles", &state.maxParticles, 1000.0f, 1, 1000000000);
+  changed |= ImGui::Checkbox("Enable Max Particles (ID thinning)", &state.config.enableMaxParticles);
+  if (state.config.enableMaxParticles) {
+    changed |= ImGui::DragInt("Max Particles", &state.config.maxParticles, 1000.0f, 1, 1000000000);
   }
 
   ImGui::Separator();

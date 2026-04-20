@@ -9,16 +9,16 @@ struct CoreSample {
 
 class ParticleMask {
 public:
-  explicit ParticleMask(MaskUIState cfg): cfg_(cfg){ rebuildNeeds_(); }
+  explicit ParticleMask(ParticleMaskConfig cfg): cfg_(cfg){ rebuildNeeds_(); }
 
   bool needPos() const { return need_pos_; }
   bool needID()  const { return need_id_; }
 
   bool typeEnabled(int t) const {
-    return cfg_.typeMode[t] != MaskUIState::TypeMode::Off;
+    return cfg_.typeMode[t] != ParticleMaskConfig::TypeMode::Off;
   }
   bool typeThinOK(int t) const {
-    return cfg_.typeMode[t] == MaskUIState::TypeMode::On_ThinOK;
+    return cfg_.typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK;
   }
 
   // thin 候補数（= ThinOK の粒子数）から stride を決める
@@ -45,8 +45,8 @@ public:
       const bool inside = (dx*dx+dy*dy+dz*dz) <= r2;
 
       if(!inside){
-        if(cfg_.outsideMode == MaskUIState::OutsideMode::Drop) return false;
-        if(cfg_.outsideMode == MaskUIState::OutsideMode::Thin){
+        if(cfg_.outsideMode == ParticleMaskConfig::OutsideMode::Drop) return false;
+        if(cfg_.outsideMode == ParticleMaskConfig::OutsideMode::Thin){
           if(!keep_by_stride_(c.id, cfg_.outsideStride)) return false;
         }
       }
@@ -65,17 +65,17 @@ public:
     if (cfg_.enableMaxParticles && cfg_.maxParticles > 0) return true;
     // type off が一つでもあれば active
     for (int t=0; t<6; ++t) {
-      if (cfg_.typeMode[t] == MaskUIState::TypeMode::Off) return true;
+      if (cfg_.typeMode[t] == ParticleMaskConfig::TypeMode::Off) return true;
     }
     // sphereがONのときのみoutsideModeが意味を持つのでここでは見ない
     return false;
   }
   
   uint64_t idStride() const { return id_stride_; }
-  const MaskUIState& config() const { return cfg_; }
+  const ParticleMaskConfig& config() const { return cfg_; }
 
 private:
-  MaskUIState cfg_;
+  ParticleMaskConfig cfg_;
   uint64_t id_stride_ = 1;
 
   bool need_pos_ = false;
@@ -83,7 +83,7 @@ private:
 
   void rebuildNeeds_(){
     need_pos_ = cfg_.enableSphere;
-    const bool need_id_for_outside = (cfg_.enableSphere && cfg_.outsideMode==MaskUIState::OutsideMode::Thin);
+    const bool need_id_for_outside = (cfg_.enableSphere && cfg_.outsideMode==ParticleMaskConfig::OutsideMode::Thin);
     const bool need_id_for_limit   = (cfg_.enableMaxParticles && cfg_.maxParticles>0);
     need_id_ = need_id_for_outside || need_id_for_limit;
   }

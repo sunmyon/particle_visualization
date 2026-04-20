@@ -4,7 +4,6 @@
 #include <cstring>
 
 #include "FileIO/file_io.h"
-#include "FileIO/file_format_dialog.h"
 
 namespace {
   std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
@@ -101,8 +100,8 @@ void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P){
 }
 
 void FileInfo::drawDialogs() {
-  DrawBinaryFormatDialog(showFormatDialog, formatTokensEdit, source);
+  DrawBinaryFormatDialog(formatDialog, source);
 #ifdef HAVE_HDF5
-  DrawHDF5FormatDialog(showHDF5MappingDialog, formatTokensEdit, source);
+  DrawHDF5FormatDialog(formatDialog, source);
 #endif
 }

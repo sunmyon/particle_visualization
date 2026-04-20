@@ -1,26 +1,25 @@
 #include "FileIO/file_format_dialog.h"
 #include <imgui.h>
 
-void DrawBinaryFormatDialog(bool& showDialog,
-                            std::vector<FieldSpec>& formatTokensEdit,
+void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             SnapshotSource& source) {
-  if (!showDialog) return;
+  if (!state.showFormatDialog) return;
 
   ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
 
-  if(!ImGui::Begin("Edit Data Format", &showDialog)){
+  if(!ImGui::Begin("Edit Data Format", &state.showFormatDialog)){
     ImGui::End();
     return;
   }
 
-  for (size_t i = 0; i < formatTokensEdit.size(); i++) {
+  for (size_t i = 0; i < state.formatTokensEdit.size(); i++) {
     ImGui::PushID((int)i);
 
     char buf[128];
     std::snprintf(buf, sizeof(buf), "%s, %s, count=%d",
-                  GetFieldKeyDisplayName(formatTokensEdit[i].key),
-                  GetDataTypeDisplayName(formatTokensEdit[i].type),
-                  formatTokensEdit[i].count);
+                  GetFieldKeyDisplayName(state.formatTokensEdit[i].key),
+                  GetDataTypeDisplayName(state.formatTokensEdit[i].type),
+                  state.formatTokensEdit[i].count);
 
     if (ImGui::Selectable(buf)) {
     }
@@ -56,50 +55,50 @@ void DrawBinaryFormatDialog(bool& showDialog,
         IM_ASSERT(payload->DataSize == sizeof(int));
         int srcIndex = *(const int*)payload->Data;
         if (srcIndex != dropIndex && srcIndex != dropIndex - 1) {
-          FieldSpec token = formatTokensEdit[srcIndex];
-          formatTokensEdit.erase(formatTokensEdit.begin() + srcIndex);
+          FieldSpec token = state.formatTokensEdit[srcIndex];
+          state.formatTokensEdit.erase(state.formatTokensEdit.begin() + srcIndex);
           if (srcIndex < dropIndex)
             dropIndex--;
-          formatTokensEdit.insert(formatTokensEdit.begin() + dropIndex, token);
+          state.formatTokensEdit.insert(state.formatTokensEdit.begin() + dropIndex, token);
         }
       }
       ImGui::EndDragDropTarget();
     }
 
     if (ImGui::BeginCombo("##fieldKeyCombo",
-                          GetFieldKeyDisplayName(formatTokensEdit[i].key))) {
+                          GetFieldKeyDisplayName(state.formatTokensEdit[i].key))) {
       for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
         FieldKey key = kAvailableFieldKeys[n];
-        bool is_selected = (formatTokensEdit[i].key == key);
+        bool is_selected = (state.formatTokensEdit[i].key == key);
 
         if (ImGui::Selectable(GetFieldKeyDisplayName(key), is_selected)) {
-          formatTokensEdit[i].key = key;
-          ApplyDefaultFieldSpec(formatTokensEdit[i]);
+          state.formatTokensEdit[i].key = key;
+          ApplyDefaultFieldSpec(state.formatTokensEdit[i]);
         }
         if (is_selected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
     }
 
-    if (ImGui::BeginCombo("Type", GetDataTypeDisplayName(formatTokensEdit[i].type))) {
+    if (ImGui::BeginCombo("Type", GetDataTypeDisplayName(state.formatTokensEdit[i].type))) {
       for (int n = 0; n < kNumDataTypeChoices; ++n) {
         DataType type = kDataTypeChoices[n].type;
-        bool is_selected = (formatTokensEdit[i].type == type);
+        bool is_selected = (state.formatTokensEdit[i].type == type);
 
         if (ImGui::Selectable(kDataTypeChoices[n].name, is_selected)) {
-          formatTokensEdit[i].type = type;
+          state.formatTokensEdit[i].type = type;
         }
         if (is_selected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
     }
 
-    ImGui::InputInt("Count", &formatTokensEdit[i].count);
-    if (formatTokensEdit[i].count < 0)
-      formatTokensEdit[i].count = 0;
+    ImGui::InputInt("Count", &state.formatTokensEdit[i].count);
+    if (state.formatTokensEdit[i].count < 0)
+      state.formatTokensEdit[i].count = 0;
 
     if (ImGui::Button("Delete")) {
-      formatTokensEdit.erase(formatTokensEdit.begin() + i);
+      state.formatTokensEdit.erase(state.formatTokensEdit.begin() + i);
       ImGui::PopID();
       i--;
       continue;
@@ -112,28 +111,27 @@ void DrawBinaryFormatDialog(bool& showDialog,
     FieldSpec newToken;
     newToken.key = FieldKey::Dummy;
     ApplyDefaultFieldSpec(newToken);
-    formatTokensEdit.push_back(newToken);
+    state.formatTokensEdit.push_back(newToken);
   }
   if (ImGui::Button("OK")) {
-    source.formatTokens = formatTokensEdit;
-    showDialog = false;
+    source.formatTokens = state.formatTokensEdit;
+    state.showFormatDialog = false;
   }
   ImGui::SameLine();
   if (ImGui::Button("Cancel")) {
-    showDialog = false;
+    state.showFormatDialog = false;
   }
   ImGui::End();
 }
 
 #ifdef HAVE_HDF5
-void DrawHDF5FormatDialog(bool& showDialog,
-                          std::vector<FieldSpec>& formatTokensEdit,
+void DrawHDF5FormatDialog(FileFormatDialogState& state,
                           SnapshotSource& source) {
-  if (!showDialog) return;
+  if (!state.showHDF5MappingDialog) return;
 
   ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
 
-  if(!ImGui::Begin("Edit HDF5 Data Format", &showDialog)){
+  if(!ImGui::Begin("Edit HDF5 Data Format", &state.showHDF5MappingDialog)){
     ImGui::End();
     return;
   }
@@ -148,7 +146,7 @@ void DrawHDF5FormatDialog(bool& showDialog,
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
     ImGui::TableHeadersRow();
 
-    for (int i = 0; i < (int)formatTokensEdit.size(); ++i) {
+    for (int i = 0; i < (int)state.formatTokensEdit.size(); ++i) {
       ImGui::PushID(i);
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
@@ -156,14 +154,14 @@ void DrawHDF5FormatDialog(bool& showDialog,
 
       ImGui::TableNextColumn();
       if (ImGui::BeginCombo("##fieldKeyCombo",
-                            GetFieldKeyDisplayName(formatTokensEdit[i].key))) {
+                            GetFieldKeyDisplayName(state.formatTokensEdit[i].key))) {
         for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
           FieldKey key = kAvailableFieldKeys[n];
-          bool is_selected = (formatTokensEdit[i].key == key);
+          bool is_selected = (state.formatTokensEdit[i].key == key);
 
           if (ImGui::Selectable(GetFieldKeyDisplayName(key), is_selected)) {
-            formatTokensEdit[i].key = key;
-            ApplyDefaultFieldSpec(formatTokensEdit[i]);
+            state.formatTokensEdit[i].key = key;
+            ApplyDefaultFieldSpec(state.formatTokensEdit[i]);
           }
           if (is_selected) ImGui::SetItemDefaultFocus();
         }
@@ -174,10 +172,10 @@ void DrawHDF5FormatDialog(bool& showDialog,
       {
         ImGui::PushItemWidth(-1);
         char buf[128];
-        std::snprintf(buf, sizeof(buf), "%s", formatTokensEdit[i].sourceName.c_str());
+        std::snprintf(buf, sizeof(buf), "%s", state.formatTokensEdit[i].sourceName.c_str());
 
         if (ImGui::InputText("##sourceName", buf, IM_ARRAYSIZE(buf))) {
-          formatTokensEdit[i].sourceName = buf;
+          state.formatTokensEdit[i].sourceName = buf;
         }
 
         ImGui::PopItemWidth();
@@ -185,13 +183,13 @@ void DrawHDF5FormatDialog(bool& showDialog,
 
       ImGui::TableNextColumn();
       if (ImGui::BeginCombo("##typeCombo",
-                            GetDataTypeDisplayName(formatTokensEdit[i].type))) {
+                            GetDataTypeDisplayName(state.formatTokensEdit[i].type))) {
         for (int n = 0; n < kNumDataTypeChoices; ++n) {
           DataType type = kDataTypeChoices[n].type;
-          bool is_selected = (formatTokensEdit[i].type == type);
+          bool is_selected = (state.formatTokensEdit[i].type == type);
 
           if (ImGui::Selectable(kDataTypeChoices[n].name, is_selected)) {
-            formatTokensEdit[i].type = type;
+            state.formatTokensEdit[i].type = type;
           }
           if (is_selected) ImGui::SetItemDefaultFocus();
         }
@@ -199,12 +197,12 @@ void DrawHDF5FormatDialog(bool& showDialog,
       }
 
       ImGui::TableNextColumn();
-      ImGui::InputInt("##count", &formatTokensEdit[i].count, 1, 10);
-      if (formatTokensEdit[i].count < 1) formatTokensEdit[i].count = 1;
+      ImGui::InputInt("##count", &state.formatTokensEdit[i].count, 1, 10);
+      if (state.formatTokensEdit[i].count < 1) state.formatTokensEdit[i].count = 1;
 
       ImGui::TableNextColumn();
       if (ImGui::Button("-", ImVec2(24,24))) {
-        formatTokensEdit.erase(formatTokensEdit.begin() + i);
+        state.formatTokensEdit.erase(state.formatTokensEdit.begin() + i);
         ImGui::PopID();
         --i;
         continue;
@@ -220,16 +218,16 @@ void DrawHDF5FormatDialog(bool& showDialog,
     FieldSpec newToken;
     newToken.key = FieldKey::Dummy;
     ApplyDefaultFieldSpec(newToken);
-    formatTokensEdit.push_back(newToken);
+    state.formatTokensEdit.push_back(newToken);
   }
   ImGui::SameLine();
   if (ImGui::Button("OK")) {
-    source.formatTokens_hdf5 = formatTokensEdit;
-    showDialog = false;
+    source.formatTokens_hdf5 = state.formatTokensEdit;
+    state.showHDF5MappingDialog = false;
   }
   ImGui::SameLine();
   if (ImGui::Button("Cancel")) {
-    showDialog = false;
+    state.showHDF5MappingDialog = false;
   }
 
   ImGui::End();

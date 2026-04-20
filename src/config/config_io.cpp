@@ -98,13 +98,13 @@ bool loadConfig(const std::string& filename,
                 ParticleArray* P,
                 FileInfo* fileInfo,
                 ParticleVisualConfig* visualCfg,
-                MaskUIState* outMaskState)
+                ParticleMaskConfig* outMaskState)
 {
   std::ifstream infile(filename);
   if (!infile.is_open()) return false;
 
   if (outMaskState) {
-    *outMaskState = MaskUIState{};
+    *outMaskState = ParticleMaskConfig{};
   }
 
   std::string line;
@@ -189,9 +189,9 @@ bool loadConfig(const std::string& filename,
     else if (startsWith(line, "Mask_OutsideMode=")) {
       if (outMaskState) {
         int v = std::stoi(line.substr(std::strlen("Mask_OutsideMode=")));
-        if (v == 0) outMaskState->outsideMode = MaskUIState::OutsideMode::Drop;
-        else if (v == 1) outMaskState->outsideMode = MaskUIState::OutsideMode::Thin;
-        else outMaskState->outsideMode = MaskUIState::OutsideMode::KeepAll;
+        if (v == 0) outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::Drop;
+        else if (v == 1) outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::Thin;
+        else outMaskState->outsideMode = ParticleMaskConfig::OutsideMode::KeepAll;
       }
     }
     else if (startsWith(line, "Mask_OutsideStride=")) {
@@ -208,9 +208,9 @@ bool loadConfig(const std::string& filename,
           int type = std::stoi(line.substr(9, eq - 9));
           if (type >= 0 && type < 6) {
             int v = std::stoi(line.substr(eq + 1));
-            if (v == 0) outMaskState->typeMode[type] = MaskUIState::TypeMode::Off;
-            else if (v == 1) outMaskState->typeMode[type] = MaskUIState::TypeMode::On_NoThin;
-            else outMaskState->typeMode[type] = MaskUIState::TypeMode::On_ThinOK;
+            if (v == 0) outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::Off;
+            else if (v == 1) outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::On_NoThin;
+            else outMaskState->typeMode[type] = ParticleMaskConfig::TypeMode::On_ThinOK;
           }
         }
       }
@@ -263,7 +263,7 @@ bool saveConfig(const std::string& filename,
                 const ParticleArray* P,
                 const FileInfo* fileInfo,
                 const ParticleVisualConfig* visualCfg,
-                const MaskUIState* maskState)
+                const ParticleMaskConfig* maskState)
 {
   std::ofstream outfile(filename);
   if (!outfile.is_open()) return false;
@@ -295,15 +295,15 @@ bool saveConfig(const std::string& filename,
     outfile << "Mask_Radius=" << maskState->radius << "\n";
 
     int outsideMode = 2;
-    if (maskState->outsideMode == MaskUIState::OutsideMode::Drop) outsideMode = 0;
-    else if (maskState->outsideMode == MaskUIState::OutsideMode::Thin) outsideMode = 1;
+    if (maskState->outsideMode == ParticleMaskConfig::OutsideMode::Drop) outsideMode = 0;
+    else if (maskState->outsideMode == ParticleMaskConfig::OutsideMode::Thin) outsideMode = 1;
     outfile << "Mask_OutsideMode=" << outsideMode << "\n";
     outfile << "Mask_OutsideStride=" << maskState->outsideStride << "\n";
 
     for (int t = 0; t < 6; ++t) {
       int tm = 1;
-      if (maskState->typeMode[t] == MaskUIState::TypeMode::Off) tm = 0;
-      else if (maskState->typeMode[t] == MaskUIState::TypeMode::On_ThinOK) tm = 2;
+      if (maskState->typeMode[t] == ParticleMaskConfig::TypeMode::Off) tm = 0;
+      else if (maskState->typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK) tm = 2;
       outfile << "Mask_Type" << t << "=" << tm << "\n";
     }
 

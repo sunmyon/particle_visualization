@@ -94,7 +94,7 @@ static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& d
     return;
   }
 
-  data.fileInfo->setMaskConfig(tools.mask);
+  data.fileInfo->setMaskConfig(tools.mask.config);
 }
 
 
