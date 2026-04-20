@@ -36,7 +36,7 @@ static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConf
 static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawNormalizationSection(ParticleArray* P, NormalizationContext& ctx);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
-static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt);
+static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt, const CameraContext& camCtx);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
 #endif
@@ -52,7 +52,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
   DrawNormalizationSection(ctx.P, rt.settings.normalization);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
-  DrawCameraPlacementSection(ctx.P, rt.settings);
+  DrawCameraPlacementSection(ctx.P, rt.settings, *ctx.camCtx);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(ctx.P, ctx.services->py);
 #endif
@@ -316,7 +316,8 @@ static void DrawSinkIdSection(const CameraContext& camCtx,
 }
 
 static void DrawCameraPlacementSection(ParticleArray* Part,
-                                       SettingsRuntimeState& rt)
+                                       SettingsRuntimeState& rt,
+				       const CameraContext& camCtx)
 {
   if (!ImGui::CollapsingHeader("Set camera pos"))
     return;
@@ -343,13 +344,23 @@ static void DrawCameraPlacementSection(ParticleArray* Part,
     req.setProjectionRequested = true;
   }
 
-  ImGui::InputFloat("Culling radius", &rt.radiusCullingSphere);
+  ImGui::SeparatorText("View Culling");    
+  ImGui::InputFloat("Culling radius", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
+  ImGui::InputFloat3("Culling center", &rt.viewFilter.center.x, "%.3f");
 
-  if (ImGui::Button("Culling sphere region")) {
-    req.applyCullingRequested = true;
+  ImGui::Checkbox("Culling Center in Original Coordinates", &rt.viewFilter.centerIsOriginal);
+  ImGui::Checkbox("Culling Radius in Original Coordinates", &rt.viewFilter.radiusIsOriginal);
+
+  if (ImGui::Button("Use Camera Target")) {
+    rt.viewFilter.center = camCtx.cameraTarget;
+    rt.viewFilter.centerIsOriginal = false;
   }
 
-  if (ImGui::Button("disable Culling")) {
+  if (ImGui::Button("Apply Culling")) {
+    req.applyCullingRequested = true;
+  }
+  
+  if (ImGui::Button("Disable Culling")) {
     req.clearCullingRequested = true;
   }
 }

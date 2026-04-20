@@ -15,6 +15,7 @@
 #include "data/particle_array.h"
 #include "data/clump_loader.h"
 #include "app/normalization_config.h"
+#include "app/app_visibility_actions.h"
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "make_2D_projection_map.h"
@@ -911,7 +912,8 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 }
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,
-				    NormalizationContext& normalization,
+				    const NormalizationContext& normalization,
+				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
 				    SettingsRuntimeState& rt)
 {
@@ -975,24 +977,14 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
   }
 
   if (req.applyCullingRequested) {
-    for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
-      auto& p = particles.particleBlock.particles[i];
-      uint8_t flag_mask = 0;
-      if (glm::distance(glm::vec3(p.pos[0], p.pos[1], p.pos[2]), camCtx.cameraTarget) >
-          rt.radiusCullingSphere) {
-        flag_mask = 1;
-      }
-      particles.flag_mask[i] = flag_mask;
-    }
-    particles.particlesDirty = true;
+    ApplyCullingSphere(particles, normalization, viewFilter);
+    viewFilter.enabled = true;
     req.applyCullingRequested = false;
   }
 
   if (req.clearCullingRequested) {
-    for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
-      particles.flag_mask[i] = 0;
-    }
-    particles.particlesDirty = true;
+    ClearVisibilityMask(particles);
+    viewFilter.enabled = false;
     req.clearCullingRequested = false;
   }
 }

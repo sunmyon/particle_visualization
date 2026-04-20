@@ -8,6 +8,7 @@ class ParticleArray;
 class FileInfo;
 struct RenderLayerState;
 struct NormalizationContext;
+struct ViewFilterConfig;
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -86,7 +87,8 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   FileNavigationRuntimeState& rt);
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,
-				    NormalizationContext& normalization,
+				    const NormalizationContext& normalization,
+				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
 				    SettingsRuntimeState& rt);
 

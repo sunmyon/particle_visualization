@@ -931,6 +931,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
+				 runtime.settings.viewFilter,
 				 camera,
 				 runtime.settings);
 

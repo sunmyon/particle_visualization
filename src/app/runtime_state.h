@@ -2,6 +2,7 @@
 #include <glm/vec3.hpp>
 #include "app/normalization_config.h"
 #include "app/input_filter_config.h"
+#include "app/view_filter_config.h"
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -145,10 +146,10 @@ struct FileNavigationRuntimeState {
 };
 
 struct SettingsRuntimeState {
-  float radiusCullingSphere = 1.0f;
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
 
+  ViewFilterConfig viewFilter;
   InputFilterConfig inputFilter;
   NormalizationContext normalization;
   FileNavigationRuntimeState fileNavigation;
