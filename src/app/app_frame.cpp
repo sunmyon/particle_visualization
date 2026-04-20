@@ -33,8 +33,8 @@
 
 static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
                                                AppViewState& view,
-                                               AppDerivedState& derived,
-					       AppUIState& ui,
+                                               AnalysisDerivedState& analysis,
+					       ToolWindowUIState& toolWindows,
                                                AppServices& services)
 {
   SettingsUIContext ctx;
@@ -43,8 +43,8 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
   ctx.camCtx         = &view.camera;
   ctx.particleVisual = &view.particleVisual;
   ctx.services       = &services;
-  ctx.analysis       = &derived.analysis;
-  ctx.windows        = &ui.toolWindows;
+  ctx.analysis       = &analysis;
+  ctx.windows        = &toolWindows;
   
   return ctx;
 }
@@ -52,12 +52,12 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
 static void DrawSettingsPanels(const AppDataState& data,
                                AppViewState& view,
                                AppRuntimeState& runtime,
-                               AppDerivedState& derived,
-			       AppUIState& ui,
+                               AnalysisDerivedState& analysis,
+			       ToolWindowUIState& toolWindows,
                                AppServices& services)
 {
   SettingsUIContext settingsCtx =
-    MakeSettingsUIContext(data, view, derived, ui, services);
+    MakeSettingsUIContext(data, view, analysis, toolWindows, services);
   ShowSettingsUI(settingsCtx, runtime);
   ShowCameraSettingsUI();
 }
@@ -88,14 +88,14 @@ static void DrawClumpPanels(const AppDataState& data,
 #endif
 }
 
-static void DrawFileDialogPanels(const AppDataState& data,
-                                 AppUIState& ui)
+static void DrawFileDialogPanels(FileInfo& file,
+                                 ToolWindowUIState& toolWindows)
 {
-  DrawBinaryFormatDialog(ui.toolWindows.fileFormatDialog,
-                         data.fileInfo->editSource());
+  DrawBinaryFormatDialog(toolWindows.fileFormatDialog,
+                         file.editSource());
 #ifdef HAVE_HDF5
-  DrawHDF5FormatDialog(ui.toolWindows.fileFormatDialog,
-                       data.fileInfo->editSource());
+  DrawHDF5FormatDialog(toolWindows.fileFormatDialog,
+                       file.editSource());
 #endif
 }
 
@@ -112,55 +112,53 @@ static void ApplyMaskIfRequested(ToolWindowUIState& tools, const AppDataState& d
 
 static void DrawAuxiliaryPanels(ToolWindowUIState& tools,
 				const AppDataState& data,
-                                AppViewState& view)
+                                CameraContext& camera)
 {
-  DrawTopParticlesUI(tools.topParticles, data.particles, view.camera);
+  DrawTopParticlesUI(tools.topParticles, data.particles, camera);
 }
 
 static void DrawMainUI(const AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
-		       AppDerivedState& derived,
-		       AppUIState& ui,
+		       AnalysisDerivedState& analysis,
+		       ToolWindowUIState& toolWindows,
 		       AppServices& services)
 {
   ShowTime(data.particles->particleBlock.header.time);
-  DrawSettingsPanels(data, view, runtime, derived, ui, services);
+  DrawSettingsPanels(data, view, runtime, analysis, toolWindows, services);
 }
 
 static void DrawToolWindows(const AppDataState& data,
-                            AppViewState& view,
+                            CameraContext& camera,
                             AppRuntimeState& runtime,
-			    AppUIState& ui,
-                            AppDerivedState& derived,
+			    ToolWindowUIState& tools,
+                            AnalysisDerivedState& analysis,
                             AppServices& services)
 {
-  auto &tools = ui.toolWindows;
-  
-  DrawClumpPanels(data, runtime.settings.normalization, services, view.camera);
-  DrawFileDialogPanels(data, ui);
+  DrawClumpPanels(data, runtime.settings.normalization, services, camera);
+  DrawFileDialogPanels(*data.fileInfo, tools);
   ApplyMaskIfRequested(tools, data);
-  DrawAuxiliaryPanels(tools, data, view);
+  DrawAuxiliaryPanels(tools, data, camera);
 
-  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, view.camera.cameraTarget, runtime.settings.normalization, data.particles->units);
+  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
 
   const auto& src = data.fileInfo->getSource();
   DrawProjectionMapUI(tools.projectionMap, 
 		      *services.projectionMap2D,
                       data.particles,
 		      runtime.settings.normalization,
-                      view.camera,
+                      camera,
                       runtime.render.cuboidAnnotations,
                       src.currentFileIndex);
 
 #ifdef HAVE_HDF5
-  DrawHaloesUI(tools.haloes, data.particles, view.camera, data.fileInfo, runtime.settings.normalization);
+  DrawHaloesUI(tools.haloes, data.particles, camera, data.fileInfo, runtime.settings.normalization);
 #endif
   
   Histogram2DContext histCtx;
-  histCtx.cameraCenter = &view.camera.cameraTarget;
+  histCtx.cameraCenter = &camera.cameraTarget;
   
-  auto visibleHulls = derived.analysis.convexHulls.visibleHulls();
+  auto visibleHulls = analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
 
   DrawHistogram2DUI(tools.histogram2D, *services.histogram2D, data.particles->particleBlock, histCtx);
@@ -710,30 +708,31 @@ static void DrawParticlePass(const ParticleVisualConfig& particleVisual,
   }
 }
 
-static void RenderScene(const AppViewState& view,
-                        const AppRuntimeState& runtime,
-                        const AppDerivedState& derived,
+static void RenderScene(const CameraContext& camera,
+			const ParticleVisualConfig& particleVisual,
+                        const RenderRuntimeState& render,
+                        const OverlayState& overlay,
                         RenderSystem& rs,
                         const WindowContext& window)
 {
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  FrameMatrices fm = BuildFrameMatrices(view.camera, window);
+  FrameMatrices fm = BuildFrameMatrices(camera, window);
 
-  DrawParticlePass(view.particleVisual,
-                   runtime.render,
+  DrawParticlePass(particleVisual,
+                   render,
                    rs,
                    fm);
 
-  DrawSceneObjectsPass(runtime.render,
+  DrawSceneObjectsPass(render,
                        rs,
                        fm);
 
-  DrawOverlayPass(derived.overlay,
-                  runtime.render,
-                  view.particleVisual,
-                  view.camera,
+  DrawOverlayPass(overlay,
+                  render,
+                  particleVisual,
+                  camera,
                   rs,
                   window,
                   fm);
@@ -764,86 +763,86 @@ static void EndFrame(WindowContext& window)
   glfwSwapBuffers(window.handle());
 }
 
-static void RebuildDerivedState(AppDataState& data,
-                                AppViewState& view,
-                                AppRuntimeState& runtime,
+static void RebuildDerivedState(ParticleArray& particles,
+                                CameraContext& camera,
+                                RenderRuntimeState& render,
                                 AppDerivedState& derived,
                                 AppServices& services)
 {
 #ifdef GEOMETRICAL_ANALYSIS
   RebuildDiskDerivedState(derived.analysis.disk,
-			  runtime.render.disks,
+			  render.disks,
 			  derived.scene.disk);
 
   RebuildEllipsoidDerivedState(derived.analysis.ellipsoid,
-			       runtime.render.ellipsoids,
+			       render.ellipsoids,
 			       derived.scene.ellipsoid);
 #endif
 
 #ifdef STREAM_LINE
   RebuildStreamlinePreviewDerivedState(derived.analysis.streamlinePreview,
-				       runtime.render.cubes,
+				       render.cubes,
 				       derived.scene.cube);
   
   RebuildStreamlineDerivedState(derived.analysis.streamlineBuild,
-				runtime.render.lines,
+				render.lines,
 				derived.scene.line);
 #endif
   
-  UpdateOverlayState(*data.particles,
-                     view.camera,
-                     runtime.render.particleLabels,
+  UpdateOverlayState(particles,
+                     camera,
+                     render.particleLabels,
                      derived.overlay);
 
 #ifdef USE_CONVEX_HULL
-  UpdateConvexHullDerivedState(*data.particles,
+  UpdateConvexHullDerivedState(particles,
                              *services.clumpFind,
                              *services.convexHull,
-                             runtime.render.polyhedra,
+                             render.polyhedra,
                              derived.scene.polyhedron,
                              derived.analysis);
 #endif
 
-  UpdateCuboidAnnotationDerivedState(runtime.render.cuboidAnnotations,
-				     runtime.render.cuboids,
-				     runtime.render.lines,
+  UpdateCuboidAnnotationDerivedState(render.cuboidAnnotations,
+				     render.cuboids,
+				     render.lines,
 				     derived.scene.cuboidAnnotation,
 				     *services.projectionMap2D);
 }
 
-static void UpdateRenderResources(const AppDataState& data,
-                                  const AppViewState& view,
-                                  AppRuntimeState& runtime,
+static void UpdateRenderResources(ParticleArray& particles,
+                                  const ParticleVisualConfig& particleVisual,
+                                  RenderRuntimeState& render,
                                   const AppDerivedState& derived,
                                   RenderSystem& rs)
 {
   rs.resources.cuboidRenderData.clear();
   rs.resources.lineRenderData.clear();
 
-  PropagateDirtyFlags(*data.particles, rs);
+  PropagateDirtyFlags(particles, rs);
 
-  UpdateParticleRenderResources(*data.particles,
-                                view.particleVisual,
-                                runtime.render.velocity,
+  UpdateParticleRenderResources(particles,
+                                particleVisual,
+                                render.velocity,
                                 rs);
 
   UpdateSceneRenderResources(derived.scene,
-                             runtime.render,
+                             render,
                              rs);
 
 #ifdef ISO_CONTOUR
   UpdateIsoContourRenderResources(derived.analysis.isoContour,
-                                  runtime.render,
+                                  render,
                                   rs);
 #endif
   
 #ifdef USE_CONVEX_HULL
-  UpdateConvexHullRenderState(runtime.render.polyhedra,
+  UpdateConvexHullRenderState(render.polyhedra,
                               derived.scene.polyhedron,
                               rs);
 #endif
   
-  UpdateCuboidAnnotationRenderResources(runtime.render.cuboidAnnotations,
+  UpdateCuboidAnnotationRenderResources(render.cuboidAnnotations,
                                         derived.scene.cuboidAnnotation,
                                         rs);
 }
@@ -950,38 +949,39 @@ void RunFrame(AppState& app,
   DrawMainUI(app.data,
 	     app.view,
 	     app.runtime,
-	     app.derived,
-	     app.ui,
+	     app.derived.analysis,
+	     app.ui.toolWindows,
 	     app.services);
 
   DrawToolWindows(app.data,
-		  app.view,
+		  app.view.camera,
 		  app.runtime,
-		  app.ui,
-		  app.derived,
+		  app.ui.toolWindows,
+		  app.derived.analysis,
 		  app.services);
   
   UpdateExternalInputs(app.services, *app.data.particles);
 
   ExecuteAnalysisRequests(app.data, app.runtime, app.derived, app.services, app.view.camera);
   
-  RebuildDerivedState(app.data,
-                      app.view,
-                      app.runtime,
+  RebuildDerivedState(*app.data.particles,
+                      app.view.camera,
+                      app.runtime.render,
                       app.derived,
                       app.services);
   
-  UpdateRenderResources(app.data,
-                        app.view,
-                        app.runtime,
+  UpdateRenderResources(*app.data.particles,
+                        app.view.particleVisual,
+                        app.runtime.render,
                         app.derived,
                         render);
 
   UpdateProjectionPreview(*app.services.projectionMap2D, render);
 
-  RenderScene(app.view,
-              app.runtime,
-              app.derived,
+  RenderScene(app.view.camera,
+	      app.view.particleVisual,
+              app.runtime.render,
+              app.derived.overlay,
               render,
               window);
 
