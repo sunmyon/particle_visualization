@@ -13,6 +13,7 @@
 
 #include "UI.h"
 #include "settingUI.h"
+#include "FileIO/file_format_dialog.h"
 
 #include "render/frame_matrices.h"
 #include "render/render_draw_helpers.h"

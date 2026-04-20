@@ -6,6 +6,7 @@
 #include "interaction/camera.h"
 #include "particle_visual_config.h"   // ParticleVisualConfig の実定義
 #include "FileIO/file_io.h"       // FileInfo の実定義
+#include "FileIO/file_format_dialog.h"       // FileInfo の実定義
 #include "render/colormap_defs.h"  
 #include "data/particle_array.h"
 
@@ -249,12 +250,12 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
   }
 
   if (ImGui::Button("Edit Data Format")) {
-#ifdef READ_HDF5
-    if(sourcer.useHDF5)
-      tools.fileFormatDialog.openHDF5(fileInfo.getSource());
+#ifdef HAVE_HDF5
+    if(source.useHDF5)
+      OpenHDF5FormatDialog(tools.fileFormatDialog, fileInfo.getSource());
     else
 #endif
-      tools.fileFormatDialog.openBinary(fileInfo.getSource());    
+      OpenBinaryFormatDialog(tools.fileFormatDialog, fileInfo.getSource());    
   }
 
   static const char* FileFormatNames[] = {

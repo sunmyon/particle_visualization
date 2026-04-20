@@ -1,6 +1,12 @@
 #include "FileIO/file_format_dialog.h"
 #include <imgui.h>
 
+void OpenBinaryFormatDialog(FileFormatDialogState& state,
+                            const SnapshotSource& source){
+  state.showFormatDialog = true;
+  state.formatTokensEdit = source.formatTokens;
+}
+
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             SnapshotSource& source) {
   if (!state.showFormatDialog) return;
@@ -231,5 +237,11 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
   }
 
   ImGui::End();
+}
+
+void OpenHDF5FormatDialog(FileFormatDialogState& state,
+			  const SnapshotSource& source){
+  state.showHDF5MappingDialog = true;
+  state.formatTokensEdit = source.formatTokens_hdf5;
 }
 #endif
