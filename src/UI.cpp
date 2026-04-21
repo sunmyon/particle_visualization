@@ -803,7 +803,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 }
 
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx) {
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track) {
   const int histSizeMax = 10;
 
   ImGui::Begin("Particles Info");
@@ -901,15 +901,15 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
 
   if (ImGui::Button("Center this paritcle")) {
     if (state.hasFound && state.historySel >= 0) {
-      P->flag_follow_particle_ID = true;
-      P->TargetParticleID = state.historyData[state.historySel].ID;
-      P->flag_follow_clump_center = false;
+      track.followParticle = true;
+      track.targetParticleID = state.historyData[state.historySel].ID;
+      track.followClump = false;
     }
   }
 
   ImGui::SameLine();
   if (ImGui::Button("Disable center paritcle")) {
-    P->flag_follow_particle_ID = false;
+    track.followParticle = false;
   }
 
   bool flag_pushed = false;

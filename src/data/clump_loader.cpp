@@ -2,6 +2,7 @@
 
 #ifdef CLUMP_DATA_READ
 #include "FindClumps/find_clumps_IO.h"
+#include "data/clump_data.h"
 #include <stdexcept>
 
 TrackingVector<ClumpData>

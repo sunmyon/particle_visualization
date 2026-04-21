@@ -5,6 +5,7 @@
 #include "compute_2D_histogram.h"
 #include "data/particle_mask_config.h"
 #include "app/file_format_dialog_state.h"
+#include "FindClumps/clump_window_state.h"
 
 struct RadialProfileUIState {
   bool open = false;
@@ -121,4 +122,7 @@ struct ToolWindowUIState {
   HaloesUIState haloes;
   MaskUIState mask;
   FileFormatDialogState fileFormatDialog;
+  ClumpFinderWindowState clumpFind;
+  LoadedClumpWindowState clumpList;
+  ClumpChainWindowState clumpChain;
 };

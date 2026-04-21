@@ -11,7 +11,7 @@
 #include "render/colormap_defs.h"  
 #include "data/particle_array.h"
 
-#include "FindClumps/find_clumps.h"             // FindClump
+#include "FindClumps/find_clumps_ui.h"
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
@@ -447,10 +447,6 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
   auto& source = ctx.fileInfo->editSource();
-  auto* services = ctx.services;
-  auto* radialProfile = services->radialProfile.get();
-  auto* histogram2D   = services->histogram2D.get();
-  auto* clumpFind     = services->clumpFind.get();
   auto* render = ctx.render;
   auto* analysis = ctx.analysis;
   
@@ -468,15 +464,15 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   static PullDownItem analysisItems[] = {
     { "radial profile", ANALYSIS_RADIAL_PROFILE },
       { "2D histogram", ANALYSIS_2D_HISTOGRAM },
-      { "clump finder", ANALYSIS_CLUMP_FIND },
-      { "stellar density", ANALYSIS_STELLAR_DENSITY },
-      { "halo catalogue", ANALYSIS_HALO_CATALOGUE },
+	{ "clump finder", ANALYSIS_CLUMP_FIND },
+	{ "stellar density", ANALYSIS_STELLAR_DENSITY },
+	{ "halo catalogue", ANALYSIS_HALO_CATALOGUE },
 #ifdef POWER_SPECTRUM
-      { "power spectrum", ANALYSIS_POWER_SPEC },
+	{ "power spectrum", ANALYSIS_POWER_SPEC },
 #endif
 #ifdef GEOMETRICAL_ANALYSIS
-      { "extract disks", ANALYSIS_DISK },
-      { "extract iso density", ANALYSIS_ISO_DENSITY },
+	{ "extract disks", ANALYSIS_DISK },
+	{ "extract iso density", ANALYSIS_ISO_DENSITY },
 #endif
   };
 		
@@ -516,8 +512,8 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   }
   case ANALYSIS_CLUMP_FIND: {
     if (ImGui::Button("Run Clumps finder")) 
-      clumpFind->showWindow();
-
+      OpenClumpFindUI(tools.clumpFind);
+    
 #ifdef CLUMP_DATA_READ
     auto& batchReq = rt.clumpBatch;
     auto& batchRes = ctx.analysis->clumpBatch;
@@ -557,17 +553,12 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
       ImGui::TextColored(ImVec4(1,0,0,1), "%s", batchRes.errorMessage);
     }
 
-    if(ImGui::Button("show clump list"))
-      clumpFind->showClumpListWindow();
+    if (ImGui::Button("show clump list")) {
+      OpenClumpListUI(tools.clumpList);
+    }
 
-    if(ImGui::Button("show clump chain list")){
-      std::string fname(batchReq.outputFolderPath);
-      fname += "/";
-      fname += batchReq.outputFileName;
-      clumpFind->showWindowClumpChainList(source.initialIndex,
-					  batchReq.nSnapshots,
-					  source.skipStep,
-					  fname);
+    if (ImGui::Button("show clump chain list")) {
+      OpenClumpChainUI(tools.clumpChain);
     }
 #endif
     break;
@@ -714,7 +705,6 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
   ParticleArray* Part = ctx.P;
   CameraContext& camCtx = *ctx.camCtx;
 
-  auto* services = ctx.services;
   auto* render = ctx.render;
   
   enum RenderingMode {

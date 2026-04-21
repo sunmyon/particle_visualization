@@ -3,6 +3,7 @@
 #include "app/normalization_config.h"
 #include "app/input_filter_config.h"
 #include "app/view_filter_config.h"
+#include "app/tracking_view_state.h"
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -65,6 +66,11 @@ struct IsoContourRequestState {
   bool clearRequested = false;
 };
 #endif
+
+struct ClumpRequestState {
+  bool openRequested = false;
+  bool runRequested = false;
+};
 
 struct ClumpBatchRequestState {
   int method = 0;                  // 0: FOF, 1: Dendrogram
@@ -154,6 +160,7 @@ struct SettingsRuntimeState {
   NormalizationContext normalization;
   FileNavigationRuntimeState fileNavigation;
   CameraPlacementRequestState cameraPlacement;
+  TrackingTargetState tracking;
 };
 
 struct RenderLayerState {

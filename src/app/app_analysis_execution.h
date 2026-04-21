@@ -9,6 +9,8 @@ class FileInfo;
 struct RenderLayerState;
 struct NormalizationContext;
 struct ViewFilterConfig;
+struct TrackingTargetState;
+struct SnapshotSource; 
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -74,6 +76,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
+				   TrackingTargetState& track,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
                                    const CameraContext& camera,
@@ -93,6 +96,9 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
 				    SettingsRuntimeState& rt);
 
 void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+				    ClumpStore& clumpStore,
 				    NormalizationContext& normalization,
+				    TrackingTargetState& track,
 				    CameraContext& camCtx,
 				    int currentFileIndex);
+

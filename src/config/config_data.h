@@ -20,7 +20,7 @@ struct PersistentSettings {
   ParticleVisualConfig visual;
   ParticleMaskConfig mask;
 
-  float normalizationFactor = 1.0f;
+  float desiredMax = 1.0f;
   UnitSystem units;
 };
 

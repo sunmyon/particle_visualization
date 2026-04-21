@@ -6,6 +6,8 @@ class RadialProfileComputer;
 class Histogram2DComputer;
 class ProjectionMapGenerator;
 class FindClump;
+class LoadedClumpTool;
+class ClumpChain;
 class DiskRadiusFinder;
 class EllipsoidComputer;
 class StreamlineComputer;
@@ -59,6 +61,8 @@ struct AppServices {
   std::unique_ptr<Histogram2DComputer> histogram2D;
   std::unique_ptr<ProjectionMapGenerator> projectionMap2D;
   std::unique_ptr<FindClump> clumpFind;
+  std::unique_ptr<LoadedClumpTool> clumpLoad;
+  std::unique_ptr<ClumpChain> clumpChain;
 #ifdef USE_CONVEX_HULL
   std::unique_ptr<ConvexHullGenerator> convexHull;
 #endif

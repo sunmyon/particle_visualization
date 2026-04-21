@@ -4,6 +4,8 @@
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
 #include "FindClumps/find_clumps.h"
+#include "FindClumps/loaded_clump_tool.h"
+#include "FindClumps/clump_chain.h"
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"

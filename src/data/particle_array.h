@@ -1,7 +1,6 @@
 #pragma once
 #include "particle_block.h"
 #include "halo_data.h"
-#include "clump_data.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "core/units.h"
@@ -105,15 +104,6 @@ public:
     }
   };
   
-  TrackingVector<ClumpData> Clumps;
-  std::string fname_clump_file;
-  bool flag_follow_clump_center = false;
-  bool flag_renew_clumpList = false;
-  int TargetClumpID;
-
-  bool flag_follow_particle_ID = false;
-  int TargetParticleID;
-
   bool findParticleID(int ID, float *pos)
   {
     size_t ip = particleBlock.findIndexByID((uint64_t)(int64_t)ID);
@@ -126,8 +116,4 @@ public:
     
   bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, NormalizationContext& ctx);
   void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml, const NormalizationContext& ctx);
-
-  void setClumps(TrackingVector<ClumpData>&& newClumps) {
-    Clumps = std::move(newClumps);
-  }
 };

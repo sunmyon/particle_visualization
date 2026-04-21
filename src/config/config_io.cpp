@@ -208,7 +208,7 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
         std::stoi(line.substr(std::strlen("Mask_MaxParticles=")));
     }
     else if (startsWith(line, "NormalizationFactor=")) {
-      outConfig.persistent.normalizationFactor =
+      outConfig.persistent.desiredMax =
         std::stof(line.substr(std::strlen("NormalizationFactor=")));
     }
     else if (startsWith(line, "initialIndex=")) {
@@ -299,7 +299,7 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
   outfile << "Mask_EnableMaxParticles=" << (maskState.enableMaxParticles ? 1 : 0) << "\n";
   outfile << "Mask_MaxParticles=" << maskState.maxParticles << "\n";
 
-  outfile << "NormalizationFactor=" << config.persistent.normalizationFactor << "\n";
+  outfile << "NormalizationFactor=" << config.persistent.desiredMax << "\n";
   outfile << "initialIndex=" << config.session.initialIndex << "\n";
   outfile << "currentFileIndex=" << config.session.currentFileIndex << "\n";
   outfile << "skipStep=" << config.session.skipStep << "\n";

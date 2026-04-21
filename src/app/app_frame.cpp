@@ -22,8 +22,10 @@
 
 #include "imgui_context.h"
 #include "window_context.h"
-#include "FindClumps/find_clumps.h"
 #include "make_2D_projection_map.h"
+
+#include "FindClumps/find_clumps.h"
+#include "FindClumps/find_clumps_ui.h"
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
@@ -62,34 +64,6 @@ static void DrawSettingsPanels(const AppDataState& data,
   ShowCameraSettingsUI();
 }
 
-static void DrawClumpPanels(const AppDataState& data,
-			    NormalizationContext& normalization,
-			    const InputFilterConfig& filter,
-                            AppServices& services,
-			    CameraContext& camera)
-{
-  services.clumpFind->ShowFindClumpsUI(data.particles->particleBlock.particles,
-                                       data.particles->particleBlock.header,
-                                       data.fileInfo->getSource(),
-				       camera);
-
-  const auto& src = data.fileInfo->getSource();
-#ifdef CLUMP_DATA_READ
-  services.clumpFind->ReadAndShowClumpsUI(data.particles,
-                                          src.currentFileIndex,
-                                          data.fileInfo->getSource(),
-					  camera,
-					  normalization);
-  
-  services.clumpFind->showClumpChainList(data.particles,
-                                         services.projectionMap2D.get(),
-                                         *data.fileInfo,
-					 camera,
-					 normalization,
-					 filter);
-#endif
-}
-
 static void DrawFileDialogPanels(FileInfo& file,
                                  ToolWindowUIState& toolWindows)
 {
@@ -110,13 +84,6 @@ static void ApplyMaskIfRequested(MaskUIState& mask, InputFilterConfig& inputFilt
 }
 
 
-static void DrawAuxiliaryPanels(ToolWindowUIState& tools,
-				const AppDataState& data,
-                                CameraContext& camera)
-{
-  DrawTopParticlesUI(tools.topParticles, data.particles, camera);
-}
-
 static void DrawMainUI(const AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
@@ -128,17 +95,17 @@ static void DrawMainUI(const AppDataState& data,
   DrawSettingsPanels(data, view, runtime, analysis, toolWindows, services);
 }
 
-static void DrawToolWindows(const AppDataState& data,
+static void DrawToolWindows(AppDataState& data,
                             CameraContext& camera,
                             AppRuntimeState& runtime,
 			    ToolWindowUIState& tools,
                             AnalysisDerivedState& analysis,
                             AppServices& services)
 {
-  DrawClumpPanels(data, runtime.settings.normalization, runtime.settings.inputFilter, services, camera);
+  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking);
+  
   DrawFileDialogPanels(*data.fileInfo, tools);
   ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
-  DrawAuxiliaryPanels(tools, data, camera);
 
   DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
 
@@ -162,6 +129,31 @@ static void DrawToolWindows(const AppDataState& data,
   histCtx.convexHulls = &visibleHulls;
 
   DrawHistogram2DUI(tools.histogram2D, *services.histogram2D, data.particles->particleBlock, histCtx);
+
+  DrawClumpFinderUI(tools.clumpFind,
+		    *services.clumpFind,
+		    data.particles->particleBlock.particles,
+		    data.particles->particleBlock.header,
+		    data.fileInfo->getSource(),
+		    camera);
+  
+  DrawClumpListUI(tools.clumpList,
+		  *services.clumpLoad,
+		  data.clumpStore,
+		  runtime.settings.tracking,
+		  data.fileInfo->getSource().currentFileIndex,
+		  data.fileInfo->getSource(),
+		  camera,
+		  runtime.settings.normalization);
+  
+  DrawClumpChainListUI(tools.clumpChain,
+		       *services.clumpChain,
+		       data.particles,
+		       services.projectionMap2D.get(),
+		       *data.fileInfo,
+		       camera,
+		       runtime.settings.normalization,
+		       runtime.settings.inputFilter);
 }
 
 static void UpdateExternalInputs(AppServices& services,
@@ -917,6 +909,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
   ExecuteProjectionMovieRequest(*data.particles,
 				runtime.settings.normalization,
 				runtime.settings.inputFilter,
+				runtime.settings.tracking,
 				*data.fileInfo,
 				*services.projectionMap2D,
 				camera,
@@ -938,7 +931,9 @@ static void ExecuteAnalysisRequests(AppDataState& data,
   if (data.fileInfo->snapshotUpdated) {
     const auto& src = data.fileInfo->getSource();
     ExecutePostSnapshotLoadActions(*data.particles,
+				   data.clumpStore,
 				   runtime.settings.normalization,
+				   runtime.settings.tracking,
 				   camera,
 				   src.currentFileIndex);
     

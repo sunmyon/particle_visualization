@@ -12,14 +12,16 @@
 #include "app/app_state.h"
 #include "app/analysis_state.h"
 #include "app/runtime_state.h"
+#include "app/normalization_config.h"
+#include "app/tracking_view_state.h"
+#include "app/app_visibility_actions.h"
 #include "data/particle_array.h"
 #include "data/clump_loader.h"
-#include "app/normalization_config.h"
-#include "app/app_visibility_actions.h"
+#include "data/clump_store.h"
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "make_2D_projection_map.h"
-
+#include "FindClumps/find_clumps_helpers.h"
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -639,10 +641,10 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
   const int initstep = src.currentFileIndex;
   const int dstep = src.skipStep;
-  clumpFind.give_stellar_id_to_clumps(initstep,
-                                      request.nSnapshots,
-                                      dstep,
-                                      std::string(filename));
+  give_stellar_id_to_clumps(initstep,
+			    request.nSnapshots,
+			    dstep,
+			    std::string(filename));
 
   result.completed = true;
 }
@@ -651,6 +653,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
+				   TrackingTargetState& track,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
                                    const CameraContext& camera,
@@ -715,10 +718,10 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       };
 
 #ifdef CLUMP_DATA_READ
-      if (particles.flag_follow_clump_center)
+      if (track.followClump)
         flag_center = 1;
 #endif
-      if (particles.flag_follow_particle_ID)
+      if (track.followParticle)
         flag_center = 1;
 
       if (request.followSinkCenter) {
@@ -991,26 +994,28 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
 
 
 void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+				    ClumpStore& clumpStore,
 				    NormalizationContext& normalization,
+				    TrackingTargetState& track,
 				    CameraContext& camCtx,
 				    int currentFileIndex)
 {
 #ifdef CLUMP_DATA_READ
-  if (particles.flag_follow_clump_center) {    
-    ClumpData targetClump = particles.Clumps[particles.TargetClumpID];
+  if (track.followClump) {    
+    ClumpData targetClump = clumpStore.clump(track.targetClumpID);
 
     TrackingVector<ClumpData> newClumps =
-      loadClumpData(particles.fname_clump_file.c_str(),
+      loadClumpData(clumpStore.filePath().c_str(),
 		    currentFileIndex,
 		    normalization.toNormalizedScale());
-
+    
     if (newClumps.empty()) {
-      particles.flag_follow_clump_center = false;
+      track.followClump = false;
     } else {
-      particles.Clumps = std::move(newClumps);
+      clumpStore.setClumps(std::move(newClumps));
 
       float target_pos_new[3];
-      targetClump.get_next_clump_position(particles.Clumps, target_pos_new);
+      targetClump.get_next_clump_position(clumpStore.clumps(), target_pos_new);
 
       float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
       glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -1020,12 +1025,12 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
   }
 #endif
 
-  if (particles.flag_follow_particle_ID) {
+  if (track.followParticle) {
     float target_pos_new[3];
-    bool found = particles.findParticleID(particles.TargetParticleID, target_pos_new);
+    bool found = particles.findParticleID(track.targetParticleID, target_pos_new);
 
     if (!found) {
-      particles.flag_follow_particle_ID = false;
+      track.followParticle = false;
     } else {
       float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
       glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -1034,3 +1039,5 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
     }
   }
 }
+
+

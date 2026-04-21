@@ -21,7 +21,7 @@ ConfigData ExtractConfigData(const FileInfo& fileInfo,
   config.persistent.formatTokensHdf5 = src.formatTokens_hdf5;
   config.persistent.visual = visual;
   config.persistent.mask = mask;
-  config.persistent.normalizationFactor = desired_max;
+  config.persistent.desiredMax = desired_max;
   config.persistent.units = units;
 
   config.session.initialIndex = src.initialIndex;

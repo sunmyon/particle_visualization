@@ -1,5 +1,8 @@
 #include "core/tracking_vector.h"
+#include "data/clump_data.h"
+
 #include "FindClumps/find_clumps_IO.h"
+#include "FindClumps/structure_nodes.h"
 
 #ifdef CLUMP_DATA_READ
 #include "H5Cpp.h"
@@ -214,6 +217,92 @@ namespace ClumpIO {
       return false;
     }
   }
-
 } // namespace ClumpIO
+
+float readClumpTime(std::string fname, int snapshotIndex){
+  uint32_t mask = L_TIME;
+  ClumpInfoIO in;    
+  bool flag = ClumpIO::readSnapshot(fname, snapshotIndex, mask, in);
+  
+  if(flag == false){
+    return 0.;
+  }
+
+  return in.time;
+}
+
+
+void readClumpEvolution(std::string fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
+			TrackingVector<float>& times, TrackingVector<ClumpData>& clumps){
+  clumps = {};
+  times = {};
+  
+  int snapshot = snapshotInit;
+  int clumpID = clumpID_init;
+  while(snapshot <= snapshotEnd){
+    uint32_t mask = (L_TIME | L_CLUMP_ID | L_CLUMP_NEXT_ID | L_CLUMP_POSITION | L_CLUMP_DENSITY | L_CLUMP_TEMPERATURE | L_CLUMP_MASS);
+    ClumpInfoIO in;    
+    bool flag = ClumpIO::readSnapshot(fname, snapshot, mask, in);
+
+    if(flag == false){
+      snapshot += dsnapshot;
+      continue;
+    }
+
+    ClumpData cd;
+    bool flag_find_next_clump = false;
+    for (size_t i = 0; i < in.clump_id.size(); i++) {
+      if(in.clump_id[i] != clumpID)
+	continue;
+
+      flag_find_next_clump = true;
+      
+      cd.clumpID = in.clump_id[i];
+      cd.density = in.clump_density[i];
+      cd.temperature = in.clump_temperature[i];    
+      cd.mass = in.clump_mass[i];
+      break;
+    }
+
+    if(!flag_find_next_clump)
+      break;
+    
+    times.push_back(in.time);
+    clumps.push_back(cd);
+
+    clumpID = cd.clumpID;
+    snapshot += dsnapshot;
+  }
+}
+
+void addNextClumpIDtoHDF5(TrackingVector<StructureNode *> nodes,
+			  const std::string &filename, int snapshotIndex)
+{
+  size_t count = 0;
+  for (auto& node : nodes) {
+    if(node->isLeaf())
+      count++;    
+  }
+
+  size_t nClumps = count;
+  TrackingVector<int> clump_next_id(nClumps);
+
+  for(size_t i=0, count=0;i<nodes.size();i++){
+    StructureNode *node = nodes[i];
+    if(!node->isLeaf())
+      continue;
+    
+    clump_next_id[count] = node->clumpID_in_next_snapshot;
+    count++;
+  }
+    
+  ClumpInfoIO out;
+  out.clump_next_id.resize(nClumps);
+    
+  for(size_t i=0;i<nClumps;i++)
+    out.clump_next_id[i] = clump_next_id[i];
+
+  uint32_t mask_out = L_CLUMP_NEXT_ID;
+  ClumpIO::writeSnapshot(filename, snapshotIndex, mask_out, out);  
+}
 #endif

@@ -11,6 +11,47 @@
 
 #include <nanoflann.hpp>
 
+void FindClump::buildMassHistogram(bool useLogScaleX, float& outMin, float& outMax)
+{
+  massHistogramValues_.clear();
+  
+  for (size_t i = 0; i < nodeList.size(); ++i) {
+    const StructureNode* node = nodeList[i];
+    float mass = node->totalMass;
+    
+    if (useLogScaleX) {
+      if (mass > 0.0f)
+	mass = std::log10(mass);
+      else
+	continue;
+    }
+    
+    massHistogramValues_.push_back(mass);
+  }
+  
+  if (massHistogramValues_.empty()) {
+    outMin = 0.0f;
+    outMax = 1.0f;
+    histogramComputed_ = false;
+    return;
+  }
+  
+  float massMin = std::numeric_limits<float>::max();
+  float massMax = std::numeric_limits<float>::lowest();
+  
+  for (const auto& mass : massHistogramValues_) {
+    massMin = std::min(massMin, mass);
+    massMax = std::max(massMax, mass);
+  }
+  
+  if (massMin == massMax)
+    massMax = massMin + 1.0f;
+  
+  outMin = massMin;
+  outMax = massMax;
+  histogramComputed_ = true;
+}
+
 int FindClump::find_parent(TrackingVector<int>& parent, int i) {
     if (parent[i] != i)
         parent[i] = find_parent(parent, parent[i]);
@@ -25,12 +66,11 @@ void FindClump::union_sets(TrackingVector<int>& parent, int a, int b) {
 }
 
 // クランプ検出ルーチン
-TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
-						      int minParticles,
-						      const std::string &var
-						      )
+void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
+			   const std::string &var
+			   )
 {
-  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
+  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -49,7 +89,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   kdTree.buildIndex();
 
   // radiusSearch には、リンク長の二乗値を指定（L2 距離の場合）
-  double searchRadius = linkingLength * linkingLength;
+  double searchRadius = params_.linkingLength * params_.linkingLength;
   nanoflann::SearchParameters params(10);
 
 #ifdef _OPENMP
@@ -72,8 +112,8 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
     // ret_matches を正しい型で宣言する
     std::vector<MyResultItem> ret_matches;
 
-    if(useHsml)
-      searchRadius = cloud.pts[i].Hsml * cloud.pts[i].Hsml * linkingLength_over_cell_size * linkingLength_over_cell_size;
+    if(params_.useHsml)
+      searchRadius = cloud.pts[i].Hsml * cloud.pts[i].Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 		
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 	
@@ -82,8 +122,8 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
       if (neighbor_index == i)
 	continue;
 	    
-      if(useHsml){
-	double LinkingLength_j = cloud.pts[neighbor_index].Hsml * cloud.pts[neighbor_index].Hsml * linkingLength_over_cell_size * linkingLength_over_cell_size;
+      if(params_.useHsml){
+	double LinkingLength_j = cloud.pts[neighbor_index].Hsml * cloud.pts[neighbor_index].Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 	if(LinkingLength_j > match.second)
 	  continue;
       }
@@ -139,7 +179,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   // 最小粒子数未満のクランプを除外してリストにする
   TrackingVector<ClumpInfo> clumpList;
   for (auto &kv : clumpMap) {
-    if (kv.second.count >= minParticles)
+    if (kv.second.count >= params_.minParticles)
       clumpList.push_back(kv.second);
   }
 
@@ -162,7 +202,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   for (size_t i = 0; i < numParticles; i++) {
     int oldGroup = find_parent(parent, i);
     // 対象となるクランプのみ
-    if (clumpMap[oldGroup].count < minParticles)
+    if (clumpMap[oldGroup].count < params_.minParticles)
       continue;
     // 新 clumpID は newClumpMap[oldGroup].clumpID
     groupIndex.push_back({ newClumpMap[oldGroup].clumpID, i });
@@ -180,10 +220,8 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
   
   // (4) ParticleCloud::pts を sortedParticles に置き換える
   cloud.pts = sortedParticles;
-
   printf("clumpListsize=%lu\n", clumpList.size());
-  
-  TrackingVector<StructureNode *> nodeList;
+
   nodeList.resize(clumpList.size());
   for(size_t i=0;i<clumpList.size();i++){
     TrackingVector<int> indices;
@@ -205,7 +243,7 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
     }
 
     TrackingVector<StructureNode*> children={};
-    StructureNode* node = new StructureNode(indices, densityThreshold, children);
+    StructureNode* node = new StructureNode(indices, params_.densityThreshold, children);
 
     node->pos_cm[0] = clumpList[i].pos_cm[0];
     node->pos_cm[1] = clumpList[i].pos_cm[1];
@@ -222,8 +260,11 @@ TrackingVector<StructureNode *> FindClump::findClumps(TrackingVector<ParticleDat
       
     nodeList[i] = node;
   }
-  
-  return nodeList;
+
+  flagDendrogramComputed = true;
+  findClumpComputed = true;
+  flagFOFComputed = true;
+  flagDirty = true;
 }
 
 //──────────────────────────────
@@ -352,10 +393,9 @@ namespace pruning {
 }
 
 
-TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParticles,
-								double min_npix, const std::string &var)
+void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParticles, const std::string &var)
 {
-  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, densityThreshold, var);
+  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -397,7 +437,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
 
   nanoflann::SearchParameters params(10);
 
-  TrackingVector<StructureNode*> nodes;
+  TrackingVector<StructureNode*>& nodes = nodeList;
   TrackingVector<StructureNode*> leafindex(numParticles);
 
   //int currentClusterID = 0;  
@@ -414,7 +454,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
     // ret_matches を正しい型で宣言する
     std::vector<MyResultItem> ret_matches;
     
-    double searchRadius = p.Hsml * p.Hsml * linkingLength_over_cell_size * linkingLength_over_cell_size;
+    double searchRadius = p.Hsml * p.Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
     
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 
@@ -487,11 +527,11 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
 	if (adjacent->isLeaf()) {
 	  bool flag;
 	  if (adjacent->parent)
-	    flag = ((adjacent->height() - adjacent->parent->height()) >= minDepth);
+	    flag = ((adjacent->height() - adjacent->parent->height()) >= params_.minDepth);
 	  else
-	    flag = ((adjacent->vmax - adjacent->vmin) >= minDepth);
+	    flag = ((adjacent->vmax - adjacent->vmin) >= params_.minDepth);
 
-	  if(flag == false || adjacent->indices.size() < static_cast<size_t>(min_npix)){	  
+	  if(flag == false || adjacent->indices.size() < static_cast<size_t>(params_.minParticles)){
 	    merger.push_back(adjacent);
 	    continue;
 	  }
@@ -543,7 +583,7 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
 
   // プルーニング対象を順次削除する
   while (true) {
-    auto toPrune = pruning::_to_prune(nodes, minDepth, min_npix);
+    auto toPrune = pruning::_to_prune(nodes, params_.minDepth, params_.minParticles);
     if (toPrune.empty())
       break;
     for (StructureNode* s : toPrune) {
@@ -566,14 +606,14 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
   }
 
   // 親を持たない構造から trunk を再構築
-  TrackingVector<StructureNode*>trunk = pruning::_make_trunk(nodes, minDepth, min_npix);
+  TrackingVector<StructureNode*>trunk = pruning::_make_trunk(nodes, params_.minDepth, params_.minParticles);
   
   for (size_t i = 0; i < nodes.size(); i++) {    
     StructureNode *sn = nodes[i];
     calc_node_statistic(sn, cloud.pts);
   }
 
-  sortNodesByMass(nodes);    
+  sortNodesByMass();    
 
   for(StructureNode* node : nodes){
     TrackingVector<int> indices_new;
@@ -587,7 +627,10 @@ TrackingVector<StructureNode *> FindClump::findClumpsDendrogram(TrackingVector<P
     node -> indices = indices_new;
   }
   
-  return nodes;
+  findClumpComputed = true;
+  flagFOFComputed = false;
+  flagDendrogramComputed = true;
+  flagDirty = true;
 }
 
 void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleDataFiltered>& p){
@@ -652,10 +695,12 @@ void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<Part
 
 //------------------------------------------------------------
 // 1) 質量順にソートする関数（降順: 質量が大きいものが前に来る）
-void FindClump::sortNodesByMass(TrackingVector<StructureNode*>& nodes) {
-  std::sort(nodes.begin(), nodes.end(), [](const StructureNode* a, const StructureNode* b) {
+void FindClump::sortNodesByMass() {
+  std::sort(nodeList.begin(), nodeList.end(), [](const StructureNode* a, const StructureNode* b) {
     return a->totalMass > b->totalMass;
   });
+
+  flagDirty = true;
 }
 
 //------------------------------------------------------------
@@ -671,15 +716,20 @@ void FindClump::traverseHierarchy(StructureNode* node, TrackingVector<StructureN
 
 // 階層順にソートする関数
 // trunk (parent == nullptr) から始め、pre-order で巡回して順序を作成
-void FindClump::sortNodesByHierarchy(TrackingVector<StructureNode*>& nodes) {
+void FindClump::sortNodesByHierarchy() {
+  if(!flagDendrogramComputed)
+    return;
+    
   TrackingVector<StructureNode*> sortedNodes;
   // nodes 内の各ノードから、親が nullptr であるもの（trunk）を対象に巡回
-  for (StructureNode* node : nodes) {
+  for (StructureNode* node : nodeList) {
     if (node->parent == nullptr) {
       traverseHierarchy(node, sortedNodes);
     }
   }
-  nodes = sortedNodes;
+
+  nodeList = sortedNodes;
+  flagDirty = true;
 }
 
 
@@ -724,293 +774,6 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
 
 
-void FindClump::ShowFindClumpsUI(TrackingVector<ParticleData>& originalParticles, const HeaderInfo& header, const SnapshotSource& src, CameraContext& cam){
-  if(!showWindowClumpFinder) return;    
-
-  ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);  
-  ImGui::Begin("clump finder", &showWindowClumpFinder, ImGuiWindowFlags_None);
-
-  const char* quantities[] = { "Density", "Temperature", "Hsml" };
-  // 各軸に使う変数のインデックス（デフォルトでは X 軸に "x"、Y 軸に "y" を選択）
-  static int selectedVar = 0;
-  
-  ImGui::Combo("Quantity", &selectedVar, quantities, IM_ARRAYSIZE(quantities));  
-  std::string var = quantities[selectedVar];
-  
-  ImGui::InputFloat("Density Threshold", &densityThreshold, 0.0, 1.0);
-  ImGui::InputInt("minParticles", &minParticles, 10, 10);
-  ImGui::InputFloat("minDepth", &minDepth, 10, 10);
-  
-  ImGui::Checkbox("Linking Length using Hsml or cell size", &useHsml);  
-
-  if (!useHsml){
-    ImGui::InputFloat("Linking Length", &linkingLength, 0.01, 0.1);
-  }else{
-    ImGui::InputFloat("Linking Length over cell size", &linkingLength_over_cell_size, 0.01, 0.1);
-  }      
-
-  if (ImGui::Button("Find Clumps")) {
-    if(findClumpComputed == true)
-      for(auto node : nodeList)
-	delete node;
-
-    flagDendrogramComputed = false;
-    
-    nodeList = findClumps(originalParticles, minParticles, var);      
-
-#ifdef USE_CONVEX_HULL
-    showHull.assign(nodeList.size(), false);
-#endif
-    
-    findClumpComputed = true;
-    flagFOFComputed = true;
-    flagDirty = true;
-  }
-
-  ImGui::SameLine();
-  if (ImGui::Button("Dendrogram")) {
-    if(findClumpComputed == true)
-      for(auto node : nodeList)
-	delete node;
-    
-    flagDendrogramComputed = false;
-    
-    nodeList = findClumpsDendrogram(originalParticles, minParticles, var);
-
-#ifdef USE_CONVEX_HULL
-    showHull.assign(nodeList.size(), false);
-#endif
-    
-    findClumpComputed = true;
-    flagFOFComputed = false;
-    flagDendrogramComputed = true;
-    flagDirty = true;
-  }
-
-#ifdef CLUMP_DATA_READ
-  static char buf[255] = "clumpList.hdf5";
-  ImGui::InputText("output file name", buf, IM_ARRAYSIZE(buf));    
-
-  char fdir[256];
-  strncpy(fdir, src.folderPath, sizeof(fdir)-1);
-  int snapshotIndex = src.currentFileIndex;
-
-  char temp[513];
-  snprintf(temp, sizeof(temp), "%s/%s", fdir, buf);
-  
-  if(ImGui::Button("Output clump data")){
-    std::string filename(temp);
-    writeFOFtoHDF5(originalParticles, header, filename, snapshotIndex);
-  }
-#endif
-  
-  if(ImGui::CollapsingHeader("Clump Lists")){
-    static float minPeakDensity = 1.e4;
-    ImGui::InputFloat("minimum peak density", &minPeakDensity);
-  
-    static bool flagShowLeaves = false;
-    ImGui::Checkbox("Leaves", &flagShowLeaves);    
-
-    ImGui::SameLine();
-    enum class SortMode { Mass, Hierarchy };
-  
-    // static 変数で現在のソートモードを保持
-    static SortMode currentSortMode = SortMode::Mass;  
-    // ラジオボタンで「質量順」を選択
-    if (ImGui::RadioButton("Sort by Mass", currentSortMode == SortMode::Mass)) {
-      if (currentSortMode != SortMode::Mass) {
-	currentSortMode = SortMode::Mass;
-	if(flagDendrogramComputed){
-	  sortNodesByMass(nodeList);
-
-	  flagDirty = true;
-	}
-      }
-    }
-  
-    ImGui::SameLine();
-    // ラジオボタンで「階層順」を選択
-    if (ImGui::RadioButton("Sort by Hierarchy", currentSortMode == SortMode::Hierarchy)) {
-      if (currentSortMode != SortMode::Hierarchy) {
-	currentSortMode = SortMode::Hierarchy;
-	if(flagDendrogramComputed){
-	  sortNodesByHierarchy(nodeList);
-
-	  flagDirty = true;
-	}
-      }
-    }
-
-    if(findClumpComputed){
-      if (ImGui::BeginTable("ClumpTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-	ImGui::TableSetupColumn("Clump Info", ImGuiTableColumnFlags_WidthStretch);
-	ImGui::TableSetupColumn("Hull", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-	ImGui::TableHeadersRow();
-
-#ifdef USE_CONVEX_HULL
-	bool flag_button_pushed = false;
-#endif
-	
-	// 各クランプ情報を表示
-	for (size_t i = 0; i < nodeList.size(); i++) {
-	  int count;
-	  double mass, pos[3], radius;
-
-	  const StructureNode *node = nodeList[i];
-	  
-	  if(node->vpeak < minPeakDensity)
-	    continue;
-	  
-	  if(flagShowLeaves)
-	    if(!node->isLeaf())
-	      continue;
-	  
-	  count = node->count;
-	  mass = node->totalMass;
-	  pos[0] = node->pos_cm[0];
-	  pos[1] = node->pos_cm[1];
-	  pos[2] = node->pos_cm[2];
-	  radius = 0.; // to be constructed
-	  
-	  ImGui::TableNextRow();
-            
-	  // 左側の列：clump の情報をSelectableで表示
-	  ImGui::TableSetColumnIndex(0);
-	  char label[256];
-	  snprintf(label, sizeof(label), "%4ld   %4d    %g    (%.3f, %.3f, %.3f) %g",
-		   i, count, mass, pos[0], pos[1], pos[2], radius);
-	  if (ImGui::Selectable(label, false)) {
-	    // クリックされたらカメラをクランプの重心に移動
-	    float dist = glm::length(cam.cameraPos - cam.cameraTarget);
-	    glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-	    cam.cameraTarget = glm::vec3(pos[0], pos[1], pos[2]);
-	    cam.cameraPos = cam.cameraTarget - direction * dist;
-	  }
-
-#ifdef USE_CONVEX_HULL
-	  // 右側の列：チェックボックス
-	  ImGui::TableSetColumnIndex(1);
-	  char checkboxLabel[64];
-	  snprintf(checkboxLabel, sizeof(checkboxLabel), "Hull##%ld", i);
-	  // vector<bool> は特殊化しているため、一時変数を使って更新する
-	  bool flag = showHull[i];
-	  if (ImGui::Checkbox(checkboxLabel, &flag)){
-	    if(flag != showHull[i]){
-	      flag_button_pushed = true;	    
-	      //convexHullDirtyMap[i] = true;
-	    }	    
-	    showHull[i] = flag;
-	  }
-#endif
-	}
-
-#ifdef USE_CONVEX_HULL
-	if(flag_button_pushed){
-	  for(auto &p : originalParticles)
-	    p.flag_stress = 0;
-
-	  for(size_t i=0;i<showHull.size();i++){
-	    if(showHull[i] == 0)
-	      continue;
-	    
-	    setFlagsRecursively(nodeList[i], originalParticles);	  
-	  }
-
-	  flagDirty = true;
-	  flag_button_pushed = false;
-	}
-#endif
-	
-	ImGui::EndTable();
-      }
-    }
-  }
-
-  if(ImGui::CollapsingHeader("Clump Mass Histogram")){
-    static bool histogramComputed = false;
-    static TrackingVector<float> mass_array;
-
-    // 自動レンジを使うかどうかのチェックボックス
-    static bool autoRange = true;
-    ImGui::Checkbox("Auto Range", &autoRange);
-  
-    // 手動レンジ入力用（autoRange==false の場合）
-    static float range1_min = 0.0f, range1_max = 1.0f;
-    if (!autoRange)
-      {
-	ImGui::InputFloat("X Axis Min", &range1_min, 0.0f, 0.0f, "%g");
-	ImGui::InputFloat("X Axis Max", &range1_max, 0.0f, 0.0f, "%g");
-      }
-
-    static bool histogramLogScaleX = true;
-    static bool histogramLogScaleY = true;  
-    ImGui::Checkbox("Use Log scale X", &histogramLogScaleX);
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Use Log scale Y", &histogramLogScaleY);
-
-    // ビン数の入力
-    static int bins = 50;
-    ImGui::InputInt("Number of bins", &bins);
-
-    static bool bins_auto = false;
-    ImGui::SameLine();
-    ImGui::Checkbox("Use Log scale Y", &bins_auto);
-
-    if (ImGui::Button("Compute 1D Histogram")) {
-      mass_array = {};
-
-      // 各クランプ情報を表示
-      for (size_t i = 0; i < nodeList.size(); i++) {
-	const StructureNode *node = nodeList[i];
-	float mass = node->totalMass;
-	  
-	if(histogramLogScaleX)
-	  mass = log10(mass);
-      
-	mass_array.push_back(mass);
-      }
-        
-      float massMin = std::numeric_limits<float>::max();
-      float massMax = std::numeric_limits<float>::lowest();
-      for (const auto &mass : mass_array) {      
-	massMin = std::min(massMin, mass);
-	massMax = std::max(massMax, mass);
-      }
-    
-      if (massMin == massMax)
-	massMax = massMin + 1.0f;
-
-      if (autoRange){
-	range1_min = massMin;
-	range1_max = massMax;
-      }
-      
-      histogramComputed = true;
-    }
-
-    if(histogramComputed){
-      if (ImPlot::BeginPlot("Mass Histogram", ImVec2(-1,300))) {
-	if (histogramLogScaleY)
-	  ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-	else
-	  ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Linear);
-	
-	ImPlot::SetupAxisLimits(ImAxis_X1, range1_min, range1_max, ImGuiCond_Always);
-
-	int bins_plot = bins;
-	if(bins_auto)
-	  bins_plot = -1;
-	
-	ImPlot::PlotHistogram("Mass", mass_array.data(), static_cast<int>(mass_array.size()), bins_plot);
-	ImPlot::EndPlot();
-      }
-    }
-  }
-  
-  ImGui::End();
-}
-
 
 #ifdef CLUMP_DATA_READ
 void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particles, const HeaderInfo& header, char *filename, int snapshotIndex){
@@ -1018,9 +781,9 @@ void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<Particle
   std::string var(var_name);
   
   if(method == 0)
-    nodeList = findClumps(particles, minParticles, var);
+    findClumps(particles, var);
   else
-    nodeList = findClumpsDendrogram(particles, minParticles, var);
+    findClumpsDendrogram(particles, var);
 
   for(auto& node : nodeList)
     node->construct_ID_array(particles);

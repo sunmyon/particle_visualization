@@ -35,7 +35,7 @@ void ApplyConfigData(const ConfigData& config,
   visual = config.persistent.visual;
   mask = config.persistent.mask;
 
-  desired_max = config.persistent.normalizationFactor;
+  desired_max = config.persistent.desiredMax;
   units = config.persistent.units;
   fileInfo.setUnit(units);
 }

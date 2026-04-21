@@ -30,10 +30,6 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
   source_.currentFileIndex = newFileIndex;
 
   printf("currentStep=%d newFileIndex=%d\n", source_.currentStep, newFileIndex);
-
-#ifdef CLUMP_DATA_READ
-  P->flag_renew_clumpList = true;
-#endif
 }
 
 bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {

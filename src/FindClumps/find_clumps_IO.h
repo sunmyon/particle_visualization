@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include "core/tracking_vector.h"
 
 #ifdef CLUMP_DATA_READ
 enum LoadMask : uint32_t {
@@ -82,4 +84,14 @@ namespace ClumpIO {
                      uint32_t mask,
                      const ClumpInfoIO& data);
 }
+
+class StructureNode;
+struct ClumpData;
+float readClumpTime(std::string fname, int snapshotIndex);
+
+void readClumpEvolution(std::string fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
+			TrackingVector<float>& times, TrackingVector<ClumpData>& clumps);
+
+void addNextClumpIDtoHDF5(TrackingVector<StructureNode *> nodes,
+			  const std::string &filename, int snapshotIndex);
 #endif

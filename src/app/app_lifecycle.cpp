@@ -16,6 +16,9 @@
 #include "UI.h"
 
 #include "FindClumps/find_clumps.h"
+#include "FindClumps/loaded_clump_tool.h"
+#include "FindClumps/clump_chain.h"
+
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
@@ -67,6 +70,8 @@ static void InitAppServices(AppServices& services)
   services.histogram2D     = std::make_unique<Histogram2DComputer>();
   services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
   services.clumpFind       = std::make_unique<FindClump>();
+  services.clumpLoad       = std::make_unique<LoadedClumpTool>();
+  services.clumpChain      = std::make_unique<ClumpChain>();
 #ifdef USE_CONVEX_HULL
   services.convexHull      = std::make_unique<ConvexHullGenerator>();
 #endif

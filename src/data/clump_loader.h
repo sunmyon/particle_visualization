@@ -2,6 +2,7 @@
 
 #include "data/particle_array.h"
 
+class ClumpData;
 #ifdef CLUMP_DATA_READ
 TrackingVector<ClumpData>
 loadClumpData(const char* fname_clump_file,

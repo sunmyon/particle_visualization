@@ -105,9 +105,12 @@ set(SOURCES_CPP
   ${SRC_DIR}/FileIO/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp
   ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp
+  ${SRC_DIR}/FindClumps/clump_chain.cpp
   ${SRC_DIR}/FindClumps/find_clumps.cpp
   ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
-  ${SRC_DIR}/FindClumps/find_clumps_make_chains.cpp
+  ${SRC_DIR}/FindClumps/find_clumps_finder_window.cpp
+  ${SRC_DIR}/FindClumps/find_clumps_loaded_window.cpp
+  ${SRC_DIR}/FindClumps/find_clumps_chain_window.cpp
   ${SRC_DIR}/OctTree/ParticleOctree.cpp
   ${SRC_DIR}/IsoSurface/density_evaluate.cpp
 )

@@ -8,6 +8,7 @@ struct ParticleBlock;
 struct CameraContext;
 struct RenderLayerState;
 struct NormalizationContext;
+struct TrackingTargetState;
 class ParticleArray;
 
 class RadialProfileComputer;
@@ -37,7 +38,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 RenderLayerState& cuboidAnnotationState,
                          int fileindex);
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx);
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track);
 
 class FileInfo;
 void OpenHaloesUI(HaloesUIState& state);
