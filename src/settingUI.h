@@ -10,7 +10,6 @@ struct SettingsUIContext {
   FileInfo* fileInfo = nullptr;
   CameraContext* camCtx = nullptr;
   ParticleVisualConfig* particleVisual = nullptr;
-  AppServices* services = nullptr;  
   RenderRuntimeState* render = nullptr;
   AnalysisDerivedState* analysis = nullptr;
   ToolWindowUIState* windows = nullptr;

@@ -40,15 +40,13 @@
 static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
                                                AppViewState& view,
                                                AnalysisDerivedState& analysis,
-					       ToolWindowUIState& toolWindows,
-                                               AppServices& services)
+					       ToolWindowUIState& toolWindows)
 {
   SettingsUIContext ctx;
   ctx.P              = data.particles;
   ctx.fileInfo       = data.fileInfo;
   ctx.camCtx         = &view.camera;
   ctx.particleVisual = &view.particleVisual;
-  ctx.services       = &services;
   ctx.analysis       = &analysis;
   ctx.windows        = &toolWindows;
   
@@ -59,11 +57,10 @@ static void DrawSettingsPanels(const AppDataState& data,
                                AppViewState& view,
                                AppRuntimeState& runtime,
                                AnalysisDerivedState& analysis,
-			       ToolWindowUIState& toolWindows,
-                               AppServices& services)
+			       ToolWindowUIState& toolWindows)
 {
   SettingsUIContext settingsCtx =
-    MakeSettingsUIContext(data, view, analysis, toolWindows, services);
+    MakeSettingsUIContext(data, view, analysis, toolWindows);
   ShowSettingsUI(settingsCtx, runtime);
   ShowCameraSettingsUI();
 }
@@ -92,11 +89,10 @@ static void DrawMainUI(const AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AnalysisDerivedState& analysis,
-		       ToolWindowUIState& toolWindows,
-		       AppServices& services)
+		       ToolWindowUIState& toolWindows)
 {
   ShowTime(data.particles->particleBlock.header.time);
-  DrawSettingsPanels(data, view, runtime, analysis, toolWindows, services);
+  DrawSettingsPanels(data, view, runtime, analysis, toolWindows);
 }
 
 static void DrawToolWindows(AppDataState& data,
@@ -960,8 +956,7 @@ void RunFrame(AppState& app,
 	     app.view,
 	     app.runtime,
 	     app.derived.analysis,
-	     app.ui.toolWindows,
-	     app.services);
+	     app.ui.toolWindows);
 
   DrawToolWindows(app.data,
 		  app.view.camera,
