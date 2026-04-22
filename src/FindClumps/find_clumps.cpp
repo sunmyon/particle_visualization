@@ -119,7 +119,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 	
     for (const auto& match : ret_matches) {
       size_t neighbor_index = match.first;
-      if (neighbor_index == i)
+      if (neighbor_index == static_cast<size_t>(i))
 	continue;
 	    
       if(params_.useHsml){
@@ -793,7 +793,7 @@ void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<Particle
 
   if(nodeList_prev.size() > 0){
     if(nodeList_prev.size())
-      findClumpsInNextSnapshot(particles);
+      findClumpsInNextSnapshot();
     
     addNextClumpIDtoHDF5(nodeList_prev, fname, snapshotIndex_prev);
   }
@@ -803,7 +803,7 @@ void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<Particle
 }
 
 
-void FindClump::findClumpsInNextSnapshot(TrackingVector<ParticleData>&particles){
+void FindClump::findClumpsInNextSnapshot(void){
   struct ParticleInfo {
     int ID;
     int clumpID;

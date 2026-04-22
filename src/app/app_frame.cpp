@@ -102,7 +102,7 @@ static void DrawToolWindows(AppDataState& data,
                             AnalysisDerivedState& analysis,
                             AppServices& services)
 {
-  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking);
+  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking, runtime.settings.snapshotPostprocess);
   
   DrawFileDialogPanels(*data.fileInfo, tools);
   ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
@@ -920,25 +920,24 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				*data.particles,
 				runtime.settings.normalization,
 				runtime.settings.inputFilter,
-				runtime.settings.fileNavigation);
+				runtime.settings.fileNavigation,
+				runtime.settings.snapshotPostprocess);
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
 				 runtime.settings.viewFilter,
 				 camera,
-				 runtime.settings);
+				 runtime.settings,
+				 runtime.settings.snapshotPostprocess);
 
-  if (data.fileInfo->snapshotUpdated) {
-    const auto& src = data.fileInfo->getSource();
-    ExecutePostSnapshotLoadActions(*data.particles,
-				   data.clumpStore,
-				   runtime.settings.normalization,
-				   runtime.settings.tracking,
-				   camera,
-				   src.currentFileIndex);
-    
-    data.fileInfo->clearSnapshotUpdated();
-  }
+  const auto& src = data.fileInfo->getSource();
+  ExecutePostSnapshotLoadActions(*data.particles,
+				 data.clumpStore,
+				 runtime.settings.normalization,
+				 runtime.settings.tracking,
+				 camera,
+				 runtime.settings.snapshotPostprocess,
+				 src.currentFileIndex);
 
   ExecutePythonBridgeRequests(*data.particles,
 			      services.py,

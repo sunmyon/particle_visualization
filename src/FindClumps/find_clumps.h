@@ -78,7 +78,6 @@ private:
   int snapshotIndex_prev;
 
   TrackingVector<StructureNode *> nodeList_next; //will be used for tracking clumps
-  int snapshotIndex_next;
 
   void clearNodes(){
     if (findClumpComputed) {
@@ -130,7 +129,7 @@ private:
   TrackingVector<ParticleDataFiltered> filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const;
   TrackingVector<ParticleData> getAllChildren(StructureNode* node, TrackingVector<ParticleData>& p) const;
 
-  void findClumpsInNextSnapshot(TrackingVector<ParticleData>&particles);
+  void findClumpsInNextSnapshot(void);
   
   void readFOFtoHDF5(    const std::string &filename,
 			 int snapshotIndex,

@@ -1,6 +1,6 @@
 #include "UI.h"
 #include "settingUI.h"
-#include "app/app_services.h"
+#include "app/app_state.h"
 #include "app/app_data_actions.h"
 #include "render_actions.h"
 
@@ -28,10 +28,10 @@ struct PullDownItem {
 
 static void DrawCameraInfoSection(const CameraContext& camCtx);
 static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
-static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* P, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
+static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawNormalizationSection(ParticleArray* P, NormalizationContext& ctx);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
-static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt, const CameraContext& camCtx);
+static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const CameraContext& camCtx);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(PythonBridgeRequestState& request, const PythonBridgeViewState& view);
 #endif
@@ -44,10 +44,10 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
 
   DrawCameraInfoSection(*ctx.camCtx);
   DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, ctx.P, rt.settings.fileNavigation, *ctx.windows);
+  DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, rt.settings.fileNavigation, *ctx.windows);
   DrawNormalizationSection(ctx.P, rt.settings.normalization);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
-  DrawCameraPlacementSection(ctx.P, rt.settings, *ctx.camCtx);
+  DrawCameraPlacementSection(rt.settings, *ctx.camCtx);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(rt.analysis.py.request, rt.analysis.py.view);
 #endif
@@ -136,7 +136,7 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
   }    
 }
 
-static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, ParticleArray* Part, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
+static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
 
@@ -310,8 +310,7 @@ static void DrawSinkIdSection(const CameraContext& camCtx,
   }
 }
 
-static void DrawCameraPlacementSection(ParticleArray* Part,
-                                       SettingsRuntimeState& rt,
+static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
 				       const CameraContext& camCtx)
 {
   if (!ImGui::CollapsingHeader("Set camera pos"))
@@ -408,11 +407,8 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
   if (!ImGui::CollapsingHeader("Analysis"))
     return;
 
-  ParticleArray* Part = ctx.P;
-  CameraContext& camCtx = *ctx.camCtx;
   auto& source = ctx.fileInfo->editSource();
   auto* render = ctx.render;
-  auto* analysis = ctx.analysis;
   
   enum AnalysisMode {
     ANALYSIS_RADIAL_PROFILE,
@@ -667,8 +663,6 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
     return;
 
   ParticleArray* Part = ctx.P;
-  CameraContext& camCtx = *ctx.camCtx;
-
   auto* render = ctx.render;
   
   enum RenderingMode {

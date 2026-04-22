@@ -833,79 +833,88 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
   }
 }
 
+static bool LoadSnapshotAtCurrentStep(FileInfo& fileInfo,
+                                      ParticleArray& particles,
+                                      NormalizationContext& normalization,
+                                      const InputFilterConfig& filter,
+                                      SnapshotSource& src,
+                                      SnapshotPostprocessState& post,
+                                      bool skipIfLoading)
+{
+  const int newFileIndex =
+    src.initialIndex + src.currentStep * src.skipStep;
+
+  if (skipIfLoading && fileInfo.isLoading()) {
+    return false;
+  }
+
+  fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+  src.currentFileIndex = newFileIndex;
+
+  post.refreshTree = true;
+  post.refreshCulling = true;
+  post.refreshTopParticles = true;
+  post.applyTrackingToCamera = true;
+
+  return true;
+}
+
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
-				   ParticleArray& particles,
-				   NormalizationContext& normalization,
-				   const InputFilterConfig& filter,
-				   FileNavigationRuntimeState& rt)
+                                   ParticleArray& particles,
+                                   NormalizationContext& normalization,
+                                   const InputFilterConfig& filter,
+                                   FileNavigationRuntimeState& rt,
+				   SnapshotPostprocessState &post)
 {
   auto& req = rt.request;
   auto& src = fileInfo.editSource();
-  
+
   if (req.applySkipStepRequested) {
     if (rt.tempSkipStep > 0) {
-      int newStep = std::round(
-        (src.currentFileIndex - src.initialIndex) /
-        static_cast<float>(rt.tempSkipStep)
+      src.currentStep = std::max(
+        0,
+        static_cast<int>(std::round(
+          (src.currentFileIndex - src.initialIndex) /
+          static_cast<float>(rt.tempSkipStep)))
       );
-      src.currentStep = std::max(0, newStep);
       src.skipStep = rt.tempSkipStep;
-
-      int newFileIndex =
-        src.initialIndex + src.currentStep * src.skipStep;
-
-      if (!fileInfo.isLoading()) {
-	fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
-      }
-
-      src.currentFileIndex = newFileIndex;
+      LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+				src, post, true);
     }
-
     req.applySkipStepRequested = false;
   }
 
   if (req.loadSelectedSnapshotRequested) {
-    int newFileIndex =
-      src.initialIndex + src.currentStep * src.skipStep;
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+			      src, post, true);
     req.loadSelectedSnapshotRequested = false;
   }
 
   if (req.loadPreviousRequested) {
     if (src.currentStep > 0) {
-      src.currentStep--;
-      int newFileIndex =
-        src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+      --src.currentStep;
+      LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+				src, post, true);
     }
     req.loadPreviousRequested = false;
   }
 
   if (req.loadNextRequested) {
-    src.currentStep++;
-    int newFileIndex =
-      src.initialIndex + src.currentStep * src.skipStep;
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+    ++src.currentStep;
+    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+			      src, post, true);
     req.loadNextRequested = false;
   }
 
   if (req.loadBatchRequested) {
-    if (!fileInfo.isLoading()) {
-      int newFileIndex =
-        src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
-      src.currentFileIndex = newFileIndex;
-    }
+    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+			      src, post, true);
     req.loadBatchRequested = false;
   }
 
   if (req.reloadRequested) {
-    if (!fileInfo.isLoading()) {
-      int newFileIndex =
-        src.initialIndex + src.currentStep * src.skipStep;
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
-      src.currentFileIndex = newFileIndex;
-    }
+    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+			      src, post, true);
     req.reloadRequested = false;
   }
 
@@ -919,7 +928,8 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
 				    const NormalizationContext& normalization,
 				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
-				    SettingsRuntimeState& rt)
+				    SettingsRuntimeState& rt,
+				    SnapshotPostprocessState &post)
 {
   auto& req = rt.cameraPlacement;
 
@@ -991,16 +1001,24 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
     viewFilter.enabled = false;
     req.clearCullingRequested = false;
   }
-}
 
+  if(post.refreshCulling){
+    ApplyCullingSphere(particles, normalization, viewFilter);
+    post.refreshCulling = false;
+  }
+}
 
 void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    ClumpStore& clumpStore,
 				    NormalizationContext& normalization,
 				    TrackingTargetState& track,
 				    CameraContext& camCtx,
+				    SnapshotPostprocessState &post,
 				    int currentFileIndex)
 {
+  if (!post.applyTrackingToCamera)
+    return;
+  
 #ifdef CLUMP_DATA_READ
   if (track.followClump) {    
     ClumpData targetClump = clumpStore.clump(track.targetClumpID);
@@ -1023,7 +1041,7 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
       camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
       camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
     }
-  }
+  }  
 #endif
 
   if (track.followParticle) {
@@ -1039,6 +1057,8 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
       camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
     }
   }
+
+  post.applyTrackingToCamera = false;
 }
 
 void ExecuteHaloesUIRequests(HaloesUIState& state,

@@ -121,7 +121,6 @@ void OpenClumpListUI(LoadedClumpWindowState& state){
 }
 
 static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
-				     LoadedClumpTool& ctool,
 				     ClumpStore& clumpStore,
 				     TrackingTargetState& state,
                                      int currentFileIndex,
@@ -154,7 +153,7 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("Clump lists", &ui.open, ImGuiWindowFlags_None);
 
-  DrawClumpFileLoadSection(ui, ctool, clump, view, currentFileIndex, src, normalization);
+  DrawClumpFileLoadSection(ui, clump, view, currentFileIndex, src, normalization);
   DrawLoadedClumpTable(ui, clump, cam);
   DrawClumpEvolutionControls(ui, ctool);
   DrawClumpEvolutionPlot(ui, ctool, clump, currentFileIndex);
@@ -163,7 +162,6 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
 }
 
 static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
-				     LoadedClumpTool& ctool,
 				     ClumpStore& clumpStore,
 				     TrackingTargetState& view,
                                      int currentFileIndex,

@@ -24,7 +24,7 @@ public:
   // thin 候補数（= ThinOK の粒子数）から stride を決める
   void prepare(size_t thinCandidates){
     id_stride_ = 1;
-    if(cfg_.enableMaxParticles && cfg_.maxParticles>0 && thinCandidates>cfg_.maxParticles){
+    if(cfg_.enableMaxParticles && cfg_.maxParticles>0 && thinCandidates>static_cast<size_t>(cfg_.maxParticles)){
       id_stride_ = (uint64_t)((thinCandidates + cfg_.maxParticles - 1) / cfg_.maxParticles);
     }
   }

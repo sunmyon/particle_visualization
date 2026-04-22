@@ -9,6 +9,7 @@ struct CameraContext;
 struct RenderLayerState;
 struct NormalizationContext;
 struct TrackingTargetState;
+struct SnapshotPostprocessState;
 class ParticleArray;
 class HaloStore;
 
@@ -43,7 +44,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 RenderLayerState& cuboidAnnotationState,
                          int fileindex);
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track);
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post);
 
 class FileInfo;
 void OpenHaloesUI(HaloesUIState& state);

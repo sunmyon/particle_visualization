@@ -1,10 +1,15 @@
 #pragma once
 
-#include "app/runtime_state.h"
-#include "app/analysis_state.h"
-#include "app/app_state.h"
+class ParticleArray;
+class FileInfo;
+struct CameraContext;
+struct ParticleVisualConfig;
+struct RenderRuntimeState;
+struct AnalysisDerivedState;
+struct ToolWindowUIState;
+struct SettingsUIContext;
+struct AppRuntimeState;
 
-struct AppServices;
 struct SettingsUIContext {
   ParticleArray* P = nullptr;
   FileInfo* fileInfo = nullptr;

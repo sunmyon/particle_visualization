@@ -177,10 +177,18 @@ struct FileNavigationRuntimeState {
   FileNavigationRequestState request;
 };
 
+struct SnapshotPostprocessState {
+  bool refreshTree = false;
+  bool refreshCulling = false;
+  bool refreshTopParticles = false;
+  bool applyTrackingToCamera = false;
+};
+
 struct SettingsRuntimeState {
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
 
+  SnapshotPostprocessState snapshotPostprocess;
   ViewFilterConfig viewFilter;
   InputFilterConfig inputFilter;
   NormalizationContext normalization;

@@ -89,19 +89,22 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   ParticleArray& particles,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
-				   FileNavigationRuntimeState& rt);
+				   FileNavigationRuntimeState& rt,
+				   SnapshotPostprocessState &post);
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,
 				    const NormalizationContext& normalization,
 				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
-				    SettingsRuntimeState& rt);
+				    SettingsRuntimeState& rt,
+				   SnapshotPostprocessState &post);
 
 void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    ClumpStore& clumpStore,
 				    NormalizationContext& normalization,
 				    TrackingTargetState& track,
 				    CameraContext& camCtx,
+				    SnapshotPostprocessState &post,
 				    int currentFileIndex);
 
 void ExecuteHaloesUIRequests(HaloesUIState& state,

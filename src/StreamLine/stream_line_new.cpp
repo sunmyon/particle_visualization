@@ -16,10 +16,6 @@ inline Eigen::Vector3f toEigen(const float p[3]) {
   return Eigen::Vector3f(p[0], p[1], p[2]);
 }
 
-inline Vec3 fromArray(const float p[3]) {
-  return {p[0], p[1], p[2]};
-}
-
 inline float limiter_ratio(float dq_allowed, float dq_trial) {
   if (dq_trial <= 0.0f) return 1.0f;
   return std::clamp(dq_allowed / dq_trial, 0.0f, 1.0f);
@@ -332,7 +328,7 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
     const float r2 = d.squaredNorm();
     const float w = std::exp(-r2 / std::max(1.0e-20f, sigma2));
 
-    printf("id=%d vec=%g %g %g\n", id, Bi[0], Bi[1], Bi[2]);
+    printf("id=%zu vec=%g %g %g\n", id, Bi[0], Bi[1], Bi[2]);
     
     Bsum += w * Bi;
     sumw += w;

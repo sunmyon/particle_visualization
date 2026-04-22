@@ -807,7 +807,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 }
 
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track) {
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post) {
   const int histSizeMax = 10;
 
   ImGui::Begin("Particles Info");
@@ -838,7 +838,13 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "Particle ID %d not found", state.queryID);
   }
 
-  if (ImGui::Button("Refresh History")) {
+  bool flag_refresh_all = false;
+  if(post.refreshTopParticles){
+    flag_refresh_all = true;
+    post.refreshTopParticles = false;
+  }
+  
+  if (ImGui::Button("Refresh History") || flag_refresh_all) {
     int prevID = (state.historySel >= 0 && state.historySel < (int)state.historyData.size())
                    ? state.historyData[state.historySel].ID
                    : -1;
@@ -935,7 +941,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
   ImGui::InputInt("Number of Particles", &state.m);
   if (state.m < 1) state.m = 1;
 
-  if (flag_pushed) {
+  if (flag_pushed || flag_refresh_all) {
     state.filtered.clear();
 
     for (size_t i = 0; i < P->particleBlock.particles.size(); i++) {
