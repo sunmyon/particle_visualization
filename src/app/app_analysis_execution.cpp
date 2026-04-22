@@ -1003,7 +1003,8 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
   }
 
   if(post.refreshCulling){
-    ApplyCullingSphere(particles, normalization, viewFilter);
+    if(viewFilter.enabled)
+      ApplyCullingSphere(particles, normalization, viewFilter);
     post.refreshCulling = false;
   }
 }
