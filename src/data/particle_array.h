@@ -2,7 +2,6 @@
 #include "particle_block.h"
 #include "core/units.h"
 #include "core/tracking_vector.h"
-#include "interaction/camera.h"
 
 struct NormalizationContext;
 

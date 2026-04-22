@@ -21,7 +21,7 @@
 #include "data/halo_store.h"
 #include "FileIO/file_io.h"
 #include "object.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 #include "FindClumps/find_clumps_helpers.h"
 
 #ifdef GEOMETRICAL_ANALYSIS

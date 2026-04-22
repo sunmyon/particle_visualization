@@ -1,8 +1,8 @@
 #pragma once
 
-#include "app_state.h"
-#include "render/render_system.h"
-#include "window_context.h"
+struct RenderSystem;
+struct AppState;
+class WindowContext;
 
 bool InitPlatform(WindowContext& window,
                   CallbackContext& callbackCtx,

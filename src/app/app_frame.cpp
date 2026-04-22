@@ -14,6 +14,7 @@
 
 #include "UI.h"
 #include "settingUI.h"
+#include "FileIO/file_io.h"
 #include "FileIO/file_format_dialog.h"
 
 #include "render/frame_matrices.h"
@@ -22,7 +23,7 @@
 
 #include "imgui_context.h"
 #include "window_context.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_ui.h"

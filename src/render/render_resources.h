@@ -3,10 +3,12 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <vector>
+
 #include "object.h"
-#include "particle_visual_config.h"
 #include "render_types.h"
-#include "data/particle_array.h"
+
+struct ParticleVisualConfig;
 
 struct RenderParticle {
   float pos[3];
@@ -100,6 +102,7 @@ struct RenderResources {
   bool polyhedraGpuDirty = true;
 };
 
+class ParticleData;
 class ParticleArray;
 void BuildRenderParticles(ParticleArray& P,
                           const ParticleVisualConfig& visualConfig,

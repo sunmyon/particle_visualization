@@ -5,8 +5,7 @@
 #include <lua.hpp>
 #endif
 
-#include "stb_image_write.h"
-#include "stb_truetype.h"
+#include "image/bitmap_font_renderer.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -30,12 +29,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "data/particle_array.h"
 #include "core/tracking_vector.h"
 #include "core/quantity.h"
 #include "render/colormap_defs.h"
-
 #include "object.h"
+
+class ParticleArray;
+class ParticleData;
 
 struct ProjectionImage {
   int width = 0;
@@ -123,12 +123,14 @@ struct pos_val {
 
 class ProjectionMapGenerator {
 private:
+  double time_;
+  BitmapFontRenderer fontRenderer_;
   ProjectionImage image_;
   bool flag_image_ = false;
   bool dirty_ = true;
   uint64_t nextVersion_ = 1;
-  char type_ = 0;
-
+  char type_ = 0;  
+  
   struct ProjectionMap {
     int npixel = 0, npixel_x = 0, npixel_y = 0, npixel_z = 0;
     float xlen[3] = {0.f, 0.f, 0.f}, xmin[3] = {0.f, 0.f, 0.f};
@@ -153,9 +155,6 @@ private:
 public:
   ProjectionMapParams params;
 
-  HeaderInfo Header;
-  bool flagFontLoaded = false;
-  bool showWindowSelectFont = false;
   double scale_to_phys = 1.0;
   glm::quat cuboidTransform = glm::quat(1.f,0.f,0.f,0.f);
   glm::vec3 center = glm::vec3(0.f);
@@ -170,11 +169,6 @@ public:
   lua_State* gLua = nullptr;
   bool flag_init_lua = false;
 #endif
-
-  stbtt_fontinfo fontCharacter;
-  std::vector<unsigned char> ttf_buffer;
-  std::vector<std::string> availableFonts = {};
-  std::vector<ImFont*> loadedFonts = {};
 
   int getFontCount() const;
   const std::string& getFontPath(int index) const;
@@ -235,42 +229,6 @@ public:
                         TrackingVector<unsigned char>& outImage,
                         int& outW, int& outH, const char *barLabel);
 
-  void ShowFontSelectionWindow();
-  void initFonts();
-  bool containsIgnoreCase(const std::string& str, const std::string& substr);
-  void getAvailableFonts(const std::vector<std::string>& fontDirectory);
-  bool loadFontFile(const std::string& fontFilename, std::vector<unsigned char>& buffer);
-  void renderGlyphExample(const std::vector<unsigned char>& ttf_buffer, char c, int fontSize);
-
-  float stbtt_CalcTextWidth(const stbtt_fontinfo* font, float scale, const char* text);
-  void measure_text(const char* text, stbtt_fontinfo* font, float pixelSize, int& outWidth, int& outHeight);
-  void measure_text_bbox(const char* text, stbtt_fontinfo* font, float scale, int& outWidth, int& outHeight, float& outMinX, float& outMinY);
-  void draw_value_on_image(TrackingVector<unsigned char>& image, int img_width, int img_height,
-                           int pos_x, int pos_y, double value,
-                           stbtt_fontinfo *font, float scale, const char *format);
-  void draw_text_label_centered(TrackingVector<unsigned char>& image,
-                                int img_width, int img_height,
-                                int pos_x, int pos_y,
-                                const char* text,
-                                stbtt_fontinfo* font,
-                                float charpixelsize);
-  void draw_text_rotated_on_image(TrackingVector<unsigned char>& image,
-                                  int img_width, int img_height,
-                                  int center_x, int center_y,
-                                  const char* text,
-                                  stbtt_fontinfo *font, float charpixelsize);
-  void draw_char(TrackingVector<unsigned char>& image, int img_width, int img_height,
-                 int pos_x, int pos_y, int codepoint,
-                 stbtt_fontinfo *font, float scale);
-  void draw_rotated_char(TrackingVector<unsigned char>& image,
-                         int img_width, int img_height,
-                         int pos_x, int pos_y, int codepoint,
-                         stbtt_fontinfo *font, float scale);
-  void drawTextBaselineAndRotate90(TrackingVector<unsigned char>& image,
-                                   int img_width, int img_height,
-                                   int center_x, int center_y,
-                                   const char* text,
-                                   stbtt_fontinfo *font, float charpixelsize);
   void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis,
                                  const float* pos_center, const float len, const float val_min, const float val_max,
                                  const int npixel_input, const int nslices, std::string var);

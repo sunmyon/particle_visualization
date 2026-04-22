@@ -8,7 +8,7 @@
 #include <glm/glm.hpp>
 
 #include "data/particle_array.h"
-#include "app/runtime_state.h"
+#include "app/render_runtime_state.h"
 #include "interaction/camera.h"
 #include "window_context.h"
 

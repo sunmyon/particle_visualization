@@ -2,7 +2,7 @@
 
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/clump_chain.h"

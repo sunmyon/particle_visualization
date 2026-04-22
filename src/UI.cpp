@@ -7,6 +7,7 @@
 
 #include "app/runtime_state.h"
 #include "app/analysis_state.h"
+#include "app/render_runtime_state.h"
 #include "app/normalization_config.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
@@ -17,7 +18,7 @@
 #include "data/particle_array.h"
 #include "data/halo_store.h"
 
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 
@@ -752,7 +753,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // font selection
   // -----------------------------
   if (ImGui::Button("Select font")) {
-    generator.showWindowSelectFont = true;
+    state.fontWindowOpen = true;
   }
 
   DrawProjectionFontSelectionUI(generator, state);

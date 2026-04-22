@@ -1,5 +1,5 @@
 #include "projection_preview_gl.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 #include "UI.h"
 
 ProjectionPreviewUIState ProjectionPreviewGL::makeUIState() const

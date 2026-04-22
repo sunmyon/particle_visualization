@@ -1,16 +1,15 @@
 #pragma once
 
+#include <vector>
 #include <cstddef>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
-#include "object_renderer.h"
-#include "gizmo_renderer.h"
-#include "particle_visual_config.h"
-#include "FileIO/file_io.h"
-
+struct ParticleVisualConfig;
 struct RenderParticle;
+class ColorbarRenderer;
+
 class ParticleRenderer {
 public:
   void init();

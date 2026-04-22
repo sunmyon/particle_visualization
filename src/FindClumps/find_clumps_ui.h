@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/tracking_vector.h"
+#include "data/particle_data.h"
+
 class FindClump;
 class LoadedClumpTool;
 class ClumpChain;

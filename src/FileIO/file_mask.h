@@ -1,5 +1,5 @@
 #pragma once
-#include "app/ui_state.h"
+#include "data/particle_mask_config.h"
 
 struct CoreSample {
   double   pos[3];

@@ -13,6 +13,7 @@
 #include "data/clump_loader.h"
 #include "app/tracking_view_state.h"
 #include "app/normalization_config.h"
+#include "interaction/camera.h"
 
 namespace {
   const char* kEvolutionQuantities[] = {

@@ -7,6 +7,7 @@
 #include "app/overlay_state.h"
 #include "app/analysis_state.h"
 #include "app/ui_state.h"
+#include "app/render_runtime_state.h"
 #include "interaction/camera.h"
 #include "interaction/interaction_utils.h"
 #include "data/clump_store.h"

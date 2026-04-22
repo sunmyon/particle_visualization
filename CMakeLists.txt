@@ -68,7 +68,6 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI.cpp
   ${SRC_DIR}/settingUI.cpp
   ${SRC_DIR}/render_actions.cpp
-  ${SRC_DIR}/make_2D_projection_map.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
   ${SRC_DIR}/imgui_context.cpp
@@ -96,6 +95,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/config/config_io.cpp
   ${SRC_DIR}/config/config_apply.cpp
   ${SRC_DIR}/config/config_extract.cpp
+  ${SRC_DIR}/config/config_validation.cpp
   ${SRC_DIR}/data/particle_block.cpp
   ${SRC_DIR}/data/particle_array.cpp
   ${SRC_DIR}/data/clump_loader.cpp
@@ -111,6 +111,10 @@ set(SOURCES_CPP
   ${SRC_DIR}/FindClumps/find_clumps_finder_window.cpp
   ${SRC_DIR}/FindClumps/find_clumps_loaded_window.cpp
   ${SRC_DIR}/FindClumps/find_clumps_chain_window.cpp
+  ${SRC_DIR}/projection/make_2D_projection_map.cpp
+  ${SRC_DIR}/image/image_canvas.cpp
+  ${SRC_DIR}/image/image_io.cpp
+  ${SRC_DIR}/image/bitmap_font_renderer.cpp
   ${SRC_DIR}/OctTree/ParticleOctree.cpp
   ${SRC_DIR}/IsoSurface/density_evaluate.cpp
 )

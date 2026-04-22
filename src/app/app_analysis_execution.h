@@ -1,7 +1,5 @@
 #pragma once
 
-#include "app/app_state.h"
-
 #ifdef GEOMETRICAL_ANALYSIS
 class DiskRadiusFinder;
 class ParticleArray;

@@ -10,8 +10,9 @@
 #include "app/normalization_config.h"
 #include "app/input_filter_config.h"
 #include "data/particle_array.h"
+#include "interaction/camera.h"
 
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 
 void OpenClumpChainUI(ClumpChainWindowState& state){
   state.open = true;

@@ -1,5 +1,7 @@
 #include <vector>
 
+#include "data/particle_array.h"
+
 #include "particle_visual_config.h"
 #include "app/runtime_state.h"
 #include "render_resources.h"

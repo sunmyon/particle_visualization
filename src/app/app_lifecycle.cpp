@@ -1,9 +1,14 @@
+#include "app/app_state.h"
 #include "app/app_lifecycle.h"
 #include "app/app_callbacks.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
 #include "config/config_extract.h"
 #include "config/config_io.h"
+#include "config/config_validation.h"
+
+#include "render/render_system.h"
+#include "window_context.h"
 
 #include <iostream>
 #include <memory>
@@ -15,13 +20,14 @@
 #include "imgui_context.h"
 #include "UI.h"
 
+#include "FileIO/file_io.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/clump_chain.h"
 
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
 
 #ifdef USE_CONVEX_HULL
 #include "geometry/convex_hull_generator.h"
@@ -105,6 +111,10 @@ void LoadInitialData(AppState& app)
 {
   ConfigData config;
   if (LoadConfigFile("config.txt", config)) {
+    ConfigValidationIssues issues;
+    SanitizeConfigData(config, &issues);
+    PrintConfigValidationIssues(issues);
+    
     ApplyConfigData(config,
                     *app.data.fileInfo,
                     app.data.particles->units,
