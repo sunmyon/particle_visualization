@@ -23,6 +23,7 @@ struct ProjectionMapUIState {
   bool fontWindowOpen = false;
   bool previewFontsInitialized = false;
   int currentFontIndex = 0;
+  int appliedFontIndex = -1;
 
   float xlen_input[3] = {2.0f, 2.0f, 1.0f};
   std::vector<ImFont*> previewFonts;

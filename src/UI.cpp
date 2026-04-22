@@ -274,19 +274,9 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
 static void InitProjectionPreviewFonts(ProjectionMapGenerator& generator,
                                        ProjectionMapUIState& state)
 {
+  (void)generator;
   if (state.previewFontsInitialized) return;
-
   state.previewFonts.clear();
-
-  ImGui::GetIO().Fonts->AddFontDefault();
-
-  for (int i = 0; i < generator.getFontCount(); ++i) {
-    ImFont* font =
-      ImGui::GetIO().Fonts->AddFontFromFileTTF(generator.getFontPath(i).c_str(), 24.0f);
-    state.previewFonts.push_back(font);
-  }
-
-  ImGui::GetIO().Fonts->Build();
   state.previewFontsInitialized = true;
 }
 
@@ -306,7 +296,7 @@ static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
 
   InitProjectionPreviewFonts(generator, state);
 
-  if (state.currentFontIndex >= generator.getFontCount()) {
+  if (state.currentFontIndex < 0 || state.currentFontIndex >= generator.getFontCount()) {
     state.currentFontIndex = 0;
   }
 
@@ -316,7 +306,6 @@ static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
       bool isSelected = (state.currentFontIndex == i);
       if (ImGui::Selectable(generator.getFontPath(i).c_str(), isSelected)) {
         state.currentFontIndex = i;
-        generator.selectFontFileByIndex(i);
       }
       if (isSelected)
         ImGui::SetItemDefaultFocus();
@@ -327,12 +316,21 @@ static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
   ImGui::Text("Selected Font: %s",
               generator.getFontPath(state.currentFontIndex).c_str());
 
-  if (state.currentFontIndex < (int)state.previewFonts.size() &&
-      state.previewFonts[state.currentFontIndex]) {
-    ImGui::PushFont(state.previewFonts[state.currentFontIndex]);
-    ImGui::Text("The quick brown fox jumps over the lazy dog.");
-    ImGui::PopFont();
+  if (ImGui::Button("Apply Font")) {
+    if (generator.selectFontFileByIndex(state.currentFontIndex)) {
+      state.appliedFontIndex = state.currentFontIndex;
+    }
   }
+
+  if (state.appliedFontIndex >= 0 &&
+      state.appliedFontIndex < generator.getFontCount()) {
+    ImGui::Text("Applied Font: %s",
+                generator.getFontPath(state.appliedFontIndex).c_str());
+  } else {
+    ImGui::TextUnformatted("Applied Font: default");
+  }
+
+  ImGui::TextUnformatted("The quick brown fox jumps over the lazy dog.");
 
   ImGui::End();
 }

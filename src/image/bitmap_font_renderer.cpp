@@ -3,6 +3,7 @@
 #include "image/image_canvas.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -107,7 +108,9 @@ struct BitmapFontRenderer::Impl {
     if (!LoadFileBytes(path, nextBuffer)) return false;
 
     stbtt_fontinfo nextFont{};
-    if (!stbtt_InitFont(&nextFont, nextBuffer.data(), 0)) return false;
+    const int offset = stbtt_GetFontOffsetForIndex(nextBuffer.data(), 0);
+    if (offset < 0) return false;
+    if (!stbtt_InitFont(&nextFont, nextBuffer.data(), offset)) return false;
 
     fontBuffer = std::move(nextBuffer);
     font = nextFont;
@@ -335,6 +338,11 @@ BitmapFontRenderer::BitmapFontRenderer()
   : impl_(std::make_unique<Impl>())
 {
   discoverFonts();
+  for (const auto& path : impl_->fontPaths) {
+    if (impl_->loadFontFile(path)) {
+      break;
+    }
+  }
 }
 
 BitmapFontRenderer::~BitmapFontRenderer() = default;
