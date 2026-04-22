@@ -16,6 +16,10 @@
 #include "StreamLine/stream_line_new.h"
 #endif
 
+#ifdef USE_CONVEX_HULL
+#include "geometry/convex_hull_generator.h"
+#endif
+
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/PythonBridge.h"
 PythonBridgeState::PythonBridgeState() = default;

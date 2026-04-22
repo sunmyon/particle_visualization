@@ -18,6 +18,7 @@
 #include "data/particle_array.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
+#include "data/halo_store.h"
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "make_2D_projection_map.h"
@@ -1040,4 +1041,33 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
   }
 }
 
+void ExecuteHaloesUIRequests(HaloesUIState& state,
+                             HaloStore& haloes,
+                             ParticleArray& particles)
+{
+  if (state.requestRecomputePositions) {
+    haloes.recomputeHaloPositionsFromParticles(
+      particles.particleBlock.particles,
+      state.recomputeUseMassWeight,
+      state.recomputeUseOriginalPos
+    );
+    state.requestRecomputePositions = false;
+  }
 
+  if (state.stressSelectionDirty) {
+    for (auto& p : particles.particleBlock.particles) {
+      p.flag_stress = 0;
+    }
+
+    if (haloes.idsLoaded()) {
+      const int n = static_cast<int>(std::min(haloes.size(), state.selectedForStress.size()));
+      for (int i = 0; i < n; ++i) {
+        if (!state.selectedForStress[i]) continue;
+        particles.ApplyIDStress(haloes.ids(i));
+      }
+    }
+
+    particles.particlesDirty = true;
+    state.stressSelectionDirty = false;
+  }
+}

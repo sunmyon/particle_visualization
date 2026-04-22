@@ -107,16 +107,6 @@ public:
              const std::string& fname,
 	     UnitSystem& units);
 
-  float readClumpTime(const std::string& fname, int snapshotIndex);
-
-  void readClumpEvolution(const std::string& fname,
-                          int snapshotInit,
-                          int snapshotEnd,
-                          int dsnapshot,
-                          int clumpID_init,
-                          TrackingVector<float>& times,
-                          TrackingVector<ClumpData>& clumps);
-
 private:
   TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumpLists_;
   TrackingVector<TrackingVector<ClumpEvolutionInfo*>> chains_;

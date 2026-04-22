@@ -27,6 +27,10 @@
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_ui.h"
 
+#ifdef USE_CONVEX_HULL
+#include "geometry/convex_hull_generator.h"
+#endif
+
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
 #include "PythonBridge/PythonBridge.h"
@@ -107,7 +111,7 @@ static void DrawToolWindows(AppDataState& data,
   DrawFileDialogPanels(*data.fileInfo, tools);
   ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
 
-  DrawRadialProfileUI(tools.radialProfile, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
+  DrawRadialProfileUI(tools.radialProfile, analysis.radial, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
 
   const auto& src = data.fileInfo->getSource();
   DrawProjectionMapUI(tools.projectionMap, 
@@ -119,7 +123,7 @@ static void DrawToolWindows(AppDataState& data,
                       src.currentFileIndex);
 
 #ifdef HAVE_HDF5
-  DrawHaloesUI(tools.haloes, data.particles, camera, data.fileInfo, runtime.settings.normalization);
+  DrawHaloesUI(tools.haloes, data.haloStore, camera, runtime.settings.normalization);
 #endif
   
   Histogram2DContext histCtx;
@@ -128,7 +132,7 @@ static void DrawToolWindows(AppDataState& data,
   auto visibleHulls = analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
 
-  DrawHistogram2DUI(tools.histogram2D, *services.histogram2D, data.particles->particleBlock, histCtx);
+  DrawHistogram2DUI(tools.histogram2D, analysis.hist2D, *services.histogram2D, data.particles->particleBlock, histCtx);
 
   DrawClumpFinderUI(tools.clumpFind,
 		    *services.clumpFind,
@@ -939,6 +943,11 @@ static void ExecuteAnalysisRequests(AppDataState& data,
     
     data.fileInfo->clearSnapshotUpdated();
   }
+
+  ExecutePythonBridgeRequests(*data.particles,
+			      services.py,
+			      runtime.analysis.py.request,
+			      runtime.analysis.py.view);
 }
 
 void RunFrame(AppState& app,

@@ -10,10 +10,13 @@ struct RenderLayerState;
 struct NormalizationContext;
 struct TrackingTargetState;
 class ParticleArray;
+class HaloStore;
 
 class RadialProfileComputer;
+struct RadialProfileRuntimeState;
 void OpenRadialProfileUI(RadialProfileUIState& state);
 void DrawRadialProfileUI(RadialProfileUIState& state,
+			 RadialProfileRuntimeState& rt,
 			 RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
@@ -22,8 +25,10 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 
 class Histogram2DComputer;
 struct Histogram2DContext;
+struct Histogram2DRuntimeState;
 void OpenHistogram2DUI(Histogram2DUIState& state);
 void DrawHistogram2DUI(Histogram2DUIState& state,
+		       Histogram2DRuntimeState& rt,
 		       Histogram2DComputer& computer,
                        ParticleBlock& partblock,
 		       const Histogram2DContext& ctx);
@@ -42,7 +47,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
 
 class FileInfo;
 void OpenHaloesUI(HaloesUIState& state);
-void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo, NormalizationContext& normalization);
+void DrawHaloesUI(HaloesUIState& state, HaloStore& halo, CameraContext& camCtx, NormalizationContext& normalization);
 
 void OpenMaskUI(MaskUIState& state);
 bool DrawMaskWindow(MaskUIState& ui, ParticleMaskConfig& mask);

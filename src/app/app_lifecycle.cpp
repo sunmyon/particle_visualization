@@ -23,6 +23,10 @@
 #include "compute_2D_histogram.h"
 #include "make_2D_projection_map.h"
 
+#ifdef USE_CONVEX_HULL
+#include "geometry/convex_hull_generator.h"
+#endif
+
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/ellipse_fitter.h"
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -81,10 +85,6 @@ static void InitAppServices(AppServices& services)
 #endif
 #ifdef STREAM_LINE
   services.streamLine      = std::make_unique<StreamlineComputer>();
-#endif
-#ifdef VOLUME_RENDERING
-  services.bvh             = std::make_unique<lbvh::MortonBuilder>();
-  services.tf              = std::make_unique<TransferFunctionEditor>();
 #endif
 }
 

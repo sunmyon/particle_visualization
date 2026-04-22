@@ -14,15 +14,3 @@ void UpdateSeedRegionPreview(StreamlineComputer& streamLine,
                              float seed_len[3],
                              float seed_opacity);
 #endif
-
-#ifdef VOLUME_RENDERING
-class ParticleArray;
-namespace lbvh { class MortonBuilder; }
-
-void PrepareVolumeRendering(ParticleArray& part,
-                            lbvh::MortonBuilder& bvh,
-			    VolumeRenderingRuntime& volume,
-                            RenderRuntimeState& render);
-
-void ReloadVolumeRendering(VolumeRenderingRuntime& volume, RenderRuntimeState& render);
-#endif

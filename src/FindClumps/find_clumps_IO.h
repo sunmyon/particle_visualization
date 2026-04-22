@@ -86,12 +86,12 @@ namespace ClumpIO {
 }
 
 class StructureNode;
-struct ClumpData;
+class ClumpData;
 float readClumpTime(std::string fname, int snapshotIndex);
 
-void readClumpEvolution(std::string fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
+void readClumpEvolution(const std::string& fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
 			TrackingVector<float>& times, TrackingVector<ClumpData>& clumps);
 
-void addNextClumpIDtoHDF5(TrackingVector<StructureNode *> nodes,
+void addNextClumpIDtoHDF5(const TrackingVector<StructureNode *>& nodes,
 			  const std::string &filename, int snapshotIndex);
 #endif

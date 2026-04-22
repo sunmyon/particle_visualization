@@ -1,28 +1,17 @@
 #pragma once
 #include <vector>
 #include "core/tracking_vector.h"
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
+#include "data/particle_data.h"
 #include "data/particle_mask_config.h"
 #include "app/file_format_dialog_state.h"
 #include "FindClumps/clump_window_state.h"
 
 struct RadialProfileUIState {
   bool open = false;
-  int selectedXAxis = 0;
-  int selectedVarIdx = 0;
-  bool computed = false;
-  
-  RadialProfileParams params;
-  RadialProfileResult result;
 };
 
 struct Histogram2DUIState {
   bool open = false;
-  bool computed = false;
-
-  Histogram2DParams params;
-  Histogram2DResult result;
 };
 
 struct ImFont;
@@ -82,6 +71,10 @@ struct HaloesUIState {
   bool open = false;
   char fname[255] = "";
 
+  std::vector<uint8_t> selectedForStress;
+  bool stressSelectionDirty = false;
+  bool requestRecomputePositions = false;
+  
   int m = 50;
 
   bool recomputeUseMassWeight = true;

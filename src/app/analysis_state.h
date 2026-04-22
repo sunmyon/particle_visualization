@@ -72,6 +72,25 @@ struct ProjectionMovieResultState {
   char errorMessage[512] = "";
 };
 
+#include "compute_radial_profile.h"
+#include "compute_2D_histogram.h"
+
+struct RadialProfileRuntimeState {
+  bool computed = false;
+  int selectedXAxis = 0;
+  int selectedVarIdx = 0;
+  
+  RadialProfileParams params;
+  RadialProfileResult result;
+};
+
+struct Histogram2DRuntimeState {
+  bool computed = false;
+
+  Histogram2DParams params;
+  Histogram2DResult result;
+};
+
 struct AnalysisDerivedState {
   ConvexHullRuntimeState convexHulls;
   
@@ -95,4 +114,7 @@ struct AnalysisDerivedState {
 #endif
 
   ProjectionMovieResultState projectionMovie;
+
+  RadialProfileRuntimeState radial;
+  Histogram2DRuntimeState hist2D;
 };

@@ -99,8 +99,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/data/particle_block.cpp
   ${SRC_DIR}/data/particle_array.cpp
   ${SRC_DIR}/data/clump_loader.cpp
+  ${SRC_DIR}/data/halo_store.cpp
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
-  ${SRC_DIR}/FileIO/halo_reader.cpp
 	${SRC_DIR}/FileIO/file_io.cpp
   ${SRC_DIR}/FileIO/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp
@@ -132,6 +132,7 @@ if(VOLUME_RENDERING)
 endif()
 
 if(PYTHON_BRIDGE)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/app/app_python_bridge_execution.cpp)  
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridge.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/BridgeAdapter.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/ShmCommon.cpp)

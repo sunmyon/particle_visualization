@@ -42,7 +42,7 @@ namespace {
   }
 
   
-  DataType mapMetaToDataType(const H5DatasetMeta& m)
+  DataType mapMetaToDataType(const HDF5Utils::H5DatasetMeta& m)
   {
     if (m.cls == H5T_FLOAT) {
       if (m.bytes == 4) return DataType::Float;
@@ -54,7 +54,7 @@ namespace {
     throw std::runtime_error("unsupported dataset dtype");
   }
 
-  int mapMetaToComps(const H5DatasetMeta& m)
+  int mapMetaToComps(const HDF5Utils::H5DatasetMeta& m)
   {
     if (m.rank == 1) return 1;
     if (m.rank == 2) return (int)m.dims[1];
@@ -87,7 +87,7 @@ namespace {
 
   void update_layout_from_hdf5(FieldLayout& fl, const H5::DataSet& ds)
   {
-    const H5DatasetMeta m = getDatasetMeta(ds);
+    const HDF5Utils::H5DatasetMeta m = HDF5Utils::getDatasetMeta(ds);
     fl.spec.type  = mapMetaToDataType(m);
     fl.spec.count = mapMetaToComps(m);
     resetStoreFromSpec(fl);
@@ -208,10 +208,10 @@ bool HDF5Reader::readRange(ParticleBlock& out,
         of.buf.resize(n * of.bpp);
         const H5::PredType memType = h5_memtype_from_source(of.fl->spec.type);
 
-        readHyperslabBytes(of.ds, memType,
-			   (hsize_t)(ctx.localStart + ctx.done),
-			   (hsize_t)ctx.nread,
-                           of.comps, of.buf, of.elemSz);
+        HDF5Utils::readHyperslabBytes(of.ds, memType,
+				      (hsize_t)(ctx.localStart + ctx.done),
+				      (hsize_t)ctx.nread,
+				      of.comps, of.buf, of.elemSz);
 	
 	dispatch_opened_field_chunk_(out, of, ctx);
 	
@@ -272,14 +272,14 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     hasHeader = true;
 
     double time = 0.0;
-    (void)readAttributeScalar(hg, "Time", time);
+    (void)HDF5Utils::readAttributeScalar(hg, "Time", time);
     header.time = (float)time;
 
     printf("time is %g\n", header.time);
       
     // MassTable double[6]
     double mt[6]{};
-    if (readAttributeArray(hg, "MassTable", mt)) {
+    if (HDF5Utils::readAttributeArray(hg, "MassTable", mt)) {
       for (int t=0;t<6;++t) mass_type_[t] = mt[t];
     } else {
       for (int t=0;t<6;++t) mass_type_[t] = 0.0;
@@ -289,7 +289,7 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     bool okNum = false;
     {
       unsigned int       n32[6]{};
-      if (readAttributeArray(hg, "NumPart_Total", n32)) {
+      if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", n32)) {
 	for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
 	okNum = true;
       }
@@ -297,7 +297,7 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
 
     if (!okNum) {
       unsigned int       n32[6]{};
-      if (readAttributeArray(hg, "NumPart_ThisFile", n32)) {
+      if (HDF5Utils::readAttributeArray(hg, "NumPart_ThisFile", n32)) {
 	for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
 	okNum = true;
       }
@@ -314,31 +314,31 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     hasParam = true;
 
     double UnitLength_in_cm;
-    (void)readAttributeScalar(param, "UnitLength_in_cm", UnitLength_in_cm);
+    (void)HDF5Utils::readAttributeScalar(param, "UnitLength_in_cm", UnitLength_in_cm);
     header.UnitLength_in_cm = UnitLength_in_cm;
 
     double UnitMass_in_g;
-    (void)readAttributeScalar(param, "UnitMass_in_g", UnitMass_in_g);
+    (void)HDF5Utils::readAttributeScalar(param, "UnitMass_in_g", UnitMass_in_g);
     header.UnitMass_in_g = UnitMass_in_g;
 
     double UnitVelocity_in_cm_per_s;
-    (void)readAttributeScalar(param, "UnitVelocity_in_cm_per_s", UnitVelocity_in_cm_per_s);
+    (void)HDF5Utils::readAttributeScalar(param, "UnitVelocity_in_cm_per_s", UnitVelocity_in_cm_per_s);
     header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
 
     double HubbleParam;
-    (void)readAttributeScalar(param, "HubbleParam", HubbleParam);
+    (void)HDF5Utils::readAttributeScalar(param, "HubbleParam", HubbleParam);
     header.HubbleParam = HubbleParam;
 
     bool flag_comoving = false;
-    (void)readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
+    (void)HDF5Utils::readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
     header.flag_comoving = flag_comoving;
 
     bool flag_density_in_cgs = false;
-    (void)readAttributeScalar(param, "FlagDensityInCgs", flag_density_in_cgs);
+    (void)HDF5Utils::readAttributeScalar(param, "FlagDensityInCgs", flag_density_in_cgs);
     header.flag_density_in_cgs = flag_density_in_cgs;
 
     bool flag_B_in_cgs = false;
-    (void)readAttributeScalar(param, "FlagBfieldInCgs", flag_B_in_cgs);
+    (void)HDF5Utils::readAttributeScalar(param, "FlagBfieldInCgs", flag_B_in_cgs);
     header.flag_B_in_cgs = flag_B_in_cgs;
   } catch (...) {
     hasParam = false;
@@ -766,7 +766,7 @@ bool HDF5Reader::read_coords_chunk_(int ptype, size_t localStart, size_t n,
     const H5::PredType memType = H5::PredType::NATIVE_FLOAT;
     const size_t elemSz = sizeof(float);
     const int comps = 3;
-    readHyperslabBytes(ds, memType, (hsize_t)localStart, (hsize_t)n, comps, buf, elemSz);
+    HDF5Utils::readHyperslabBytes(ds, memType, (hsize_t)localStart, (hsize_t)n, comps, buf, elemSz);
     return true;
   }catch(...){
     return false;

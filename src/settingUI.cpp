@@ -12,12 +12,7 @@
 #include "data/particle_array.h"
 
 #include "FindClumps/find_clumps_ui.h"
-
-#ifdef PYTHON_BRIDGE
-#include "PythonBridge/BridgeAdapter.h"
-#include "PythonBridge/PythonBridge.h"
-#include "PythonBridge/ShmLayout.h"
-#endif
+#include <imgui.h>
 
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
@@ -38,7 +33,7 @@ static void DrawNormalizationSection(ParticleArray* P, NormalizationContext& ctx
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(ParticleArray* P, SettingsRuntimeState& rt, const CameraContext& camCtx);
 #ifdef PYTHON_BRIDGE
-static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py);
+static void DrawPythonBridgeSection(PythonBridgeRequestState& request, const PythonBridgeViewState& view);
 #endif
 static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
 static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
@@ -54,7 +49,7 @@ void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(ctx.P, rt.settings, *ctx.camCtx);
 #ifdef PYTHON_BRIDGE
-  DrawPythonBridgeSection(ctx.P, ctx.services->py);
+  DrawPythonBridgeSection(rt.analysis.py.request, rt.analysis.py.view);
 #endif
   DrawAnalysisSection(ctx, rt.analysis, *ctx.windows);
   DrawRenderingSection(ctx, rt.analysis, *ctx.windows);
@@ -366,76 +361,45 @@ static void DrawCameraPlacementSection(ParticleArray* Part,
 }
 
 #ifdef PYTHON_BRIDGE
-static void DrawPythonBridgeSection(ParticleArray* Part, struct PythonBridgeState& py){
-  if (!ImGui::CollapsingHeader("Python:Jupyter notebook")) 
+static void DrawPythonBridgeSection(PythonBridgeRequestState& request,
+                             const PythonBridgeViewState& view)
+{
+  if (!ImGui::CollapsingHeader("Python:Jupyter notebook"))
     return;
-  
-  const bool isOpen = (py.ptr != nullptr);
+
+  const bool isOpen = view.available;
+
   if (ImGui::Button(isOpen ? "Close notebook" : "Open notebook")) {
-    if (!isOpen) {
-      // --- Open ---
-      py.ptr.reset(CreatePythonBridge());
-      if (!py.ptr) {
-	ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge creation failed");
-      } else {
-	// 共有メモリ準備
-	const uint64_t N = static_cast<uint64_t>(Part->particleBlock.particles.size());
-	if (!py.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
-	  ImGui::TextColored(ImVec4(1,0.4f,0.4f,1),"Bridge init failed");
-	  py.ptr.reset();
-	} else {
-	  bridge::loadInitialFromAoS(*py.ptr, *Part, sizeof(ParticleData));	    
-	  // Notebook 起動（非同期でもOK／boolで可否だけ握る）
-	  py.launched = py.ptr->launchNotebook("./jupyter_work");
-	}
-      }
-    } else {
-      // --- Close ---
-      py.ptr->shutdown();
-      py.ptr.reset();
-      py.launched = false;
-      py.needUploadPos = false;
-    }
+    if (isOpen)
+      request.shutdownRequested = true;
+    else
+      request.launchRequested = true;
   }
-		
-  // ステータス表示
-  if (py.ptr) {
+
+  if (view.available) {
     ImGui::SameLine();
-    ImGui::TextColored(py.launched ? ImVec4(0.6f,1,0.6f,1) : ImVec4(1,0.8f,0.4f,1),
-		       py.launched ? "launched" : "launching...");
+    ImGui::TextColored(view.launched ? ImVec4(0.6f,1,0.6f,1)
+                                     : ImVec4(1,0.8f,0.4f,1),
+                       view.launched ? "launched" : "launching...");
   }
-		
-  if (py.ptr && py.launched) {
-    const auto& info = py.ptr->notebookInfo();
-			
+
+  if (view.launched) {
     ImGui::SeparatorText("Jupyter Notebook");
-    ImGui::Text("Port : %d", info.port);
-    ImGui::TextWrapped("URL  : %s", info.url.c_str());
-			
-    // クリップボードにコピー
+    ImGui::Text("Port : %d", view.port);
+    ImGui::TextWrapped("URL  : %s", view.url.c_str());
+
     ImGui::SameLine();
     if (ImGui::SmallButton("Copy URL")) {
-      ImGui::SetClipboardText(info.url.c_str());
+      ImGui::SetClipboardText(view.url.c_str());
     }
-			
-    // 既に JupyterLauncher で open/xdg-open 済みでも、手動で開けるボタンを用意
+
     if (ImGui::SmallButton("Open in Browser")) {
-#if defined(__APPLE__)
-      std::string cmd = "open \"" + info.url + "\"";
-      std::system(cmd.c_str());
-#elif defined(__linux__)
-      std::string cmd = "xdg-open \"" + info.url + "\"";
-      std::system(cmd.c_str());
-#elif defined(_WIN32)
-      // Windows: start はシェル内蔵。cmd /c 経由で。
-      std::string cmd = "cmd /c start \"\" \"" + info.url + "\"";
-      std::system(cmd.c_str());
-#endif
+      request.openBrowserRequested = true;
     }
-			
-    // 状態表示（任意）
-    ImGui::SameLine();
-    ImGui::TextDisabled("(token: %s)", info.token.c_str());
+
+    if (!view.lastError.empty()) {
+      ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "%s", view.lastError.c_str());
+    }
   }
 }
 #endif

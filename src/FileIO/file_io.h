@@ -28,10 +28,6 @@ public:
   
   void applySelectedFilePath(const char* fullPath);
   
-#ifdef HAVE_HDF5
-  HaloCatalog readHaloCatalogFromHDF5(char *fname, bool loadIDs /*=true*/);
-#endif
-
   void setUnit(UnitSystem& units_input){
     source.setUnit(units_input);
   }

@@ -6,6 +6,7 @@
 #include "implot.h"
 
 #include "app/runtime_state.h"
+#include "app/analysis_state.h"
 #include "app/normalization_config.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
@@ -14,6 +15,7 @@
 #include "render/colormap_defs.h"
 #include "render/gizmo_renderer.h"
 #include "data/particle_array.h"
+#include "data/halo_store.h"
 
 #include "make_2D_projection_map.h"
 #include "compute_radial_profile.h"
@@ -47,6 +49,7 @@ void OpenMaskUI(MaskUIState& state){
 }
 
 void DrawRadialProfileUI(RadialProfileUIState& state,
+			 RadialProfileRuntimeState& rt,
 			 RadialProfileComputer& computer,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
@@ -60,93 +63,93 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   ImGui::Begin("Radial Profile", &state.open);
 
   const char* xaxes[] = { "r", "x", "y", "z", "M(<r)" };
-  ImGui::Combo("X Axis", &state.selectedXAxis, xaxes, IM_ARRAYSIZE(xaxes));
-  state.params.xmode = (XAxisMode)state.selectedXAxis;
+  ImGui::Combo("X Axis", &rt.selectedXAxis, xaxes, IM_ARRAYSIZE(xaxes));
+  rt.params.xmode = (XAxisMode)rt.selectedXAxis;
 
   const int baseCount = partblock.nUIQ;
-  const bool allowMDot = (state.params.xmode == XAxisMode::Radius ||
-                          state.params.xmode == XAxisMode::EnclosedMass);
+  const bool allowMDot = (rt.params.xmode == XAxisMode::Radius ||
+                          rt.params.xmode == XAxisMode::EnclosedMass);
   const int totalCount = baseCount + (allowMDot ? 1 : 0);
 
-  if (state.selectedVarIdx < 0 || state.selectedVarIdx >= totalCount)
-    state.selectedVarIdx = 0;
+  if (rt.selectedVarIdx < 0 || rt.selectedVarIdx >= totalCount)
+    rt.selectedVarIdx = 0;
 
   auto labelAt = [&](int idx)->const char* {
     if (idx < baseCount) return QuantityLabel(partblock.uiQ[idx]);
     return "mdot";
   };
 
-  if (ImGui::BeginCombo("Quantity", labelAt(state.selectedVarIdx))) {
+  if (ImGui::BeginCombo("Quantity", labelAt(rt.selectedVarIdx))) {
     for (int i = 0; i < baseCount; ++i) {
-      bool sel = (state.selectedVarIdx == i);
+      bool sel = (rt.selectedVarIdx == i);
       if (ImGui::Selectable(QuantityLabel(partblock.uiQ[i]), sel))
-        state.selectedVarIdx = i;
+        rt.selectedVarIdx = i;
       if (sel) ImGui::SetItemDefaultFocus();
     }
     if (allowMDot) {
       ImGui::Separator();
       int mdotIdx = baseCount;
-      bool sel = (state.selectedVarIdx == mdotIdx);
+      bool sel = (rt.selectedVarIdx == mdotIdx);
       if (ImGui::Selectable("mdot", sel))
-        state.selectedVarIdx = mdotIdx;
+        rt.selectedVarIdx = mdotIdx;
       if (sel) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
   }
 
-  if (state.selectedVarIdx < baseCount) {
-    state.params.var1 = partblock.uiQ[state.selectedVarIdx];
-    state.params.isMDot = false;
+  if (rt.selectedVarIdx < baseCount) {
+    rt.params.var1 = partblock.uiQ[rt.selectedVarIdx];
+    rt.params.isMDot = false;
   } else {
-    state.params.isMDot = true;
+    rt.params.isMDot = true;
   }
 
-  ImGui::InputInt("Number of Bins", &state.params.bins);
-  ImGui::Checkbox("Use Original Coordinates", &state.params.useOriginal);
-  ImGui::Checkbox("Log X Axis", &state.params.plotXAxisLog);
-  ImGui::Checkbox("Log Y Axis", &state.params.plotYAxisLog);
-  ImGui::Checkbox("Auto Range", &state.params.autorange);
-  ImGui::Checkbox("Take absolute value", &state.params.flagAbsolute);
+  ImGui::InputInt("Number of Bins", &rt.params.bins);
+  ImGui::Checkbox("Use Original Coordinates", &rt.params.useOriginal);
+  ImGui::Checkbox("Log X Axis", &rt.params.plotXAxisLog);
+  ImGui::Checkbox("Log Y Axis", &rt.params.plotYAxisLog);
+  ImGui::Checkbox("Auto Range", &rt.params.autorange);
+  ImGui::Checkbox("Take absolute value", &rt.params.flagAbsolute);
 
-  if (!state.params.autorange) {
-    ImGui::InputFloat("X Axis Min", &state.params.xmin, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &state.params.xmax, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Min", &state.params.ymin, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Max", &state.params.ymax, 0.0f, 0.0f, "%g");
+  if (!rt.params.autorange) {
+    ImGui::InputFloat("X Axis Min", &rt.params.xmin, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("X Axis Max", &rt.params.xmax, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Min", &rt.params.ymin, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Max", &rt.params.ymax, 0.0f, 0.0f, "%g");
   }
 
-  ImGui::InputFloat("Maximum Radius (cut)", &state.params.rmax, 0.0f, 0.0f, "%g");
+  ImGui::InputFloat("Maximum Radius (cut)", &rt.params.rmax, 0.0f, 0.0f, "%g");
 
   if (ImGui::Button("Compute profile")) {
-    state.result = computer.compute(partblock, normalization, state.params, cam_center);
+    rt.result = computer.compute(partblock, normalization, rt.params, cam_center);
 
-    if (state.params.autorange) {
-      state.params.xmin = state.result.xmin;
-      state.params.xmax = state.result.xmax;
-      state.params.ymin = state.result.ymin;
-      state.params.ymax = state.result.ymax;
+    if (rt.params.autorange) {
+      rt.params.xmin = rt.result.xmin;
+      rt.params.xmax = rt.result.xmax;
+      rt.params.ymin = rt.result.ymin;
+      rt.params.ymax = rt.result.ymax;
     }
 
-    state.computed = true;
+    rt.computed = true;
   }
 
-  if (state.computed && state.result.valid) {
+  if (rt.computed && rt.result.valid) {
     if (ImPlot::BeginPlot("Profile", ImVec2(-1, 300))) {
-      const char* ylabel = state.params.isMDot ? "mdot" : QuantityLabel(state.params.var1);
-      ImPlot::SetupAxes(XAxisLabel(state.params.xmode), ylabel);
+      const char* ylabel = rt.params.isMDot ? "mdot" : QuantityLabel(rt.params.var1);
+      ImPlot::SetupAxes(XAxisLabel(rt.params.xmode), ylabel);
 
-      if (state.params.plotXAxisLog)
+      if (rt.params.plotXAxisLog)
         ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
-      if (state.params.plotYAxisLog)
+      if (rt.params.plotYAxisLog)
         ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
 
-      ImPlot::SetupAxisLimits(ImAxis_X1, state.params.xmin, state.params.xmax, ImGuiCond_Always);
-      ImPlot::SetupAxisLimits(ImAxis_Y1, state.params.ymin, state.params.ymax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_X1, rt.params.xmin, rt.params.xmax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, rt.params.ymin, rt.params.ymax, ImGuiCond_Always);
 
       ImPlot::PlotLine("Profile",
-                       state.result.x.data(),
-                       state.result.y.data(),
-                       (int)state.result.y.size());
+                       rt.result.x.data(),
+                       rt.result.y.data(),
+                       (int)rt.result.y.size());
       ImPlot::EndPlot();
     }
   }
@@ -155,6 +158,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 }
 
 void DrawHistogram2DUI(Histogram2DUIState& state,
+		       Histogram2DRuntimeState& rt,
 		       Histogram2DComputer& computer,
                        ParticleBlock& partblock,
 		       const Histogram2DContext& ctx)
@@ -164,88 +168,88 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("histogram 2D", &state.open, ImGuiWindowFlags_None);
 
-  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(state.params.var1))) {
+  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(rt.params.var1))) {
     for (int q = 0; q < partblock.nAllQ; ++q) {
       QuantityId cand = partblock.allQ[q];
-      bool is_selected = (cand == state.params.var1);
+      bool is_selected = (cand == rt.params.var1);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        state.params.var1 = cand;
+        rt.params.var1 = cand;
       if (is_selected) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
   }
 
-  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(state.params.var2))) {
+  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(rt.params.var2))) {
     for (int q = 0; q < partblock.nAllQ; ++q) {
       QuantityId cand = partblock.allQ[q];
-      bool is_selected = (cand == state.params.var2);
+      bool is_selected = (cand == rt.params.var2);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        state.params.var2 = cand;
+        rt.params.var2 = cand;
       if (is_selected) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
   }
 
-  ImGui::InputInt("Bins X", &state.params.bins1);
-  ImGui::InputInt("Bins Y", &state.params.bins2);
+  ImGui::InputInt("Bins X", &rt.params.bins1);
+  ImGui::InputInt("Bins Y", &rt.params.bins2);
 
-  ImGui::Checkbox("Use Log scale X", &state.params.logScaleX);
-  ImGui::Checkbox("Use Log scale Y", &state.params.logScaleY);
-  ImGui::Checkbox("Use Log color scale", &state.params.logScaleColor);
+  ImGui::Checkbox("Use Log scale X", &rt.params.logScaleX);
+  ImGui::Checkbox("Use Log scale Y", &rt.params.logScaleY);
+  ImGui::Checkbox("Use Log color scale", &rt.params.logScaleColor);
 
-  ImGui::Checkbox("Auto Range", &state.params.autoRange);
+  ImGui::Checkbox("Auto Range", &rt.params.autoRange);
 
-  if (!state.params.autoRange) {
-    ImGui::InputFloat("X Axis Min", &state.params.range1_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &state.params.range1_max, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Min", &state.params.range2_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Max", &state.params.range2_max, 0.0f, 0.0f, "%g");
+  if (!rt.params.autoRange) {
+    ImGui::InputFloat("X Axis Min", &rt.params.range1_min, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("X Axis Max", &rt.params.range1_max, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Min", &rt.params.range2_min, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Max", &rt.params.range2_max, 0.0f, 0.0f, "%g");
   }
 
 #ifdef USE_CONVEX_HULL
-  ImGui::Checkbox("Filter: Use Convex Hull", &state.params.useConvexHull);
+  ImGui::Checkbox("Filter: Use Convex Hull", &rt.params.useConvexHull);
 #endif
 
-  ImGui::Checkbox("Filter: Use Camera Center", &state.params.useCameraCenter);
-  if (state.params.useCameraCenter) {
-    ImGui::InputFloat("Camera Radius", &state.params.cameraRadius, 0.1f, 1.0f, "%.2f");
+  ImGui::Checkbox("Filter: Use Camera Center", &rt.params.useCameraCenter);
+  if (rt.params.useCameraCenter) {
+    ImGui::InputFloat("Camera Radius", &rt.params.cameraRadius, 0.1f, 1.0f, "%.2f");
   }
 
   if (ImGui::Button("Compute Histogram")) {
-    state.result = computer.compute(partblock, state.params, ctx);
-    if (state.result.valid) {
-      state.computed = true;
+    rt.result = computer.compute(partblock, rt.params, ctx);
+    if (rt.result.valid) {
+      rt.computed = true;
 
-      state.params.range1_min = state.result.range1_min;
-      state.params.range1_max = state.result.range1_max;
-      state.params.range2_min = state.result.range2_min;
-      state.params.range2_max = state.result.range2_max;
+      rt.params.range1_min = rt.result.range1_min;
+      rt.params.range1_max = rt.result.range1_max;
+      rt.params.range2_min = rt.result.range2_min;
+      rt.params.range2_max = rt.result.range2_max;
     }
   }
 
-  if (state.computed && state.result.valid) {
-    size_t computedBins1 = state.result.values.size();
-    size_t computedBins2 = (computedBins1 > 0) ? state.result.values[0].size() : 0;
+  if (rt.computed && rt.result.valid) {
+    size_t computedBins1 = rt.result.values.size();
+    size_t computedBins2 = (computedBins1 > 0) ? rt.result.values[0].size() : 0;
 
     TrackingVector<float> heatmapData;
     heatmapData.reserve(computedBins1 * computedBins2);
 
     for (size_t j = 0; j < computedBins2; j++) {
       for (size_t i = 0; i < computedBins1; i++) {
-        heatmapData.push_back(state.result.values[i][j]);
+        heatmapData.push_back(rt.result.values[i][j]);
       }
     }
 
     if (ImPlot::BeginPlot("2D Histogram", ImVec2(-1, 300))) {
-      ImPlot::SetupAxes(QuantityLabel(state.params.var1), QuantityLabel(state.params.var2));
+      ImPlot::SetupAxes(QuantityLabel(rt.params.var1), QuantityLabel(rt.params.var2));
 
       ImPlot::SetupAxisLimits(ImAxis_X1,
-                              state.params.range1_min,
-                              state.params.range1_max,
+                              rt.params.range1_min,
+                              rt.params.range1_max,
                               ImGuiCond_Always);
       ImPlot::SetupAxisLimits(ImAxis_Y1,
-                              state.params.range2_min,
-                              state.params.range2_max,
+                              rt.params.range2_min,
+                              rt.params.range2_max,
                               ImGuiCond_Always);
 
       ImPlot::PushColormap(ImPlotColormap_Viridis);
@@ -255,8 +259,8 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
                           (int)computedBins2,
                           (int)computedBins1,
                           0, 0, "",
-                          ImPlotPoint(state.params.range1_min, state.params.range2_min),
-                          ImPlotPoint(state.params.range1_max, state.params.range2_max));
+                          ImPlotPoint(rt.params.range1_min, rt.params.range2_min),
+                          ImPlotPoint(rt.params.range1_max, rt.params.range2_max));
 
       ImPlot::EndPlot();
     }
@@ -1123,7 +1127,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
   ImGui::End();
 }
 
-void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx, FileInfo* fileInfo, NormalizationContext& normalization)
+void DrawHaloesUI(HaloesUIState& state, HaloStore& haloes, CameraContext& camCtx, NormalizationContext& normalization)
 {
 #ifdef HAVE_HDF5
   if (!state.open) return;
@@ -1135,29 +1139,18 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
 
   {
     if (ImGui::Button("Load halo catalog (no IDs)")) {
-      auto cat = fileInfo->readHaloCatalogFromHDF5(state.fname, /*loadIDs=*/false);
-      P->Haloes = std::move(cat.haloes);
-
-      P->haloIDs.clear();
-      P->haloIDsLoaded = false;
-      P->haloChecked.assign(P->Haloes.size(), 0);
+      haloes.loadFromHDF5(state.fname, /*loadIDs=*/false);
+      state.selectedForStress.assign(haloes.size(), 0);
     }
 
     ImGui::SameLine();
-
     if (ImGui::Button("Load halo catalog (+ IDs)")) {
-      auto cat = fileInfo->readHaloCatalogFromHDF5(state.fname, /*loadIDs=*/true);
-      P->Haloes  = std::move(cat.haloes);
-      P->haloIDs = std::move(cat.haloIDs);
-
-      P->haloIDsLoaded = (!P->haloIDs.empty() && P->haloIDs.size() == P->Haloes.size());
-      P->haloChecked.assign(P->Haloes.size(), 0);
-
-      P->particleBlock.id2indexDirty = true;
+      haloes.loadFromHDF5(state.fname, /*loadIDs=*/true);
+      state.selectedForStress.assign(haloes.size(), 0);
     }
   }
 
-  if (P->Haloes.empty()) {
+  if (haloes.empty()) {
     ImGui::TextUnformatted("No haloes loaded.");
     ImGui::End();
     return;
@@ -1165,26 +1158,23 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
 
   ImGui::InputInt("Number of Halo list", &state.m);
   if (state.m < 1) state.m = 1;
-  const int count = std::min(state.m, (int)P->Haloes.size());
+  const int count = std::min(state.m, (int)haloes.size());
   ImGui::SameLine();
-  ImGui::Text(" / %zu halos", P->Haloes.size());
+  ImGui::Text(" / %zu halos", haloes.size());
 
-  if (!P->haloIDsLoaded) {
+  if (!haloes.idsLoaded()) {
     ImGui::TextUnformatted("Halo particle IDs: not loaded. (Checkbox needs IDs)");
   } else {
     ImGui::TextUnformatted("Halo particle IDs: loaded.");
     ImGui::SameLine();
     if (ImGui::Button("Clear IDs")) {
-      P->haloIDs.clear();
-      P->haloChecked.assign(P->Haloes.size(), 0);
-      P->haloIDsLoaded = false;
+      haloes.clearHaloIDs();
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Reset ALL flag_stress")) {
-      for (auto& p : P->particleBlock.particles) p.flag_stress = 0;
-      P->particlesDirty = true;
-      std::fill(P->haloChecked.begin(), P->haloChecked.end(), 0);
+    if (ImGui::Button("Reset halo selection")) {
+      state.stressSelectionDirty  = true;
+      std::fill(state.selectedForStress.begin(), state.selectedForStress.end(), 0);
     }
 
     ImGui::Separator();
@@ -1198,9 +1188,7 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
     if (state.recomputeMinParticles < 1) state.recomputeMinParticles = 1;
 
     if (ImGui::Button("Recompute halo positions from particle distribution")) {
-      P->recomputeHaloPositionsFromParticles(state.recomputeUseMassWeight,
-                                             state.recomputeUseOriginalPos,
-                                             state.recomputeMinParticles);
+      state.requestRecomputePositions = true;
     }
   }
 
@@ -1236,20 +1224,20 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
     ImGui::TableHeadersRow();
 
     for (int i = 0; i < count; i++) {
-      const HaloData& h = P->Haloes[i];
+      const HaloData& h = haloes.halo(i);
 
       ImGui::TableNextRow();
 
       ImGui::TableSetColumnIndex(0);
-      bool checked = (P->haloIDsLoaded && i < (int)P->haloChecked.size()) ? (P->haloChecked[i] != 0) : false;
+      bool checked = (haloes.idsLoaded() && i < (int)state.selectedForStress.size()) ? (state.selectedForStress[i] != 0) : false;
 
       ImGui::PushID(i);
       if (ImGui::Checkbox("##haloStress", &checked)) {
-        if (!P->haloIDsLoaded) {
+        if (!haloes.idsLoaded()) {
           checked = false;
         } else {
-          P->haloChecked[i] = checked ? 1 : 0;
-          P->ApplyHaloStress(i, checked);
+          state.selectedForStress[i] = checked ? 1 : 0;
+	  state.stressSelectionDirty = true;
         }
       }
       ImGui::PopID();
@@ -1317,7 +1305,7 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
     float massMin = std::numeric_limits<float>::max();
     float massMax = std::numeric_limits<float>::lowest();
 
-    for (const auto& p : P->Haloes) {
+    for (const auto& p : haloes.allHaloes()) {
       float mass = p.getHaloValue(var);
       if (state.histogramLogScaleX)
         mass = log10(mass);
@@ -1337,7 +1325,7 @@ void DrawHaloesUI(HaloesUIState& state, ParticleArray* P, CameraContext& camCtx,
     TrackingVector<int> binCounts(state.bins, 0);
     state.binSize = (state.range1_max - state.range1_min) / state.bins;
 
-    for (const auto& p : P->Haloes) {
+    for (const auto& p : haloes.allHaloes()) {
       float mass = p.getHaloValue(var);
       if (state.histogramLogScaleX)
         mass = log10(mass);

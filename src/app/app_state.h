@@ -10,6 +10,7 @@
 #include "interaction/camera.h"
 #include "interaction/interaction_utils.h"
 #include "data/clump_store.h"
+#include "data/halo_store.h"
 
 class ParticleArray;
 class FileInfo;
@@ -20,6 +21,7 @@ class WindowContext;
 struct AppDataState {
   ParticleArray* particles = nullptr;
   ClumpStore clumpStore;
+  HaloStore haloStore;
   FileInfo* fileInfo = nullptr;
 };
 

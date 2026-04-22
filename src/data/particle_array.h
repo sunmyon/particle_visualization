@@ -1,9 +1,8 @@
 #pragma once
 #include "particle_block.h"
-#include "halo_data.h"
+#include "core/units.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
-#include "core/units.h"
 
 struct NormalizationContext;
 
@@ -24,85 +23,25 @@ public:
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMin;
   std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMax;
 
-  UnitSystem units;
-  
+  UnitSystem units;  
   void setUnits(){
     units.updateDerived();
   }
   
   ParticleBlock particleBlock;
-    
   TrackingVector<uint8_t> flag_mask;
-  
-  TrackingVector<HaloData> Haloes;
-  std::vector<std::vector<uint64_t>> haloIDs;   // size = Haloes.size() or empty
-  std::vector<uint8_t> haloChecked;            // 0/1
-  bool haloIDsLoaded = false;
 
-  void ApplyHaloStress(int iHalo, bool on)
+  template <class IdContainer>
+  void ApplyIDStress(const IdContainer& ids)
   {
-    if (!haloIDsLoaded) return;
-    if (iHalo < 0 || iHalo >= (int)haloIDs.size()) return;
-    
-    const uint8_t v = on ? 1 : 0;
-    
-    for (uint64_t pid : haloIDs[iHalo]) {
-      size_t ip = particleBlock.findIndexByID(pid);
-      if (ip == (size_t)-1) continue;
-      particleBlock.particles[ip].flag_stress = v;
+    for (const auto& pid_raw : ids) {
+      const uint64_t pid = static_cast<uint64_t>(pid_raw);
+      const size_t ip = particleBlock.findIndexByID(pid);
+      if (ip == static_cast<size_t>(-1)) continue;
+      particleBlock.particles[ip].flag_stress = 1;
     }
     particlesDirty = true;
   }
-
-  //void recomputeHaloPositionsFromParticles(bool useMassWeight, bool useOriginalPos, int  minParticles);
-  void recomputeHaloPositionsFromParticles(bool useMassWeight,
-					   bool useOriginalPos,
-					   int  minParticles)
-  {
-    if (!haloIDsLoaded) return;
-    if (haloIDs.size() != Haloes.size()) return;
-
-    // ID辞書が必要
-    if (particleBlock.id2indexDirty) particleBlock.rebuildIdIndex();
-
-    const size_t nHalos = Haloes.size();
-
-    for (size_t ih = 0; ih < nHalos; ++ih) {
-      const auto& ids = haloIDs[ih];
-      if ((int)ids.size() < minParticles) continue;
-
-      double sx = 0.0, sy = 0.0, sz = 0.0;
-      double sw = 0.0;
-
-      for (uint64_t pid : ids) {
-	const size_t ip = particleBlock.findIndexByID(pid);
-	if (ip == (size_t)-1) continue;
-
-	const ParticleData& p = particleBlock.particles[ip];
-
-	const float* x = useOriginalPos ? p.original_pos : p.pos;
-
-	double w = 1.0;
-	if (useMassWeight) 
-	  w = (p.mass > 0.0f) ? (double)p.mass : 1.0;      
-
-	sx += w * (double)x[0];
-	sy += w * (double)x[1];
-	sz += w * (double)x[2];
-	sw += w;
-      }
-
-      if (sw <= 0.0) continue;
-
-      const float cx = (float)(sx / sw);
-      const float cy = (float)(sy / sw);
-      const float cz = (float)(sz / sw);
-
-      Haloes[ih].GroupPos[0] = cx;
-      Haloes[ih].GroupPos[1] = cy;
-      Haloes[ih].GroupPos[2] = cz;
-    }
-  };
   
   bool findParticleID(int ID, float *pos)
   {

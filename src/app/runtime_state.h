@@ -97,6 +97,28 @@ struct ProjectionMovieRequestState {
   bool runRequested = false;
 };
 
+#ifdef PYTHON_BRIDGE
+struct PythonBridgeRequestState {
+  bool launchRequested = false;
+  bool shutdownRequested = false;
+  bool openBrowserRequested = false;
+};
+
+struct PythonBridgeViewState {
+  bool available = false;
+  bool launched = false;
+  int port = -1;
+  std::string url;
+  std::string token;
+  std::string lastError;
+};
+
+struct PythonBridgeRuntimeState {
+  PythonBridgeRequestState request;
+  PythonBridgeViewState view;
+};
+#endif
+
 struct AnalysisRequestRuntimeState {
   StellarDensityRequestState stellarDensity;
 
@@ -119,6 +141,10 @@ struct AnalysisRequestRuntimeState {
   ClumpBatchRequestState clumpBatch;
 #endif
 
+#ifdef PYTHON_BRIDGE
+  PythonBridgeRuntimeState py;
+#endif
+  
   ProjectionMovieRequestState projectionMovie;
 };
 

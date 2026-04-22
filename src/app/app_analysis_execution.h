@@ -6,11 +6,13 @@
 class DiskRadiusFinder;
 class ParticleArray;
 class FileInfo;
+class HaloStore;
 struct RenderLayerState;
 struct NormalizationContext;
 struct ViewFilterConfig;
 struct TrackingTargetState;
 struct SnapshotSource; 
+struct HaloesUIState;
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -102,3 +104,13 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    CameraContext& camCtx,
 				    int currentFileIndex);
 
+void ExecuteHaloesUIRequests(HaloesUIState& state,
+                             HaloStore& haloes,
+                             ParticleArray& particles);
+
+#ifdef PYTHON_BRIDGE
+void ExecutePythonBridgeRequests(ParticleArray& particles,
+                                 PythonBridgeState& service,
+                                 PythonBridgeRequestState& request,
+                                 PythonBridgeViewState& view);
+#endif
