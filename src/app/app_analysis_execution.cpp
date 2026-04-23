@@ -23,6 +23,7 @@
 #include "object.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_geometry.h"
+#include "projection/projection_map_context.h"
 #include "FindClumps/find_clumps_helpers.h"
 
 #include "image/image_io.h"

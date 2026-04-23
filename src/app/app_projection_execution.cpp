@@ -6,6 +6,7 @@
 #include "image/image_io.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_tool_state.h"
+#include "projection/projection_map_context.h"
 
 #include <cstdio>
 #include <iostream>
@@ -15,6 +16,7 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   ProjectionMapGenerator& generator,
                                   ParticleArray& particles,
                                   const NormalizationContext& normalization,
+				  int currentFileIndex,
                                   ProjectionPreviewDerivedState& preview)
 {
   if (!tool.renderRequested) return;
@@ -31,12 +33,18 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   params,
                                   context);
 
-  char filename[512];
-  std::snprintf(filename,
-                sizeof(filename),
+  char pattern[512];
+  std::snprintf(pattern,
+                sizeof(pattern),
                 "%s/%s",
                 params.folderPath,
                 params.fileFormat);
+  
+  char filename[512];
+  std::snprintf(filename,
+                sizeof(filename),
+		pattern,
+		currentFileIndex);
 
   if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
     std::cerr << "Failed to write projection map: " << filename << "\n";

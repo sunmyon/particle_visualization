@@ -35,28 +35,9 @@
 class ParticleArray;
 class ParticleData;
 struct ProjectionMapParams;
+struct ProjectionMapContext;
 struct RgbImage;
 struct FluxSettings;
-
-struct ProjectionImage {
-  int width = 0;
-  int height = 0;
-  uint64_t version = 0;
-  TrackingVector<uint8_t> rgb; // size = width*height*3, RGB8
-};
-
-struct ProjectionMapContext {
-  char selectedType = 0;
-  glm::vec3 center{0.0f};
-  glm::quat cuboidTransform{1.f, 0.f, 0.f, 0.f};
-  glm::vec3 planeNormal{0.f, 0.f, 1.f};
-
-  const float* colorMap = nullptr;
-  int colorMapSize = 0;
-
-  double scaleToPhysical = 1.0;
-  double time = 0.0;
-};
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
                                                double scaleToPhysical,

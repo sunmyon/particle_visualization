@@ -489,10 +489,8 @@ static void UpdateCuboidAnnotationDerivedState(RenderLayerState& annotationState
     annotations.add(obj);
   }
 
-  if(annotationState.show){
-    cuboidsState.show = true;
-    linesState.show = true;
-  }
+  cuboidsState.show = annotationState.show;
+  linesState.show = annotationState.show;
       
   annotationState.gpuUpdated = true;
   annotationState.cpuUpdated = false;
@@ -923,6 +921,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 			       *services.projectionMap2D,
 			       *data.particles,
 			       runtime.settings.normalization,
+			       data.fileInfo->getSource().currentFileIndex,
 			       analysis.projectionPreview);
   
   ExecuteProjectionMovieRequest(*data.particles,

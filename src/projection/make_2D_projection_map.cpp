@@ -14,6 +14,7 @@
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_params.h"
 #include "projection/projection_geometry.h"
+#include "projection/projection_map_context.h"
 
 #ifdef USE_LUA
 #include <lua.hpp>
@@ -62,7 +63,6 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
   ensureLuaInitialized();
 #endif
 
-  glm::quat cuboidTransform = UpdateTransformFromEuler(params.tilt);
   TrackingVector<ParticleData>& originalParticles = particles.particleBlock.particles;
   
   if(params.flagSpecifyZoomRegionByMass){
@@ -137,7 +137,7 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
 
     bool inside = false;
     glm::vec4 localPos =
-      glm::inverse(cuboidTransform)
+      glm::inverse(ctx.cuboidTransform)
       * glm::vec4(glm::vec3(p.pos[0] - ctx.center.x, p.pos[1] - ctx.center.y, p.pos[2] - ctx.center.z), 1.0f)
       + glm::vec4(ctx.center.x, ctx.center.y, ctx.center.z, 0.);
 
@@ -216,9 +216,9 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
   map.flagLogScale = params.flagLogScale;
     
   // 平面の基底を計算
-  glm::vec3 axisX = glm::normalize(cuboidTransform * glm::vec3(1,0,0));
-  glm::vec3 axisY = glm::normalize(cuboidTransform * glm::vec3(0,1,0));
-  glm::vec3 axisZ = glm::normalize(cuboidTransform * glm::vec3(0,0,1));
+  glm::vec3 axisX = glm::normalize(ctx.cuboidTransform * glm::vec3(1,0,0));
+  glm::vec3 axisY = glm::normalize(ctx.cuboidTransform * glm::vec3(0,1,0));
+  glm::vec3 axisZ = glm::normalize(ctx.cuboidTransform * glm::vec3(0,0,1));
 
   // selectedAxis: 0=X, 1=Y, 2=Z から見ている
   if (params.selectedAxis == 0) {
