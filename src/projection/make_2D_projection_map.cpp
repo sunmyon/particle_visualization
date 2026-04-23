@@ -94,20 +94,16 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
       count++;
     }
 
-    for(int k=0;k<3;k++)
-      xsum_zoom[k] /= weight;
-    
-    printf("xmin_zoom=%g %g %g max=%g %g %g mean=%g %g %g\n"
-	   , xmin_zoom[0], xmin_zoom[1], xmin_zoom[2]
-	   , xmax_zoom[0], xmax_zoom[1], xmax_zoom[2]
-	   , xsum_zoom[0], xsum_zoom[1], xsum_zoom[2]
-	   );
-    
-    if(count > 0){
-      float len_zoom = params.lenZoomRegion;
-      if(params.flagScaleOriginalCoordinateZoomRegion)
-	len_zoom *= ctx.scaleToPhysical;
+    if(count > 0 && weight > 0.0){
+      for(int k=0;k<3;k++)
+	xsum_zoom[k] /= weight;
 
+      printf("xmin_zoom=%g %g %g max=%g %g %g mean=%g %g %g\n"
+	     , xmin_zoom[0], xmin_zoom[1], xmin_zoom[2]
+	     , xmax_zoom[0], xmax_zoom[1], xmax_zoom[2]
+	     , xsum_zoom[0], xsum_zoom[1], xsum_zoom[2]
+	     );
+      
       ctx.center.x = xsum_zoom[0];
       ctx.center.y = xsum_zoom[1];
       ctx.center.z = xsum_zoom[2];

@@ -13,6 +13,11 @@
 #include "interaction/camera.h"
 
 #include "projection/make_2D_projection_map.h"
+#include "projection/projection_geometry.h"
+#include "projection/projection_map_context.h"
+#include "projection/projection_map_params.h"
+#include "image/image_io.h"
+#include "image/rgb_image.h"
 
 void OpenClumpChainUI(ClumpChainWindowState& state){
   state.open = true;
@@ -37,6 +42,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
 					       ClumpChain& chain,
                                                ParticleArray* P,
                                                ProjectionMapGenerator* proj,
+                                               const ProjectionMapParams& baseParams,
                                                FileInfo& fileinfo,
                                                NormalizationContext& normalization,
                                                const InputFilterConfig& filter,
@@ -46,6 +52,7 @@ static void DrawSelectedClumpChainSection(ClumpChainWindowState& ui,
 					  ClumpChain& chain,
                                           ParticleArray* P,
                                           ProjectionMapGenerator* proj,
+                                          const ProjectionMapParams& baseParams,
                                           FileInfo& fileinfo,
                                           CameraContext& cam,
                                           NormalizationContext& normalization,
@@ -59,6 +66,7 @@ void DrawClumpChainListUI(ClumpChainWindowState& ui,
 			  ClumpChain& chain,
 			  ParticleArray* P,
 			  ProjectionMapGenerator* proj,
+			  const ProjectionMapParams& baseParams,
 			  FileInfo& fileinfo,
 			  CameraContext& cam,
 			  NormalizationContext& normalization,
@@ -82,7 +90,7 @@ void DrawClumpChainListUI(ClumpChainWindowState& ui,
 
   if(chain.computed()){
     DrawClumpChainTableSection(ui, chain);
-    DrawSelectedClumpChainSection(ui, chain, P, proj, fileinfo, cam, normalization, filter, src);
+    DrawSelectedClumpChainSection(ui, chain, P, proj, baseParams, fileinfo, cam, normalization, filter, src);
   }
 
   ImGui::End();
@@ -341,6 +349,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
 					       ClumpChain& chain,
                                                ParticleArray* P,
                                                ProjectionMapGenerator* proj,
+                                               const ProjectionMapParams& baseParams,
                                                FileInfo& fileinfo,
                                                NormalizationContext& normalization,
                                                const InputFilterConfig& filter,
@@ -370,6 +379,15 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
   std::string var = quantities2[ui.selectedProjectionVar];
 
   if (ImGui::Button("make projection maps")) {
+    const QuantityId projectionVars[] = {
+      QuantityId::Density,
+      QuantityId::Temperature,
+      QuantityId::Val,
+      QuantityId::Val2,
+      QuantityId::Hsml,
+      QuantityId::Mass
+    };
+
     for (size_t i = 0; i < ch.size(); i++) {
       int flag_use_amvector = (i == 0) ? 1 : 0;
 
@@ -389,17 +407,44 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
                     ui.selectedChainIndex,
                     i);
 
-      /*proj->set_projection_parameters(P->particleBlock.particles,
-                                      flag_use_amvector,
-                                      pos_center,
-                                      ui.mapLen,
-                                      ui.mapValMin,
-                                      ui.mapValMax,
-                                      ui.mapNpixel,
-                                      ui.mapNslices,
-                                      var);
-      //will make later
-				      proj->make_density_map(P, fname_output);*/
+      ProjectionMapParams frameParams = baseParams;
+      frameParams.dataSource = DataSource::Gas;
+      frameParams.selectedType = 0;
+      frameParams.selectedVarGas = projectionVars[ui.selectedProjectionVar];
+      frameParams.var = QuantityLabel(frameParams.selectedVarGas);
+      frameParams.xoffset[0] = pos_center[0];
+      frameParams.xoffset[1] = pos_center[1];
+      frameParams.xoffset[2] = pos_center[2];
+      frameParams.xlen[0] = ui.mapLen;
+      frameParams.xlen[1] = ui.mapLen;
+      frameParams.xlen[2] = ui.mapLen;
+      frameParams.range_min = ui.mapValMin;
+      frameParams.range_max = ui.mapValMax;
+      frameParams.autoRange = false;
+      frameParams.npixel = ui.mapNpixel;
+      frameParams.step_z = ui.mapNslices;
+      frameParams.flagVoronoi = (ui.mapNslices > 1);
+
+      ProjectionMapContext context =
+        BuildProjectionMapContext(frameParams,
+                                  normalization.toPhysicalScale(),
+                                  P->particleBlock.header.time);
+
+      if (flag_use_amvector) {
+        auto frame = ComputeAngularMomentumFrame(P->particleBlock.particles,
+                                                 context.center,
+                                                 frameParams.xlen);
+        if (frame.valid) {
+          context.center = frame.center;
+          context.planeNormal = frame.axis;
+          context.cuboidTransform = BuildRotationFromZAxisTo(frame.axis);
+        }
+      }
+
+      RgbImage image = proj->makeDensityMapImage(*P, frameParams, context);
+      if (!WritePngRgb(fname_output, image.width, image.height, image.rgb)) {
+        std::fprintf(stderr, "Failed to write projection map: %s\n", fname_output);
+      }
     }
   }
 }
@@ -409,6 +454,7 @@ static void DrawSelectedClumpChainSection(ClumpChainWindowState& ui,
 					  ClumpChain& chain,
                                           ParticleArray* P,
                                           ProjectionMapGenerator* proj,
+                                          const ProjectionMapParams& baseParams,
                                           FileInfo& fileinfo,
                                           CameraContext& cam,
                                           NormalizationContext& normalization,
@@ -417,7 +463,7 @@ static void DrawSelectedClumpChainSection(ClumpChainWindowState& ui,
 {
   DrawSelectedClumpChainNavigation(ui, chain, P, fileinfo, cam, normalization, filter, src);
   DrawSelectedClumpChainPlot(ui, chain, P);
-  DrawSelectedClumpProjectionSection(ui, chain, P, proj, fileinfo, normalization, filter, src);
+  DrawSelectedClumpProjectionSection(ui, chain, P, proj, baseParams, fileinfo, normalization, filter, src);
 }
       
 

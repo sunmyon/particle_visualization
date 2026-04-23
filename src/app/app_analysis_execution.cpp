@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <cmath>
 
@@ -27,6 +28,58 @@
 #include "FindClumps/find_clumps_helpers.h"
 
 #include "image/image_io.h"
+
+static bool IsSafeIndexFormat(const char* format)
+{
+  if (!format || format[0] == '\0') {
+    return false;
+  }
+
+  bool hasIndexSpecifier = false;
+  const char* p = format;
+  while (*p) {
+    if (*p != '%') {
+      ++p;
+      continue;
+    }
+
+    ++p;
+    if (*p == '\0') {
+      return false;
+    }
+    if (*p == '%') {
+      ++p;
+      continue;
+    }
+
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#') ++p;
+    while (*p >= '0' && *p <= '9') ++p;
+    if (*p == '.') {
+      ++p;
+      while (*p >= '0' && *p <= '9') ++p;
+    }
+    if (*p == 'h' || *p == 'l' || *p == 'j' || *p == 'z' || *p == 't') {
+      const char m = *p++;
+      if ((m == 'h' && *p == 'h') || (m == 'l' && *p == 'l')) {
+        ++p;
+      }
+    }
+
+    if (*p == '\0') {
+      return false;
+    }
+
+    if (*p == 'd' || *p == 'i' || *p == 'u') {
+      hasIndexSpecifier = true;
+      ++p;
+      continue;
+    }
+
+    return false;
+  }
+
+  return hasIndexSpecifier;
+}
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -712,7 +765,21 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
                     request.outputFileFormat);
 
       char filename[512];
-      std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
+      if (IsSafeIndexFormat(request.outputFileFormat)) {
+        std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
+      } else {
+        if (std::strchr(request.outputFileFormat, '%') != nullptr) {
+          std::snprintf(result.errorMessage,
+                        sizeof(result.errorMessage),
+                        "Unsafe outputFileFormat for movie: %s",
+                        request.outputFileFormat);
+          result.success = false;
+          return;
+        }
+        std::snprintf(filename, sizeof(filename), "%s/%s",
+                      request.outputFolderPath,
+                      request.outputFileFormat);
+      }
 
       int flag_use_amvector = (i == 0 && request.faceOn) ? 1 : 0;
 
@@ -850,7 +917,17 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       "-c:v libx264 -pix_fmt yuv420p " +
       std::string(request.outputFolderPath) + "/" + std::string(request.outputMovieName);
 
-    std::system(ffmpegCommand.c_str());
+    const int ffmpegExit = std::system(ffmpegCommand.c_str());
+    if (ffmpegExit != 0) {
+      std::snprintf(result.errorMessage,
+                    sizeof(result.errorMessage),
+                    "ffmpeg failed with exit code %d",
+                    ffmpegExit);
+      result.success = false;
+      fs::remove_all("ffmpeg_frames");
+      return;
+    }
+
     fs::remove_all("ffmpeg_frames");
 
     src.currentStep = savedStep;
@@ -860,10 +937,12 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
     std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
                   "%s/%s", request.outputFolderPath, request.outputMovieName);
 
+    result.success = true;
     result.completed = true;
   }
   catch (const std::exception& e) {
     std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
+    result.success = false;
   }
 }
 

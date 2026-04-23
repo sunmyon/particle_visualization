@@ -9,8 +9,61 @@
 #include "projection/projection_map_context.h"
 
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <utility>
+
+static bool IsSafeIndexFormat(const char* format)
+{
+  if (!format || format[0] == '\0') {
+    return false;
+  }
+
+  bool hasIndexSpecifier = false;
+  const char* p = format;
+  while (*p) {
+    if (*p != '%') {
+      ++p;
+      continue;
+    }
+
+    ++p;
+    if (*p == '\0') {
+      return false;
+    }
+    if (*p == '%') {
+      ++p;
+      continue;
+    }
+
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#') ++p;
+    while (*p >= '0' && *p <= '9') ++p;
+    if (*p == '.') {
+      ++p;
+      while (*p >= '0' && *p <= '9') ++p;
+    }
+    if (*p == 'h' || *p == 'l' || *p == 'j' || *p == 'z' || *p == 't') {
+      const char m = *p++;
+      if ((m == 'h' && *p == 'h') || (m == 'l' && *p == 'l')) {
+        ++p;
+      }
+    }
+
+    if (*p == '\0') {
+      return false;
+    }
+
+    if (*p == 'd' || *p == 'i' || *p == 'u') {
+      hasIndexSpecifier = true;
+      ++p;
+      continue;
+    }
+
+    return false;
+  }
+
+  return hasIndexSpecifier;
+}
 
 void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   ProjectionMapGenerator& generator,
@@ -41,10 +94,22 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                 params.fileFormat);
   
   char filename[512];
-  std::snprintf(filename,
-                sizeof(filename),
-		pattern,
-		currentFileIndex);
+  if (IsSafeIndexFormat(params.fileFormat)) {
+    std::snprintf(filename,
+                  sizeof(filename),
+                  pattern,
+                  currentFileIndex);
+  } else {
+    if (std::strchr(params.fileFormat, '%') != nullptr) {
+      std::cerr << "Unsafe projection file format. Falling back to literal filename: "
+                << params.fileFormat << "\n";
+    }
+    std::snprintf(filename,
+                  sizeof(filename),
+                  "%s/%s",
+                  params.folderPath,
+                  params.fileFormat);
+  }
 
   if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
     std::cerr << "Failed to write projection map: " << filename << "\n";
