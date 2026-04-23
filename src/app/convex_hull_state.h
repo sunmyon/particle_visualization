@@ -10,6 +10,7 @@ struct ConvexHullEntry {
   std::shared_ptr<IConvexHull> hull;
   std::string tag;
   int sourceId = -1;
+  TrackingVector<float> lineVertices;
   bool visible = true;
 };
 

@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef USE_CONVEX_HULL
+class FindClump;
+class ConvexHullGenerator;
+#endif
+
 #ifdef GEOMETRICAL_ANALYSIS
 class DiskRadiusFinder;
 class ParticleArray;
@@ -57,6 +62,15 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
                               IsoContourRequestState& request,
                               IsoContourGeometryState& geometry,
                               RenderLayerState& isoContourRenderState);
+#endif
+
+#ifdef USE_CONVEX_HULL
+struct ConvexHullRuntimeState;
+void ExecuteConvexHullRequests(ParticleArray& particles,
+                               FindClump& clumpFind,
+                               ConvexHullGenerator& convexHull,
+                               ConvexHullRuntimeState& convexState,
+                               RenderLayerState& polyhedraState);
 #endif
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,

@@ -373,67 +373,39 @@ static void UpdateIsoContourRenderResources(const IsoContourGeometryState& isoCo
 #endif
 
 #ifdef USE_CONVEX_HULL
-static void UpdateConvexHullDerivedState(ParticleArray& particles,
-                                         FindClump& clumpFind,
-                                         ConvexHullGenerator& convexHull,
-                                         RenderLayerState& polyhedraState,
-					 PolyhedronManager& polyhedra,
-                                         AnalysisDerivedState& analysis)
+static void RebuildConvexHullDerivedState(const ConvexHullRuntimeState& convexState,
+                                          RenderLayerState& polyhedraState,
+					  PolyhedronManager& polyhedra)
 {
-  if (!clumpFind.checkClumpComputation()) {
-    return;
-  }
-
-  polyhedraState.cpuUpdated = clumpFind.isDirty();
   if (!polyhedraState.cpuUpdated) {
     return;
   }
 
   polyhedra.clearGroup("convex_hull");
-  analysis.convexHulls.resetGroup("convex_hull");
 
-  const int nclumps = clumpFind.get_nclumps();
-  for (int i = 0; i < nclumps; ++i) {
-    if (!clumpFind.flagShowHull(i))
+  bool anyVisible = false;
+  for (const auto& entry : convexState.entries) {
+    if (!entry.visible || entry.lineVertices.empty()) {
       continue;
-
-    TrackingVector<ParticleData> pts =
-      clumpFind.get_particle_indices(i, particles.particleBlock.particles);
-
-    std::vector<glm::vec3> points;
-    points.reserve(pts.size());
-    for (const auto& p : pts) {
-      points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
     }
 
-    auto hull = convexHull.buildHull(points);
-
-    ConvexHullEntry entry;
-    entry.hull = hull;
-    entry.tag = "convex_hull";
-    entry.sourceId = i;
-    entry.visible = true;
-    analysis.convexHulls.entries.push_back(std::move(entry));
-
-    TrackingVector<float> vertices =
-      convexHull.buildLineVertices(points);
-
     PolyhedronObject obj;
-    obj.vertices.reserve(vertices.size() / 3);
-    for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
-      obj.vertices.emplace_back(vertices[k], vertices[k + 1], vertices[k + 2]);
+    obj.vertices.reserve(entry.lineVertices.size() / 3);
+    for (size_t k = 0; k + 2 < entry.lineVertices.size(); k += 3) {
+      obj.vertices.emplace_back(entry.lineVertices[k],
+                                entry.lineVertices[k + 1],
+                                entry.lineVertices[k + 2]);
     }
 
     obj.color   = glm::vec3(1.0f);
     obj.opacity = polyhedraState.opacity;
     obj.tag     = "convex_hull";
 
-    polyhedra.add(i, obj);
+    polyhedra.add(entry.sourceId, obj);
+    anyVisible = true;
   }
 
-  clumpFind.clearDirtyFlag();
-
-  polyhedraState.show = true;
+  polyhedraState.show = anyVisible;
   polyhedraState.cpuUpdated = false;
   polyhedraState.gpuUpdated = true;
 }
@@ -769,7 +741,6 @@ static void RebuildDerivedState(ParticleArray& particles,
                                 CameraContext& camera,
                                 RenderRuntimeState& render,				
                                 AppDerivedState& derived,
-                                AppServices& services,
 				const ProjectionMapToolState& projection)
 {
 #ifdef GEOMETRICAL_ANALYSIS
@@ -798,12 +769,9 @@ static void RebuildDerivedState(ParticleArray& particles,
                      derived.overlay);
 
 #ifdef USE_CONVEX_HULL
-  UpdateConvexHullDerivedState(particles,
-                             *services.clumpFind,
-                             *services.convexHull,
-                             render.polyhedra,
-                             derived.scene.polyhedron,
-                             derived.analysis);
+  RebuildConvexHullDerivedState(derived.analysis.convexHulls,
+                                render.polyhedra,
+                                derived.scene.polyhedron);
 #endif
 
   UpdateCuboidAnnotationDerivedState(render.cuboidAnnotations,
@@ -918,6 +886,14 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 			   analysis.clumpBatch);
 #endif
 
+#ifdef USE_CONVEX_HULL
+  ExecuteConvexHullRequests(*data.particles,
+                            *services.clumpFind,
+                            *services.convexHull,
+                            analysis.convexHulls,
+                            runtime.render.polyhedra);
+#endif
+
   ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
 			       *services.projectionMap2D,
 			       *data.particles,
@@ -992,7 +968,6 @@ void RunFrame(AppState& app,
                       app.view.camera,
                       app.runtime.render,
                       app.derived,
-                      app.services,
 		      app.runtime.analysis.projectionMap);
   
   UpdateRenderResources(*app.data.particles,

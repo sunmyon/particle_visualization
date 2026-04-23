@@ -27,6 +27,12 @@
 #include "projection/projection_map_context.h"
 #include "FindClumps/find_clumps_helpers.h"
 
+#ifdef USE_CONVEX_HULL
+#include "FindClumps/find_clumps.h"
+#include "geometry/convex_hull_generator.h"
+#include "app/convex_hull_state.h"
+#endif
+
 #include "image/image_io.h"
 
 static bool IsSafeIndexFormat(const char* format)
@@ -643,8 +649,54 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
   particles.particlesDirty = true;
 }
 
+#ifdef USE_CONVEX_HULL
+void ExecuteConvexHullRequests(ParticleArray& particles,
+                               FindClump& clumpFind,
+                               ConvexHullGenerator& convexHull,
+                               ConvexHullRuntimeState& convexState,
+                               RenderLayerState& polyhedraState)
+{
+  if (!clumpFind.checkClumpComputation()) {
+    return;
+  }
+  if (!clumpFind.isDirty()) {
+    return;
+  }
+
+  convexState.resetGroup("convex_hull");
+
+  const int nclumps = clumpFind.get_nclumps();
+  for (int i = 0; i < nclumps; ++i) {
+    if (!clumpFind.flagShowHull(i)) {
+      continue;
+    }
+
+    TrackingVector<ParticleData> pts =
+      clumpFind.get_particle_indices(i, particles.particleBlock.particles);
+
+    std::vector<glm::vec3> points;
+    points.reserve(pts.size());
+    for (const auto& p : pts) {
+      points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
+    }
+
+    ConvexHullEntry entry;
+    entry.hull = convexHull.buildHull(points);
+    entry.tag = "convex_hull";
+    entry.sourceId = i;
+    entry.visible = static_cast<bool>(entry.hull);
+    entry.lineVertices = convexHull.buildLineVertices(points);
+
+    convexState.entries.push_back(std::move(entry));
+  }
+
+  clumpFind.clearDirtyFlag();
+  polyhedraState.show = !convexState.entries.empty();
+  polyhedraState.cpuUpdated = true;
+}
+#endif
+
 #ifdef CLUMP_DATA_READ
-#include "FindClumps/find_clumps.h" 
 void ExecuteClumpBatchRequest(ParticleArray& particles,
 			      NormalizationContext& normalization,
 			      const InputFilterConfig& filter,
