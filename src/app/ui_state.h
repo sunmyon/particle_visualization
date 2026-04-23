@@ -5,6 +5,7 @@
 #include "data/particle_mask_config.h"
 #include "app/file_format_dialog_state.h"
 #include "FindClumps/clump_window_state.h"
+#include "projection/projection_map_ui_state.h"
 
 struct RadialProfileUIState {
   bool open = false;
@@ -106,13 +107,6 @@ struct MaskUIState {
   bool open = false;
   bool autoApply = true;
   uint64_t revision = 0;
-};
-
-struct ProjectionPreviewUIState {
-  void* textureId = nullptr;   // ImTextureID 用
-  int width = 0;
-  int height = 0;
-  bool valid = false;
 };
 
 struct ToolWindowUIState {

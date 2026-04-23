@@ -43,5 +43,14 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
   }
 
   preview.image = std::move(image);
+  preview.valid = preview.image.valid();
+  if (preview.valid) {
+    preview.version += 1;
+    preview.image.version = preview.version;
+    preview.computed = true;
+  } else {
+    preview.computed = false;
+  }
+  
   tool.renderRequested = false;
 }

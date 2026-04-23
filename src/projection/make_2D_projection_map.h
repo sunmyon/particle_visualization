@@ -31,7 +31,6 @@
 
 #include "core/tracking_vector.h"
 #include "render/colormap_defs.h"
-#include "object.h"
 
 class ParticleArray;
 class ParticleData;
@@ -98,8 +97,6 @@ private:
   void createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles);
   void createStarMap(ProjectionMap &map, const TrackingVector<pos_val>& particles, float sigma_pix, bool normalize);
 
-  CuboidObject interactiveCuboid_;
-
 #ifdef USE_LUA
   lua_State* gLua_ = nullptr;
   bool flag_init_lua_ = false;
@@ -141,10 +138,7 @@ public:
 
   TrackingVector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);
 
-  static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);
-  
-  CuboidObject& interactiveCuboid() { return interactiveCuboid_; }
-  const CuboidObject& interactiveCuboid() const { return interactiveCuboid_; }
+  static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);  
 };
 
 static inline double Ledd_Lsun(double M_Msun){ return 3.8e4 * M_Msun; }
