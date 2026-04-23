@@ -79,6 +79,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 				   TrackingTargetState& track,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
+				   const ProjectionMapParams& baseParams,
                                    const CameraContext& camera,
                                    ProjectionMovieRequestState& request,
                                    ProjectionMovieResultState& result);

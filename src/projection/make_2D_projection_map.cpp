@@ -9,8 +9,11 @@
 #include <filesystem>
 #include <sstream>
 
+#include "image/rgb_image.h"
 #include "render/colormap_defs.h"
-#include "make_2D_projection_map.h"
+#include "projection/make_2D_projection_map.h"
+#include "projection/projection_map_params.h"
+#include "projection/projection_geometry.h"
 
 #ifdef USE_LUA
 #include <lua.hpp>
@@ -51,137 +54,16 @@ namespace fs = std::filesystem;
 
 ProjectionMapGenerator::ProjectionMapGenerator() = default;
 
-void ProjectionMapGenerator::set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis, 
-						       const float* pos_center, const float len, const float val_min, const float val_max,
-						       const int npixel_input, const int nslices, std::string var_new){
-  if(pos_center != nullptr) {
-    center.x = pos_center[0];
-    center.y = pos_center[1];
-    center.z = pos_center[2];
-  }
 
-  if(len > 0.){
-    params.xlen[0] = len;
-    params.xlen[1] = len;
-    params.xlen[2] = len;
-  }
+RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
+						     ProjectionMapParams& params,
+						     ProjectionMapContext& ctx){
+#ifdef USE_LUA
+  ensureLuaInitialized();
+#endif
 
-  if (!std::isnan(val_min)) {
-    params.range_min = val_min;
-    params.autoRange = false;
-  }
-  if (!std::isnan(val_max)) {
-    params.range_max = val_max;
-    params.autoRange  = false;
-  }
-  
-  if (npixel_input > 0) 
-    params.npixel = npixel_input;
-
-  if (nslices > 0) 
-    params.step_z = nslices;
-  
-  if (!var_new.empty())
-    params.var = var_new;
-  
-  //flagShowStarParticles = true;
-  //flagDensityWeight = true;
-  //flagLogScale = true;
-  //flagVoronoi = true;
-  
-  if(useAngularMomentumAxis){
-    glm::vec3 normal(0.f, 0.f, 1.f);
-    planeNormal = glm::normalize(calc_angular_momentum_axis(originalParticles, center, params.xlen));
-
-    glm::vec3 v = glm::cross(normal, planeNormal);
-    float w = 1.0f + glm::dot(normal, planeNormal);
-    cuboidTransform = glm::normalize(glm::quat(w, v.x, v.y, v.z));
-  }
-}
-
-
-glm::vec3 ProjectionMapGenerator::calc_angular_momentum_axis(const TrackingVector<ParticleData>& originalParticles, glm::vec3 &center, float *xlen){
-  TrackingVector<ParticleData> insideParticles;
-
-  double xmean[3]={0.,0.,0.};
-  double vmean[3]={0.,0.,0.};
-  
-  double total_mass = 0., total_weight = 0.;
-  float xmin[3], xmax[3];
-
-  for(int k=0;k<3;k++){
-    xmin[k] = -0.5 * xlen[k];
-    xmax[k] = 0.5 * xlen[k];
-  }
-  
-  double len_crit2 = 4.* (xlen[0]*xlen[0] + xlen[1]*xlen[1] + xlen[2]*xlen[2]);
-  for (const auto& p : originalParticles) {
-    glm::vec3 localPos = glm::vec3(p.pos[0] - center.x, p.pos[1] - center.y, p.pos[2] - center.z);
-    if(std::sqrt(localPos.x*localPos.x + localPos.y*localPos.y + localPos.z*localPos.z >= len_crit2))
-      continue;
-
-    /*if (localPos.x >= xmin[0] && localPos.x <= xmax[0] &&
-	localPos.y >= xmin[1] && localPos.y <= xmax[1] &&
-	localPos.z >= xmin[2] && localPos.z <= xmax[2]) */
-      
-    float mass = p.mass;
-    xmean[0] += p.pos[0] * p.density;
-    xmean[1] += p.pos[1] * p.density;
-    xmean[2] += p.pos[2] * p.density;      
-    
-    vmean[0] += mass * p.vel[0];
-    vmean[1] += mass * p.vel[1];
-    vmean[2] += mass * p.vel[2];
-    
-    total_mass += mass;
-    total_weight += p.density;
-  }
-
-  vmean[0] /= total_mass;
-  vmean[1] /= total_mass;
-  vmean[2] /= total_mass;
-
-  xmean[0] /= total_weight;
-  xmean[1] /= total_weight;
-  xmean[2] /= total_weight;
-
-  center.x = xmean[0];
-  center.y = xmean[1];
-  center.z = xmean[2];
-  
-  glm::vec3 angular_momentum;
-  angular_momentum.x = angular_momentum.y = angular_momentum.z = 0.;
-  
-  for (const auto& p : originalParticles) {
-    glm::vec3 localPos = glm::vec3(p.pos[0] - center.x, p.pos[1] - center.y, p.pos[2] - center.z);
-    if (localPos.x >= xmin[0] && localPos.x <= xmax[0] &&
-	localPos.y >= xmin[1] && localPos.y <= xmax[1] &&
-	localPos.z >= xmin[2] && localPos.z <= xmax[2]) {
-
-      float mass = p.mass;
-      float dv[3];
-      for(int k=0;k<3;k++)
-	dv[k] = p.vel[k] - vmean[k];
-
-      angular_momentum.x += mass * (localPos.y * dv[2] - localPos.z * dv[1]);
-      angular_momentum.y += mass * (localPos.z * dv[0] - localPos.x * dv[2]);
-      angular_momentum.z += mass * (localPos.x * dv[1] - localPos.y * dv[0]);
-    }    
-  }
-
-  angular_momentum.x /= total_mass;
-  angular_momentum.y /= total_mass;
-  angular_momentum.z /= total_mass;
-
-  return angular_momentum;
-}
-
-
-
-void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
-  syncStateFromParams();
-  TrackingVector<ParticleData>& originalParticles = P->particleBlock.particles;
-  time_ = P->particleBlock.header.time;
+  glm::quat cuboidTransform = UpdateTransformFromEuler(params.tilt);
+  TrackingVector<ParticleData>& originalParticles = particles.particleBlock.particles;
   
   if(params.flagSpecifyZoomRegionByMass){
     //construct xmin, xmax, center here
@@ -192,7 +74,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     
     int count = 0;
     for (const auto& p : originalParticles) {
-      if(p.type != type_)
+      if(p.type != ctx.selectedType)
 	continue;
       
       if(p.mass > params.criticalGasMassForZoomRegion)
@@ -224,43 +106,41 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     if(count > 0){
       float len_zoom = params.lenZoomRegion;
       if(params.flagScaleOriginalCoordinateZoomRegion)
-	len_zoom *= scale_to_phys;
-      
-      //center.x = 0.5 * (xmax_zoom[0] + xmin_zoom[0]);
-      //center.y = 0.5 * (xmax_zoom[1] + xmin_zoom[1]);
-      //center.z = 0.5 * (xmax_zoom[2] + xmin_zoom[2]);
+	len_zoom *= ctx.scaleToPhysical;
 
-      center.x = xsum_zoom[0];
-      center.y = xsum_zoom[1];
-      center.z = xsum_zoom[2];
-      
-      params.xlen[0] = params.xlen[1] = params.xlen[2] = len_zoom;
+      ctx.center.x = xsum_zoom[0];
+      ctx.center.y = xsum_zoom[1];
+      ctx.center.z = xsum_zoom[2];
     }else
       printf("no particles have been found...\n");
   }
 
   float xmin[3], xmin_cut[3], xmax_cut[3];
-  xmin[0] = center.x - 0.5 * params.xlen[0];
-  xmin[1] = center.y - 0.5 * params.xlen[1];
-  xmin[2] = center.z - 0.5 * params.xlen[2];
+  xmin[0] = ctx.center.x - 0.5 * params.xlen[0];
+  xmin[1] = ctx.center.y - 0.5 * params.xlen[1];
+  xmin[2] = ctx.center.z - 0.5 * params.xlen[2];
 
   /*we temporally define here, xmin_cut and xmax_cut should be removed... */
-  xmin_cut[0] = center.x - params.xlen[0];
-  xmin_cut[1] = center.y - params.xlen[1];
-  xmin_cut[2] = center.z - params.xlen[2];
+  xmin_cut[0] = ctx.center.x - params.xlen[0];
+  xmin_cut[1] = ctx.center.y - params.xlen[1];
+  xmin_cut[2] = ctx.center.z - params.xlen[2];
 
-  xmax_cut[0] = center.x + params.xlen[0];
-  xmax_cut[1] = center.y + params.xlen[1];
-  xmax_cut[2] = center.z + params.xlen[2];  
+  xmax_cut[0] = ctx.center.x + params.xlen[0];
+  xmax_cut[1] = ctx.center.y + params.xlen[1];
+  xmax_cut[2] = ctx.center.z + params.xlen[2];  
   
   TrackingVector<pos_val> insideParticles;
 
   for (int idx = 0; idx < (int)originalParticles.size(); ++idx) {
     const auto& p = originalParticles[idx];
-    if (p.type != type_) continue;
+    if (p.type != ctx.selectedType) continue;
 
     bool inside = false;
-    glm::vec4 localPos = glm::inverse(cuboidTransform) * glm::vec4(glm::vec3(p.pos[0] - center.x, p.pos[1] - center.y, p.pos[2] - center.z), 1.0f) + glm::vec4(center.x, center.y, center.z, 0.);
+    glm::vec4 localPos =
+      glm::inverse(cuboidTransform)
+      * glm::vec4(glm::vec3(p.pos[0] - ctx.center.x, p.pos[1] - ctx.center.y, p.pos[2] - ctx.center.z), 1.0f)
+      + glm::vec4(ctx.center.x, ctx.center.y, ctx.center.z, 0.);
+
     if (localPos.x >= xmin_cut[0] && localPos.x <= xmax_cut[0] &&
 	localPos.y >= xmin_cut[1] && localPos.y <= xmax_cut[1] &&
 	localPos.z >= xmin_cut[2] && localPos.z <= xmax_cut[2]) {
@@ -274,21 +154,21 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     pp.mass = p.mass;
     
     if (params.dataSource == DataSource::Gas) {    
-      pp.val = getScalarValue(P->particleBlock, p, idx, params.selectedVarGas);
+      pp.val = getScalarValue(particles.particleBlock, p, idx, params.selectedVarGas);
       pp.density = p.density;
     }
     
     if (params.dataSource == DataSource::Stars) {
       if (params.starQuantity == StarQuantity::Metallicity) {
 	float zmet = 0.0f;
-	P->particleBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);	
+	particles.particleBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);	
 	pp.val = zmet;
       } else if (params.starQuantity == StarQuantity::Mass) {
 	pp.val = p.mass;
       } else if (params.starQuantity == StarQuantity::Density) {
 	pp.val = p.density;
       } else if (params.starQuantity == StarQuantity::Flux) {
-	pp.val = (float)compute_band_luminosity_Lsun(p.mass*P->units.mass_msun, params.flux);
+	pp.val = (float)compute_band_luminosity_Lsun(p.mass*particles.units.mass_msun, params.flux);
       } else {
 	pp.val = 1.0f;
       }
@@ -301,7 +181,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     if(insideParticles.size() < 0.1 * params.npixel * params.npixel){
       printf("too few particles inside specified region... npart=%ld while there are %dx%d pixels.\n",
 	     insideParticles.size(), params.npixel, params.npixel);
-      return;
+      return {};
     }
     
   ProjectionMap map;
@@ -310,7 +190,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     map.xmin[k] = xmin[k];
   }
 
-  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n", params.xlen[0], params.xlen[1], params.xlen[2], xmin[0], xmin[1], xmin[2], center.x, center.y, center.z);
+  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n", params.xlen[0], params.xlen[1], params.xlen[2], xmin[0], xmin[1], xmin[2], ctx.center.x, ctx.center.y, ctx.center.z);
   
   map.npixel = params.npixel;
   map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);  
@@ -360,7 +240,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     map.vAxis = axisY;
   }
 
-  map.center = center;
+  map.center = ctx.center;
   
   using namespace std::chrono;
   auto start = high_resolution_clock::now();
@@ -406,7 +286,7 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
   for (int i = 0; i < map.npixel_x * map.npixel_y; i++) {
     float norm = (map.values[i] - params.range_min) / (params.range_max - params.range_min  + 1.e-6);
     float rF,gF,bF;
-    colormapLookup(norm, rF, gF, bF, colorMap, countColorMap);
+    colormapLookup(norm, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
     unsigned char rC=(unsigned char)(rF*255);
     unsigned char gC=(unsigned char)(gF*255);
     unsigned char bC=(unsigned char)(bF*255);
@@ -416,26 +296,17 @@ void ProjectionMapGenerator::make_density_map(ParticleArray *P, char *filename){
     map.image.push_back(bC);
   }
 
+  int colorBarWidth = static_cast<int>(0.07 * map.npixel_x);
+  ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};  
   if(params.flagShowStarParticles)
-    overlayStarParticles(map, originalParticles);
-  
-  outW = map.npixel_x;
-  outH = map.npixel_y;
+    overlayStarParticles(canvas, map, params, ctx, originalParticles);  
 
-  int colorBarWidth = static_cast<int>(0.07 * outW);
-  outImage = map.image;
-  addColorBarToMap(map, params.range_min, params.range_max, colorBarWidth, colorMap, countColorMap, outImage, outW, outH, params.var.c_str());
-  
-  //output PNG file
-  if (!WritePngRgb(filename, outW, outH, outImage)) {
-    std::cerr << "Failed to write PNG: " << filename << "\n";
-  }
-  
-  setTexture2D(outImage, outW, outH);
-  flag2DprojectionComputed = true;
+  addColorBarToMap(canvas, map.cell_size, params.range_min, params.range_max, colorBarWidth, ctx.colorMap, ctx.colorMapSize, params.var.c_str(), params, ctx);  
+
+  return ToRgbImage(canvas);
 }
 
-  // 直方体の8頂点（ローカル座標）を計算し、g_cuboidTransformを適用してワールド座標に変換する関数
+  // 直方体の8頂点（ローカル座標）を計算し、cuboidTransformを適用してワールド座標に変換する関数
 TrackingVector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform)
 {
   // ローカルAABBの中心と半幅を計算
@@ -463,15 +334,6 @@ TrackingVector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *x
     world.push_back(glm::vec3(wpos));
   }
   return world;
-}
-  
-glm::quat ProjectionMapGenerator::UpdateTransformFromEuler(float *eulerAngles)
-{
-  glm::quat qx = glm::angleAxis(glm::radians(eulerAngles[0]), glm::vec3(1.0f, 0.0f, 0.0f));
-  glm::quat qy = glm::angleAxis(glm::radians(eulerAngles[1]), glm::vec3(0.0f, 1.0f, 0.0f));
-  glm::quat qz = glm::angleAxis(glm::radians(eulerAngles[2]), glm::vec3(0.0f, 0.0f, 1.0f));
-    
-  return qz * qy * qx;  
 }
   
 float ProjectionMapGenerator::kernel(float u) {
@@ -733,20 +595,28 @@ void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
 }
 
 #ifdef USE_LUA
+void ProjectionMapGenerator::ensureLuaInitialized(){
+  if (flag_init_lua_ == false) {
+    gLua_ = luaL_newstate();
+    luaL_openlibs(gLua_);
+    flag_init_lua_ = true;
+  }
+}
+
   // ---------------------------
   // Lua の式を評価して数値を返す関数
 bool ProjectionMapGenerator::EvaluateLuaExpressionNumber(const char* expr, double& outValue) {
-  lua_settop(gLua, 0);
-  if (luaL_dostring(gLua, expr) == LUA_OK) {
-    if(lua_isnumber(gLua, -1)) {
-      outValue = lua_tonumber(gLua, -1);
-      lua_pop(gLua, 1);
+  lua_settop(gLua_, 0);
+  if (luaL_dostring(gLua_, expr) == LUA_OK) {
+    if(lua_isnumber(gLua_, -1)) {
+      outValue = lua_tonumber(gLua_, -1);
+      lua_pop(gLua_, 1);
       return true;
     }
   } else {
-    const char* err = lua_tostring(gLua, -1);
+    const char* err = lua_tostring(gLua_, -1);
     std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua, 1);
+    lua_pop(gLua_, 1);
   }
   return false;
 }
@@ -755,29 +625,29 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionNumber(const char* expr, doubl
   // ---------------------------
   // Lua の式を評価してテーブル（色）を取得する関数
 bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a) {
-  lua_settop(gLua, 0);
-  if (luaL_dostring(gLua, expr) == LUA_OK) {
-    if(lua_istable(gLua, -1)) {
-      lua_getfield(gLua, -1, "r");
-      r = static_cast<float>(lua_tonumber(gLua, -1));
-      lua_pop(gLua, 1);
-      lua_getfield(gLua, -1, "g");
-      g = static_cast<float>(lua_tonumber(gLua, -1));
-      lua_pop(gLua, 1);
-      lua_getfield(gLua, -1, "b");
-      b = static_cast<float>(lua_tonumber(gLua, -1));
-      lua_pop(gLua, 1);
-      lua_getfield(gLua, -1, "a");
-      a = static_cast<float>(lua_tonumber(gLua, -1));
-      lua_pop(gLua, 1);
-      lua_pop(gLua, 1); // テーブルをポップ
+  lua_settop(gLua_, 0);
+  if (luaL_dostring(gLua_, expr) == LUA_OK) {
+    if(lua_istable(gLua_, -1)) {
+      lua_getfield(gLua_, -1, "r");
+      r = static_cast<float>(lua_tonumber(gLua_, -1));
+      lua_pop(gLua_, 1);
+      lua_getfield(gLua_, -1, "g");
+      g = static_cast<float>(lua_tonumber(gLua_, -1));
+      lua_pop(gLua_, 1);
+      lua_getfield(gLua_, -1, "b");
+      b = static_cast<float>(lua_tonumber(gLua_, -1));
+      lua_pop(gLua_, 1);
+      lua_getfield(gLua_, -1, "a");
+      a = static_cast<float>(lua_tonumber(gLua_, -1));
+      lua_pop(gLua_, 1);
+      lua_pop(gLua_, 1); // テーブルをポップ
       return true;
     }
-    lua_pop(gLua, 1);
+    lua_pop(gLua_, 1);
   } else {
-    const char* err = lua_tostring(gLua, -1);
+    const char* err = lua_tostring(gLua_, -1);
     std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua, 1);
+    lua_pop(gLua_, 1);
   }
   return false;
 }
@@ -786,28 +656,32 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float&
   // ---------------------------
   // Lua の式を評価して論理値を取得する関数（フィルタ用）
 bool ProjectionMapGenerator::EvaluateLuaExpressionBool(const char* expr, bool& outValue) {
-  lua_settop(gLua, 0);
-  if (luaL_dostring(gLua, expr) == LUA_OK) {
-    if(lua_isboolean(gLua, -1)) {
-      outValue = lua_toboolean(gLua, -1);
-      lua_pop(gLua, 1);
+  lua_settop(gLua_, 0);
+  if (luaL_dostring(gLua_, expr) == LUA_OK) {
+    if(lua_isboolean(gLua_, -1)) {
+      outValue = lua_toboolean(gLua_, -1);
+      lua_pop(gLua_, 1);
       return true;
     }
-    lua_pop(gLua, 1);
+    lua_pop(gLua_, 1);
   } else {
-    const char* err = lua_tostring(gLua, -1);
+    const char* err = lua_tostring(gLua_, -1);
     std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua, 1);
+    lua_pop(gLua_, 1);
   }
   return false;
 }
 #endif
 
-void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const TrackingVector<ParticleData>& particles)
+void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
+						  const ProjectionMap& map,
+						  const ProjectionMapParams& params,
+						  const ProjectionMapContext& ctx,
+						  const TrackingVector<ParticleData>& particles)
 {
 
 #ifdef USE_LUA
-  if(flag_init_lua){
+  if(flag_init_lua_){
     double minVal = 0.0, maxVal = 1.0;
     if(!EvaluateLuaExpressionNumber(params.minValueExpr, minVal)) {
       std::cerr << "Error evaluating min value expression\n";
@@ -815,35 +689,33 @@ void ProjectionMapGenerator::overlayStarParticles(ProjectionMap& map, const Trac
     if(!EvaluateLuaExpressionNumber(params.maxValueExpr, maxVal)) {
       std::cerr << "Error evaluating max value expression\n";
     }
-    lua_pushnumber(gLua, minVal);
-    lua_setglobal(gLua, "min");
-    lua_pushnumber(gLua, maxVal);
-    lua_setglobal(gLua, "max");
+    lua_pushnumber(gLua_, minVal);
+    lua_setglobal(gLua_, "min");
+    lua_pushnumber(gLua_, maxVal);
+    lua_setglobal(gLua_, "max");
   }
 #endif
 
-  ImageCanvas canvas(map.image, map.npixel_x, map.npixel_y);
-   
   for (const auto &p : particles) {
     if(p.type < 3 || p.type > 5)
       continue;
 
     if (params.dataSource == DataSource::Stars)
-      if(p.type == type_)
+      if(p.type == ctx.selectedType)
 	continue;
     
     double pointSize = 5.0;
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
     
 #ifdef USE_LUA
-    if(flag_init_lua){
-      lua_settop(gLua, 0);
-      lua_pushnumber(gLua, p.mass);
-      lua_setglobal(gLua, "m");
-      lua_pushnumber(gLua, p.Hsml);
-      lua_setglobal(gLua, "Hsml");
-      lua_pushnumber(gLua, p.type);
-      lua_setglobal(gLua, "ptype");
+    if(flag_init_lua_){
+      lua_settop(gLua_, 0);
+      lua_pushnumber(gLua_, p.mass);
+      lua_setglobal(gLua_, "m");
+      lua_pushnumber(gLua_, p.Hsml);
+      lua_setglobal(gLua_, "Hsml");
+      lua_pushnumber(gLua_, p.type);
+      lua_setglobal(gLua_, "ptype");
 
       // 1. フィルタ条件の評価
       bool pass = false;
@@ -946,19 +818,27 @@ std::vector<double> generate_ticks(double min, double max, int n_desired) {
   return ticks;
 }
 
-void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
-					      float minVal, float maxVal,
+void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
+					      double cell_size,
+					      float minVal,
+					      float maxVal,
 					      int colorBarWidth,
-					      const float *colormap, int countcolormap,
-					      TrackingVector<unsigned char>& outImage, int& outW, int& outH, const char *barLabel)
+					      const float *colormap,
+					      int countcolormap,
+					      const char *barLabel,
+					      const ProjectionMapParams& params,
+					      const ProjectionMapContext& ctx)
 {
   // (3) カラーバーに ticks (5分割) とラベルを描画 (簡易ドット)
   int nTicks = 5;
   std::vector<double> ticks = generate_ticks(minVal, maxVal, nTicks);
   nTicks = ticks.size();
 
-  const int charPixelSize = std::max(1, static_cast<int>(0.08f * outH));
-  const int charPixelSizeLabel = std::max(1, static_cast<int>(0.10f * outH));
+  int outW_init = canvas.width();
+  int outH_init = canvas.height();
+    
+  const int charPixelSize = std::max(1, static_cast<int>(0.08f * outH_init));
+  const int charPixelSizeLabel = std::max(1, static_cast<int>(0.10f * outH_init));
 
   float maxTicksWidth = 0.0f;
   char labelStr[64];
@@ -976,16 +856,11 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
   int padding = 4;
   int ticksWidth = static_cast<int>(ceil(maxTicksWidth)) + 2 * padding;
   int rotateLabelWidth = charPixelSizeLabel + 2 * padding;
-  
-  // 出力画像の総幅は、メイン画像＋色バー＋ラベル領域
-  outW = map.npixel_x + colorBarWidth + ticksWidth + rotateLabelWidth;
-  outH = map.npixel_y;
-  
-  // 出力画像バッファ (RGB)
-  outImage.resize(outW * outH * 3, 0);
 
-  ImageCanvas canvas(outImage, outW, outH);
-  canvas.copyRgbImage(map.image, map.npixel_x, map.npixel_y, 0, 0);
+  // 出力画像の総幅は、メイン画像＋色バー＋ラベル領域
+  int outW = outW_init + colorBarWidth + ticksWidth + rotateLabelWidth;
+  int outH = outH_init;
+  canvas.resizeKeepContent(outW, outH, 0);
 
   // (2) カラーバーを右側 colorBarWidth 幅に描画
   //     y=0 が最上部, y=outH が最下部
@@ -993,24 +868,24 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
   for (int py = 0; py < outH; py++) {
     float t = 1.0f - float(py) / float(outH - 1); // 上->下が 1->0
     float rF, gF, bF;
-    colormapLookup(t, rF, gF, bF, colormap, countcolormap);
+    colormapLookup(t, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
     unsigned char rC = (unsigned char)(rF * 255);
     unsigned char gC = (unsigned char)(gF * 255);
     unsigned char bC = (unsigned char)(bF * 255);
 
     for (int px = 0; px < colorBarWidth; px++) {
-      int outX = map.npixel_x + px;
+      int outX = outW_init + px;
       canvas.setPixel(outX, py, rC, gC, bC);
     }
   }
 
-  canvas.fillRect(map.npixel_x + colorBarWidth,
+  canvas.fillRect(outW_init + colorBarWidth,
 		  0,
 		  outW,
 		  outH,
 		  0, 0, 0);
   
-  int labelAreaX = map.npixel_x + colorBarWidth;
+  int labelAreaX = outW_init + colorBarWidth;
   int labelCenterX = labelAreaX + ticksWidth / 2;
   
   for (int i = 0; i < nTicks; i++) {
@@ -1020,8 +895,8 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
     float frac = (ticks[i] - minVal) / (maxVal - minVal);
     int tickY = int((1.0f - frac) * (outH - 1));
 
-    int xLineStart = map.npixel_x; 
-    int xLineEnd   = map.npixel_x + 10;
+    int xLineStart = outW_init; 
+    int xLineEnd   = outW_init + 10;
     canvas.drawHorizontalLine(xLineStart, xLineEnd, tickY, 255, 255, 255);
  
     fontRenderer_.drawValueCenteredBaseline(canvas,
@@ -1034,7 +909,7 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
 
   
   {
-    int labelAreaX = map.npixel_x + colorBarWidth + ticksWidth;
+    int labelAreaX = outW_init + colorBarWidth + ticksWidth;
     int center_x = labelAreaX + rotateLabelWidth / 2;
     int center_y = outH / 2;
 
@@ -1047,9 +922,9 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
 
   if(params.flagTimeLabel){
     char timeStr[64];
-    double t = time_ * params.factorShownTimeInUnitTime;
+    double t = ctx.time * params.factorShownTimeInUnitTime;
     if(params.flagUseRedshift)
-      t = 1./time_ - 1.;
+      t = 1./ctx.time - 1.;
     
     snprintf(timeStr, sizeof(timeStr), params.timeFormatBuf, t);
 
@@ -1092,11 +967,11 @@ void ProjectionMapGenerator::addColorBarToMap(const ProjectionMap& map,
     {
       double arrowLenX_scaled = params.arrowLenX;
       if(params.flagScaleOriginalCoordinate)
-	arrowLenX_scaled *= scale_to_phys;
+	arrowLenX_scaled *= ctx.scaleToPhysical;
 
-      int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / map.cell_size);
+      int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / cell_size);
 	
-      int arrowCenterX = map.npixel_x / 2;
+      int arrowCenterX = outW_init / 2;
       int arrowStartX = arrowCenterX - arrowLenX_in_pixel / 2;
       int arrowEndX = arrowStartX + arrowLenX_in_pixel;
       
@@ -1124,4 +999,14 @@ const std::string& ProjectionMapGenerator::getFontPath(int index) const
 bool ProjectionMapGenerator::selectFontFileByIndex(int index)
 {
   return fontRenderer_.loadFontByIndex(index);
+}
+
+static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs)
+{
+  const double Lbol = Lbol_single_massive_Lsun(M_Msun); if (!(Lbol > 0.0) || !std::isfinite(Lbol)) return 0.0;
+  const double Teff = Teff_massive_K(M_Msun); if (!(Teff > 0.0) || !std::isfinite(Teff)) return 0.0;
+  const double lambda0_m = std::max(1.0, (double)fs.band_center_nm) * 1e-9;
+  const double dlambda_m = std::max(1.0, (double)fs.band_width_nm ) * 1e-9;
+  const double frac = band_fraction_rect_lambda(Teff, lambda0_m, dlambda_m);
+  return Lbol * frac;
 }

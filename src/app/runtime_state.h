@@ -4,6 +4,7 @@
 #include "app/input_filter_config.h"
 #include "app/view_filter_config.h"
 #include "app/tracking_view_state.h"
+#include "projection/projection_map_tool_state.h"
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -146,6 +147,7 @@ struct AnalysisRequestRuntimeState {
 #endif
   
   ProjectionMovieRequestState projectionMovie;
+  ProjectionMapToolState projectionMap;
 };
 
 struct CameraPlacementRequestState {

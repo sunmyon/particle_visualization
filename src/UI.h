@@ -10,6 +10,8 @@ struct RenderLayerState;
 struct NormalizationContext;
 struct TrackingTargetState;
 struct SnapshotPostprocessState;
+struct ProjectionPreviewUIState;
+struct ProjectionMapToolState;
 class ParticleArray;
 class HaloStore;
 
@@ -35,14 +37,20 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
 		       const Histogram2DContext& ctx);
 
 class ProjectionMapGenerator;
+struct ProjectionMapUIState;
+struct ProjectionMapParams;
+struct CuboidObject;
 void OpenProjectionMapUI(ProjectionMapUIState& state);
 void DrawProjectionMapUI(ProjectionMapUIState& state,
-			 ProjectionMapGenerator& generator,
-                         ParticleArray* P,
-			 NormalizationContext& normalization,
+			 ProjectionMapToolState& tool,
+                         ParticleArray& P,
+			 const NormalizationContext& normalization,
                          CameraContext& camCtx,
 			 RenderLayerState& cuboidAnnotationState,
                          int fileindex);
+
+void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
+				   ProjectionMapUIState& state);
 
 void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post);
 
@@ -53,15 +61,7 @@ void DrawHaloesUI(HaloesUIState& state, HaloStore& halo, CameraContext& camCtx, 
 void OpenMaskUI(MaskUIState& state);
 bool DrawMaskWindow(MaskUIState& ui, ParticleMaskConfig& mask);
 
-struct ProjectionPreviewUIState {
-  void* textureId = nullptr;   // ImTextureID 用
-  int width = 0;
-  int height = 0;
-  bool valid = false;
-};
-
-void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
-                             const ProjectionPreviewUIState& st);
+void DrawProjectionPreviewUI(const ProjectionPreviewUIState& st);
 
 void ShowCameraSettingsUI();
 void ShowTime(double time);

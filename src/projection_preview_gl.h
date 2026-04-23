@@ -3,12 +3,12 @@
 #include <cstdint>
 #include <glad/glad.h>
 
-struct ProjectionImage;
+struct RgbImage;
 struct ProjectionPreviewUIState;
 
 class ProjectionPreviewGL {
 public:
-  void update(const ProjectionImage& img);
+  void update(const RgbImage& img);
   ProjectionPreviewUIState makeUIState() const;
   void destroy();
 

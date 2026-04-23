@@ -1,6 +1,7 @@
 #include "projection_preview_gl.h"
 #include "projection/make_2D_projection_map.h"
 #include "UI.h"
+#include "image/rgb_image.h"
 
 ProjectionPreviewUIState ProjectionPreviewGL::makeUIState() const
 {
@@ -12,11 +13,10 @@ ProjectionPreviewUIState ProjectionPreviewGL::makeUIState() const
   return ui;
 }
 
-void ProjectionPreviewGL::update(const ProjectionImage& img)
+void ProjectionPreviewGL::update(const RgbImage& img)
 {
   if (img.width <= 0 || img.height <= 0) return;
   if (img.rgb.size() != static_cast<size_t>(img.width * img.height * 3)) return;
-  if (img.version == uploadedVersion_) return;
 
   if (tex_ == 0) {
     glGenTextures(1, &tex_);

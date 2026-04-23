@@ -389,7 +389,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
                     ui.selectedChainIndex,
                     i);
 
-      proj->set_projection_parameters(P->particleBlock.particles,
+      /*proj->set_projection_parameters(P->particleBlock.particles,
                                       flag_use_amvector,
                                       pos_center,
                                       ui.mapLen,
@@ -398,7 +398,8 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
                                       ui.mapNpixel,
                                       ui.mapNslices,
                                       var);
-      proj->make_density_map(P, fname_output);
+      //will make later
+				      proj->make_density_map(P, fname_output);*/
     }
   }
 }

@@ -8,6 +8,7 @@
 
 #include "app/app_state.h"
 #include "app/app_analysis_execution.h"
+#include "app/app_projection_execution.h"
 #include "app/app_callbacks.h"
 #include "app/normalization_config.h"
 #include "render/render_system.h"
@@ -111,14 +112,16 @@ static void DrawToolWindows(AppDataState& data,
   DrawRadialProfileUI(tools.radialProfile, analysis.radial, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
 
   const auto& src = data.fileInfo->getSource();
-  DrawProjectionMapUI(tools.projectionMap, 
-		      *services.projectionMap2D,
-                      data.particles,
+  DrawProjectionMapUI(tools.projectionMap,
+		      runtime.analysis.projectionMap,
+		      *data.particles,
 		      runtime.settings.normalization,
-                      camera,
-                      runtime.render.cuboidAnnotations,
-                      src.currentFileIndex);
-
+		      camera,
+		      runtime.render.cuboidAnnotations,
+		      src.currentFileIndex);
+  
+  DrawProjectionFontSelectionUI(*services.projectionMap2D, tools.projectionMap);
+  
 #ifdef HAVE_HDF5
   DrawHaloesUI(tools.haloes, data.haloStore, camera, runtime.settings.normalization);
 #endif
@@ -455,7 +458,7 @@ static void UpdateCuboidAnnotationDerivedState(RenderLayerState& annotationState
 					       RenderLayerState& cuboidsState,
 					       RenderLayerState& linesState,
 					       CuboidAnnotationManager& annotations,
-                                               ProjectionMapGenerator& projectionMap2D)
+					       const ProjectionMapToolState& rt)
 {
   if (!annotationState.cpuUpdated) {
     return;
@@ -465,13 +468,13 @@ static void UpdateCuboidAnnotationDerivedState(RenderLayerState& annotationState
 
   if (annotationState.show) {
     CuboidAnnotationObject obj;
-    obj.cuboid = projectionMap2D.interactiveCuboid();
+    obj.cuboid = rt.interactiveCuboid;
 
     obj.cuboid.edgeColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
     obj.highlightColor   = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
     obj.arrowColor       = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
 
-    const int axis = projectionMap2D.params.selectedAxis;
+    const int axis = rt.params.selectedAxis;
     if (axis == 0)      obj.selectedAxis = CuboidAxis::X;
     else if (axis == 1) obj.selectedAxis = CuboidAxis::Y;
     else                obj.selectedAxis = CuboidAxis::Z;
@@ -731,12 +734,19 @@ static void RenderScene(const CameraContext& camera,
                   fm);
 }
 
-static void UpdateProjectionPreview(ProjectionMapGenerator& projectionMap,
+
+static void UpdateProjectionPreview(ProjectionPreviewDerivedState& source,
                                     RenderSystem& render)
 {
-  render.preview.update(projectionMap.getImage());
+  if (!source.image.valid()) return;
+
+  if(source.computed){
+    render.preview.update(source.image);
+    source.computed = false;
+  }
+  
   ProjectionPreviewUIState previewUI = render.preview.makeUIState();
-  DrawProjectionPreviewUI(projectionMap, previewUI);
+  DrawProjectionPreviewUI(previewUI);
 }
 
 static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
@@ -758,9 +768,10 @@ static void EndFrame(WindowContext& window)
 
 static void RebuildDerivedState(ParticleArray& particles,
                                 CameraContext& camera,
-                                RenderRuntimeState& render,
+                                RenderRuntimeState& render,				
                                 AppDerivedState& derived,
-                                AppServices& services)
+                                AppServices& services,
+				const ProjectionMapToolState& projection)
 {
 #ifdef GEOMETRICAL_ANALYSIS
   RebuildDiskDerivedState(derived.analysis.disk,
@@ -800,7 +811,8 @@ static void RebuildDerivedState(ParticleArray& particles,
 				     render.cuboids,
 				     render.lines,
 				     derived.scene.cuboidAnnotation,
-				     *services.projectionMap2D);
+				     projection
+				     );
 }
 
 static void UpdateRenderResources(ParticleArray& particles,
@@ -906,6 +918,12 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 			   runtime.analysis.clumpBatch,
 			   analysis.clumpBatch);
 #endif
+
+  ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
+			       *services.projectionMap2D,
+			       *data.particles,
+			       runtime.settings.normalization,
+			       analysis.projectionPreview);
   
   ExecuteProjectionMovieRequest(*data.particles,
 				runtime.settings.normalization,
@@ -913,6 +931,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				runtime.settings.tracking,
 				*data.fileInfo,
 				*services.projectionMap2D,
+				runtime.analysis.projectionMap.params,
 				camera,
 				runtime.analysis.projectionMovie,
 				analysis.projectionMovie);
@@ -973,7 +992,8 @@ void RunFrame(AppState& app,
                       app.view.camera,
                       app.runtime.render,
                       app.derived,
-                      app.services);
+                      app.services,
+		      app.runtime.analysis.projectionMap);
   
   UpdateRenderResources(*app.data.particles,
                         app.view.particleVisual,
@@ -981,7 +1001,7 @@ void RunFrame(AppState& app,
                         app.derived,
                         render);
 
-  UpdateProjectionPreview(*app.services.projectionMap2D, render);
+  UpdateProjectionPreview(app.derived.analysis.projectionPreview, render);
 
   RenderScene(app.view.camera,
 	      app.view.particleVisual,

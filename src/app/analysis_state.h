@@ -1,5 +1,6 @@
 #pragma once
 #include "convex_hull_state.h"
+#include "image/rgb_image.h"
 #include "object.h"
 
 struct DiskAnalysisResultState {
@@ -67,6 +68,7 @@ struct ClumpBatchResultState {
 
 struct ProjectionMovieResultState {
   bool completed = false;
+  bool success = false;
   int processedSnapshots = 0;
   char outputMoviePath[512] = "";
   char errorMessage[512] = "";
@@ -89,6 +91,14 @@ struct Histogram2DRuntimeState {
 
   Histogram2DParams params;
   Histogram2DResult result;
+};
+
+struct ProjectionPreviewDerivedState {
+  bool computed = false;
+  
+  RgbImage image;
+  bool valid = false;
+  uint64_t version = 0;
 };
 
 struct AnalysisDerivedState {
@@ -114,7 +124,8 @@ struct AnalysisDerivedState {
 #endif
 
   ProjectionMovieResultState projectionMovie;
-
+  ProjectionPreviewDerivedState projectionPreview;
+  
   RadialProfileRuntimeState radial;
   Histogram2DRuntimeState hist2D;
 };

@@ -19,6 +19,8 @@
 #include "data/halo_store.h"
 
 #include "projection/make_2D_projection_map.h"
+#include "projection/projection_map_params.h"
+#include "projection/projection_geometry.h"
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 
@@ -280,8 +282,8 @@ static void InitProjectionPreviewFonts(ProjectionMapGenerator& generator,
   state.previewFontsInitialized = true;
 }
 
-static void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
-                                          ProjectionMapUIState& state)
+void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
+				   ProjectionMapUIState& state)
 {
   if (!state.fontWindowOpen) return;
 
@@ -371,24 +373,25 @@ namespace {
   }
 }
 
+
 void DrawProjectionMapUI(ProjectionMapUIState& state,
-			 ProjectionMapGenerator& generator,
-                         ParticleArray* P,
-			 NormalizationContext& normalization,
+			 ProjectionMapToolState& tool,
+                         ParticleArray& particles,
+                         const NormalizationContext& normalization,
                          CameraContext& camCtx,
-			 RenderLayerState& cuboidAnnotationState,
+                         RenderLayerState& cuboidAnnotationState,
                          int indexfile)
 {
   if (!state.open) return;
 
-  auto& params = generator.params;
-  auto& cuboid = generator.interactiveCuboid();
+  auto& interactiveCuboid = tool.interactiveCuboid; 
+  auto& params = tool.params;
   int prevSelectedAxis = params.selectedAxis; 
   
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("make projectoin map", &state.open, ImGuiWindowFlags_None);
 
-  generator.scale_to_phys = normalization.toPhysicalScale();
+  double scale_to_phys = normalization.toPhysicalScale();
   // -----------------------------
   // side length
   // -----------------------------
@@ -397,14 +400,14 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
   if (state.useOriginalCoordinate) {
     for (int k = 0; k < 3; k++) {
-      params.xlen[k] = state.xlen_input[k] * generator.scale_to_phys;
+      params.xlen[k] = state.xlen_input[k] * scale_to_phys;
     }
   } else {
     for (int k = 0; k < 3; k++) {
       params.xlen[k] = state.xlen_input[k];
     }
   }
-
+  
   ImGui::InputFloat3("offset center", params.xoffset);
   ImGui::InputInt("npixel", &params.npixel, 10, 1000);
   ImGui::InputFloat3("Plane Tilt (deg) x", params.tilt);
@@ -415,16 +418,13 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     }
   }
 
-  // params -> derived state
-  generator.center = glm::vec3(params.xoffset[0], params.xoffset[1], params.xoffset[2]);
-
   float xmin[3], xmax[3];
   for (int k = 0; k < 3; k++) {
     xmin[k] = params.xoffset[k] - 0.5f * params.xlen[k];
     xmax[k] = params.xoffset[k] + 0.5f * params.xlen[k];
   }
 
-  generator.cuboidTransform = generator.UpdateTransformFromEuler(params.tilt);
+  glm::quat cuboidTransform = UpdateTransformFromEuler(params.tilt);
   ImGui::Checkbox("show cubic region", &params.flagShowCuboid);
 
   // -----------------------------
@@ -441,11 +441,11 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   if (ImGui::Button(state.selectMode ? "Exit Region Select" : "Select Region (Mouse Drag)")) {
     state.selectMode = !state.selectMode;
     printf("center_init=%g %g %g\n",
-           generator.center.x, generator.center.y, generator.center.z);
+           params.xoffset[0], params.xoffset[1], params.xoffset[2]);
   }
   ImGui::PopStyleColor();
 
-  glm::vec3 pivot(generator.center.x, generator.center.y, generator.center.z);
+  glm::vec3 pivot(params.xoffset[0], params.xoffset[1], params.xoffset[2]);
 
   if (state.selectMode) {
     glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
@@ -465,7 +465,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     if (ImGui::IsMouseDown(0)) {
       ImGuiIO& io = ImGui::GetIO();
             
-      UpdateCuboidTransformArcball(cuboid,
+      UpdateCuboidTransformArcball(interactiveCuboid,
 				   xpos - dx, ypos - dy,
 				   lastX, lastY,
 				   io.DisplaySize.x, io.DisplaySize.y,
@@ -474,54 +474,46 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
       cuboidAnnotationState.cpuUpdated = true;
     }
 
-    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(cuboid.orientation));
+    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(interactiveCuboid.orientation));
     params.tilt[0] = eulerAngles.x;
     params.tilt[1] = eulerAngles.y;
     params.tilt[2] = eulerAngles.z;
-
-    generator.center = cuboid.center;
-    generator.cuboidTransform = cuboid.orientation;
-  } else {
-    generator.cuboidTransform = generator.UpdateTransformFromEuler(params.tilt);
-    generator.center = glm::vec3(params.xoffset[0], params.xoffset[1], params.xoffset[2]);
   }
 
   // -----------------------------
   // angular momentum axis
   // -----------------------------
   if (ImGui::Button("set axis from angular momentum")) {
-    glm::vec3 normal(0.f, 0.f, 1.f);
-    generator.planeNormal = glm::normalize(
-					   generator.calc_angular_momentum_axis(P->particleBlock.particles,
-										generator.center,
-										params.xlen));
-
-    printf("planeNormal = %g %g %g\n",
-           generator.planeNormal.x,
-           generator.planeNormal.y,
-           generator.planeNormal.z);
-
-    glm::vec3 v = glm::cross(normal, generator.planeNormal);
-    float w = 1.0f + glm::dot(normal, generator.planeNormal);
-    generator.cuboidTransform = glm::normalize(glm::quat(w, v.x, v.y, v.z));
-
-    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(generator.cuboidTransform));
-    params.tilt[0] = eulerAngles.x;
-    params.tilt[1] = eulerAngles.y;
-    params.tilt[2] = eulerAngles.z;
+    glm::vec3 center{params.xoffset[0],params.xoffset[1], params.xoffset[2]};
+    auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
+					     center,
+					     params.xlen);
+    
+    if (frame.valid) {
+      glm::quat cuboidTransform = BuildRotationFromZAxisTo(frame.axis);
+      glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(cuboidTransform));
+      params.tilt[0] = eulerAngles.x;
+      params.tilt[1] = eulerAngles.y;
+      params.tilt[2] = eulerAngles.z;      
+    }   
   }
 
-  updateInteractiveCuboidIfNeeded(cuboid,
+
+  cuboidTransform = UpdateTransformFromEuler(params.tilt);
+
+  glm::vec3 center{params.xoffset[0], params.xoffset[1], params.xoffset[2]};
+  
+  updateInteractiveCuboidIfNeeded(interactiveCuboid,
 				  cuboidAnnotationState,
-				  generator.center,
-				  generator.cuboidTransform,
+				  center,
+				  cuboidTransform,
 				  glm::vec3(0.5f * params.xlen[0],
 					    0.5f * params.xlen[1],
 					    0.5f * params.xlen[2]),
 				  params.flagShowCuboid);
-    
-  cuboid.edgeColor = glm::vec4(1.0f);
-  cuboid.tag = "interactive_cuboid";
+  
+  interactiveCuboid.edgeColor = glm::vec4(1.0f);
+  interactiveCuboid.tag = "interactive_cuboid";
   
   // -----------------------------
   // output file
@@ -546,11 +538,6 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
                axisLabels,
                IM_ARRAYSIZE(axisLabels));
 
-  glm::vec3 normal(0, 0, 1);
-  if (params.selectedAxis == 0) normal = glm::vec3(1, 0, 0);
-  if (params.selectedAxis == 1) normal = glm::vec3(0, 1, 0);
-  if (params.selectedAxis == 2) normal = glm::vec3(0, 0, 1);
-
   if (prevSelectedAxis != params.selectedAxis) 
     cuboidAnnotationState.cpuUpdated = true;  
 
@@ -572,8 +559,6 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     params.dataSource = DataSource::Stars;
   }
 
-  generator.planeNormal = glm::normalize(generator.cuboidTransform * normal);
-
   // -----------------------------
   // colormap
   // -----------------------------
@@ -592,16 +577,13 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     ImGui::EndCombo();
   }
   
-  generator.colorMap      = gColormapDefs[params.colormapindex].data;
-  generator.countColorMap = gColormapDefs[params.colormapindex].count;
-    
   // -----------------------------
   // data source specific UI
   // -----------------------------
   if (params.dataSource == DataSource::Gas) {
     if (ImGui::BeginCombo("Quantity", QuantityLabel(params.selectedVarGas))) {
-      for (int q = 0; q < P->particleBlock.nUIQ; ++q) {
-        QuantityId cand = P->particleBlock.uiQ[q];
+      for (int q = 0; q < particles.particleBlock.nUIQ; ++q) {
+        QuantityId cand = particles.particleBlock.uiQ[q];
         bool is_selected = (cand == params.selectedVarGas);
         if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
           params.selectedVarGas = cand;
@@ -754,20 +736,10 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     state.fontWindowOpen = true;
   }
 
-  DrawProjectionFontSelectionUI(generator, state);
-
   // -----------------------------
   // star particle overlay
   // -----------------------------
   ImGui::Checkbox("draw star particle", &params.flagShowStarParticles);
-
-#ifdef USE_LUA
-  if (generator.flag_init_lua == false) {
-    generator.gLua = luaL_newstate();
-    luaL_openlibs(generator.gLua);
-    generator.flag_init_lua = true;
-  }
-#endif
 
   if (params.flagShowStarParticles) {
     ImGui::InputText("Filter Expression",
@@ -798,8 +770,8 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     } else {
       params.dataSource = DataSource::Stars;
     }
-    
-    generator.make_density_map(P, filename);
+
+    tool.renderRequested = true;
   }
 
   ImGui::End();
@@ -1469,15 +1441,13 @@ bool DrawMaskWindow(MaskUIState& state, ParticleMaskConfig& mask) {
   return apply; // ★「設定が反映された」トリガとして true
 }
 
-void DrawProjectionPreviewUI(const ProjectionMapGenerator& gen,
-                             const ProjectionPreviewUIState& st)
+void DrawProjectionPreviewUI(const ProjectionPreviewUIState& st)
 {
-  if (!gen.getImageFlag()) return;
+  if (!st.valid) return;
 
   ImGui::Begin("2D Projection Map");
-  if (st.valid) {
-    ImGui::Image((ImTextureID)st.textureId, ImVec2((float)st.width, (float)st.height));
-  }
+  ImGui::Image((ImTextureID)st.textureId,
+               ImVec2((float)st.width, (float)st.height));
   ImGui::End();
 }
 

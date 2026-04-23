@@ -108,6 +108,13 @@ struct MaskUIState {
   uint64_t revision = 0;
 };
 
+struct ProjectionPreviewUIState {
+  void* textureId = nullptr;   // ImTextureID 用
+  int width = 0;
+  int height = 0;
+  bool valid = false;
+};
+
 struct ToolWindowUIState {
   RadialProfileUIState radialProfile;
   Histogram2DUIState histogram2D;

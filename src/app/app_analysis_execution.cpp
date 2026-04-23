@@ -22,7 +22,10 @@
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "projection/make_2D_projection_map.h"
+#include "projection/projection_geometry.h"
 #include "FindClumps/find_clumps_helpers.h"
+
+#include "image/image_io.h"
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -657,6 +660,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 				   TrackingTargetState& track,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
+				   const ProjectionMapParams& baseParams,
                                    const CameraContext& camera,
                                    ProjectionMovieRequestState& request,
                                    ProjectionMovieResultState& result)
@@ -792,15 +796,44 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
         }
       }
 
-      projectionMap.set_projection_parameters(particles.particleBlock.particles,
-                                              flag_use_amvector,
-                                              flag_center ? pos_center : nullptr,
-                                              -1.0f,
-                                              std::numeric_limits<float>::quiet_NaN(),
-                                              std::numeric_limits<float>::quiet_NaN(),
-                                              -1, -1, "");
+      ProjectionMapParams frameParams = baseParams;
 
-      projectionMap.make_density_map(&particles, filename);
+      if (flag_center) {
+	frameParams.xoffset[0] = pos_center[0];
+	frameParams.xoffset[1] = pos_center[1];
+	frameParams.xoffset[2] = pos_center[2];
+      }
+
+      ProjectionMapContext context =
+	BuildProjectionMapContext(frameParams,
+				  normalization.toPhysicalScale(),
+				  particles.particleBlock.header.time);
+
+      if (flag_use_amvector) {
+	auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
+						 context.center,
+						 frameParams.xlen);
+	
+	if (frame.valid) {
+	  context.center = frame.center;
+	  context.planeNormal = frame.axis;
+	  context.cuboidTransform = BuildRotationFromZAxisTo(frame.axis);
+	}
+      }
+      
+      RgbImage image =
+	projectionMap.makeDensityMapImage(particles,
+					  frameParams,
+					  context);
+
+      if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
+	std::snprintf(result.errorMessage,
+		      sizeof(result.errorMessage),
+		      "Failed to write projection frame: %s",
+		      filename);
+	result.success = false;
+	return;
+      }
 
       char linkname[512];
       std::snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i++);

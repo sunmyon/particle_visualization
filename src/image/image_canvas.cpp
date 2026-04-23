@@ -1,4 +1,5 @@
 #include "image/image_canvas.h"
+#include "image/rgb_image.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -20,6 +21,34 @@ int ImageCanvas::width() const
 int ImageCanvas::height() const
 {
   return height_;
+}
+
+TrackingVector<unsigned char>& ImageCanvas::pixels() const{
+  return rgb_;
+}
+
+void ImageCanvas::resizeKeepContent(int newWidth, int newHeight, unsigned char value)
+{
+  TrackingVector<unsigned char> newRgb;
+  newRgb.resize(static_cast<size_t>(newWidth) * newHeight * 3, value);
+
+  const int copyWidth = std::min(width_, newWidth);
+  const int copyHeight = std::min(height_, newHeight);
+
+  for (int y = 0; y < copyHeight; ++y) {
+    for (int x = 0; x < copyWidth; ++x) {
+      const int oldIdx = 3 * (y * width_ + x);
+      const int newIdx = 3 * (y * newWidth + x);
+
+      newRgb[newIdx + 0] = rgb_[oldIdx + 0];
+      newRgb[newIdx + 1] = rgb_[oldIdx + 1];
+      newRgb[newIdx + 2] = rgb_[oldIdx + 2];
+    }
+  }
+
+  rgb_.swap(newRgb);
+  width_ = newWidth;
+  height_ = newHeight;
 }
 
 void ImageCanvas::setPixel(int x,
@@ -271,4 +300,14 @@ void ImageCanvas::copyRgbImage(const TrackingVector<unsigned char>& src,
       rgb_[dstIdx + 2] = src[srcIdx + 2];
     }
   }
+}
+
+RgbImage ToRgbImage(const ImageCanvas& canvas, uint64_t version)
+{
+  RgbImage out;
+  out.width = canvas.width();
+  out.height = canvas.height();
+  out.version = version;
+  out.rgb = canvas.pixels(); // const ref を返すAPIならコピー
+  return out;
 }

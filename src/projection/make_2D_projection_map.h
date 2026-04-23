@@ -30,12 +30,14 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "core/tracking_vector.h"
-#include "core/quantity.h"
 #include "render/colormap_defs.h"
 #include "object.h"
 
 class ParticleArray;
 class ParticleData;
+struct ProjectionMapParams;
+struct RgbImage;
+struct FluxSettings;
 
 struct ProjectionImage {
   int width = 0;
@@ -44,70 +46,22 @@ struct ProjectionImage {
   TrackingVector<uint8_t> rgb; // size = width*height*3, RGB8
 };
 
-enum class DataSource : int { Gas = 0, DM = 1, Stars = 2 };
-enum class StarQuantity : int { Density=0, Metallicity=1, Mass=2, Flux=3 };
+struct ProjectionMapContext {
+  char selectedType = 0;
+  glm::vec3 center{0.0f};
+  glm::quat cuboidTransform{1.f, 0.f, 0.f, 0.f};
+  glm::vec3 planeNormal{0.f, 0.f, 1.f};
 
-struct FluxSettings {
-  float band_center_nm = 1500.0f;
-  float band_width_nm  = 200.0f;
+  const float* colorMap = nullptr;
+  int colorMapSize = 0;
+
+  double scaleToPhysical = 1.0;
+  double time = 0.0;
 };
 
-struct ProjectionMapParams {
-  int npixel = 200;
-
-  float xlen[3] = {2.f, 2.f, 1.f};
-  float xoffset[3] = {0.f, 0.f, 0.f};
-  float tilt[3] = {0.f, 0.f, 0.f};
-
-  bool flagDensityWeight = true;
-  bool flagVoronoi = true;
-  int step_z = 200;
-
-  bool flagLogScale = true;
-  bool autoRange = true;
-  float range_min = 0.0f;
-  float range_max = 1.0f;
-
-  bool flagShowStarParticles = true;
-  bool flagShowCuboid = false;
-
-  bool flagSpecifyZoomRegionByMass = false;
-  bool flagScaleOriginalCoordinateZoomRegion = true;
-  float criticalGasMassForZoomRegion = 0.0f;
-  float lenZoomRegion = 0.0f;
-
-  bool flagPlaceScale = false;
-  bool flagScaleOriginalCoordinate = true;
-  float arrowLenX = 100.0f;
-  char arrowLabelStr[255] = "100 au";
-
-  bool flagTimeLabel = true;
-  bool flagUseRedshift = false;
-  char timeFormatBuf[255] = "t=%.3f";
-
-  char fileFormat[255] = "image_%04d.png";
-  char folderPath[255] = "./output";
-
-  std::string var;
-
-  int selectedAxis = 2;
-  int selectedType = 0;
-  int colormapindex = 0;
-
-  float factorShownTimeInUnitTime = 1.0f;
-
-  DataSource dataSource = DataSource::Gas;
-  StarQuantity starQuantity = StarQuantity::Density;
-  FluxSettings flux;
-  float psf_sigma_pix = 1.5f;
-  QuantityId selectedVarGas = QuantityId::Density;
-
-  char filterExpr[256] = "return m > 10.0";
-  char pointSizeExpr[256] = "return m / 10.0";
-  char pointColorExpr[256] = "return { r = m/100.0, g = 0.5, b = 0.2, a = 1.0 }";
-  char minValueExpr[32] = "return 0.0";
-  char maxValueExpr[32] = "return 1.0";
-};
+ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
+                                               double scaleToPhysical,
+                                               double time);
 
 extern const float jetMap[];
 extern const float viridisMap[];
@@ -123,13 +77,7 @@ struct pos_val {
 
 class ProjectionMapGenerator {
 private:
-  double time_;
   BitmapFontRenderer fontRenderer_;
-  ProjectionImage image_;
-  bool flag_image_ = false;
-  bool dirty_ = true;
-  uint64_t nextVersion_ = 1;
-  char type_ = 0;  
   
   struct ProjectionMap {
     int npixel = 0, npixel_x = 0, npixel_y = 0, npixel_z = 0;
@@ -151,24 +99,39 @@ private:
   void createStarMap(ProjectionMap &map, const TrackingVector<pos_val>& particles, float sigma_pix, bool normalize);
 
   CuboidObject interactiveCuboid_;
-  
-public:
-  ProjectionMapParams params;
-
-  double scale_to_phys = 1.0;
-  glm::quat cuboidTransform = glm::quat(1.f,0.f,0.f,0.f);
-  glm::vec3 center = glm::vec3(0.f);
-  glm::vec3 planeNormal = glm::vec3(0.f,0.f,1.f);
-  int countColorMap = gColormapDefs[0].count;
-  const float* colorMap = gColormapDefs[0].data;
-  TrackingVector<unsigned char> outImage;
-  int outW = 0, outH = 0;
-  bool flag2DprojectionComputed = false;
 
 #ifdef USE_LUA
-  lua_State* gLua = nullptr;
-  bool flag_init_lua = false;
+  lua_State* gLua_ = nullptr;
+  bool flag_init_lua_ = false;
+  void ensureLuaInitialized();
+
+  bool EvaluateLuaExpressionNumber(const char* expr, double& outValue);
+  bool EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a);
+  bool EvaluateLuaExpressionBool(const char* expr, bool& outValue);
 #endif
+
+  void addColorBarToMap(ImageCanvas& canvas,
+			double cell_size,
+			float minVal,
+			float maxVal,
+			int colorBarWidth,
+			const float *colormap,
+			int countcolormap,
+			const char *barLabel,
+			const ProjectionMapParams& params,
+			const ProjectionMapContext& ctx);
+
+  void overlayStarParticles(ImageCanvas& canvas,
+			    const ProjectionMap& map,
+			    const ProjectionMapParams& params,
+			    const ProjectionMapContext& ctx,
+			    const TrackingVector<ParticleData>& particles);
+  float kernel(float u);
+  
+public:
+  RgbImage makeDensityMapImage(ParticleArray& particles,
+			       ProjectionMapParams& params,
+			       ProjectionMapContext& ctx);
 
   int getFontCount() const;
   const std::string& getFontPath(int index) const;
@@ -176,63 +139,10 @@ public:
   
   ProjectionMapGenerator();
 
-  void reset_flag(){
-    flag_image_ = false;
-    dirty_ = true;
-  }
-
-  void setTexture2D(const TrackingVector<unsigned char> &rgb, const int width, const int height){
-    image_.width = width;
-    image_.height = height;
-    image_.rgb = rgb;
-    flag_image_ = true;
-    dirty_ = true;
-    image_.version = nextVersion_++;
-  }
-
-  const ProjectionImage &getImage() const noexcept{ return image_; }
-  bool getImageFlag() const { return flag_image_; }
-
-  void syncStateFromParams() {
-    type_ = static_cast<char>(params.selectedType);
-    center.x = params.xoffset[0];
-    center.y = params.xoffset[1];
-    center.z = params.xoffset[2];
-    cuboidTransform = UpdateTransformFromEuler(params.tilt);
-    planeNormal = glm::normalize(cuboidTransform * glm::vec3(0.f, 0.f, 1.f));
-
-    if (params.colormapindex < 0) params.colormapindex = 0;
-    if (params.colormapindex >= gNumColormaps) params.colormapindex = gNumColormaps - 1;
-
-    colorMap = gColormapDefs[params.colormapindex].data;
-    countColorMap = gColormapDefs[params.colormapindex].count;
-  }
-
-  glm::vec3 calc_angular_momentum_axis(const TrackingVector<ParticleData>& originalParticles, glm::vec3 &center, float *xlen);
-  void make_density_map(ParticleArray *P, char *filename);
   TrackingVector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);
-  glm::quat UpdateTransformFromEuler(float *eulerAngles);
-  float kernel(float u);
 
-#ifdef USE_LUA
-  bool EvaluateLuaExpressionNumber(const char* expr, double& outValue);
-  bool EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a);
-  bool EvaluateLuaExpressionBool(const char* expr, bool& outValue);
-#endif
-
-  void overlayStarParticles(ProjectionMap& map, const TrackingVector<ParticleData>& particles);
   static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);
-  void addColorBarToMap(const ProjectionMap& map,
-                        float minVal, float maxVal,
-                        int colorBarWidth,
-                        const float *colormap, int countcolormap,
-                        TrackingVector<unsigned char>& outImage,
-                        int& outW, int& outH, const char *barLabel);
-
-  void set_projection_parameters(const TrackingVector<ParticleData>& originalParticles, const int useAngularMomentumAxis,
-                                 const float* pos_center, const float len, const float val_min, const float val_max,
-                                 const int npixel_input, const int nslices, std::string var);
-
+  
   CuboidObject& interactiveCuboid() { return interactiveCuboid_; }
   const CuboidObject& interactiveCuboid() const { return interactiveCuboid_; }
 };
@@ -286,13 +196,6 @@ static inline double band_fraction_rect_lambda(double T_K, double lambda0_m, dou
   const double integral = (hstep/3.0) * sum; const double norm = sigma_over_pi * std::pow(T_K, 4); if (norm <= 0.0) return 0.0;
   double frac = integral / norm; if (frac < 0.0) frac = 0.0; if (frac > 1.0) frac = 1.0; return frac;
 }
-static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs){
-  const double Lbol = Lbol_single_massive_Lsun(M_Msun); if (!(Lbol > 0.0) || !std::isfinite(Lbol)) return 0.0;
-  const double Teff = Teff_massive_K(M_Msun); if (!(Teff > 0.0) || !std::isfinite(Teff)) return 0.0;
-  const double lambda0_m = std::max(1.0, (double)fs.band_center_nm) * 1e-9;
-  const double dlambda_m = std::max(1.0, (double)fs.band_width_nm ) * 1e-9;
-  const double frac = band_fraction_rect_lambda(Teff, lambda0_m, dlambda_m);
-  return Lbol * frac;
-}
 
+static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs);
 #endif

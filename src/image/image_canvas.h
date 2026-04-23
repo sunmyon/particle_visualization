@@ -7,7 +7,10 @@ public:
 
   int width() const;
   int height() const;
-
+  TrackingVector<unsigned char>& pixels() const;
+  
+  void resizeKeepContent(int newWidth, int newHeight, unsigned char value);
+  
   void setPixel(int x, int y,
                 unsigned char r,
                 unsigned char g,

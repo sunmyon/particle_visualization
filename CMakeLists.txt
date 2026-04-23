@@ -79,6 +79,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
   ${SRC_DIR}/app/app_analysis_execution.cpp
+  ${SRC_DIR}/app/app_projection_execution.cpp
   ${SRC_DIR}/app/app_data_actions.cpp
   ${SRC_DIR}/app/app_visibility_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
@@ -112,6 +113,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/FindClumps/find_clumps_loaded_window.cpp
   ${SRC_DIR}/FindClumps/find_clumps_chain_window.cpp
   ${SRC_DIR}/projection/make_2D_projection_map.cpp
+  ${SRC_DIR}/projection/projection_geometry.cpp
+  ${SRC_DIR}/projection/projection_map_context.cpp
   ${SRC_DIR}/image/image_canvas.cpp
   ${SRC_DIR}/image/image_io.cpp
   ${SRC_DIR}/image/bitmap_font_renderer.cpp
