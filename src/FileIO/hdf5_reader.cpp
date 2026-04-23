@@ -9,6 +9,7 @@
 #include "FileIO/hdf5_reader.h"
 #include "FileIO/file_layout.h"
 #include "FileIO/file_mask.h"
+#include "data/header_info.h"
 
 namespace {
   std::string partPath(int ptype, const std::string& dsName) {

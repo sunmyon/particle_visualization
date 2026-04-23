@@ -1,4 +1,5 @@
 #include "data/particle_array.h"
+#include "data/header_info.h"
 #include "core/PerfTimer.h"
 #include "app/normalization_config.h"
 
@@ -15,7 +16,7 @@ void ParticleArray::rescalePositions(NormalizationContext& ctx){
   particlesDirty = true;  // グローバルなフラグをtrueに設定
 };
 
-bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, NormalizationContext& ctx) {
+bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx) {
   TIME_FUNCTION();
 
   bool hadOld = !particleBlock.particles.empty();
@@ -36,12 +37,12 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
   originalMax = stats.originalMax;
   ctx.originalMax = stats.originalMax;
 
-  if (particleBlock.header.flag_hdf5) {
-    units.length_cm = particleBlock.header.UnitLength_in_cm;
-    units.mass_g = particleBlock.header.UnitMass_in_g;
-    units.velocity_cm_per_s = particleBlock.header.UnitVelocity_in_cm_per_s;
-    units.hubble = particleBlock.header.HubbleParam;
-    units.useComovingCoordinate = particleBlock.header.flag_comoving;
+  if (header.flag_hdf5) {
+    units.length_cm = header.UnitLength_in_cm;
+    units.mass_g = header.UnitMass_in_g;
+    units.velocity_cm_per_s = header.UnitVelocity_in_cm_per_s;
+    units.hubble = header.HubbleParam;
+    units.useComovingCoordinate = header.flag_comoving;
     units.updateDerived();
   }
 
@@ -107,7 +108,7 @@ static inline double cubic_spline_W(double r, double h) {
 
   // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
   // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
-void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml, const NormalizationContext& ctx)
+void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwrite_hsml, const NormalizationContext& ctx, double time)
 {
   const int N_neighbours = 32;
 
@@ -154,7 +155,7 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType, boo
 
   double cosmofac = 1.;
   if(units.useComovingCoordinate)
-    cosmofac = particleBlock.header.time;
+    cosmofac = time;
 
   if(cosmofac < 1.e-2 || cosmofac > 1.)
     cosmofac = 1.;

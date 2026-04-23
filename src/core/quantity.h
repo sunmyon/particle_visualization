@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 static constexpr int kMaxV = 4;
 enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
 
@@ -45,3 +47,10 @@ inline bool QuantityShowInUI(QuantityId q) {
       return true;      
   }
 }
+
+struct QuantityCatalogState {
+  int nAllQ;
+  int nUIQ;
+  std::array<QuantityId,kMaxQ> allQ;
+  std::array<QuantityId,kMaxQ> uiQ;
+};

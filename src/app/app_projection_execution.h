@@ -11,4 +11,5 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   ParticleArray& particles,
                                   const NormalizationContext& normalization,
 				  int currentFileIndex,
-                                  ProjectionPreviewDerivedState& preview);
+                                  ProjectionPreviewDerivedState& preview,
+				  double time);

@@ -2,12 +2,13 @@
 
 #include "core/PerfTimer.h"
 #include "app/input_filter_config.h"
+#include "data/header_info.h"
 
 SnapshotPrefetchController::SnapshotPrefetchController(SnapshotSource& source,
                                                        SnapshotLoader& loader)
   : source_(source), loader_(loader) {}
 
-void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
+void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
   bool foundInCache = false;
@@ -16,14 +17,14 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
     std::lock_guard<std::mutex> lock(prefetch_.mutex);
     if (prefetch_.cache.pop(newFileIndex, block)) {
       ParticleBlock oldBlock;
-      P->setParticleBlock(std::move(block), &oldBlock, normalization);
+      P->setParticleBlock(std::move(block), &oldBlock, header, normalization);
       foundInCache = true;
     }
   }
 
   if (!foundInCache) {
     if (!isLoading_) {
-      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, normalization, filter);
+      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, header, normalization, filter);
     }
   }
 
@@ -32,8 +33,8 @@ void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray
   printf("currentStep=%d newFileIndex=%d\n", source_.currentStep, newFileIndex);
 }
 
-bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
-  if (!loader_.loadFirstFileIntoArray(targetFile, P, normalization, filter)) {
+bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
+  if (!loader_.loadFirstFileIntoArray(targetFile, P, header, normalization, filter)) {
     return false;
   }
 
@@ -50,13 +51,16 @@ void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
 							 const InputFilterConfig& filter
 							 ) {
   TrackingVector<std::pair<int, ParticleBlock>> loaded;
+  TrackingVector<std::pair<int, HeaderInfo>> loaded_header;
 
   for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;
     ParticleBlock block;
-
-    if (loader_.loadSingleFile(fileNumber, block, filter)) {
+    HeaderInfo header;
+    
+    if (loader_.loadSingleFile(fileNumber, block, header, filter)) {
       loaded.push_back({fileNumber, std::move(block)});
+      loaded_header.push_back({fileNumber, std::move(header)});
     }
   }
 
@@ -74,13 +78,14 @@ void SnapshotPrefetchController::loadBatch(int targetFile,
                                            int batchSize,
                                            int skipStep,
                                            ParticleArray* P,
+					   HeaderInfo& header,
 					   NormalizationContext& normalization,
 					   const InputFilterConfig& filter) {
   const int gen = ++prefetch_.generation;
   prefetch_.running = true;
   isLoading_ = true;
 
-  if (!syncLoadFirstFile(targetFile, P, normalization, filter)) {
+  if (!syncLoadFirstFile(targetFile, P, header, normalization, filter)) {
     prefetch_.running = false;
     isLoading_ = false;
     return;

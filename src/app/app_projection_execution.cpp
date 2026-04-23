@@ -70,7 +70,8 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   ParticleArray& particles,
                                   const NormalizationContext& normalization,
 				  int currentFileIndex,
-                                  ProjectionPreviewDerivedState& preview)
+                                  ProjectionPreviewDerivedState& preview,
+				  double time)
 {
   if (!tool.renderRequested) return;
 
@@ -79,7 +80,7 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
   ProjectionMapContext context =
     BuildProjectionMapContext(params,
                               normalization.toPhysicalScale(),
-                              particles.particleBlock.header.time);
+                              time);
   
   RgbImage image =
     generator.makeDensityMapImage(particles,

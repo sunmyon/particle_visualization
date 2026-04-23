@@ -4,6 +4,7 @@
 #include "FileIO/binary_reader.h"
 #include "core/PerfTimer.h"
 #include "app/input_filter_config.h"
+#include "data/header_info.h"
 
 #include <algorithm>
 #include <cctype>
@@ -83,13 +84,13 @@ namespace {
 SnapshotLoader::SnapshotLoader(SnapshotSource& source)
   : source_(source) {}
 
-bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, const InputFilterConfig& filter) {
+bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, HeaderInfo& header, const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
-  outBlock.header.UnitLength_in_cm         = source_.units.length_cm;
-  outBlock.header.UnitMass_in_g            = source_.units.mass_g;
-  outBlock.header.UnitVelocity_in_cm_per_s = source_.units.velocity_cm_per_s;
-  outBlock.header.HubbleParam              = source_.units.hubble;
+  header.UnitLength_in_cm         = source_.units.length_cm;
+  header.UnitMass_in_g            = source_.units.mass_g;
+  header.UnitVelocity_in_cm_per_s = source_.units.velocity_cm_per_s;
+  header.HubbleParam              = source_.units.hubble;
 
   ReaderSelection sel = makeReaderSelection(source_, fileNumber);
   if (!sel.reader) {
@@ -97,12 +98,12 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, con
     return false;
   }
 
-  if (!sel.reader->tryFixAndCheckBinary(sel.fullPath, outBlock.header, sel.format)) {
+  if (!sel.reader->tryFixAndCheckBinary(sel.fullPath, header, sel.format)) {
     std::cerr << "the format is incorrect\n";
     return false;
   }
 
-  if (!sel.reader->open(sel.fullPath, outBlock.header)) {
+  if (!sel.reader->open(sel.fullPath, header)) {
     std::cerr << "failed to open the file: " << sel.fullPath << "\n";
     return false;
   }
@@ -130,22 +131,23 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, con
   return true;
 }
 
-bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter) {
+bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
   ParticleBlock newBlock;
-  if (!loadSingleFile(targetFile, newBlock, filter)) {
+  if (!loadSingleFile(targetFile, newBlock, header, filter)) {
     P->particleBlock.clear();
     std::cerr << "Failed to load first file: " << targetFile << std::endl;
     return false;
   }
 
   ParticleBlock oldBlock;
-  P->setParticleBlock(std::move(newBlock), &oldBlock, normalization);
+  P->setParticleBlock(std::move(newBlock), &oldBlock, header, normalization);
   return true;
 }
 
 TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const InputFilterConfig& filter) {
   ParticleBlock p_block;
-  loadSingleFile(indexFile, p_block, filter);
+  HeaderInfo header;
+  loadSingleFile(indexFile, p_block, header, filter);
 
   TrackingVector<int> IDs;
   for (auto& p : p_block.particles) {
@@ -157,7 +159,7 @@ TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const Input
   return IDs;
 }
 
-void SnapshotLoader::generateTestData(ParticleArray* P, NormalizationContext& normalization) {
-  ParticleBlock block = ParticleBlock::makeTestParticleBlock();
-  P->setParticleBlock(std::move(block), nullptr, normalization);
+void SnapshotLoader::generateTestData(ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization) {
+  ParticleBlock block = ParticleBlock::makeTestParticleBlock(header);
+  P->setParticleBlock(std::move(block), nullptr, header, normalization);
 }

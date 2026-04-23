@@ -16,6 +16,7 @@ struct ViewFilterConfig;
 struct TrackingTargetState;
 struct SnapshotSource; 
 struct HaloesUIState;
+struct HeaderInfo;
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -24,6 +25,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
                                       DiskAnalysisResultState& result);
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
+			     HeaderInfo& header,
 			     NormalizationContext& normalization,
 			     const InputFilterConfig& filter,
                              FileInfo& fileInfo,
@@ -38,6 +40,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
                                            EllipsoidAnalysisResultState& result);
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+				  HeaderInfo& header,
 				  NormalizationContext& normalization,
 				  const InputFilterConfig& filter,
                                   FileInfo& fileInfo,
@@ -75,10 +78,12 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
 				  const NormalizationContext& normalization,
-                                  StellarDensityRequestState& request);
+                                  StellarDensityRequestState& request,
+				  double time);
 
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
+			      HeaderInfo& header,
 			      NormalizationContext& normalization,
 			      const InputFilterConfig& filter,
                               FileInfo& fileInfo,
@@ -88,6 +93,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 #endif
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
+				   HeaderInfo& header,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
 				   TrackingTargetState& track,
@@ -100,6 +106,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 				   ParticleArray& particles,
+				   HeaderInfo& header,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
 				   FileNavigationRuntimeState& rt,

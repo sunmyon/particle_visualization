@@ -20,6 +20,7 @@
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
+#include "data/header_info.h"
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "projection/make_2D_projection_map.h"
@@ -154,6 +155,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 }
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
+			     HeaderInfo& header,
 			     NormalizationContext& normalization,
 			     const InputFilterConfig& filter,
 			     FileInfo& fileInfo,
@@ -243,7 +245,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
 
     for (int istep = 0; istep < 100; ++istep) {
       int snap = snap_init + src.skipStep * istep;
-      fileInfo.loadNewSnapshot(snap, &particles, normalization, filter);
+      fileInfo.loadNewSnapshot(snap, &particles, header, normalization, filter);
 
       if (particles.particleBlock.particles.empty()) {
         continue;
@@ -309,7 +311,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       if (firstEvolution) {
         fp_evo = std::fopen(fname_evolution, "w");
         firstEvolution = false;
-        time_not_disk = particles.particleBlock.header.time;
+        time_not_disk = header.time;
         snap_not_disk = snap;
       } else {
         fp_evo = std::fopen(fname_evolution, "a");
@@ -335,7 +337,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
 
       std::fprintf(fp_evo, "%d %g %g %g %g %d\n",
                    snap,
-                   particles.particleBlock.header.time,
+                   header.time,
                    std::sqrt(dist2) * scale_fac,
                    r1 * scale_fac,
                    r2 * scale_fac,
@@ -343,14 +345,14 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       std::fclose(fp_evo);
 
       if (flag_disk) {
-        time_disk = particles.particleBlock.header.time;
+        time_disk = header.time;
         dist_disk = std::sqrt(dist2) * scale_fac;
         snap_disk = snap;
         r_disk1 = r1 * scale_fac;
         r_disk2 = r2 * scale_fac;
         break;
       } else {
-        time_not_disk = particles.particleBlock.header.time;
+        time_not_disk = header.time;
         snap_not_disk = snap;
       }
     }
@@ -408,6 +410,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
 }
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+				  HeaderInfo& header,
 				  NormalizationContext& normalization,
 				  const InputFilterConfig& filter,
                                   FileInfo& fileInfo,
@@ -463,7 +466,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
       continue;
     }
 
-    fileInfo.loadNewSnapshot(r.snap, &particles, normalization, filter);
+    fileInfo.loadNewSnapshot(r.snap, &particles, header, normalization, filter);
     if (particles.particleBlock.particles.empty()) {
       continue;
     }
@@ -632,7 +635,8 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
 				  const NormalizationContext& normalization,
-                                  StellarDensityRequestState& request)
+                                  StellarDensityRequestState& request,
+				  double time)
 {
   if (!request.runRequested) {
     return;
@@ -645,7 +649,7 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
     sel[i] = request.selectedTypes[i];
   }
 
-  particles.computeStellarDensity(sel, request.overwriteHsml, normalization);
+  particles.computeStellarDensity(sel, request.overwriteHsml, normalization, time);
   particles.particlesDirty = true;
 }
 
@@ -698,6 +702,7 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
 
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
+			      HeaderInfo& header,
 			      NormalizationContext& normalization,
 			      const InputFilterConfig& filter,
                               FileInfo& fileInfo,
@@ -730,7 +735,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
     const int newFileIndex =
       src.initialIndex + src.currentStep * src.skipStep;
 
-    fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+    fileInfo.loadNewSnapshot(newFileIndex, &particles, header, normalization, filter);
 
     if (particles.particleBlock.particles.empty()) {
       continue;
@@ -738,7 +743,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
     clumpFind.do_FOF_and_output_clump_data(request.method,
                                            particles.particleBlock.particles,
-                                           particles.particleBlock.header,
+                                           header,
                                            filename,
                                            newFileIndex);
 
@@ -761,6 +766,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 #endif
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
+				   HeaderInfo& header,
 				   NormalizationContext& normalization,
 				   const InputFilterConfig& filter,
 				   TrackingTargetState& track,
@@ -806,7 +812,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       const int newFileIndex =
         src.initialIndex + src.currentStep * src.skipStep;
 
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+      fileInfo.loadNewSnapshot(newFileIndex, &particles, header, normalization, filter);
       if (particles.particleBlock.particles.empty()) {
         continue;
       }
@@ -927,7 +933,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       ProjectionMapContext context =
 	BuildProjectionMapContext(frameParams,
 				  normalization.toPhysicalScale(),
-				  particles.particleBlock.header.time);
+				  header.time);
 
       if (flag_use_amvector) {
 	auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
@@ -1000,6 +1006,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 
 static bool LoadSnapshotAtCurrentStep(FileInfo& fileInfo,
                                       ParticleArray& particles,
+				      HeaderInfo& header,
                                       NormalizationContext& normalization,
                                       const InputFilterConfig& filter,
                                       SnapshotSource& src,
@@ -1013,7 +1020,7 @@ static bool LoadSnapshotAtCurrentStep(FileInfo& fileInfo,
     return false;
   }
 
-  fileInfo.loadNewSnapshot(newFileIndex, &particles, normalization, filter);
+  fileInfo.loadNewSnapshot(newFileIndex, &particles, header, normalization, filter);
   src.currentFileIndex = newFileIndex;
 
   post.refreshTree = true;
@@ -1026,6 +1033,7 @@ static bool LoadSnapshotAtCurrentStep(FileInfo& fileInfo,
 
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
                                    ParticleArray& particles,
+				   HeaderInfo& header,
                                    NormalizationContext& normalization,
                                    const InputFilterConfig& filter,
                                    FileNavigationRuntimeState& rt,
@@ -1043,14 +1051,14 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
           static_cast<float>(rt.tempSkipStep)))
       );
       src.skipStep = rt.tempSkipStep;
-      LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+      LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 				src, post, true);
     }
     req.applySkipStepRequested = false;
   }
 
   if (req.loadSelectedSnapshotRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 			      src, post, true);
     req.loadSelectedSnapshotRequested = false;
   }
@@ -1058,7 +1066,7 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
   if (req.loadPreviousRequested) {
     if (src.currentStep > 0) {
       --src.currentStep;
-      LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+      LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 				src, post, true);
     }
     req.loadPreviousRequested = false;
@@ -1066,25 +1074,25 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 
   if (req.loadNextRequested) {
     ++src.currentStep;
-    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 			      src, post, true);
     req.loadNextRequested = false;
   }
 
   if (req.loadBatchRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 			      src, post, true);
     req.loadBatchRequested = false;
   }
 
   if (req.reloadRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, normalization, filter,				  
+    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
 			      src, post, true);
     req.reloadRequested = false;
   }
 
   if (req.generateTestDataRequested) {
-    fileInfo.generateTestData(&particles, normalization);
+    fileInfo.generateTestData(&particles, header, normalization);
     req.generateTestDataRequested = false;
   }
 }

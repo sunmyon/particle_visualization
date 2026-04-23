@@ -5,6 +5,7 @@
 
 #include "FileIO/file_io.h"
 #include "app/input_filter_config.h"
+#include "data/header_info.h"
 
 namespace {
   std::pair<std::string, int> convertFilenameToFormatAndExtractNumber(const std::string& filename)
@@ -91,12 +92,12 @@ void FileInfo::applySelectedFilePath(const char* fullPath) {
   src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
 }
 
-void FileInfo::generateTestData(ParticleArray *P, NormalizationContext& normalization){
-  loader.generateTestData(P, normalization);
+void FileInfo::generateTestData(ParticleArray *P, HeaderInfo& header, NormalizationContext& normalization){
+  loader.generateTestData(P, header, normalization);
 }
 
-void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P, NormalizationContext& normalization, const InputFilterConfig& filter){
-  prefetchController.loadNewSnapshot(newFileIndex, P, normalization, filter);
+void FileInfo::loadNewSnapshot(int newFileIndex, ParticleArray *P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter){
+  prefetchController.loadNewSnapshot(newFileIndex, P, header, normalization, filter);
   snapshotUpdated = true;
 }
 

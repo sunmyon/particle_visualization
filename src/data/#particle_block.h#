@@ -8,8 +8,6 @@
 #include "core/quantity.h"
 #include "core/tracking_vector.h"
 
-struct HeaderInfo;
-
 struct ParticleBlock {
   // ---- AoS core ----
   TrackingVector<ParticleData> particles;
@@ -212,7 +210,7 @@ public:
   };
   
   BuildResult rebuild(float desiredMax);  
-  static ParticleBlock makeTestParticleBlock(HeaderInfo& header);
+  static ParticleBlock makeTestParticleBlock();
 };
 
 inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size_t ipart, VectorId v, float out[3]) {

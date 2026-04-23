@@ -9,6 +9,7 @@ class ClumpChain;
 class ProjectionMapGenerator;
 class FileInfo;
 class ParticleArray;
+struct HeaderInfo;
 struct ProjectionMapParams;
 struct SnapshotSource;
 struct CameraContext;
@@ -42,6 +43,7 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
 void DrawClumpChainListUI(ClumpChainWindowState& ui,
 			  ClumpChain& chain,
 			  ParticleArray* P,
+			  HeaderInfo& header,
 			  ProjectionMapGenerator* proj,
 			  const ProjectionMapParams& baseParams,
 			  FileInfo& fileinfo,

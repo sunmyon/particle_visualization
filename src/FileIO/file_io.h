@@ -5,6 +5,7 @@
 
 struct NormalizationContext;
 struct InputFilterConfig;
+struct HeaderInfo;
 
 class FileInfo{
 private:
@@ -23,8 +24,8 @@ public:
     snapshotUpdated = false;
   }
   
-  void loadNewSnapshot(int newindex, ParticleArray* P, NormalizationContext& normalization, const InputFilterConfig& filter);
-  void generateTestData(ParticleArray *P, NormalizationContext& normalization);
+  void loadNewSnapshot(int newindex, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter);
+  void generateTestData(ParticleArray *P, HeaderInfo& header, NormalizationContext& normalization);
   
   void applySelectedFilePath(const char* fullPath);
   

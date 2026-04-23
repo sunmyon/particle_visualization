@@ -91,9 +91,10 @@ static void DrawMainUI(const AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AnalysisDerivedState& analysis,
-		       ToolWindowUIState& toolWindows)
+		       ToolWindowUIState& toolWindows,
+		       double time)
 {
-  ShowTime(data.particles->particleBlock.header.time);
+  ShowTime(time);
   DrawSettingsPanels(data, view, runtime, analysis, toolWindows);
 }
 
@@ -137,7 +138,7 @@ static void DrawToolWindows(AppDataState& data,
   DrawClumpFinderUI(tools.clumpFind,
 		    *services.clumpFind,
 		    data.particles->particleBlock.particles,
-		    data.particles->particleBlock.header,
+		    data.header,
 		    data.fileInfo->getSource(),
 		    camera);
   
@@ -153,6 +154,7 @@ static void DrawToolWindows(AppDataState& data,
   DrawClumpChainListUI(tools.clumpChain,
 		       *services.clumpChain,
 		       data.particles,
+		       data.header,
 		       services.projectionMap2D.get(),
 		       runtime.analysis.projectionMap.params,
 		       *data.fileInfo,
@@ -833,6 +835,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                    analysis.disk);
   
   ExecuteDiskBatchRequest(*data.particles,
+			  data.header,
 			  runtime.settings.normalization,
 			  runtime.settings.inputFilter,
                           *data.fileInfo,
@@ -847,6 +850,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                         analysis.ellipsoid);
   
   ExecuteEllipsoidBatchRequest(*data.particles,
+			       data.header,
 			       runtime.settings.normalization,
 			       runtime.settings.inputFilter,
                                *data.fileInfo,
@@ -867,7 +871,8 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
   ExecuteStellarDensityRequest(*data.particles,
 			       runtime.settings.normalization, 
-			       runtime.analysis.stellarDensity);
+			       runtime.analysis.stellarDensity,
+			       data.header.time);
 
 #ifdef ISO_CONTOUR
   ExecuteIsoContourRequest(*data.particles,
@@ -878,6 +883,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
 #ifdef CLUMP_DATA_READ
   ExecuteClumpBatchRequest(*data.particles,
+			   data.header,
 			   runtime.settings.normalization,
 			   runtime.settings.inputFilter,
 			   *data.fileInfo,
@@ -899,9 +905,11 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 			       *data.particles,
 			       runtime.settings.normalization,
 			       data.fileInfo->getSource().currentFileIndex,
-			       analysis.projectionPreview);
+			       analysis.projectionPreview,
+			       data.header.time);
   
   ExecuteProjectionMovieRequest(*data.particles,
+				data.header,
 				runtime.settings.normalization,
 				runtime.settings.inputFilter,
 				runtime.settings.tracking,
@@ -914,6 +922,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 
   ExecuteFileNavigationRequests(*data.fileInfo,
 				*data.particles,
+				data.header,
 				runtime.settings.normalization,
 				runtime.settings.inputFilter,
 				runtime.settings.fileNavigation,
@@ -951,7 +960,8 @@ void RunFrame(AppState& app,
 	     app.view,
 	     app.runtime,
 	     app.derived.analysis,
-	     app.ui.toolWindows);
+	     app.ui.toolWindows,
+	     app.data.header.time);
 
   DrawToolWindows(app.data,
 		  app.view.camera,

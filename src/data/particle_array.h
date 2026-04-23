@@ -4,6 +4,7 @@
 #include "core/tracking_vector.h"
 
 struct NormalizationContext;
+struct Header;
 
 class ParticleArray {
 private:
@@ -52,6 +53,6 @@ public:
     return true;
   }
     
-  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, NormalizationContext& ctx);
-  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml, const NormalizationContext& ctx);
+  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx);
+  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml, const NormalizationContext& ctx, double time);
 };

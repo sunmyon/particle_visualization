@@ -1,4 +1,5 @@
 #include "particle_block.h"
+#include "header_info.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,7 +133,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
   return result;
 }
 
-ParticleBlock ParticleBlock::makeTestParticleBlock()
+ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
 {
   std::mt19937_64 rng(12345);
   std::uniform_real_distribution<double> ud(-1.0, 1.0);
@@ -148,12 +149,12 @@ ParticleBlock ParticleBlock::makeTestParticleBlock()
 
   ParticleBlock block;
 
-  block.header.npart = n_side * n_side * n_side;
+  header.npart = n_side * n_side * n_side;
 
-  block.header.time = 0.0;
-  block.header.boxSize = xlen;
-  block.header.flag_comoving = 0;
-  block.header.flag_hdf5 = 0;
+  header.time = 0.0;
+  header.boxSize = xlen;
+  header.flag_comoving = 0;
+  header.flag_hdf5 = 0;
   block.particles.reserve(n_side * n_side * n_side);
 
   for (int i = 0; i < n_side; i++) {

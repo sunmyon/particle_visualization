@@ -129,7 +129,7 @@ void LoadInitialData(AppState& app)
   const auto& src = app.data.fileInfo->getSource();
   
   const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.runtime.settings.normalization, app.runtime.settings.inputFilter);
+  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.data.header, app.runtime.settings.normalization, app.runtime.settings.inputFilter);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)

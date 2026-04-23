@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/tracking_vector.h"
+#include "core/quantity.h"
 #include "scene_manager.h"
 #include "particle_visual_config.h"
 #include "app/runtime_state.h"
@@ -12,6 +13,7 @@
 #include "interaction/interaction_utils.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
+#include "data/header_info.h"
 
 class ParticleArray;
 class FileInfo;
@@ -24,6 +26,9 @@ struct AppDataState {
   ClumpStore clumpStore;
   HaloStore haloStore;
   FileInfo* fileInfo = nullptr;
+
+  HeaderInfo header;
+  QuantityCatalogState quantity;
 };
 
 struct AppViewState {
