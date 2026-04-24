@@ -503,6 +503,13 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     if (ImGui::Button("generate clump data")) {
       batchReq.runRequested = true;
     }
+    ImGui::SameLine();
+    if (batchReq.job.status == JobStatus::Running) {
+      if (ImGui::Button("cancel clump batch")) {
+        batchReq.cancelRequested = true;
+      }
+      ImGui::Text("running %d / %d", batchReq.job.processed, batchReq.nSnapshots);
+    }
 
     if (batchRes.completed) {
       ImGui::Text("Processed snapshots: %d", batchRes.processedSnapshots);
@@ -599,6 +606,13 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     if (ImGui::Button("calc disk radius from text file")) {
       batchReq.runRequested = true;
     }
+    ImGui::SameLine();
+    if (batchReq.job.status == JobStatus::Running) {
+      if (ImGui::Button("cancel disk batch")) {
+        batchReq.cancelRequested = true;
+      }
+      ImGui::Text("running %d / %d", batchReq.rowCursor, static_cast<int>(batchReq.rows.size()));
+    }
 
     if (batchRes.completed) {
       ImGui::Text("Processed rows: %d", batchRes.processedRows);
@@ -645,6 +659,13 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 
     if (ImGui::Button("ellipsoidal fit from text file")) {
       batchReq.runRequested = true;
+    }
+    ImGui::SameLine();
+    if (batchReq.job.status == JobStatus::Running) {
+      if (ImGui::Button("cancel ellipsoid batch")) {
+        batchReq.cancelRequested = true;
+      }
+      ImGui::Text("running %d / %d", batchReq.rowCursor, static_cast<int>(batchReq.rows.size()));
     }
 
     if (batchRes.completed) {

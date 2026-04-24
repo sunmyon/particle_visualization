@@ -1,6 +1,7 @@
 #include "app/app_state.h"
 #include "app/app_lifecycle.h"
 #include "app/app_callbacks.h"
+#include "app/app_snapshot_load.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
 #include "config/config_extract.h"
@@ -127,9 +128,11 @@ void LoadInitialData(AppState& app)
   app.data.fileInfo->setUnit(app.data.particles->units);
 
   const auto& src = app.data.fileInfo->getSource();
-  
-  const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  app.data.fileInfo->loadNewSnapshot(newFileIndex, app.data.particles, app.data.header, app.runtime.settings.normalization, app.runtime.settings.inputFilter);
+  RequestSnapshotLoad(app.runtime.snapshotLoad,
+                      SnapshotLoadOwner::UserNavigation,
+                      src.currentStep,
+                      100);
+  ProcessSnapshotLoadQueue(app.data, app.runtime);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)

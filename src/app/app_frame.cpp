@@ -9,6 +9,7 @@
 #include "app/app_state.h"
 #include "app/app_analysis_execution.h"
 #include "app/app_projection_execution.h"
+#include "app/app_snapshot_load.h"
 #include "app/app_callbacks.h"
 #include "app/normalization_config.h"
 #include "render/render_system.h"
@@ -160,9 +161,9 @@ static void DrawToolWindows(AppDataState& data,
 		       services.projectionMap2D.get(),
 		       runtime.analysis.projectionMap.params,
 		       *data.fileInfo,
+		       runtime.snapshotLoad,
 		       camera,
-		       runtime.settings.normalization,
-		       runtime.settings.inputFilter);
+		       runtime.settings.normalization);
 }
 
 static void UpdateExternalInputs(AppServices& services,
@@ -724,50 +725,6 @@ static void UpdateProjectionPreview(ProjectionPreviewDerivedState& source,
   DrawProjectionPreviewUI(previewUI);
 }
 
-static void MarkPostSnapshotLoad(SnapshotPostprocessState& post)
-{
-  post.refreshTree = true;
-  post.refreshCulling = true;
-  post.refreshTopParticles = true;
-  post.applyTrackingToCamera = true;
-}
-
-
-static void ProcessSnapshotLoadQueue(AppDataState& data,
-                                     AppRuntimeState& runtime)
-{
-  runtime.snapshotLoad.result = SnapshotLoadResultState{};
-
-  auto& req = runtime.snapshotLoad.request;
-  if (!req.pending) return;
-  if (data.fileInfo->isLoading()) return;
-
-  auto& src = data.fileInfo->editSource();
-  src.currentStep = req.targetStep;
-  const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  src.currentFileIndex = newFileIndex;
-
-  if (req.kind == SnapshotLoadKind::GenerateTestData) {
-    data.fileInfo->generateTestData(data.particles,
-                                    data.header,
-                                    runtime.settings.normalization);
-  } else {
-    data.fileInfo->loadNewSnapshot(newFileIndex,
-                                   data.particles,
-                                   data.header,
-                                   runtime.settings.normalization,
-                                   runtime.settings.inputFilter);
-  }
-  
-  runtime.snapshotLoad.result.loadedThisFrame = true;
-  runtime.snapshotLoad.result.loadedStep = src.currentStep;
-  runtime.snapshotLoad.result.owner = req.owner;
-
-  MarkPostSnapshotLoad(runtime.settings.snapshotPostprocess);    
-  req = SnapshotLoadRequestState{};
-}
-
-
 static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
 {
   float currentFrame = static_cast<float>(glfwGetTime());
@@ -883,8 +840,8 @@ static void ExecuteAnalysisRequests(AppDataState& data,
   ExecuteDiskBatchRequest(*data.particles,
 			  data.header,
 			  runtime.settings.normalization,
-			  runtime.settings.inputFilter,
                           *data.fileInfo,
+                          runtime.snapshotLoad,
                           *services.diskFinder,
                           runtime.render.disks,
                           runtime.analysis.diskBatch,
@@ -896,10 +853,8 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                         analysis.ellipsoid);
   
   ExecuteEllipsoidBatchRequest(*data.particles,
-			       data.header,
-			       runtime.settings.normalization,
-			       runtime.settings.inputFilter,
                                *data.fileInfo,
+                               runtime.snapshotLoad,
                                *services.ellipsoid,
                                runtime.analysis.ellipsoidBatch,
                                analysis.ellipsoidBatch);
@@ -930,9 +885,8 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #ifdef CLUMP_DATA_READ
   ExecuteClumpBatchRequest(*data.particles,
 			   data.header,
-			   runtime.settings.normalization,
-			   runtime.settings.inputFilter,
 			   *data.fileInfo,
+			   runtime.snapshotLoad,
 			   *services.clumpFind,
 			   runtime.analysis.clumpBatch,
 			   analysis.clumpBatch);

@@ -14,7 +14,7 @@ struct ProjectionMapParams;
 struct SnapshotSource;
 struct CameraContext;
 struct NormalizationContext;
-struct InputFilterConfig;
+struct SnapshotLoadRuntimeState;
 
 struct ClumpFinderWindowState;
 struct LoadedClumpWindowState;
@@ -47,6 +47,6 @@ void DrawClumpChainListUI(ClumpChainWindowState& ui,
 			  ProjectionMapGenerator* proj,
 			  const ProjectionMapParams& baseParams,
 			  FileInfo& fileinfo,
+			  SnapshotLoadRuntimeState& snapshotLoad,
 			  CameraContext& cam,
-			  NormalizationContext& normalization,
-			  const InputFilterConfig& filter);
+			  NormalizationContext& normalization);

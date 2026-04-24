@@ -79,6 +79,14 @@ struct ClumpChainWindowState {
   bool requestMakeProjectionMaps = false;
 
   bool flagFileLoaded = false;
+  bool navigationLoadPending = false;
+  int navigationPendingStep = -1;
+  float navigationPendingCenter[3] = {0.f, 0.f, 0.f};
+
+  bool projectionBatchRunning = false;
+  int projectionBatchCursor = 0;
+  int projectionBatchChainIndex = -1;
+
   int clumpChainInitFileIndex = 0;
   int clumpChainNsnapshots = 1;
   int clumpChainDFileIndex = 1;

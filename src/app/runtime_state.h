@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <glm/vec3.hpp>
 
 #include "app/normalization_config.h"
@@ -13,7 +14,11 @@
 enum class SnapshotLoadOwner : uint8_t {
   None = 0,
   ProjectionMovie = 1,
-  UserNavigation = 2
+  UserNavigation = 2,
+  DiskBatch = 3,
+  EllipsoidBatch = 4,
+  ClumpBatch = 5,
+  ClumpChainProjectionBatch = 6
 };
 
 enum class SnapshotLoadKind : uint8_t {
@@ -104,8 +109,30 @@ struct DiskAnalysisRequestState {
 
 struct DiskAnalysisBatchRequestState {
   bool runRequested = false;
+  bool cancelRequested = false;
   char inputFile[255] = "binary_fragmentation_ellipticity_all_w_mode.txt";
   char outputFile[255] = "binary_fragmentation_disks.txt";
+
+  SnapshotJobRuntimeState job;
+  struct TargetRow {
+    int idx = 0;
+    int idA = 0;
+    int idB = 0;
+    int snap = -1;
+  };
+  std::vector<TargetRow> rows;
+  int rowCursor = 0;
+  int scanOffset = 0;
+  bool firstOutput = true;
+  bool firstEvolution = true;
+  int snapDisk = -1;
+  int snapNotDisk = -1;
+  double timeDisk = -1.0;
+  double timeNotDisk = -1.0;
+  double distDisk = 0.0;
+  double rDisk1 = 0.0;
+  double rDisk2 = 0.0;
+  char evolutionOutputFile[255] = "";
 };
 
 struct EllipsoidAnalysisRequestState {
@@ -117,8 +144,20 @@ struct EllipsoidAnalysisRequestState {
 
 struct EllipsoidAnalysisBatchRequestState {
   bool runRequested = false;
+  bool cancelRequested = false;
   char inputFile[255] = "binary_fragmentation.txt";
   char outputFile[255] = "binary_fragmentation_output.txt";
+
+  SnapshotJobRuntimeState job;
+  struct TargetRow {
+    int idx = 0;
+    int idA = 0;
+    int idB = 0;
+    int snap = -1;
+  };
+  std::vector<TargetRow> rows;
+  int rowCursor = 0;
+  bool firstOutput = true;
 };
 
 struct StreamlinePreviewRequestState {
@@ -168,7 +207,10 @@ struct ClumpBatchRequestState {
   int nSnapshots = 10;
   char outputFileName[255] = "clump_data.hdf5";
   char outputFolderPath[255] = "./output/";
+  bool cancelRequested = false;
   bool runRequested = false;
+
+  SnapshotJobRuntimeState job;
 };
 
 struct ProjectionMovieRequestState {
@@ -302,4 +344,3 @@ struct SettingsRuntimeState {
   CameraPlacementRequestState cameraPlacement;
   TrackingTargetState tracking;
 };
-
