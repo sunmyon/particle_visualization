@@ -1,5 +1,22 @@
 #pragma once
 
+class ParticleArray;
+class FileInfo;
+class HaloStore;
+class ProjectionMapGenerator;
+struct HeaderInfo;
+struct RenderLayerState;
+struct NormalizationContext;
+struct ViewFilterConfig;
+struct TrackingTargetState;
+struct SnapshotSource;
+struct HaloesUIState;
+struct CameraContext;
+struct ProjectionMapParams;
+struct ProjectionMovieAnalysisRuntime;
+struct SnapshotLoadRuntimeState;
+struct SnapshotPostprocessState;
+
 #ifdef USE_CONVEX_HULL
 class FindClump;
 class ConvexHullGenerator;
@@ -7,16 +24,6 @@ class ConvexHullGenerator;
 
 #ifdef GEOMETRICAL_ANALYSIS
 class DiskRadiusFinder;
-class ParticleArray;
-class FileInfo;
-class HaloStore;
-struct RenderLayerState;
-struct NormalizationContext;
-struct ViewFilterConfig;
-struct TrackingTargetState;
-struct SnapshotSource; 
-struct HaloesUIState;
-struct HeaderInfo;
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -93,24 +100,21 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 #endif
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
-				   HeaderInfo& header,
-				   NormalizationContext& normalization,
-				   const InputFilterConfig& filter,
-				   TrackingTargetState& track,
+                                   HeaderInfo& header,
+                                   NormalizationContext& normalization,
+                                   TrackingTargetState& track,
                                    FileInfo& fileInfo,
                                    ProjectionMapGenerator& projectionMap,
-				   const ProjectionMapParams& baseParams,
-                                   const CameraContext& camera,
-                                   ProjectionMovieRequestState& request,
+                                   const ProjectionMapParams& baseParams,
+                                   CameraContext& camera,
+                                   ProjectionMovieAnalysisRuntime& movie,
+                                   SnapshotLoadRuntimeState& snapshotLoad,
+                                   SnapshotPostprocessState& post,
                                    ProjectionMovieResultState& result);
 
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
-				   ParticleArray& particles,
-				   HeaderInfo& header,
-				   NormalizationContext& normalization,
-				   const InputFilterConfig& filter,
-				   FileNavigationRuntimeState& rt,
-				   SnapshotPostprocessState &post);
+                                   FileNavigationRuntimeState& rt,
+                                   SnapshotLoadRuntimeState& snapshotLoad);
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,
 				    const NormalizationContext& normalization,

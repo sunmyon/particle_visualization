@@ -41,14 +41,16 @@
 
 static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
                                                AppViewState& view,
+                                               AppRuntimeState& runtime,
                                                AnalysisDerivedState& analysis,
-					       ToolWindowUIState& toolWindows)
+                                               ToolWindowUIState& toolWindows)
 {
   SettingsUIContext ctx;
   ctx.P              = data.particles;
   ctx.fileInfo       = data.fileInfo;
   ctx.camCtx         = &view.camera;
   ctx.particleVisual = &view.particleVisual;
+  ctx.render         = &runtime.render;
   ctx.analysis       = &analysis;
   ctx.windows        = &toolWindows;
   
@@ -62,7 +64,7 @@ static void DrawSettingsPanels(const AppDataState& data,
 			       ToolWindowUIState& toolWindows)
 {
   SettingsUIContext settingsCtx =
-    MakeSettingsUIContext(data, view, analysis, toolWindows);
+    MakeSettingsUIContext(data, view, runtime, analysis, toolWindows);
   ShowSettingsUI(settingsCtx, runtime);
   ShowCameraSettingsUI();
 }
@@ -722,6 +724,50 @@ static void UpdateProjectionPreview(ProjectionPreviewDerivedState& source,
   DrawProjectionPreviewUI(previewUI);
 }
 
+static void MarkPostSnapshotLoad(SnapshotPostprocessState& post)
+{
+  post.refreshTree = true;
+  post.refreshCulling = true;
+  post.refreshTopParticles = true;
+  post.applyTrackingToCamera = true;
+}
+
+
+static void ProcessSnapshotLoadQueue(AppDataState& data,
+                                     AppRuntimeState& runtime)
+{
+  runtime.snapshotLoad.result = SnapshotLoadResultState{};
+
+  auto& req = runtime.snapshotLoad.request;
+  if (!req.pending) return;
+  if (data.fileInfo->isLoading()) return;
+
+  auto& src = data.fileInfo->editSource();
+  src.currentStep = req.targetStep;
+  const int newFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+  src.currentFileIndex = newFileIndex;
+
+  if (req.kind == SnapshotLoadKind::GenerateTestData) {
+    data.fileInfo->generateTestData(data.particles,
+                                    data.header,
+                                    runtime.settings.normalization);
+  } else {
+    data.fileInfo->loadNewSnapshot(newFileIndex,
+                                   data.particles,
+                                   data.header,
+                                   runtime.settings.normalization,
+                                   runtime.settings.inputFilter);
+  }
+  
+  runtime.snapshotLoad.result.loadedThisFrame = true;
+  runtime.snapshotLoad.result.loadedStep = src.currentStep;
+  runtime.snapshotLoad.result.owner = req.owner;
+
+  MarkPostSnapshotLoad(runtime.settings.snapshotPostprocess);    
+  req = SnapshotLoadRequestState{};
+}
+
+
 static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
 {
   float currentFrame = static_cast<float>(glfwGetTime());
@@ -900,33 +946,9 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                             runtime.render.polyhedra);
 #endif
 
-  ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
-			       *services.projectionMap2D,
-			       *data.particles,
-			       runtime.settings.normalization,
-			       data.fileInfo->getSource().currentFileIndex,
-			       analysis.projectionPreview,
-			       data.header.time);
-  
-  ExecuteProjectionMovieRequest(*data.particles,
-				data.header,
-				runtime.settings.normalization,
-				runtime.settings.inputFilter,
-				runtime.settings.tracking,
-				*data.fileInfo,
-				*services.projectionMap2D,
-				runtime.analysis.projectionMap.params,
-				camera,
-				runtime.analysis.projectionMovie,
-				analysis.projectionMovie);
-
   ExecuteFileNavigationRequests(*data.fileInfo,
-				*data.particles,
-				data.header,
-				runtime.settings.normalization,
-				runtime.settings.inputFilter,
-				runtime.settings.fileNavigation,
-				runtime.settings.snapshotPostprocess);
+                                runtime.settings.fileNavigation,
+                                runtime.snapshotLoad);
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
@@ -944,10 +966,33 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				 runtime.settings.snapshotPostprocess,
 				 src.currentFileIndex);
 
+  ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
+			       *services.projectionMap2D,
+			       *data.particles,
+			       runtime.settings.normalization,
+			       data.fileInfo->getSource().currentFileIndex,
+			       analysis.projectionPreview,
+			       data.header.time);
+
+  ExecuteProjectionMovieRequest(*data.particles,
+				data.header,
+				runtime.settings.normalization,
+				runtime.settings.tracking,
+				*data.fileInfo,
+				*services.projectionMap2D,
+				runtime.analysis.projectionMap.params,
+				camera,
+				runtime.analysis.projectionMovie,
+				runtime.snapshotLoad,
+				runtime.settings.snapshotPostprocess,
+				analysis.projectionMovie);
+
+#ifdef PYTHON_BRIDGE
   ExecutePythonBridgeRequests(*data.particles,
 			      services.py,
 			      runtime.analysis.py.request,
 			      runtime.analysis.py.view);
+#endif
 }
 
 void RunFrame(AppState& app,
@@ -972,6 +1017,7 @@ void RunFrame(AppState& app,
   
   UpdateExternalInputs(app.services, *app.data.particles);
 
+  ProcessSnapshotLoadQueue(app.data, app.runtime);
   ExecuteAnalysisRequests(app.data, app.runtime, app.derived.analysis, app.services, app.view.camera);
   
   RebuildDerivedState(*app.data.particles,

@@ -1,10 +1,100 @@
 #pragma once
+#include <array>
+#include <cstdint>
+#include <string>
 #include <glm/vec3.hpp>
+
 #include "app/normalization_config.h"
 #include "app/input_filter_config.h"
 #include "app/view_filter_config.h"
 #include "app/tracking_view_state.h"
 #include "projection/projection_map_tool_state.h"
+
+enum class SnapshotLoadOwner : uint8_t {
+  None = 0,
+  ProjectionMovie = 1,
+  UserNavigation = 2
+};
+
+enum class SnapshotLoadKind : uint8_t {
+  FileStep,
+  GenerateTestData
+};
+
+enum class JobStatus : uint8_t {
+  Idle = 0,
+  Running = 1,
+  Completed = 2,
+  Cancelled = 3,
+  Error = 4
+};
+
+struct SnapshotJobRuntimeState {
+  JobStatus status = JobStatus::Idle;
+  bool cancelRequested = false;
+
+  int savedCurrentStep = 0;
+  int beginStep = 0;
+  int endStep = 0;
+  int nextStep = 0;
+  int stepStride = 1;
+  int processed = 0;
+
+  bool savedTrackingValid = false;
+  TrackingTargetState savedTracking{};
+
+  bool savedCameraValid = false;
+  std::array<float, 3> savedCameraPos = {0.f, 0.f, 5.f};
+  std::array<float, 3> savedCameraTarget = {0.f, 0.f, 0.f};
+  std::array<float, 3> savedCameraUp = {0.f, 1.f, 0.f};
+  std::array<float, 4> savedCameraOrientation = {1.f, 0.f, 0.f, 0.f}; // w, x, y, z
+  float savedCameraDistance = 5.f;
+};
+
+struct SnapshotLoadRequestState {
+  bool pending = false;
+  int targetStep = 0;
+  int priority = 0;
+  
+  SnapshotLoadKind kind = SnapshotLoadKind::FileStep; 
+  SnapshotLoadOwner owner = SnapshotLoadOwner::None;
+};
+
+struct SnapshotLoadResultState {
+  bool loadedThisFrame = false;
+  int loadedStep = -1;
+  SnapshotLoadOwner owner = SnapshotLoadOwner::None;
+};
+
+struct SnapshotLoadRuntimeState {
+  SnapshotLoadRequestState request;
+  SnapshotLoadResultState result;
+};
+
+inline void RequestSnapshotLoad(SnapshotLoadRuntimeState& load,
+                                SnapshotLoadOwner owner,
+                                int targetStep,
+                                int priority,
+				SnapshotLoadKind kind = SnapshotLoadKind::FileStep)
+{
+  if (!load.request.pending || priority >= load.request.priority) {
+    load.request.pending = true;
+    load.request.targetStep = targetStep;
+    load.request.priority = priority;
+    load.request.kind = kind;
+    load.request.owner = owner;
+  }
+}
+
+inline bool IsSnapshotLoadedFor(const SnapshotLoadRuntimeState& load,
+                                SnapshotLoadOwner owner,
+                                int step)
+{
+  return load.result.loadedThisFrame &&
+         load.result.owner == owner &&
+         load.result.loadedStep == step;
+}
+
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -87,7 +177,14 @@ struct ProjectionMovieRequestState {
   char outputFolderPath[255] = "./output";
   char outputMovieName[255] = "output.mp4";
 
-  bool faceOn = false;
+  bool faceOn = false; // legacy toggle (maps to face-on angular-momentum view)
+  bool alignToAngularMomentum = false;
+  AngularMomentumViewMode amViewMode = AngularMomentumViewMode::FaceOn;
+  float amRadius = 0.0f;
+  bool amSubtractBulkVelocity = true;
+  std::array<bool, 6> amUseType = {true, true, true, true, true, true};
+  bool amKeepSignContinuity = true;
+
   bool followSinkCenter = false;
   bool followMostMassiveSink = false;
   int particleIdCenter = 0;
@@ -95,7 +192,14 @@ struct ProjectionMovieRequestState {
   float massCenterRadius = 0.0f;
   float massCenterMinDensity = 0.0f;
 
+  bool restoreCameraOnFinish = true;
+  bool cancelRequested = false;
   bool runRequested = false;
+};
+
+struct ProjectionMovieAnalysisRuntime {
+  ProjectionMovieRequestState request;
+  SnapshotJobRuntimeState job;
 };
 
 #ifdef PYTHON_BRIDGE
@@ -146,7 +250,7 @@ struct AnalysisRequestRuntimeState {
   PythonBridgeRuntimeState py;
 #endif
   
-  ProjectionMovieRequestState projectionMovie;
+  ProjectionMovieAnalysisRuntime projectionMovie;
   ProjectionMapToolState projectionMap;
 };
 
@@ -198,5 +302,4 @@ struct SettingsRuntimeState {
   CameraPlacementRequestState cameraPlacement;
   TrackingTargetState tracking;
 };
-
 

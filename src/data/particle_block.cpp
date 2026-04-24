@@ -1,5 +1,6 @@
-#include "particle_block.h"
-#include "header_info.h"
+#include "data/particle_selection.h"
+#include "data/particle_block.h"
+#include "data/header_info.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,6 +133,50 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
 
   return result;
 }
+
+bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op,
+                                               glm::vec3& outAxis) const
+{
+  const float r2max = (op.radius > 0.0f) ? (op.radius * op.radius) : -1.0f;
+
+  glm::dvec3 vcm(0.0);
+  double msum = 0.0;
+
+  if (op.flagSubtractBulkVelocity) {
+    for (const auto& p : particles) {
+      const int t = static_cast<int>(p.type);
+      if (t < 0 || t >= 6) continue;
+      if (!op.useType[t]) continue;
+
+      glm::dvec3 r = glm::dvec3(p.pos[0], p.pos[1], p.pos[2]) - glm::dvec3(op.center);
+      if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
+
+      vcm += static_cast<double>(p.mass) * glm::dvec3(p.vel[0], p.vel[1], p.vel[2]);
+      msum += static_cast<double>(p.mass);
+    }
+    if (msum > 0.0) vcm /= msum;
+  }
+
+  glm::dvec3 L(0.0);
+  for (const auto& p : particles) {
+    const int t = static_cast<int>(p.type);
+    if (t < 0 || t >= 6) continue;
+    if (!op.useType[t]) continue;
+
+    glm::dvec3 r = glm::dvec3(p.pos[0], p.pos[1], p.pos[2]) - glm::dvec3(op.center);
+    if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
+
+    glm::dvec3 v = glm::dvec3(p.vel[0], p.vel[1], p.vel[2]) - vcm;
+    L += static_cast<double>(p.mass) * glm::cross(r, v);
+  }
+
+  const double n2 = glm::dot(L, L);
+  if (n2 < 1e-24) return false;
+
+  outAxis = glm::normalize(glm::vec3(L));
+  return true;
+}
+
 
 ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
 {

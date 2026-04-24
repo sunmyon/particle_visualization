@@ -711,12 +711,15 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
     if (ImGui::Button("make projection map"))
       OpenProjectionMapUI(tools.projectionMap);    
     
-    auto& movieReq = rt.projectionMovie;
+    auto& movieRt = rt.projectionMovie;
+    auto& movieReq = movieRt.request;
+    auto& movieJob = movieRt.job;
     auto& movieRes = ctx.analysis->projectionMovie;
 
     ImGui::Text("create projection maps for continuous snapshots");
 
     ImGui::InputInt("number of snapshots##render", &movieReq.nSnapshots);
+    if (movieReq.nSnapshots < 1) movieReq.nSnapshots = 1;
     ImGui::InputText("Output File Format##render",
 		     movieReq.outputFileFormat,
 		     IM_ARRAYSIZE(movieReq.outputFileFormat));
@@ -727,9 +730,9 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
 		     movieReq.outputMovieName,
 		     IM_ARRAYSIZE(movieReq.outputMovieName));
 
-    ImGui::Checkbox("show face-on view", &movieReq.faceOn);
-
-    ImGui::Checkbox("follow the center around the particle", &movieReq.followSinkCenter);
+    ImGui::Checkbox("restore camera after movie", &movieReq.restoreCameraOnFinish);
+    ImGui::SeparatorText("Movie Tracking");
+    ImGui::Checkbox("follow the center around the sink particle", &movieReq.followSinkCenter);
     if (movieReq.followSinkCenter) {
       ImGui::Checkbox("the most massive sink particle", &movieReq.followMostMassiveSink);
       if (!movieReq.followMostMassiveSink) {
@@ -743,7 +746,36 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
       }
     }
 
-    if (ImGui::Button("generate maps")) {
+    ImGui::SeparatorText("Angular Momentum");
+    ImGui::Checkbox("force face-on view", &movieReq.faceOn);
+    ImGui::Checkbox("align camera to angular momentum", &movieReq.alignToAngularMomentum);
+
+    const bool useAm = (movieReq.faceOn || movieReq.alignToAngularMomentum);
+    if (useAm) {
+      const char* amModes[] = {"Face-on", "Edge-on"};
+      int amMode = movieReq.faceOn ? 0 : static_cast<int>(movieReq.amViewMode);
+      if (ImGui::Combo("AM view mode", &amMode, amModes, IM_ARRAYSIZE(amModes)) && !movieReq.faceOn) {
+        movieReq.amViewMode = static_cast<AngularMomentumViewMode>(amMode);
+      }
+      ImGui::InputFloat("AM radius", &movieReq.amRadius, 0.f, 0.f, "%g");
+      ImGui::Checkbox("Subtract bulk velocity", &movieReq.amSubtractBulkVelocity);
+      ImGui::Checkbox("Keep axis sign continuity", &movieReq.amKeepSignContinuity);
+      for (int t = 0; t < 6; ++t) {
+        char label[64];
+        std::snprintf(label, sizeof(label), "use type %d##movie_am_type", t);
+        ImGui::Checkbox(label, &movieReq.amUseType[t]);
+        if (t < 5) ImGui::SameLine();
+      }
+    }
+
+    if (movieJob.status == JobStatus::Running) {
+      if (ImGui::Button("cancel movie")) {
+        movieReq.cancelRequested = true;
+      }
+      ImGui::SameLine();
+      ImGui::Text("running %d / %d", movieJob.processed, movieReq.nSnapshots);
+    } else if (ImGui::Button("generate maps")) {
+      movieReq.cancelRequested = false;
       movieReq.runRequested = true;
     }
 
@@ -918,4 +950,3 @@ static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, Sett
     ImGui::SliderFloat("Cross Marker Size", &render.crossGizmo.size, 0.01f, 1.0f);
   }
 }
-

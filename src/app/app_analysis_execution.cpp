@@ -1,4 +1,5 @@
 #include <utility>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <cmath>
+#include <cstdlib>
 
 #include <glm/vec3.hpp>
 
@@ -17,6 +19,7 @@
 #include "app/tracking_view_state.h"
 #include "app/app_visibility_actions.h"
 #include "data/particle_array.h"
+#include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
@@ -24,7 +27,6 @@
 #include "FileIO/file_io.h"
 #include "object.h"
 #include "projection/make_2D_projection_map.h"
-#include "projection/projection_geometry.h"
 #include "projection/projection_map_context.h"
 #include "FindClumps/find_clumps_helpers.h"
 
@@ -765,282 +767,19 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 }
 #endif
 
-void ExecuteProjectionMovieRequest(ParticleArray& particles,
-				   HeaderInfo& header,
-				   NormalizationContext& normalization,
-				   const InputFilterConfig& filter,
-				   TrackingTargetState& track,
-                                   FileInfo& fileInfo,
-                                   ProjectionMapGenerator& projectionMap,
-				   const ProjectionMapParams& baseParams,
-                                   const CameraContext& camera,
-                                   ProjectionMovieRequestState& request,
-                                   ProjectionMovieResultState& result)
-{
-  if (!request.runRequested) {
-    return;
-  }
-  request.runRequested = false;
-
-  result = ProjectionMovieResultState{};
-
-  namespace fs = std::filesystem;
-  const fs::path dir = "ffmpeg_frames";
-
-  try {
-    auto ensure_dir = [](const fs::path& p) {
-      if (fs::exists(p)) {
-        if (!fs::is_directory(p)) {
-          throw fs::filesystem_error("Path exists but is not a directory", p,
-                                     std::make_error_code(std::errc::not_a_directory));
-        }
-      } else {
-        fs::create_directories(p);
-      }
-    };
-
-    ensure_dir(dir);
-    ensure_dir(request.outputFolderPath);
-
-    auto& src = fileInfo.editSource();
-    const int savedStep = src.currentStep;
-    int count_i = 0;
-
-    for (int i = 0; i < request.nSnapshots; ++i) {
-      src.currentStep = savedStep + i;
-
-      const int newFileIndex =
-        src.initialIndex + src.currentStep * src.skipStep;
-
-      fileInfo.loadNewSnapshot(newFileIndex, &particles, header, normalization, filter);
-      if (particles.particleBlock.particles.empty()) {
-        continue;
-      }
-
-      char filename_format[512];
-      std::snprintf(filename_format, sizeof(filename_format), "%s/%s",
-                    request.outputFolderPath,
-                    request.outputFileFormat);
-
-      char filename[512];
-      if (IsSafeIndexFormat(request.outputFileFormat)) {
-        std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
-      } else {
-        if (std::strchr(request.outputFileFormat, '%') != nullptr) {
-          std::snprintf(result.errorMessage,
-                        sizeof(result.errorMessage),
-                        "Unsafe outputFileFormat for movie: %s",
-                        request.outputFileFormat);
-          result.success = false;
-          return;
-        }
-        std::snprintf(filename, sizeof(filename), "%s/%s",
-                      request.outputFolderPath,
-                      request.outputFileFormat);
-      }
-
-      int flag_use_amvector = (i == 0 && request.faceOn) ? 1 : 0;
-
-      int flag_center = 0;
-      float pos_center[3] = {
-        camera.cameraTarget[0],
-        camera.cameraTarget[1],
-        camera.cameraTarget[2]
-      };
-
-#ifdef CLUMP_DATA_READ
-      if (track.followClump)
-        flag_center = 1;
-#endif
-      if (track.followParticle)
-        flag_center = 1;
-
-      if (request.followSinkCenter) {
-        double pos_init[3] = {0., 0., 0.};
-        bool found = false;
-
-        if (!request.followMostMassiveSink) {
-          for (const auto& p : particles.particleBlock.particles) {
-            if (p.ID == request.particleIdCenter) {
-              pos_init[0] = p.pos[0];
-              pos_init[1] = p.pos[1];
-              pos_init[2] = p.pos[2];
-              found = true;
-              break;
-            }
-          }
-        }
-
-        if (request.followMostMassiveSink || !found) {
-          double mass_max = 0.0;
-          for (const auto& p : particles.particleBlock.particles) {
-            if (p.type < 3) continue;
-            if (p.mass > mass_max) {
-              pos_init[0] = p.pos[0];
-              pos_init[1] = p.pos[1];
-              pos_init[2] = p.pos[2];
-              mass_max = p.mass;
-              found = true;
-            }
-          }
-        }
-
-        if (found) {
-          pos_center[0] = pos_init[0];
-          pos_center[1] = pos_init[1];
-          pos_center[2] = pos_init[2];
-          flag_center = 1;
-        }
-
-        if (found && request.useMassCenter) {
-          double pos_temp[3] = {0., 0., 0.};
-          double weight = 0.0;
-
-          for (const auto& p : particles.particleBlock.particles) {
-            if (p.type == 1 || p.type == 2) continue;
-            if (p.type == 0 && p.density < request.massCenterMinDensity) continue;
-
-            const double dx = pos_init[0] - p.pos[0];
-            const double dy = pos_init[1] - p.pos[1];
-            const double dz = pos_init[2] - p.pos[2];
-            const double dist2 = dx*dx + dy*dy + dz*dz;
-
-            if (dist2 > request.massCenterRadius * request.massCenterRadius) continue;
-
-            pos_temp[0] += p.mass * p.pos[0];
-            pos_temp[1] += p.mass * p.pos[1];
-            pos_temp[2] += p.mass * p.pos[2];
-            weight += p.mass;
-          }
-
-          if (weight > 0.0) {
-            pos_center[0] = pos_temp[0] / weight;
-            pos_center[1] = pos_temp[1] / weight;
-            pos_center[2] = pos_temp[2] / weight;
-            flag_center = 1;
-          }
-        }
-      }
-
-      ProjectionMapParams frameParams = baseParams;
-
-      if (flag_center) {
-	frameParams.xoffset[0] = pos_center[0];
-	frameParams.xoffset[1] = pos_center[1];
-	frameParams.xoffset[2] = pos_center[2];
-      }
-
-      ProjectionMapContext context =
-	BuildProjectionMapContext(frameParams,
-				  normalization.toPhysicalScale(),
-				  header.time);
-
-      if (flag_use_amvector) {
-	auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
-						 context.center,
-						 frameParams.xlen);
-	
-	if (frame.valid) {
-	  context.center = frame.center;
-	  context.planeNormal = frame.axis;
-	  context.cuboidTransform = BuildRotationFromZAxisTo(frame.axis);
-	}
-      }
-      
-      RgbImage image =
-	projectionMap.makeDensityMapImage(particles,
-					  frameParams,
-					  context);
-
-      if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
-	std::snprintf(result.errorMessage,
-		      sizeof(result.errorMessage),
-		      "Failed to write projection frame: %s",
-		      filename);
-	result.success = false;
-	return;
-      }
-
-      char linkname[512];
-      std::snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", count_i++);
-      fs::remove(linkname);
-      fs::create_symlink(fs::absolute(filename), linkname);
-
-      result.processedSnapshots++;
-    }
-
-    std::string ffmpegCommand =
-      "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png "
-      "-vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" "
-      "-c:v libx264 -pix_fmt yuv420p " +
-      std::string(request.outputFolderPath) + "/" + std::string(request.outputMovieName);
-
-    const int ffmpegExit = std::system(ffmpegCommand.c_str());
-    if (ffmpegExit != 0) {
-      std::snprintf(result.errorMessage,
-                    sizeof(result.errorMessage),
-                    "ffmpeg failed with exit code %d",
-                    ffmpegExit);
-      result.success = false;
-      fs::remove_all("ffmpeg_frames");
-      return;
-    }
-
-    fs::remove_all("ffmpeg_frames");
-
-    src.currentStep = savedStep;
-    src.currentFileIndex =
-      src.initialIndex + src.currentStep * src.skipStep;
-
-    std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
-                  "%s/%s", request.outputFolderPath, request.outputMovieName);
-
-    result.success = true;
-    result.completed = true;
-  }
-  catch (const std::exception& e) {
-    std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
-    result.success = false;
-  }
-}
-
-static bool LoadSnapshotAtCurrentStep(FileInfo& fileInfo,
-                                      ParticleArray& particles,
-				      HeaderInfo& header,
-                                      NormalizationContext& normalization,
-                                      const InputFilterConfig& filter,
-                                      SnapshotSource& src,
-                                      SnapshotPostprocessState& post,
-                                      bool skipIfLoading)
-{
-  const int newFileIndex =
-    src.initialIndex + src.currentStep * src.skipStep;
-
-  if (skipIfLoading && fileInfo.isLoading()) {
-    return false;
-  }
-
-  fileInfo.loadNewSnapshot(newFileIndex, &particles, header, normalization, filter);
-  src.currentFileIndex = newFileIndex;
-
-  post.refreshTree = true;
-  post.refreshCulling = true;
-  post.refreshTopParticles = true;
-  post.applyTrackingToCamera = true;
-
-  return true;
-}
-
 void ExecuteFileNavigationRequests(FileInfo& fileInfo,
-                                   ParticleArray& particles,
-				   HeaderInfo& header,
-                                   NormalizationContext& normalization,
-                                   const InputFilterConfig& filter,
                                    FileNavigationRuntimeState& rt,
-				   SnapshotPostprocessState &post)
+                                   SnapshotLoadRuntimeState& snapshotLoad)
 {
   auto& req = rt.request;
   auto& src = fileInfo.editSource();
+
+  auto enqueueUserNavLoad = [&](int step) {
+    RequestSnapshotLoad(snapshotLoad,
+                        SnapshotLoadOwner::UserNavigation,
+                        step,
+                        100); // User操作を最優先
+  };
 
   if (req.applySkipStepRequested) {
     if (rt.tempSkipStep > 0) {
@@ -1051,48 +790,46 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
           static_cast<float>(rt.tempSkipStep)))
       );
       src.skipStep = rt.tempSkipStep;
-      LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-				src, post, true);
+      enqueueUserNavLoad(src.currentStep);
     }
     req.applySkipStepRequested = false;
   }
 
   if (req.loadSelectedSnapshotRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-			      src, post, true);
+    enqueueUserNavLoad(src.currentStep);
     req.loadSelectedSnapshotRequested = false;
   }
 
   if (req.loadPreviousRequested) {
     if (src.currentStep > 0) {
       --src.currentStep;
-      LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-				src, post, true);
     }
+    enqueueUserNavLoad(src.currentStep);
     req.loadPreviousRequested = false;
   }
 
   if (req.loadNextRequested) {
     ++src.currentStep;
-    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-			      src, post, true);
+    enqueueUserNavLoad(src.currentStep);
     req.loadNextRequested = false;
   }
 
   if (req.loadBatchRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-			      src, post, true);
+    enqueueUserNavLoad(src.currentStep);
     req.loadBatchRequested = false;
   }
 
   if (req.reloadRequested) {
-    LoadSnapshotAtCurrentStep(fileInfo, particles, header, normalization, filter,				  
-			      src, post, true);
+    enqueueUserNavLoad(src.currentStep);
     req.reloadRequested = false;
   }
 
   if (req.generateTestDataRequested) {
-    fileInfo.generateTestData(&particles, header, normalization);
+    RequestSnapshotLoad(snapshotLoad,
+                        SnapshotLoadOwner::UserNavigation,
+                        src.currentStep,
+                        1,
+                        SnapshotLoadKind::GenerateTestData);
     req.generateTestDataRequested = false;
   }
 }
@@ -1182,58 +919,574 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
   }
 }
 
-void ExecutePostSnapshotLoadActions(ParticleArray& particles,
-				    ClumpStore& clumpStore,
-				    NormalizationContext& normalization,
-				    TrackingTargetState& track,
-				    CameraContext& camCtx,
-				    SnapshotPostprocessState &post,
-				    int currentFileIndex)
+static void SaveCameraToJob(const CameraContext& camera, SnapshotJobRuntimeState& job)
 {
-  if (!post.applyTrackingToCamera)
-    return;
-  
-#ifdef CLUMP_DATA_READ
-  if (track.followClump) {    
-    ClumpData targetClump = clumpStore.clump(track.targetClumpID);
+  job.savedCameraValid = true;
+  job.savedCameraPos = {
+    camera.cameraPos.x, camera.cameraPos.y, camera.cameraPos.z
+  };
+  job.savedCameraTarget = {
+    camera.cameraTarget.x, camera.cameraTarget.y, camera.cameraTarget.z
+  };
+  job.savedCameraUp = {
+    camera.cameraUp.x, camera.cameraUp.y, camera.cameraUp.z
+  };
+#ifdef ROTATE_QUATERNION
+  job.savedCameraOrientation = {
+    camera.cameraOrientation.w,
+    camera.cameraOrientation.x,
+    camera.cameraOrientation.y,
+    camera.cameraOrientation.z
+  };
+#endif
+  job.savedCameraDistance = camera.distance;
+}
 
-    TrackingVector<ClumpData> newClumps =
-      loadClumpData(clumpStore.filePath().c_str(),
-		    currentFileIndex,
-		    normalization.toNormalizedScale());
-    
-    if (newClumps.empty()) {
+static void RestoreCameraFromJob(CameraContext& camera, const SnapshotJobRuntimeState& job)
+{
+  if (!job.savedCameraValid) return;
+
+  camera.cameraPos = glm::vec3(job.savedCameraPos[0], job.savedCameraPos[1], job.savedCameraPos[2]);
+  camera.cameraTarget = glm::vec3(job.savedCameraTarget[0], job.savedCameraTarget[1], job.savedCameraTarget[2]);
+  camera.cameraUp = glm::vec3(job.savedCameraUp[0], job.savedCameraUp[1], job.savedCameraUp[2]);
+  camera.distance = job.savedCameraDistance;
+#ifdef ROTATE_QUATERNION
+  camera.cameraOrientation = glm::quat(job.savedCameraOrientation[0],
+                                       job.savedCameraOrientation[1],
+                                       job.savedCameraOrientation[2],
+                                       job.savedCameraOrientation[3]);
+#endif
+}
+
+static void ApplyMovieRequestToTracking(const ProjectionMovieRequestState& request,
+                                        TrackingTargetState& track)
+{
+  track.followParticle = false;
+  track.followClump = false;
+  track.followSinkParticle = request.followSinkCenter;
+  track.followSinkParticleMostMassive = request.followMostMassiveSink;
+  track.targetSinkParticleID = request.particleIdCenter;
+  track.useMassCenter = request.useMassCenter;
+  track.massCenterRadius = request.massCenterRadius;
+  track.massCenterMinDensity = request.massCenterMinDensity;
+
+  track.alignToAngularMomentum = (request.alignToAngularMomentum || request.faceOn);
+  track.amViewMode = request.faceOn ? AngularMomentumViewMode::FaceOn : request.amViewMode;
+  track.amRadius = request.amRadius;
+  track.amSubtractBulkVelocity = request.amSubtractBulkVelocity;
+  track.amUseType = request.amUseType;
+  track.amKeepSignContinuity = request.amKeepSignContinuity;
+  track.amHasLastAxis = false;
+  track.renewAfterSnapshot = true;
+}
+
+static bool RenderProjectionMovieFrame(ParticleArray& particles,
+                                       HeaderInfo& header,
+                                       NormalizationContext& normalization,
+                                       ProjectionMapGenerator& projectionMap,
+                                       const ProjectionMapParams& baseParams,
+                                       const CameraContext& camera,
+                                       const ProjectionMovieRequestState& request,
+                                       int frameSerial,
+                                       int newFileIndex,
+                                       ProjectionMovieResultState& result)
+{
+  namespace fs = std::filesystem;
+
+  char filename_format[512];
+  std::snprintf(filename_format, sizeof(filename_format), "%s/%s",
+                request.outputFolderPath,
+                request.outputFileFormat);
+
+  char filename[512];
+  if (IsSafeIndexFormat(request.outputFileFormat)) {
+    std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
+  } else {
+    if (std::strchr(request.outputFileFormat, '%') != nullptr) {
+      std::snprintf(result.errorMessage, sizeof(result.errorMessage),
+                    "Unsafe outputFileFormat for movie: %s",
+                    request.outputFileFormat);
+      return false;
+    }
+    std::snprintf(filename, sizeof(filename), "%s/%s",
+                  request.outputFolderPath,
+                  request.outputFileFormat);
+  }
+
+  ProjectionMapParams frameParams = baseParams;
+  frameParams.xoffset[0] = camera.cameraTarget[0];
+  frameParams.xoffset[1] = camera.cameraTarget[1];
+  frameParams.xoffset[2] = camera.cameraTarget[2];  
+
+  ProjectionMapContext context =
+    BuildProjectionMapContext(frameParams,
+                              normalization.toPhysicalScale(),
+                              header.time);
+
+  RgbImage image =
+    projectionMap.makeDensityMapImage(particles, frameParams, context);
+
+  if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
+    std::snprintf(result.errorMessage, sizeof(result.errorMessage),
+                  "Failed to write projection frame: %s", filename);
+    return false;
+  }
+
+  char linkname[512];
+  std::snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", frameSerial);
+  fs::remove(linkname);
+  fs::create_symlink(fs::absolute(filename), linkname);
+
+  return true;
+}
+
+void ExecuteProjectionMovieRequest(ParticleArray& particles,
+                                   HeaderInfo& header,
+                                   NormalizationContext& normalization,
+                                   TrackingTargetState& track,
+                                   FileInfo& fileInfo,
+                                   ProjectionMapGenerator& projectionMap,
+                                   const ProjectionMapParams& baseParams,
+                                   CameraContext& camera,
+                                   ProjectionMovieAnalysisRuntime& movie,
+                                   SnapshotLoadRuntimeState& snapshotLoad,
+                                   SnapshotPostprocessState& post,
+                                   ProjectionMovieResultState& result)
+{
+  namespace fs = std::filesystem;
+  const fs::path framesDir = "ffmpeg_frames";
+
+  auto& request = movie.request;
+  auto& job = movie.job;
+  auto& src = fileInfo.editSource();
+
+  if (request.cancelRequested) {
+    job.cancelRequested = true;
+    request.cancelRequested = false;
+  }
+
+  if (request.runRequested && job.status != JobStatus::Running) {
+    request.runRequested = false;
+    result = ProjectionMovieResultState{};
+    job = SnapshotJobRuntimeState{};
+
+    if (request.nSnapshots <= 0) {
+      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "nSnapshots must be > 0");
+      result.success = false;
+      result.completed = true;
+      return;
+    }
+
+    try {
+      fs::remove_all(framesDir);
+      fs::create_directories(framesDir);
+      fs::create_directories(request.outputFolderPath);
+    } catch (const std::exception& e) {
+      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
+      result.success = false;
+      result.completed = true;
+      return;
+    }
+
+    if (request.restoreCameraOnFinish) {
+      SaveCameraToJob(camera, job);
+    }
+    job.savedTracking = track;
+    job.savedTrackingValid = true;
+    ApplyMovieRequestToTracking(request, track);
+    post.applyTrackingToCamera = true;
+
+    job.status = JobStatus::Running;
+    job.savedCurrentStep = src.currentStep;
+    job.beginStep = src.currentStep;
+    job.endStep = src.currentStep + request.nSnapshots - 1;
+    job.nextStep = job.beginStep;
+    job.stepStride = 1;
+    job.processed = 0;
+  }
+
+  if (job.status != JobStatus::Running) {
+    return;
+  }
+
+  if (job.cancelRequested) {
+    job.status = JobStatus::Cancelled;
+  }
+
+  if (job.status == JobStatus::Running) {
+    const int targetStep = job.nextStep;
+
+    if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::ProjectionMovie, targetStep)) {
+      RequestSnapshotLoad(snapshotLoad,
+                          SnapshotLoadOwner::ProjectionMovie,
+                          targetStep,
+                          10);
+      return;
+    }
+
+    const int newFileIndex = src.initialIndex + targetStep * src.skipStep;
+
+    try {
+      if (!RenderProjectionMovieFrame(particles,
+                                      header,
+                                      normalization,
+                                      projectionMap,
+                                      baseParams,
+                                      camera,
+                                      request,
+                                      job.processed,
+                                      newFileIndex,
+                                      result)) {
+        job.status = JobStatus::Error;
+      } else {
+        result.processedSnapshots++;
+        job.processed++;
+        job.nextStep += job.stepStride;
+
+        if (job.nextStep > job.endStep) {
+          job.status = JobStatus::Completed;
+        } else {
+          RequestSnapshotLoad(snapshotLoad,
+                              SnapshotLoadOwner::ProjectionMovie,
+                              job.nextStep,
+                              10);
+        }
+      }
+    } catch (const std::exception& e) {
+      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
+      job.status = JobStatus::Error;
+    }
+  }
+
+  if (job.status == JobStatus::Completed) {
+    if (result.processedSnapshots <= 0) {
+      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "No frames were generated");
+      job.status = JobStatus::Error;
+    } else {
+      std::string ffmpegCommand =
+        "ffmpeg -y -framerate 30 -i ffmpeg_frames/frame_%04d.png "
+        "-vf \"scale=ceil(iw/2)*2:ceil(ih/2)*2\" "
+        "-c:v libx264 -pix_fmt yuv420p " +
+        std::string(request.outputFolderPath) + "/" + std::string(request.outputMovieName);
+
+      const int ffmpegExit = std::system(ffmpegCommand.c_str());
+      if (ffmpegExit != 0) {
+        std::snprintf(result.errorMessage, sizeof(result.errorMessage),
+                      "ffmpeg failed with exit code %d", ffmpegExit);
+        job.status = JobStatus::Error;
+      } else {
+        std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
+                      "%s/%s", request.outputFolderPath, request.outputMovieName);
+        result.success = true;
+        result.completed = true;
+      }
+    }
+  }
+
+  if (job.status == JobStatus::Cancelled ||
+      job.status == JobStatus::Error ||
+      job.status == JobStatus::Completed) {
+    fs::remove_all(framesDir);
+
+    if (job.savedTrackingValid) {
+      track = job.savedTracking;
+    }
+
+    if (request.restoreCameraOnFinish) {
+      RestoreCameraFromJob(camera, job);
+    }
+
+    src.currentStep = job.savedCurrentStep;
+    src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+    RequestSnapshotLoad(snapshotLoad,
+                        SnapshotLoadOwner::UserNavigation,
+                        src.currentStep,
+                        50);
+
+    if (job.status == JobStatus::Cancelled) {
+      if (result.errorMessage[0] == '\0') {
+        std::snprintf(result.errorMessage, sizeof(result.errorMessage), "Cancelled by user");
+      }
+      result.success = false;
+      result.completed = true;
+    } else if (job.status == JobStatus::Error) {
+      result.success = false;
+      result.completed = true;
+    }
+
+    job = SnapshotJobRuntimeState{};
+  }
+}
+
+static void RecenterCameraKeepView(CameraContext& camCtx, const glm::vec3& target)
+{
+  float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+  if (dist < 1e-6f) {
+    dist = (camCtx.distance > 1e-6f) ? camCtx.distance : 1.0f;
+  }
+
+  glm::vec3 dir = camCtx.cameraTarget - camCtx.cameraPos;
+  if (glm::dot(dir, dir) < 1e-12f) {
+    dir = glm::vec3(0.0f, 0.0f, -1.0f);
+  } else {
+    dir = glm::normalize(dir);
+  }
+
+  camCtx.cameraTarget = target;
+  camCtx.cameraPos = target - dir * dist;
+  camCtx.distance = dist;
+
+  glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
+  camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
+}
+
+
+static glm::vec3 StabilizeAxisSign(glm::vec3 axis, TrackingTargetState& track)
+{
+  if (!track.amKeepSignContinuity) return axis;
+
+  if (track.amHasLastAxis) {
+    glm::vec3 last(track.amLastAxis[0], track.amLastAxis[1], track.amLastAxis[2]);
+    if (glm::dot(axis, last) < 0.0f) {
+      axis = -axis;
+    }
+  }
+
+  track.amLastAxis[0] = axis.x;
+  track.amLastAxis[1] = axis.y;
+  track.amLastAxis[2] = axis.z;
+  track.amHasLastAxis = true;
+
+  return axis;
+}
+
+static void ApplyCameraAlignmentFromAxis(CameraContext& camCtx,
+                                         const glm::vec3& center,
+                                         const glm::vec3& axisIn,
+                                         AngularMomentumViewMode mode)
+{
+  glm::vec3 axis = glm::normalize(axisIn);
+
+  float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+  if (dist < 1e-6f) {
+    dist = (camCtx.distance > 1e-6f) ? camCtx.distance : 1.0f;
+  }
+
+  glm::vec3 prevF = camCtx.cameraTarget - camCtx.cameraPos;
+  if (glm::dot(prevF, prevF) < 1e-12f) prevF = glm::vec3(0.0f, 0.0f, -1.0f);
+  prevF = glm::normalize(prevF);
+
+  glm::vec3 forward(0.0f);
+
+  if (mode == AngularMomentumViewMode::FaceOn) {
+    glm::vec3 f1 = -axis;
+    glm::vec3 f2 =  axis;
+    forward = (glm::dot(f1, prevF) >= glm::dot(f2, prevF)) ? f1 : f2;
+  } else {
+    glm::vec3 proj = prevF - glm::dot(prevF, axis) * axis;
+    if (glm::dot(proj, proj) < 1e-12f) {
+      glm::vec3 c1 = glm::cross(axis, glm::vec3(0.0f, 1.0f, 0.0f));
+      if (glm::dot(c1, c1) < 1e-12f) {
+        c1 = glm::cross(axis, glm::vec3(1.0f, 0.0f, 0.0f));
+      }
+      c1 = glm::normalize(c1);
+      glm::vec3 c2 = -c1;
+      forward = (glm::dot(c1, prevF) >= glm::dot(c2, prevF)) ? c1 : c2;
+    } else {
+      forward = glm::normalize(proj);
+    }
+  }
+
+  glm::vec3 upHint = (mode == AngularMomentumViewMode::EdgeOn) ? axis : camCtx.cameraUp;
+  if (glm::dot(upHint, upHint) < 1e-12f) upHint = glm::vec3(0.0f, 1.0f, 0.0f);
+  upHint = glm::normalize(upHint);
+
+  if (std::abs(glm::dot(upHint, forward)) > 0.95f) {
+    upHint = glm::vec3(0.0f, 1.0f, 0.0f);
+    if (std::abs(glm::dot(upHint, forward)) > 0.95f) {
+      upHint = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+  }
+
+  glm::vec3 right = glm::cross(forward, upHint);
+  if (glm::dot(right, right) < 1e-12f) {
+    upHint = glm::vec3(1.0f, 0.0f, 0.0f);
+    right = glm::cross(forward, upHint);
+  }
+  right = glm::normalize(right);
+
+  glm::vec3 up = glm::normalize(glm::cross(right, forward));
+
+  camCtx.cameraTarget = center;
+  camCtx.cameraPos = center - forward * dist;
+  camCtx.cameraUp = up;
+  camCtx.distance = dist;
+
+  glm::mat4 view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
+  camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
+}
+
+static bool ResolveTrackingCenter(ParticleArray& particles,
+                                  ClumpStore& clumpStore,
+                                  const NormalizationContext& normalization,
+                                  TrackingTargetState& track,
+                                  int currentFileIndex,
+                                  glm::vec3& outCenter)
+{
+#ifdef CLUMP_DATA_READ
+  if (track.followClump) {
+    if (clumpStore.filePath().empty() || clumpStore.empty()) {
       track.followClump = false;
     } else {
-      clumpStore.setClumps(std::move(newClumps));
+      int idx = clumpStore.findIndexByClumpID(track.targetClumpID);
+      if (idx < 0 && track.targetClumpID >= 0 && track.targetClumpID < static_cast<int>(clumpStore.size())) {
+        idx = track.targetClumpID;
+      }
 
-      float target_pos_new[3];
-      targetClump.get_next_clump_position(clumpStore.clumps(), target_pos_new);
+      if (idx < 0 || idx >= static_cast<int>(clumpStore.size())) {
+        track.followClump = false;
+      } else {
+        ClumpData targetClump = clumpStore.clump(idx);
 
-      float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-      camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
-      camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+        TrackingVector<ClumpData> newClumps =
+          loadClumpData(clumpStore.filePath().c_str(),
+                        currentFileIndex,
+                        normalization.toNormalizedScale());
+
+        if (newClumps.empty()) {
+          track.followClump = false;
+        } else {
+          clumpStore.setClumps(std::move(newClumps));
+
+          float nextPos[3] = {0.f, 0.f, 0.f};
+          targetClump.get_next_clump_position(clumpStore.clumps(), nextPos);
+          outCenter = glm::vec3(nextPos[0], nextPos[1], nextPos[2]);
+          return true;
+        }
+      }
     }
-  }  
+  }
 #endif
 
   if (track.followParticle) {
-    float target_pos_new[3];
-    bool found = particles.findParticleID(track.targetParticleID, target_pos_new);
-
-    if (!found) {
+    float pos[3] = {0.f, 0.f, 0.f};
+    if (!particles.findParticleID(track.targetParticleID, pos)) {
       track.followParticle = false;
     } else {
-      float dist = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
-      glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-      camCtx.cameraTarget = glm::vec3(target_pos_new[0], target_pos_new[1], target_pos_new[2]);
-      camCtx.cameraPos = camCtx.cameraTarget - direction * dist;
+      outCenter = glm::vec3(pos[0], pos[1], pos[2]);
+      return true;
+    }
+  }
+
+  if (track.followSinkParticle) {
+    float targetPos[3] = {0.f, 0.f, 0.f};
+    bool found = false;
+
+    if (!track.followSinkParticleMostMassive) {
+      found = particles.findParticleID(track.targetSinkParticleID, targetPos);
+    }
+
+    if (track.followSinkParticleMostMassive || !found) {
+      double massMax = -1.0;
+      for (const auto& p : particles.particleBlock.particles) {
+        if (p.type < 3) continue;
+        if (p.mass > massMax) {
+          targetPos[0] = p.pos[0];
+          targetPos[1] = p.pos[1];
+          targetPos[2] = p.pos[2];
+          massMax = p.mass;
+          found = true;
+        }
+      }
+    }
+
+    if (!found) {
+      track.followSinkParticle = false;
+    } else {
+      if (track.useMassCenter) {
+        double dPos[3] = {0.0, 0.0, 0.0};
+        double weight = 0.0;
+        const double r2max = (track.massCenterRadius > 0.0f)
+                           ? static_cast<double>(track.massCenterRadius) * static_cast<double>(track.massCenterRadius)
+                           : -1.0;
+
+        for (const auto& p : particles.particleBlock.particles) {
+          if (p.type == 1 || p.type == 2) continue;
+          if (p.type == 0 && p.density < track.massCenterMinDensity) continue;
+
+          const double dx = static_cast<double>(targetPos[0]) - static_cast<double>(p.pos[0]);
+          const double dy = static_cast<double>(targetPos[1]) - static_cast<double>(p.pos[1]);
+          const double dz = static_cast<double>(targetPos[2]) - static_cast<double>(p.pos[2]);
+          const double dist2 = dx * dx + dy * dy + dz * dz;
+          if (r2max > 0.0 && dist2 > r2max) continue;
+
+          dPos[0] += static_cast<double>(p.mass) * dx;
+          dPos[1] += static_cast<double>(p.mass) * dy;
+          dPos[2] += static_cast<double>(p.mass) * dz;
+          weight += static_cast<double>(p.mass);
+        }
+
+        if (weight > 0.0) {
+          targetPos[0] += static_cast<float>(dPos[0] / weight);
+          targetPos[1] += static_cast<float>(dPos[1] / weight);
+          targetPos[2] += static_cast<float>(dPos[2] / weight);
+        }
+      }
+
+      outCenter = glm::vec3(targetPos[0], targetPos[1], targetPos[2]);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+                                    ClumpStore& clumpStore,
+                                    NormalizationContext& normalization,
+                                    TrackingTargetState& track,
+                                    CameraContext& camCtx,
+                                    SnapshotPostprocessState& post,
+                                    int currentFileIndex)
+{
+  if (!post.applyTrackingToCamera && !track.renewAfterSnapshot) {
+    return;
+  }
+
+  glm::vec3 center = camCtx.cameraTarget;
+  const bool foundCenter =
+    ResolveTrackingCenter(particles,
+                          clumpStore,
+                          normalization,
+                          track,
+                          currentFileIndex,
+                          center);
+
+  if (foundCenter) {
+    if (track.alignToAngularMomentum) {
+      ParticleSelectionOption op;
+      op.center = center;
+      op.radius = track.amRadius;
+      op.useType = track.amUseType;
+      op.flagSubtractBulkVelocity = track.amSubtractBulkVelocity;
+      
+      glm::vec3 axis(0.0f, 0.0f, 1.0f);
+      if (particles.particleBlock.ComputeAngularMomentumAxis(op, axis)) {
+        axis = StabilizeAxisSign(axis, track);
+        ApplyCameraAlignmentFromAxis(camCtx, center, axis, track.amViewMode);
+      } else {
+        RecenterCameraKeepView(camCtx, center);
+      }
+    } else {
+      RecenterCameraKeepView(camCtx, center);
     }
   }
 
   post.applyTrackingToCamera = false;
+  track.renewAfterSnapshot = false;
 }
+
 
 void ExecuteHaloesUIRequests(HaloesUIState& state,
                              HaloStore& haloes,

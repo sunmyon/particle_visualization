@@ -9,6 +9,7 @@
 #include "core/tracking_vector.h"
 
 struct HeaderInfo;
+struct ParticleSelectionOption;
 
 struct ParticleBlock {
   // ---- AoS core ----
@@ -213,7 +214,11 @@ public:
   
   BuildResult rebuild(float desiredMax);  
   static ParticleBlock makeTestParticleBlock(HeaderInfo& header);
+
+  bool ComputeAngularMomentumAxis(const ParticleSelectionOption& op,
+                                  glm::vec3& outAxis) const;
 };
+
 
 inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size_t ipart, VectorId v, float out[3]) {
   switch (v) {

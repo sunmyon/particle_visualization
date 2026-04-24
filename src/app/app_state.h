@@ -42,6 +42,7 @@ struct AppUIState {
 
 struct AppRuntimeState {
   InteractionState interaction;
+  SnapshotLoadRuntimeState snapshotLoad;
   SettingsRuntimeState settings;
   RenderRuntimeState render;
   AnalysisRequestRuntimeState analysis;
