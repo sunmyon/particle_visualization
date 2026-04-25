@@ -10,6 +10,7 @@
 #include "app/view_filter_config.h"
 #include "app/tracking_view_state.h"
 #include "projection/projection_map_tool_state.h"
+#include "FileIO/file_format_types.h"
 
 enum class SnapshotLoadOwner : uint8_t {
   None = 0,
@@ -74,6 +75,7 @@ struct SnapshotLoadResultState {
 struct SnapshotLoadRuntimeState {
   SnapshotLoadRequestState request;
   SnapshotLoadResultState result;
+  bool busy = false;
 };
 
 inline void RequestSnapshotLoad(SnapshotLoadRuntimeState& load,
@@ -320,7 +322,68 @@ struct FileNavigationRequestState {
   bool generateTestDataRequested = false;
 };
 
+struct SnapshotNavigationState {
+  int initialIndex = 0;
+  int currentFileIndex = 0;
+  int batchSize = 1;
+  int skipStep = 1;
+  int currentStep = 0;
+};
+
+struct SnapshotInputState {
+  char fileFormat[255] = "output_%04d.dat";
+  char folderPath[255] = "./example/";
+  char filePath[512]   = "./example/output_0000.dat";
+#ifdef HAVE_HDF5
+  bool useHDF5 = false;
+#endif
+};
+
+struct SnapshotCurrentState {
+  int loadedFileIndex = -1;
+  double loadedTime = 0.0;
+};
+
+inline std::vector<FieldSpec> MakeDefaultSnapshotFormatTokens()
+{
+  std::vector<FieldSpec> tokens;
+  tokens.reserve(12);
+
+  auto push = [&](FieldKey key, DataType type, int count) {
+    FieldSpec spec;
+    spec.key = key;
+    spec.type = type;
+    spec.count = count;
+    spec.sourceName = GetDefaultHDF5SourceName(key);
+    tokens.push_back(std::move(spec));
+  };
+
+  push(FieldKey::Position,    DataType::Float, 3);
+  push(FieldKey::Velocity,    DataType::Float, 3);
+  push(FieldKey::Type,        DataType::Int32, 1);
+  push(FieldKey::ID,          DataType::Int32, 1);
+  push(FieldKey::Hsml,        DataType::Float, 1);
+  push(FieldKey::Density,     DataType::Float, 1);
+  push(FieldKey::Temperature, DataType::Float, 1);
+  push(FieldKey::Dummy,       DataType::Float, 1);
+  push(FieldKey::Value,       DataType::Float, 1);
+  push(FieldKey::Value2,      DataType::Float, 1);
+  push(FieldKey::Dummy,       DataType::Float, 4);
+  push(FieldKey::Mass,        DataType::Float, 1);
+
+  return tokens;
+}
+
+struct SnapshotFormatState {
+  FileFormat readFormat = FileFormat::Auto;
+  std::vector<FieldSpec> formatTokens = MakeDefaultSnapshotFormatTokens();
+  std::vector<FieldSpec> formatTokensHdf5 = MakeDefaultSnapshotFormatTokens();
+};
+
 struct FileNavigationRuntimeState {
+  SnapshotNavigationState navigation;
+  SnapshotInputState input;
+  SnapshotCurrentState current;
   int tempSkipStep = 1;
   FileNavigationRequestState request;
 };
@@ -332,6 +395,12 @@ struct SnapshotPostprocessState {
   bool applyTrackingToCamera = false;
 };
 
+struct SettingsActionRequestState {
+  bool normalizeRequested = false;
+  bool particleRenderDirtyRequested = false;
+  bool velocityRenderDirtyRequested = false;
+};
+
 struct SettingsRuntimeState {
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
@@ -339,8 +408,10 @@ struct SettingsRuntimeState {
   SnapshotPostprocessState snapshotPostprocess;
   ViewFilterConfig viewFilter;
   InputFilterConfig inputFilter;
+  SnapshotFormatState snapshotFormat;
   NormalizationContext normalization;
   FileNavigationRuntimeState fileNavigation;
   CameraPlacementRequestState cameraPlacement;
   TrackingTargetState tracking;
+  SettingsActionRequestState request;
 };

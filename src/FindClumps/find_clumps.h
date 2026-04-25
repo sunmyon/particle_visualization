@@ -6,9 +6,7 @@
 #include "FindClumps/structure_nodes.h"
 
 /**** needed for Im32U ****/
-class FileInfo;
 class ProjectionMapGenerator;
-struct SnapshotSource;
 struct NormalizationContext;
 struct InputFilterConfig;
 struct HeaderInfo;
@@ -252,5 +250,4 @@ public:
     snapshotIndex_prev = -1;
   }
 };
-
 

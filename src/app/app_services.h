@@ -5,6 +5,7 @@
 class RadialProfileComputer;
 class Histogram2DComputer;
 class ProjectionMapGenerator;
+class SnapshotIOService;
 class FindClump;
 class LoadedClumpTool;
 class ClumpChain;
@@ -32,6 +33,7 @@ struct AppServices {
   std::unique_ptr<RadialProfileComputer> radialProfile;
   std::unique_ptr<Histogram2DComputer> histogram2D;
   std::unique_ptr<ProjectionMapGenerator> projectionMap2D;
+  std::unique_ptr<SnapshotIOService> snapshotIO;
   std::unique_ptr<FindClump> clumpFind;
   std::unique_ptr<LoadedClumpTool> clumpLoad;
   std::unique_ptr<ClumpChain> clumpChain;

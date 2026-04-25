@@ -84,8 +84,13 @@ namespace {
 SnapshotLoader::SnapshotLoader(SnapshotSource& source)
   : source_(source) {}
 
-bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, HeaderInfo& header, const InputFilterConfig& filter) {
+bool SnapshotLoader::readFile(int fileNumber,
+                              SnapshotReadResult& outResult,
+                              const InputFilterConfig& filter) {
   TIME_FUNCTION();
+
+  HeaderInfo& header = outResult.header;
+  ParticleBlock& outBlock = outResult.block;
 
   header.UnitLength_in_cm         = source_.units.length_cm;
   header.UnitMass_in_g            = source_.units.mass_g;
@@ -128,29 +133,18 @@ bool SnapshotLoader::loadSingleFile(int fileNumber, ParticleBlock& outBlock, Hea
     return false;
   }
 
-  return true;
-}
-
-bool SnapshotLoader::loadFirstFileIntoArray(int targetFile, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
-  ParticleBlock newBlock;
-  if (!loadSingleFile(targetFile, newBlock, header, filter)) {
-    P->particleBlock.clear();
-    std::cerr << "Failed to load first file: " << targetFile << std::endl;
-    return false;
-  }
-
-  ParticleBlock oldBlock;
-  P->setParticleBlock(std::move(newBlock), &oldBlock, header, normalization);
+  outResult.fileIndex = fileNumber;
   return true;
 }
 
 TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const InputFilterConfig& filter) {
-  ParticleBlock p_block;
-  HeaderInfo header;
-  loadSingleFile(indexFile, p_block, header, filter);
+  SnapshotReadResult result;
+  if (!readFile(indexFile, result, filter)) {
+    return {};
+  }
 
   TrackingVector<int> IDs;
-  for (auto& p : p_block.particles) {
+  for (auto& p : result.block.particles) {
     if (p.type < 3)
       continue;
     IDs.push_back(p.ID);
@@ -159,7 +153,10 @@ TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const Input
   return IDs;
 }
 
-void SnapshotLoader::generateTestData(ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization) {
+void SnapshotLoader::generateTestData(ParticleArray* P,
+                                      HeaderInfo& header,
+                                      NormalizationContext& normalization,
+                                      QuantityState& quantity) {
   ParticleBlock block = ParticleBlock::makeTestParticleBlock(header);
-  P->setParticleBlock(std::move(block), nullptr, header, normalization);
+  P->setParticleBlock(std::move(block), nullptr, header, normalization, quantity);
 }

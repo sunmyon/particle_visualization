@@ -198,11 +198,6 @@ struct ParticleBlock {
     return writeSoAAs<T>(view.key, i, in);
   }
   
-  int nAllQ = 0;
-  int nUIQ  = 0;
-  std::array<QuantityId, kMaxQ> allQ;
-  std::array<QuantityId, kMaxQ> uiQ;
-
   void rebuildQuantities();
   
 public:
@@ -212,7 +207,7 @@ public:
     float originalMax = 0.0f;
   };
   
-  BuildResult rebuild(float desiredMax);  
+  BuildResult rebuild(float desiredMax, const QuantityCatalogState& catalog);  
   static ParticleBlock makeTestParticleBlock(HeaderInfo& header);
 
   bool ComputeAngularMomentumAxis(const ParticleSelectionOption& op,

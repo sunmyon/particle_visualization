@@ -2,13 +2,13 @@
 #include <imgui.h>
 
 void OpenBinaryFormatDialog(FileFormatDialogState& state,
-                            const SnapshotSource& source){
+                            const std::vector<FieldSpec>& formatTokens){
   state.showFormatDialog = true;
-  state.formatTokensEdit = source.formatTokens;
+  state.formatTokensEdit = formatTokens;
 }
 
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
-                            SnapshotSource& source) {
+                            std::vector<FieldSpec>& formatTokens) {
   if (!state.showFormatDialog) return;
 
   ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
@@ -120,7 +120,7 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
     state.formatTokensEdit.push_back(newToken);
   }
   if (ImGui::Button("OK")) {
-    source.formatTokens = state.formatTokensEdit;
+    formatTokens = state.formatTokensEdit;
     state.showFormatDialog = false;
   }
   ImGui::SameLine();
@@ -132,7 +132,7 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
 
 #ifdef HAVE_HDF5
 void DrawHDF5FormatDialog(FileFormatDialogState& state,
-                          SnapshotSource& source) {
+                          std::vector<FieldSpec>& formatTokens) {
   if (!state.showHDF5MappingDialog) return;
 
   ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
@@ -228,7 +228,7 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
   }
   ImGui::SameLine();
   if (ImGui::Button("OK")) {
-    source.formatTokens_hdf5 = state.formatTokensEdit;
+    formatTokens = state.formatTokensEdit;
     state.showHDF5MappingDialog = false;
   }
   ImGui::SameLine();
@@ -240,8 +240,8 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
 }
 
 void OpenHDF5FormatDialog(FileFormatDialogState& state,
-			  const SnapshotSource& source){
+                          const std::vector<FieldSpec>& formatTokens){
   state.showHDF5MappingDialog = true;
-  state.formatTokensEdit = source.formatTokens_hdf5;
+  state.formatTokensEdit = formatTokens;
 }
 #endif

@@ -57,6 +57,7 @@ ProjectionMapGenerator::ProjectionMapGenerator() = default;
 
 
 RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
+						     const UnitSystem& units,
 						     ProjectionMapParams& params,
 						     ProjectionMapContext& ctx){
 #ifdef USE_LUA
@@ -164,7 +165,7 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
       } else if (params.starQuantity == StarQuantity::Density) {
 	pp.val = p.density;
       } else if (params.starQuantity == StarQuantity::Flux) {
-	pp.val = (float)compute_band_luminosity_Lsun(p.mass*particles.units.mass_msun, params.flux);
+	pp.val = (float)compute_band_luminosity_Lsun(p.mass*units.mass_msun, params.flux);
       } else {
 	pp.val = 1.0f;
       }

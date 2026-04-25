@@ -1,6 +1,6 @@
 #pragma once
-
 #include <array>
+#include "core/units.h"
 
 static constexpr int kMaxV = 4;
 enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
@@ -49,8 +49,20 @@ inline bool QuantityShowInUI(QuantityId q) {
 }
 
 struct QuantityCatalogState {
-  int nAllQ;
-  int nUIQ;
-  std::array<QuantityId,kMaxQ> allQ;
-  std::array<QuantityId,kMaxQ> uiQ;
+  int nAllQ = 0;
+  int nUIQ = 0;
+  std::array<QuantityId,kMaxQ> allQ{};
+  std::array<QuantityId,kMaxQ> uiQ{};
+};
+
+struct QuantityRangeState {
+  float originalMax = 0.0f;
+  std::array<std::array<float, kNumTypes>, kMaxQ> valueMin{};
+  std::array<std::array<float, kNumTypes>, kMaxQ> valueMax{};
+};
+
+struct QuantityState {
+  QuantityCatalogState catalog;
+  QuantityRangeState range;
+  UnitSystem units;
 };

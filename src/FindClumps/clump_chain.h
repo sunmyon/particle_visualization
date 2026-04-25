@@ -105,7 +105,7 @@ public:
              int nsnapshots,
              int dstep,
              const std::string& fname,
-	     UnitSystem& units);
+	     const UnitSystem& units);
 
 private:
   TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumpLists_;

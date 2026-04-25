@@ -7,14 +7,18 @@ class FindClump;
 class LoadedClumpTool;
 class ClumpChain;
 class ProjectionMapGenerator;
-class FileInfo;
 class ParticleArray;
+class ClumpStore;
 struct HeaderInfo;
 struct ProjectionMapParams;
-struct SnapshotSource;
+struct SnapshotNavigationState;
+struct SnapshotInputState;
+struct SnapshotCurrentState;
 struct CameraContext;
 struct NormalizationContext;
+struct TrackingTargetState;
 struct SnapshotLoadRuntimeState;
+struct UnitSystem;
 
 struct ClumpFinderWindowState;
 struct LoadedClumpWindowState;
@@ -28,7 +32,8 @@ void DrawClumpFinderUI(ClumpFinderWindowState& ui,
 		       FindClump& cfind,
 		       TrackingVector<ParticleData>& originalParticles,
 		       const HeaderInfo& header,
-		       const SnapshotSource& src,
+		       const SnapshotInputState& input,
+                       const SnapshotCurrentState& current,
 		       CameraContext& cam);
 
 void DrawClumpListUI(LoadedClumpWindowState& ui,
@@ -36,17 +41,18 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
 		     ClumpStore& clump,
 		     TrackingTargetState& view,
 		     int currentFileIndex,
-		     const SnapshotSource& src,
+		     const SnapshotInputState& input,
 		     CameraContext& cam,
 		     const NormalizationContext& normalization);
 
 void DrawClumpChainListUI(ClumpChainWindowState& ui,
 			  ClumpChain& chain,
 			  ParticleArray* P,
-			  HeaderInfo& header,
+			  const UnitSystem& units,
 			  ProjectionMapGenerator* proj,
 			  const ProjectionMapParams& baseParams,
-			  FileInfo& fileinfo,
+			  const SnapshotNavigationState& nav,
+                          const SnapshotCurrentState& current,
 			  SnapshotLoadRuntimeState& snapshotLoad,
 			  CameraContext& cam,
 			  NormalizationContext& normalization);

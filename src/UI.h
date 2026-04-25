@@ -4,6 +4,8 @@
 #include "app/ui_state.h"
 
 struct UnitSystem;
+struct QuantityState;
+struct QuantityCatalogState;
 struct ParticleBlock;
 struct CameraContext;
 struct RenderLayerState;
@@ -24,7 +26,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
 			 NormalizationContext& normalization,
-			 UnitSystem& units);
+			 QuantityState& quantity);
 
 class Histogram2DComputer;
 struct Histogram2DContext;
@@ -34,6 +36,7 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
 		       Histogram2DRuntimeState& rt,
 		       Histogram2DComputer& computer,
                        ParticleBlock& partblock,
+		       const QuantityCatalogState& catalog,
 		       const Histogram2DContext& ctx);
 
 class ProjectionMapGenerator;
@@ -43,18 +46,17 @@ struct CuboidObject;
 void OpenProjectionMapUI(ProjectionMapUIState& state);
 void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 ProjectionMapToolState& tool,
-                         ParticleArray& P,
+			 const ParticleArray& particles,
 			 const NormalizationContext& normalization,
                          CameraContext& camCtx,
 			 RenderLayerState& cuboidAnnotationState,
+			 QuantityCatalogState& catalog,
                          int fileindex);
 
 void DrawProjectionFontSelectionUI(ProjectionMapGenerator& generator,
 				   ProjectionMapUIState& state);
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post);
-
-class FileInfo;
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post, UnitSystem& units);
 void OpenHaloesUI(HaloesUIState& state);
 void DrawHaloesUI(HaloesUIState& state, HaloStore& halo, CameraContext& camCtx, NormalizationContext& normalization);
 

@@ -1,9 +1,10 @@
 #pragma once
 #include "particle_block.h"
-#include "core/units.h"
 #include "core/tracking_vector.h"
 
 struct NormalizationContext;
+struct QuantityState;
+struct UnitSystem;
 struct Header;
 
 class ParticleArray {
@@ -18,15 +19,6 @@ public:
   bool particlesDirty = true;
   bool velocityDirty = true;
   bool flagParticleIndexDirty = true;
-  float originalMax = 1.;
-  
-  std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMin;
-  std::array<std::array<float, kNumTypes>, kMaxQ> particleValueMax;
-
-  UnitSystem units;  
-  void setUnits(){
-    units.updateDerived();
-  }
   
   ParticleBlock particleBlock;
   TrackingVector<uint8_t> flag_mask;
@@ -53,6 +45,10 @@ public:
     return true;
   }
     
-  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx);
-  void computeStellarDensity(const std::array<bool,6>& selType, bool flag_overwirte_hsml, const NormalizationContext& ctx, double time);
+  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity);
+  void computeStellarDensity(const std::array<bool,6>& selType,
+                             bool flag_overwirte_hsml,
+                             const NormalizationContext& ctx,
+                             double time,
+                             const UnitSystem& units);
 };

@@ -2,39 +2,47 @@
 
 #include "core/PerfTimer.h"
 #include "app/input_filter_config.h"
-#include "data/header_info.h"
 
 SnapshotPrefetchController::SnapshotPrefetchController(SnapshotSource& source,
                                                        SnapshotLoader& loader)
   : source_(source), loader_(loader) {}
 
-void SnapshotPrefetchController::loadNewSnapshot(int newFileIndex, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
+bool SnapshotPrefetchController::loadNewSnapshot(int newFileIndex,
+                                                 SnapshotReadResult& outResult,
+                                                 const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
   bool foundInCache = false;
-  ParticleBlock block;
   {
     std::lock_guard<std::mutex> lock(prefetch_.mutex);
-    if (prefetch_.cache.pop(newFileIndex, block)) {
-      ParticleBlock oldBlock;
-      P->setParticleBlock(std::move(block), &oldBlock, header, normalization);
+    if (prefetch_.cache.pop(newFileIndex, outResult)) {
       foundInCache = true;
     }
   }
 
   if (!foundInCache) {
     if (!isLoading_) {
-      loadBatch(newFileIndex, source_.batchSize, source_.skipStep, P, header, normalization, filter);
+      if (!loadBatch(newFileIndex,
+                     source_.batchSize,
+                     source_.skipStep,
+                     outResult,
+                     filter)) {
+        return false;
+      }
+      foundInCache = true;
+    } else {
+      return false;
     }
   }
 
   source_.currentFileIndex = newFileIndex;
-
-  printf("currentStep=%d newFileIndex=%d\n", source_.currentStep, newFileIndex);
+  return foundInCache;
 }
 
-bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile, ParticleArray* P, HeaderInfo& header, NormalizationContext& normalization, const InputFilterConfig& filter) {
-  if (!loader_.loadFirstFileIntoArray(targetFile, P, header, normalization, filter)) {
+bool SnapshotPrefetchController::syncLoadFirstFile(int targetFile,
+                                                   SnapshotReadResult& outResult,
+                                                   const InputFilterConfig& filter) {
+  if (!loader_.readFile(targetFile, outResult, filter)) {
     return false;
   }
 
@@ -50,17 +58,14 @@ void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
                                                          int generation,
 							 const InputFilterConfig& filter
 							 ) {
-  TrackingVector<std::pair<int, ParticleBlock>> loaded;
-  TrackingVector<std::pair<int, HeaderInfo>> loaded_header;
+  TrackingVector<SnapshotReadResult> loaded;
 
   for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;
-    ParticleBlock block;
-    HeaderInfo header;
+    SnapshotReadResult result;
     
-    if (loader_.loadSingleFile(fileNumber, block, header, filter)) {
-      loaded.push_back({fileNumber, std::move(block)});
-      loaded_header.push_back({fileNumber, std::move(header)});
+    if (loader_.readFile(fileNumber, result, filter)) {
+      loaded.push_back(std::move(result));
     }
   }
 
@@ -68,27 +73,25 @@ void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
     std::lock_guard<std::mutex> lock(prefetch_.mutex);
     if (prefetch_.generation.load() != generation) return;
 
-    for (auto& e : loaded) {
-      prefetch_.cache.push(e.first, std::move(e.second));
+    for (auto& result : loaded) {
+      prefetch_.cache.push(std::move(result));
     }
   }
 }
 
-void SnapshotPrefetchController::loadBatch(int targetFile,
+bool SnapshotPrefetchController::loadBatch(int targetFile,
                                            int batchSize,
                                            int skipStep,
-                                           ParticleArray* P,
-					   HeaderInfo& header,
-					   NormalizationContext& normalization,
-					   const InputFilterConfig& filter) {
+                                           SnapshotReadResult& outResult,
+                                           const InputFilterConfig& filter) {
   const int gen = ++prefetch_.generation;
   prefetch_.running = true;
   isLoading_ = true;
 
-  if (!syncLoadFirstFile(targetFile, P, header, normalization, filter)) {
+  if (!syncLoadFirstFile(targetFile, outResult, filter)) {
     prefetch_.running = false;
     isLoading_ = false;
-    return;
+    return false;
   }
 
   prefetch_.future = std::async(std::launch::async,
@@ -99,4 +102,5 @@ void SnapshotPrefetchController::loadBatch(int targetFile,
                                     isLoading_ = false;
                                   }
                                 });
+  return true;
 }

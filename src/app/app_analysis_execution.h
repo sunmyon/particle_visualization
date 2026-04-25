@@ -1,15 +1,16 @@
 #pragma once
 
 class ParticleArray;
-class FileInfo;
 class HaloStore;
 class ProjectionMapGenerator;
 struct HeaderInfo;
 struct RenderLayerState;
+struct QuantityState;
+struct UnitSystem;
+struct SettingsRuntimeState;
 struct NormalizationContext;
 struct ViewFilterConfig;
 struct TrackingTargetState;
-struct SnapshotSource;
 struct HaloesUIState;
 struct CameraContext;
 struct ProjectionMapParams;
@@ -29,17 +30,19 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
                                       DiskRadiusFinder& diskFinder,
                                       DiskAnalysisRequestState& request,
-                                      DiskAnalysisResultState& result);
+                                      DiskAnalysisResultState& result,
+				      const UnitSystem& units);
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
 			     HeaderInfo& header,
 			     NormalizationContext& normalization,
-                             FileInfo& fileInfo,
+                             FileNavigationRuntimeState& fileNav,
                              SnapshotLoadRuntimeState& snapshotLoad,
                              DiskRadiusFinder& diskFinder,
                              const RenderLayerState& diskRenderState,
                              DiskAnalysisBatchRequestState& request,
-                             DiskAnalysisBatchResultState& result);
+                             DiskAnalysisBatchResultState& result,
+			     const UnitSystem& units);
 
 void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
                                            EllipseFitter& ellipsoidFitter,
@@ -47,7 +50,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
                                            EllipsoidAnalysisResultState& result);
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
-                                  FileInfo& fileInfo,
+                                  FileNavigationRuntimeState& fileNav,
                                   SnapshotLoadRuntimeState& snapshotLoad,
                                   EllipseFitter& ellipsoidFitter,
                                   EllipsoidAnalysisBatchRequestState& request,
@@ -82,14 +85,19 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
 #endif
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
+				  const UnitSystem& units,
 				  const NormalizationContext& normalization,
                                   StellarDensityRequestState& request,
 				  double time);
 
+void ExecuteSettingsActionRequests(ParticleArray& particles,
+                                   QuantityState& quantity,
+                                   SettingsRuntimeState& settings);
+
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
 			      HeaderInfo& header,
-                              FileInfo& fileInfo,
+                              FileNavigationRuntimeState& fileNav,
                               SnapshotLoadRuntimeState& snapshotLoad,
                               FindClump& clumpFind,
                               ClumpBatchRequestState& request,
@@ -98,9 +106,10 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
                                    HeaderInfo& header,
+				   const UnitSystem& units,
                                    NormalizationContext& normalization,
                                    TrackingTargetState& track,
-                                   FileInfo& fileInfo,
+                                   FileNavigationRuntimeState& fileNav,
                                    ProjectionMapGenerator& projectionMap,
                                    const ProjectionMapParams& baseParams,
                                    CameraContext& camera,
@@ -109,8 +118,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
                                    SnapshotPostprocessState& post,
                                    ProjectionMovieResultState& result);
 
-void ExecuteFileNavigationRequests(FileInfo& fileInfo,
-                                   FileNavigationRuntimeState& rt,
+void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad);
 
 void ExecuteCameraPlacementRequests(ParticleArray& particles,

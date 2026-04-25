@@ -68,6 +68,7 @@ static bool IsSafeIndexFormat(const char* format)
 void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
                                   ProjectionMapGenerator& generator,
                                   ParticleArray& particles,
+				  const UnitSystem& units,
                                   const NormalizationContext& normalization,
 				  int currentFileIndex,
                                   ProjectionPreviewDerivedState& preview,
@@ -84,6 +85,7 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
   
   RgbImage image =
     generator.makeDensityMapImage(particles,
+				  units,
                                   params,
                                   context);
 

@@ -1,6 +1,7 @@
 #include <string>
 #include <limits>
 #include <cmath>
+#include <cstring>
 
 #include <imgui.h>
 #include "implot.h"
@@ -8,7 +9,7 @@
 #include "FindClumps/clump_window_state.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/find_clumps_IO.h"
-#include "FileIO/snapshot_source.h"
+#include "app/runtime_state.h"
 #include "data/clump_store.h"
 #include "data/clump_loader.h"
 #include "app/tracking_view_state.h"
@@ -125,7 +126,7 @@ static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
 				     ClumpStore& clumpStore,
 				     TrackingTargetState& state,
                                      int currentFileIndex,
-                                     const SnapshotSource& src,
+                                     const SnapshotInputState& input,
                                      const NormalizationContext& normalization);
 
 static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
@@ -145,7 +146,7 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
 		     ClumpStore& clump,
 		     TrackingTargetState& view,
 		     int currentFileIndex,
-		     const SnapshotSource& src,
+		     const SnapshotInputState& input,
 		     CameraContext& cam,
 		     const NormalizationContext& normalization)
 {
@@ -154,7 +155,7 @@ void DrawClumpListUI(LoadedClumpWindowState& ui,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("Clump lists", &ui.open, ImGuiWindowFlags_None);
 
-  DrawClumpFileLoadSection(ui, clump, view, currentFileIndex, src, normalization);
+  DrawClumpFileLoadSection(ui, clump, view, currentFileIndex, input, normalization);
   DrawLoadedClumpTable(ui, clump, cam);
   DrawClumpEvolutionControls(ui, ctool);
   DrawClumpEvolutionPlot(ui, ctool, clump, currentFileIndex);
@@ -166,7 +167,7 @@ static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
 				     ClumpStore& clumpStore,
 				     TrackingTargetState& view,
                                      int currentFileIndex,
-                                     const SnapshotSource& src,
+                                     const SnapshotInputState& input,
                                      const NormalizationContext& normalization)
 {
   static char buf[255];
@@ -174,7 +175,7 @@ static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
 
   ImGui::SameLine();
   if (ImGui::Button("path")) {
-    std::strcpy(buf, src.folderPath);
+    std::strcpy(buf, input.folderPath);
   }
 
   if (view.renewAfterSnapshot) {

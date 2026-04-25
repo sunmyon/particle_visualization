@@ -16,8 +16,8 @@
 
 #include "UI.h"
 #include "settingUI.h"
-#include "FileIO/file_io.h"
 #include "FileIO/file_format_dialog.h"
+#include "FileIO/snapshot_io_service.h"
 
 #include "render/frame_matrices.h"
 #include "render/render_draw_helpers.h"
@@ -40,15 +40,14 @@
 #include "PythonBridge/ShmLayout.h"
 #endif
 
-static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
+static SettingsUIContext MakeSettingsUIContext(AppDataState& data,
                                                AppViewState& view,
                                                AppRuntimeState& runtime,
                                                AnalysisDerivedState& analysis,
                                                ToolWindowUIState& toolWindows)
 {
   SettingsUIContext ctx;
-  ctx.P              = data.particles;
-  ctx.fileInfo       = data.fileInfo;
+  ctx.quantity       = &data.quantity;
   ctx.camCtx         = &view.camera;
   ctx.particleVisual = &view.particleVisual;
   ctx.render         = &runtime.render;
@@ -58,7 +57,7 @@ static SettingsUIContext MakeSettingsUIContext(const AppDataState& data,
   return ctx;
 }
 
-static void DrawSettingsPanels(const AppDataState& data,
+static void DrawSettingsPanels(AppDataState& data,
                                AppViewState& view,
                                AppRuntimeState& runtime,
                                AnalysisDerivedState& analysis,
@@ -70,14 +69,14 @@ static void DrawSettingsPanels(const AppDataState& data,
   ShowCameraSettingsUI();
 }
 
-static void DrawFileDialogPanels(FileInfo& file,
+static void DrawFileDialogPanels(SnapshotFormatState& format,
                                  ToolWindowUIState& toolWindows)
 {
   DrawBinaryFormatDialog(toolWindows.fileFormatDialog,
-                         file.editSource());
+                         format.formatTokens);
 #ifdef HAVE_HDF5
   DrawHDF5FormatDialog(toolWindows.fileFormatDialog,
-                       file.editSource());
+                       format.formatTokensHdf5);
 #endif
 }
 
@@ -90,7 +89,7 @@ static void ApplyMaskIfRequested(MaskUIState& mask, InputFilterConfig& inputFilt
 }
 
 
-static void DrawMainUI(const AppDataState& data,
+static void DrawMainUI(AppDataState& data,
 		       AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AnalysisDerivedState& analysis,
@@ -108,21 +107,22 @@ static void DrawToolWindows(AppDataState& data,
                             AnalysisDerivedState& analysis,
                             AppServices& services)
 {
-  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking, runtime.settings.snapshotPostprocess);
+  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking, runtime.settings.snapshotPostprocess, data.quantity.units);
   
-  DrawFileDialogPanels(*data.fileInfo, tools);
+  DrawFileDialogPanels(runtime.settings.snapshotFormat, tools);
   ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
 
-  DrawRadialProfileUI(tools.radialProfile, analysis.radial, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.particles->units);
+  DrawRadialProfileUI(tools.radialProfile, analysis.radial, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.quantity);
 
-  const auto& src = data.fileInfo->getSource();
+  const int currentFileIndex = runtime.settings.fileNavigation.navigation.currentFileIndex;
   DrawProjectionMapUI(tools.projectionMap,
 		      runtime.analysis.projectionMap,
 		      *data.particles,
 		      runtime.settings.normalization,
 		      camera,
 		      runtime.render.cuboidAnnotations,
-		      src.currentFileIndex);
+		      data.quantity.catalog,
+		      currentFileIndex);
   
   DrawProjectionFontSelectionUI(*services.projectionMap2D, tools.projectionMap);
   
@@ -136,31 +136,38 @@ static void DrawToolWindows(AppDataState& data,
   auto visibleHulls = analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
 
-  DrawHistogram2DUI(tools.histogram2D, analysis.hist2D, *services.histogram2D, data.particles->particleBlock, histCtx);
+  DrawHistogram2DUI(tools.histogram2D,
+		    analysis.hist2D,
+		    *services.histogram2D,
+		    data.particles->particleBlock,
+		    data.quantity.catalog,
+		    histCtx);
 
   DrawClumpFinderUI(tools.clumpFind,
 		    *services.clumpFind,
 		    data.particles->particleBlock.particles,
 		    data.header,
-		    data.fileInfo->getSource(),
+		    runtime.settings.fileNavigation.input,
+                    runtime.settings.fileNavigation.current,
 		    camera);
   
   DrawClumpListUI(tools.clumpList,
 		  *services.clumpLoad,
 		  data.clumpStore,
 		  runtime.settings.tracking,
-		  data.fileInfo->getSource().currentFileIndex,
-		  data.fileInfo->getSource(),
+		  currentFileIndex,
+                  runtime.settings.fileNavigation.input,
 		  camera,
 		  runtime.settings.normalization);
   
   DrawClumpChainListUI(tools.clumpChain,
 		       *services.clumpChain,
 		       data.particles,
-		       data.header,
+		       data.quantity.units,
 		       services.projectionMap2D.get(),
 		       runtime.analysis.projectionMap.params,
-		       *data.fileInfo,
+		       runtime.settings.fileNavigation.navigation,
+                       runtime.settings.fileNavigation.current,
 		       runtime.snapshotLoad,
 		       camera,
 		       runtime.settings.normalization);
@@ -835,17 +842,19 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				   runtime.settings.normalization,
                                    *services.diskFinder,
                                    runtime.analysis.disk,
-                                   analysis.disk);
+                                   analysis.disk,
+				   data.quantity.units);
   
   ExecuteDiskBatchRequest(*data.particles,
 			  data.header,
 			  runtime.settings.normalization,
-                          *data.fileInfo,
+                          runtime.settings.fileNavigation,
                           runtime.snapshotLoad,
                           *services.diskFinder,
                           runtime.render.disks,
                           runtime.analysis.diskBatch,
-                          analysis.diskBatch);
+                          analysis.diskBatch,
+			  data.quantity.units);
 
   ExecuteSingleEllipsoidAnalysisRequest(*data.particles,
                                         *services.ellipsoid,
@@ -853,7 +862,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                                         analysis.ellipsoid);
   
   ExecuteEllipsoidBatchRequest(*data.particles,
-                               *data.fileInfo,
+                               runtime.settings.fileNavigation,
                                runtime.snapshotLoad,
                                *services.ellipsoid,
                                runtime.analysis.ellipsoidBatch,
@@ -871,6 +880,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #endif
 
   ExecuteStellarDensityRequest(*data.particles,
+			       data.quantity.units,
 			       runtime.settings.normalization, 
 			       runtime.analysis.stellarDensity,
 			       data.header.time);
@@ -885,7 +895,7 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 #ifdef CLUMP_DATA_READ
   ExecuteClumpBatchRequest(*data.particles,
 			   data.header,
-			   *data.fileInfo,
+			   runtime.settings.fileNavigation,
 			   runtime.snapshotLoad,
 			   *services.clumpFind,
 			   runtime.analysis.clumpBatch,
@@ -900,9 +910,12 @@ static void ExecuteAnalysisRequests(AppDataState& data,
                             runtime.render.polyhedra);
 #endif
 
-  ExecuteFileNavigationRequests(*data.fileInfo,
-                                runtime.settings.fileNavigation,
+  ExecuteFileNavigationRequests(runtime.settings.fileNavigation,
                                 runtime.snapshotLoad);
+
+  ExecuteSettingsActionRequests(*data.particles,
+                                data.quantity,
+                                runtime.settings);
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
@@ -911,28 +924,34 @@ static void ExecuteAnalysisRequests(AppDataState& data,
 				 runtime.settings,
 				 runtime.settings.snapshotPostprocess);
 
-  const auto& src = data.fileInfo->getSource();
+  int currentFileIndex = runtime.settings.fileNavigation.current.loadedFileIndex;
+  if (currentFileIndex < 0) {
+    currentFileIndex = runtime.settings.fileNavigation.navigation.currentFileIndex;
+  }
+
   ExecutePostSnapshotLoadActions(*data.particles,
 				 data.clumpStore,
 				 runtime.settings.normalization,
 				 runtime.settings.tracking,
 				 camera,
 				 runtime.settings.snapshotPostprocess,
-				 src.currentFileIndex);
+				 currentFileIndex);
 
   ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
 			       *services.projectionMap2D,
 			       *data.particles,
+			       data.quantity.units,
 			       runtime.settings.normalization,
-			       data.fileInfo->getSource().currentFileIndex,
+			       currentFileIndex,
 			       analysis.projectionPreview,
-			       data.header.time);
+                               runtime.settings.fileNavigation.current.loadedTime);
 
   ExecuteProjectionMovieRequest(*data.particles,
 				data.header,
+				data.quantity.units,
 				runtime.settings.normalization,
 				runtime.settings.tracking,
-				*data.fileInfo,
+				runtime.settings.fileNavigation,
 				*services.projectionMap2D,
 				runtime.analysis.projectionMap.params,
 				camera,
@@ -955,23 +974,26 @@ void RunFrame(AppState& app,
 {
   BeginFrame(app.runtime, window);
 
+  app.runtime.snapshotLoad.busy =
+    (app.services.snapshotIO && app.services.snapshotIO->isLoading());
+
   DrawMainUI(app.data,
 	     app.view,
 	     app.runtime,
 	     app.derived.analysis,
 	     app.ui.toolWindows,
-	     app.data.header.time);
+             app.runtime.settings.fileNavigation.current.loadedTime);
 
   DrawToolWindows(app.data,
-		  app.view.camera,
-		  app.runtime,
-		  app.ui.toolWindows,
-		  app.derived.analysis,
-		  app.services);
-  
+                  app.view.camera,
+                  app.runtime,
+                  app.ui.toolWindows,
+                  app.derived.analysis,
+                  app.services);
+
   UpdateExternalInputs(app.services, *app.data.particles);
 
-  ProcessSnapshotLoadQueue(app.data, app.runtime);
+  ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
   ExecuteAnalysisRequests(app.data, app.runtime, app.derived.analysis, app.services, app.view.camera);
   
   RebuildDerivedState(*app.data.particles,

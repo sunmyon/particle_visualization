@@ -108,6 +108,7 @@ private:
   
 public:
   RgbImage makeDensityMapImage(ParticleArray& particles,
+			       const UnitSystem& units,
 			       ProjectionMapParams& params,
 			       ProjectionMapContext& ctx);
 

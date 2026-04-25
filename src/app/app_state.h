@@ -16,7 +16,6 @@
 #include "data/header_info.h"
 
 class ParticleArray;
-class FileInfo;
 class WindowContext;
 
 #include "app_services.h"
@@ -25,10 +24,9 @@ struct AppDataState {
   ParticleArray* particles = nullptr;
   ClumpStore clumpStore;
   HaloStore haloStore;
-  FileInfo* fileInfo = nullptr;
 
   HeaderInfo header;
-  QuantityCatalogState quantity;
+  QuantityState quantity;
 };
 
 struct AppViewState {
@@ -59,7 +57,7 @@ struct AppState {
   AppDataState data;
   AppViewState view;
   AppRuntimeState runtime;
-  AppUIState ui;  
+  AppUIState ui;
   AppDerivedState derived;
 };
 

@@ -1,6 +1,6 @@
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/clump_window_state.h"
-#include "FileIO/snapshot_source.h"
+#include "app/runtime_state.h"
 #include "interaction/camera.h"
 
 #include <imgui.h>
@@ -29,7 +29,8 @@ static void DrawClumpFinderRunButtons(ClumpFinderWindowState& ui,
 static void DrawClumpOutputSection(FindClump& cfind,
                                    TrackingVector<ParticleData>& originalParticles,
                                    const HeaderInfo& header,
-                                   const SnapshotSource& src);
+                                   const SnapshotInputState& input,
+                                   const SnapshotCurrentState& current);
 #endif
 
 static void DrawClumpListSection(ClumpFinderWindowState& ui,
@@ -44,7 +45,8 @@ void DrawClumpFinderUI(ClumpFinderWindowState& ui,
 		       FindClump& cfind,
 		       TrackingVector<ParticleData>& originalParticles,
 		       const HeaderInfo& header,
-		       const SnapshotSource& src,
+		       const SnapshotInputState& input,
+                       const SnapshotCurrentState& current,
 		       CameraContext& cam)
 {
   if (!ui.open) return;
@@ -56,7 +58,7 @@ void DrawClumpFinderUI(ClumpFinderWindowState& ui,
   DrawClumpFinderRunButtons(ui, cfind, originalParticles);
 
 #ifdef CLUMP_DATA_READ
-  DrawClumpOutputSection(cfind, originalParticles, header, src);
+  DrawClumpOutputSection(cfind, originalParticles, header, input, current);
 #endif
 
   DrawClumpListSection(ui, cfind, cam, originalParticles);
@@ -107,17 +109,19 @@ static void DrawClumpFinderRunButtons(ClumpFinderWindowState& ui,
 static void DrawClumpOutputSection(FindClump& cfind,
                                    TrackingVector<ParticleData>& originalParticles,
                                    const HeaderInfo& header,
-                                   const SnapshotSource& src)
+                                   const SnapshotInputState& input,
+                                   const SnapshotCurrentState& current)
 {
   static char buf[255] = "clumpList.hdf5";
   ImGui::InputText("output file name", buf, IM_ARRAYSIZE(buf));
 
   char temp[513];
-  std::snprintf(temp, sizeof(temp), "%s/%s", src.folderPath, buf);
+  std::snprintf(temp, sizeof(temp), "%s/%s", input.folderPath, buf);
 
   if (ImGui::Button("Output clump data")) {
     std::string filename(temp);
-    int snapshotIndex = src.currentFileIndex;
+    int snapshotIndex = current.loadedFileIndex;
+    if (snapshotIndex < 0) snapshotIndex = 0;
     cfind.writeFOFtoHDF5(originalParticles, header, filename, snapshotIndex);
   }
 }
@@ -277,4 +281,3 @@ static void DrawClumpHistogramSection(ClumpFinderWindowState& ui, FindClump& cfi
     ImPlot::EndPlot();
   }
 }
-

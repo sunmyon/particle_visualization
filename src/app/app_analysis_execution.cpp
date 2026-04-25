@@ -17,14 +17,15 @@
 #include "app/runtime_state.h"
 #include "app/normalization_config.h"
 #include "app/tracking_view_state.h"
+#include "app/snapshot_state_sync.h"
 #include "app/app_visibility_actions.h"
+#include "app/app_data_actions.h"
 #include "data/particle_array.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
 #include "data/header_info.h"
-#include "FileIO/file_io.h"
 #include "object.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_context.h"
@@ -98,7 +99,8 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
 				      DiskRadiusFinder& diskFinder,
 				      DiskAnalysisRequestState& request,
-				      DiskAnalysisResultState& result)
+				      DiskAnalysisResultState& result,
+				      const UnitSystem& units)
 {
   if (request.clearRequested) {
     result = DiskAnalysisResultState{};
@@ -137,7 +139,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
     return;
   }
 
-  param.G         = particles.units.grav_const_internal;
+  param.G         = units.grav_const_internal;
   param.max_shell = 100;
   param.scale_fac = normalization.toPhysicalScale();
 
@@ -249,14 +251,15 @@ static bool AppendDiskBatchEvolution(DiskAnalysisBatchRequestState& request,
 void ExecuteDiskBatchRequest(ParticleArray& particles,
 			     HeaderInfo& header,
 			     NormalizationContext& normalization,
-			     FileInfo& fileInfo,
+			     FileNavigationRuntimeState& fileNav,
 			     SnapshotLoadRuntimeState& snapshotLoad,
 			     DiskRadiusFinder& diskFinder,
 			     const RenderLayerState& diskRenderState,
 			     DiskAnalysisBatchRequestState& request,
-			     DiskAnalysisBatchResultState& result)
+			     DiskAnalysisBatchResultState& result,
+			     const UnitSystem& units)
 {
-  auto& src = fileInfo.editSource();
+  auto& nav = fileNav.navigation;
   auto& job = request.job;
 
   if (request.cancelRequested) {
@@ -271,8 +274,8 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
     result.lastInputFile = request.inputFile;
     result.lastOutputFile = request.outputFile;
 
-    if (src.skipStep <= 0) {
-      std::cerr << "invalid skipStep for disk batch: " << src.skipStep << '\n';
+    if (nav.skipStep <= 0) {
+      std::cerr << "invalid skipStep for disk batch: " << nav.skipStep << '\n';
       result.running = false;
       result.completed = true;
       result.success = false;
@@ -290,7 +293,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
 
     job = SnapshotJobRuntimeState{};
     job.status = JobStatus::Running;
-    job.savedCurrentStep = src.currentStep;
+    job.savedCurrentStep = nav.currentStep;
     request.rowCursor = 0;
     request.firstOutput = true;
     ResetDiskBatchRowState(request);
@@ -313,11 +316,11 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       job.status = JobStatus::Completed;
     } else {
       const auto& row = request.rows[request.rowCursor];
-      const int snapInit = static_cast<int>(row.snap / src.skipStep) * src.skipStep;
-      const int targetFileIndex = snapInit + src.skipStep * request.scanOffset;
-      const int targetStep = (src.skipStep != 0)
-                           ? ((targetFileIndex - src.initialIndex) / src.skipStep)
-                           : src.currentStep;
+      const int snapInit = static_cast<int>(row.snap / nav.skipStep) * nav.skipStep;
+      const int targetFileIndex = snapInit + nav.skipStep * request.scanOffset;
+      const int targetStep = (nav.skipStep != 0)
+                           ? ((targetFileIndex - nav.initialIndex) / nav.skipStep)
+                           : nav.currentStep;
 
       if (request.scanOffset == 0) {
         std::snprintf(request.evolutionOutputFile,
@@ -367,7 +370,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
             break;
           }
 
-          param.G = particles.units.grav_const_internal;
+          param.G = units.grav_const_internal;
           param.max_shell = 100;
           param.scale_fac = normalization.toPhysicalScale();
 
@@ -420,10 +423,10 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       if (!rowDone) {
         ++request.scanOffset;
         if (request.scanOffset < 100) {
-          const int nextFileIndex = snapInit + src.skipStep * request.scanOffset;
-          const int nextStep = (src.skipStep != 0)
-                             ? ((nextFileIndex - src.initialIndex) / src.skipStep)
-                             : src.currentStep;
+          const int nextFileIndex = snapInit + nav.skipStep * request.scanOffset;
+          const int nextStep = (nav.skipStep != 0)
+                             ? ((nextFileIndex - nav.initialIndex) / nav.skipStep)
+                             : nav.currentStep;
           RequestSnapshotLoad(snapshotLoad,
                               SnapshotLoadOwner::DiskBatch,
                               nextStep,
@@ -450,11 +453,11 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
   if (job.status == JobStatus::Cancelled ||
       job.status == JobStatus::Error ||
       job.status == JobStatus::Completed) {
-    src.currentStep = job.savedCurrentStep;
-    src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+    nav.currentStep = job.savedCurrentStep;
+    RecomputeCurrentFileIndex(fileNav);
     RequestSnapshotLoad(snapshotLoad,
                         SnapshotLoadOwner::UserNavigation,
-                        src.currentStep,
+                        nav.currentStep,
                         50);
 
     result.running = false;
@@ -506,13 +509,13 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
 }
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
-				  FileInfo& fileInfo,
+				  FileNavigationRuntimeState& fileNav,
 				  SnapshotLoadRuntimeState& snapshotLoad,
 				  EllipseFitter& ellipsoidFitter,
 				  EllipsoidAnalysisBatchRequestState& request,
 				  EllipsoidAnalysisBatchResultState& result)
 {
-  auto& src = fileInfo.editSource();
+  auto& nav = fileNav.navigation;
   auto& job = request.job;
 
   if (request.cancelRequested) {
@@ -526,8 +529,8 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
     result.lastInputFile = request.inputFile;
     result.lastOutputFile = request.outputFile;
 
-    if (src.skipStep <= 0) {
-      std::cerr << "invalid skipStep for ellipsoid batch: " << src.skipStep << '\n';
+    if (nav.skipStep <= 0) {
+      std::cerr << "invalid skipStep for ellipsoid batch: " << nav.skipStep << '\n';
       result.completed = true;
       result.success = false;
       return;
@@ -558,7 +561,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
     request.firstOutput = true;
     job = SnapshotJobRuntimeState{};
     job.status = JobStatus::Running;
-    job.savedCurrentStep = src.currentStep;
+    job.savedCurrentStep = nav.currentStep;
   }
 
   if (job.status != JobStatus::Running) return;
@@ -577,9 +580,9 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
       job.status = JobStatus::Completed;
     } else {
       const auto& row = request.rows[request.rowCursor];
-      const int targetStep = (src.skipStep != 0)
-                           ? ((row.snap - src.initialIndex) / src.skipStep)
-                           : src.currentStep;
+      const int targetStep = (nav.skipStep != 0)
+                           ? ((row.snap - nav.initialIndex) / nav.skipStep)
+                           : nav.currentStep;
 
       if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::EllipsoidBatch, targetStep)) {
         RequestSnapshotLoad(snapshotLoad,
@@ -625,11 +628,11 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
   if (job.status == JobStatus::Cancelled ||
       job.status == JobStatus::Error ||
       job.status == JobStatus::Completed) {
-    src.currentStep = job.savedCurrentStep;
-    src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+    nav.currentStep = job.savedCurrentStep;
+    RecomputeCurrentFileIndex(fileNav);
     RequestSnapshotLoad(snapshotLoad,
                         SnapshotLoadOwner::UserNavigation,
-                        src.currentStep,
+                        nav.currentStep,
                         50);
 
     result.completed = true;
@@ -765,6 +768,7 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
 #endif
 
 void ExecuteStellarDensityRequest(ParticleArray& particles,
+				  const UnitSystem& units,
 				  const NormalizationContext& normalization,
                                   StellarDensityRequestState& request,
 				  double time)
@@ -780,7 +784,11 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
     sel[i] = request.selectedTypes[i];
   }
 
-  particles.computeStellarDensity(sel, request.overwriteHsml, normalization, time);
+  particles.computeStellarDensity(sel,
+                                  request.overwriteHsml,
+                                  normalization,
+                                  time,
+                                  units);
   particles.particlesDirty = true;
 }
 
@@ -834,13 +842,13 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
 			      HeaderInfo& header,
-			      FileInfo& fileInfo,
+			      FileNavigationRuntimeState& fileNav,
 			      SnapshotLoadRuntimeState& snapshotLoad,
 			      FindClump& clumpFind,
 			      ClumpBatchRequestState& request,
 			      ClumpBatchResultState& result)
 {
-  auto& src = fileInfo.editSource();
+  auto& nav = fileNav.navigation;
   auto& job = request.job;
 
   if (request.cancelRequested) {
@@ -864,9 +872,9 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
       return;
     }
 
-    if (src.skipStep <= 0) {
+    if (nav.skipStep <= 0) {
       std::snprintf(result.errorMessage, sizeof(result.errorMessage),
-                    "invalid skipStep for clump batch: %d", src.skipStep);
+                    "invalid skipStep for clump batch: %d", nav.skipStep);
       result.completed = true;
       return;
     }
@@ -874,9 +882,9 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
     clumpFind.initialize_prev_nodes();
     job = SnapshotJobRuntimeState{};
     job.status = JobStatus::Running;
-    job.savedCurrentStep = src.currentStep;
-    job.beginStep = src.currentStep;
-    job.endStep = src.currentStep + request.nSnapshots - 1;
+    job.savedCurrentStep = nav.currentStep;
+    job.beginStep = nav.currentStep;
+    job.endStep = nav.currentStep + request.nSnapshots - 1;
     job.nextStep = job.beginStep;
     job.stepStride = 1;
   }
@@ -897,7 +905,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
       return;
     }
 
-    const int newFileIndex = src.initialIndex + targetStep * src.skipStep;
+    const int newFileIndex = nav.initialIndex + targetStep * nav.skipStep;
     if (!particles.particleBlock.particles.empty()) {
       clumpFind.do_FOF_and_output_clump_data(request.method,
                                              particles.particleBlock.particles,
@@ -923,12 +931,12 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
   if (job.status == JobStatus::Cancelled ||
       job.status == JobStatus::Error ||
       job.status == JobStatus::Completed) {
-    src.currentStep = job.savedCurrentStep;
-    src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+    nav.currentStep = job.savedCurrentStep;
+    RecomputeCurrentFileIndex(fileNav);
 
     if (job.status == JobStatus::Completed) {
-      const int initstep = src.currentFileIndex;
-      const int dstep = src.skipStep;
+      const int initstep = nav.currentFileIndex;
+      const int dstep = nav.skipStep;
       give_stellar_id_to_clumps(initstep,
                                 request.nSnapshots,
                                 dstep,
@@ -943,7 +951,7 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 
     RequestSnapshotLoad(snapshotLoad,
                         SnapshotLoadOwner::UserNavigation,
-                        src.currentStep,
+                        nav.currentStep,
                         50);
 
     request.job = SnapshotJobRuntimeState{};
@@ -951,12 +959,11 @@ void ExecuteClumpBatchRequest(ParticleArray& particles,
 }
 #endif
 
-void ExecuteFileNavigationRequests(FileInfo& fileInfo,
-                                   FileNavigationRuntimeState& rt,
+void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad)
 {
   auto& req = rt.request;
-  auto& src = fileInfo.editSource();
+  auto& nav = rt.navigation;
 
   auto enqueueUserNavLoad = [&](int step) {
     RequestSnapshotLoad(snapshotLoad,
@@ -967,54 +974,87 @@ void ExecuteFileNavigationRequests(FileInfo& fileInfo,
 
   if (req.applySkipStepRequested) {
     if (rt.tempSkipStep > 0) {
-      src.currentStep = std::max(
+      nav.currentStep = std::max(
         0,
         static_cast<int>(std::round(
-          (src.currentFileIndex - src.initialIndex) /
+          (nav.currentFileIndex - nav.initialIndex) /
           static_cast<float>(rt.tempSkipStep)))
       );
-      src.skipStep = rt.tempSkipStep;
-      enqueueUserNavLoad(src.currentStep);
+      nav.skipStep = rt.tempSkipStep;
+      RecomputeCurrentFileIndex(rt);
+      enqueueUserNavLoad(nav.currentStep);
     }
     req.applySkipStepRequested = false;
   }
 
   if (req.loadSelectedSnapshotRequested) {
-    enqueueUserNavLoad(src.currentStep);
+    RecomputeCurrentFileIndex(rt);
+    enqueueUserNavLoad(nav.currentStep);
     req.loadSelectedSnapshotRequested = false;
   }
 
   if (req.loadPreviousRequested) {
-    if (src.currentStep > 0) {
-      --src.currentStep;
+    if (nav.currentStep > 0) {
+      --nav.currentStep;
     }
-    enqueueUserNavLoad(src.currentStep);
+    RecomputeCurrentFileIndex(rt);
+    enqueueUserNavLoad(nav.currentStep);
     req.loadPreviousRequested = false;
   }
 
   if (req.loadNextRequested) {
-    ++src.currentStep;
-    enqueueUserNavLoad(src.currentStep);
+    ++nav.currentStep;
+    RecomputeCurrentFileIndex(rt);
+    enqueueUserNavLoad(nav.currentStep);
     req.loadNextRequested = false;
   }
 
   if (req.loadBatchRequested) {
-    enqueueUserNavLoad(src.currentStep);
+    RecomputeCurrentFileIndex(rt);
+    enqueueUserNavLoad(nav.currentStep);
     req.loadBatchRequested = false;
   }
 
   if (req.reloadRequested) {
-    enqueueUserNavLoad(src.currentStep);
+    RecomputeCurrentFileIndex(rt);
+    enqueueUserNavLoad(nav.currentStep);
     req.reloadRequested = false;
   }
 
   if (req.generateTestDataRequested) {
+    RecomputeCurrentFileIndex(rt);
     RequestSnapshotLoad(snapshotLoad,
                         SnapshotLoadOwner::UserNavigation,
-                        src.currentStep,
+                        nav.currentStep,
                         1,
                         SnapshotLoadKind::GenerateTestData);
     req.generateTestDataRequested = false;
+  }
+}
+
+void ExecuteSettingsActionRequests(ParticleArray& particles,
+                                   QuantityState& quantity,
+                                   SettingsRuntimeState& settings)
+{
+  auto& req = settings.request;
+
+  if (req.normalizeRequested) {
+    settings.normalization.originalMax = quantity.range.originalMax;
+    NormalizeParticlePositions(particles, settings.normalization);
+    settings.snapshotPostprocess.refreshTree = true;
+    settings.snapshotPostprocess.refreshCulling = true;
+    settings.snapshotPostprocess.refreshTopParticles = true;
+    req.normalizeRequested = false;
+  }
+
+  if (req.particleRenderDirtyRequested) {
+    particles.particlesDirty = true;
+    req.particleRenderDirtyRequested = false;
+  }
+
+  if (req.velocityRenderDirtyRequested) {
+    particles.velocityDirty = true;
+    req.velocityRenderDirtyRequested = false;
   }
 }
 
@@ -1164,8 +1204,9 @@ static void ApplyMovieRequestToTracking(const ProjectionMovieRequestState& reque
   track.renewAfterSnapshot = true;
 }
 
-static bool RenderProjectionMovieFrame(ParticleArray& particles,
+static bool RenderProjectionMovieFrame(ParticleArray& particles,				       
                                        HeaderInfo& header,
+				       const UnitSystem& units,
                                        NormalizationContext& normalization,
                                        ProjectionMapGenerator& projectionMap,
                                        const ProjectionMapParams& baseParams,
@@ -1208,7 +1249,7 @@ static bool RenderProjectionMovieFrame(ParticleArray& particles,
                               header.time);
 
   RgbImage image =
-    projectionMap.makeDensityMapImage(particles, frameParams, context);
+    projectionMap.makeDensityMapImage(particles, units, frameParams, context);
 
   if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
     std::snprintf(result.errorMessage, sizeof(result.errorMessage),
@@ -1226,9 +1267,10 @@ static bool RenderProjectionMovieFrame(ParticleArray& particles,
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
                                    HeaderInfo& header,
+				   const UnitSystem& units,
                                    NormalizationContext& normalization,
                                    TrackingTargetState& track,
-                                   FileInfo& fileInfo,
+                                   FileNavigationRuntimeState& fileNav,
                                    ProjectionMapGenerator& projectionMap,
                                    const ProjectionMapParams& baseParams,
                                    CameraContext& camera,
@@ -1242,7 +1284,7 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
 
   auto& request = movie.request;
   auto& job = movie.job;
-  auto& src = fileInfo.editSource();
+  auto& nav = fileNav.navigation;
 
   if (request.cancelRequested) {
     job.cancelRequested = true;
@@ -1281,9 +1323,9 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
     post.applyTrackingToCamera = true;
 
     job.status = JobStatus::Running;
-    job.savedCurrentStep = src.currentStep;
-    job.beginStep = src.currentStep;
-    job.endStep = src.currentStep + request.nSnapshots - 1;
+    job.savedCurrentStep = nav.currentStep;
+    job.beginStep = nav.currentStep;
+    job.endStep = nav.currentStep + request.nSnapshots - 1;
     job.nextStep = job.beginStep;
     job.stepStride = 1;
     job.processed = 0;
@@ -1308,11 +1350,12 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       return;
     }
 
-    const int newFileIndex = src.initialIndex + targetStep * src.skipStep;
+    const int newFileIndex = nav.initialIndex + targetStep * nav.skipStep;
 
     try {
       if (!RenderProjectionMovieFrame(particles,
                                       header,
+				      units,
                                       normalization,
                                       projectionMap,
                                       baseParams,
@@ -1380,11 +1423,11 @@ void ExecuteProjectionMovieRequest(ParticleArray& particles,
       RestoreCameraFromJob(camera, job);
     }
 
-    src.currentStep = job.savedCurrentStep;
-    src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
+    nav.currentStep = job.savedCurrentStep;
+    RecomputeCurrentFileIndex(fileNav);
     RequestSnapshotLoad(snapshotLoad,
                         SnapshotLoadOwner::UserNavigation,
-                        src.currentStep,
+                        nav.currentStep,
                         50);
 
     if (job.status == JobStatus::Cancelled) {

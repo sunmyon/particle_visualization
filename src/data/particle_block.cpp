@@ -1,55 +1,19 @@
 #include "data/particle_selection.h"
 #include "data/particle_block.h"
 #include "data/header_info.h"
+#include "data/quantity_catalog_builder.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <random>
 
-void ParticleBlock::rebuildQuantities(void) {
-  nAllQ = 0; nUIQ = 0;
-
-  auto pushAll = [&](QuantityId q){ allQ[nAllQ++] = q; };
-  auto pushUI  = [&](QuantityId q){ uiQ[nUIQ++]  = q; };
-
-  for (auto q : {QuantityId::Density, QuantityId::Temperature,
-		 QuantityId::Mass, QuantityId::Hsml}) {
-    pushAll(q);
-    pushUI(q);
-  }
-
-  // --- 内部用（UIに出さないが all には入れる）---
-  for (auto q : {QuantityId::PosX, QuantityId::PosY, QuantityId::PosZ, QuantityId::Radius, QuantityId::VRad}) {
-    pushAll(q);
-  }
-
-  auto push_if_has = [&](const auto& view, QuantityId q) {
-    if (hasSoAAs(view)) {
-      pushAll(q);
-      pushUI(q);
-    }
-  };
-
-  push_if_has(soa_views::Bfield,            QuantityId::B);
-  push_if_has(soa_views::Bfield,            QuantityId::Beta);
-  push_if_has(soa_views::Metallicity,       QuantityId::Metallicity);
-  push_if_has(soa_views::ElectronAbundance, QuantityId::ElectronAbundance);
-  push_if_has(soa_views::H2Abundance,       QuantityId::H2Abundance);
-  push_if_has(soa_views::HDAbundance,       QuantityId::HDAbundance);
-  push_if_has(soa_views::J21,               QuantityId::J21);
-  push_if_has(soa_views::Val1,              QuantityId::Val);
-  push_if_has(soa_views::Val2,              QuantityId::Val2);    
-}
-
-ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
-  rebuildQuantities();
-
+ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
   BuildResult result;
   
   if (!particles.empty()) {
     result.originalMax = 0.;
-    for (int q = 0; q < nUIQ; ++q) {
+    for (int q = 0; q < catalog.nUIQ; ++q) {
       for (int t = 0; t < kNumTypes; ++t) {
 	result.valueMin[q][t] = std::numeric_limits<float>::max();
 	result.valueMax[q][t] = -std::numeric_limits<float>::max();
@@ -65,7 +29,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
       int   local_npart_type[kNumTypes] = {0};
 
       // thread-local init
-      for (int q = 0; q < nUIQ; ++q) {
+      for (int q = 0; q < catalog.nUIQ; ++q) {
         for (int t = 0; t < kNumTypes; ++t) {
           localMin[q][t]  = std::numeric_limits<float>::max();
           localMaxV[q][t] = -std::numeric_limits<float>::max();
@@ -89,8 +53,8 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
         p.flag_stress = 0;
 
         // renew min/max
-        for (int q = 0; q < nUIQ; ++q) {
-          float v = getScalarValue(*this, p, i, uiQ[q]);
+        for (int q = 0; q < catalog.nUIQ; ++q) {
+          float v = getScalarValue(*this, p, i, catalog.uiQ[q]);
           localMin[q][type]  = std::min(localMin[q][type],  v);
           localMaxV[q][type] = std::max(localMaxV[q][type], v);
         }
@@ -102,7 +66,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
 
         for (int t = 0; t < kNumTypes; ++t) npart_type[t] += local_npart_type[t];
 
-        for (int q = 0; q < nUIQ; ++q)
+        for (int q = 0; q < catalog.nUIQ; ++q)
           for (int t = 0; t < kNumTypes; ++t) {
             result.valueMin[q][t] = std::min(result.valueMin[q][t], localMin[q][t]);
             result.valueMax[q][t] = std::max(result.valueMax[q][t], localMaxV[q][t]);
@@ -122,7 +86,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax){
     }
 
     // 4) set 0 to max/min values if no particle for each particle type
-    for (int q = 0; q < nUIQ; ++q) {
+    for (int q = 0; q < catalog.nUIQ; ++q) {
       for (int t = 0; t < kNumTypes; ++t) {
         if (npart_type[t] == 0) {
           result.valueMin[q][t] = result.valueMax[q][t] = 0.0f;

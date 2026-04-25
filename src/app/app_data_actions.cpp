@@ -6,6 +6,5 @@
 void NormalizeParticlePositions(ParticleArray& particles,
                                 NormalizationContext& normalization)
 {
-  normalization.originalMax = particles.originalMax;
   particles.rescalePositions(normalization);
 }

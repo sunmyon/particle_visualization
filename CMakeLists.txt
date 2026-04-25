@@ -102,8 +102,9 @@ set(SOURCES_CPP
   ${SRC_DIR}/data/particle_array.cpp
   ${SRC_DIR}/data/clump_loader.cpp
   ${SRC_DIR}/data/halo_store.cpp
+  ${SRC_DIR}/data/quantity_catalog_builder.cpp
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
-	${SRC_DIR}/FileIO/file_io.cpp
+  ${SRC_DIR}/FileIO/snapshot_io_service.cpp
   ${SRC_DIR}/FileIO/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp
   ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp

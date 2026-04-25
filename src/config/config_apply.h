@@ -1,13 +1,15 @@
 #pragma once
 
 struct ConfigData;
-class FileInfo;
-class ParticleArray;
+struct FileNavigationRuntimeState;
+struct SnapshotFormatState;
+struct UnitSystem;
 struct ParticleVisualConfig;
 struct ParticleMaskConfig;
 
 void ApplyConfigData(const ConfigData& config,
-                     FileInfo& fileInfo,
+                     FileNavigationRuntimeState& fileNav,
+                     SnapshotFormatState& format,
 		     UnitSystem& units,
 		     float& desired_max,
                      ParticleVisualConfig& visual,

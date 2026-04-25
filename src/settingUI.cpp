@@ -1,13 +1,12 @@
 #include "UI.h"
 #include "settingUI.h"
 #include "app/app_state.h"
-#include "app/app_data_actions.h"
+#include "app/snapshot_state_sync.h"
 #include "render_actions.h"
 
 #include "interaction/camera.h"
 #include "particle_visual_config.h"   // ParticleVisualConfig の実定義
-#include "FileIO/file_io.h"       // FileInfo の実定義
-#include "FileIO/file_format_dialog.h"       // FileInfo の実定義
+#include "FileIO/file_format_dialog.h"
 #include "render/colormap_defs.h"  
 #include "data/particle_array.h"
 
@@ -27,33 +26,53 @@ struct PullDownItem {
 };
 
 static void DrawCameraInfoSection(const CameraContext& camCtx);
-static void DrawParticleTypeSettingsSection(ParticleArray* P, ParticleVisualConfig& particleVisual);
-static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, FileNavigationRuntimeState& rt, ToolWindowUIState& tools);
-static void DrawNormalizationSection(ParticleArray* P, NormalizationContext& ctx);
+static void DrawParticleTypeSettingsSection(QuantityState& quantity,
+					    ParticleVisualConfig& particleVisual,
+					    SettingsActionRequestState& req);
+static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
+                                      SnapshotFormatState& format,
+                                      bool isLoading,
+                                      ToolWindowUIState& tools);
+static void DrawNormalizationSection(NormalizationContext& ctx,
+				     SettingsActionRequestState& req);
 static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const CameraContext& camCtx);
 #ifdef PYTHON_BRIDGE
 static void DrawPythonBridgeSection(PythonBridgeRequestState& request, const PythonBridgeViewState& view);
 #endif
-static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
-static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools);
-static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render);
+static void DrawAnalysisSection(RenderRuntimeState& render,
+				AnalysisDerivedState& analysis,
+                                AnalysisRequestRuntimeState& rt,
+                                const FileNavigationRuntimeState& fileNav,
+                                ToolWindowUIState& tools);
+
+static void DrawRenderingSection(RenderRuntimeState& render,
+				 AnalysisDerivedState& analysis,
+				 QuantityCatalogState& catalog,
+				 AnalysisRequestRuntimeState& rt,
+				 ToolWindowUIState& tools,
+				 SettingsActionRequestState& settingsReq);
+
+static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt, RenderRuntimeState& render);
 
 void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
   ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
   DrawCameraInfoSection(*ctx.camCtx);
-  DrawParticleTypeSettingsSection(ctx.P, *ctx.particleVisual);
-  DrawFileNavigationSection(ctx.fileInfo->editSource(), *ctx.fileInfo, rt.settings.fileNavigation, *ctx.windows);
-  DrawNormalizationSection(ctx.P, rt.settings.normalization);
+  DrawParticleTypeSettingsSection(*ctx.quantity, *ctx.particleVisual, rt.settings.request);
+  DrawFileNavigationSection(rt.settings.fileNavigation,
+                            rt.settings.snapshotFormat,
+                            rt.snapshotLoad.busy,
+                            *ctx.windows);
+  DrawNormalizationSection(rt.settings.normalization, rt.settings.request);
   DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
   DrawCameraPlacementSection(rt.settings, *ctx.camCtx);
 #ifdef PYTHON_BRIDGE
   DrawPythonBridgeSection(rt.analysis.py.request, rt.analysis.py.view);
 #endif
-  DrawAnalysisSection(ctx, rt.analysis, *ctx.windows);
-  DrawRenderingSection(ctx, rt.analysis, *ctx.windows);
-  DrawOtherSettingsSection(ctx.P->units, ctx.fileInfo, rt.settings, rt.render);
+  DrawAnalysisSection(*ctx.render, *ctx.analysis, rt.analysis, rt.settings.fileNavigation, *ctx.windows);
+  DrawRenderingSection(*ctx.render, *ctx.analysis, ctx.quantity->catalog, rt.analysis, *ctx.windows, rt.settings.request);
+  DrawOtherSettingsSection(ctx.quantity->units, rt.settings, rt.render);
 
   ImGui::End();
 }
@@ -63,7 +82,9 @@ static void DrawCameraInfoSection(const CameraContext& camCtx) {
   ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)", camCtx.cameraTarget.x, camCtx.cameraTarget.y, camCtx.cameraTarget.z);
 }
 
-static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualConfig& particleVisual) {
+static void DrawParticleTypeSettingsSection(QuantityState& quantity,
+					    ParticleVisualConfig& particleVisual,
+					    SettingsActionRequestState& req) {
   if (!ImGui::CollapsingHeader("Particle Type Settings"))
     return;
     
@@ -71,6 +92,7 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
     std::string header = "Type " + std::to_string(i);
     if (ImGui::TreeNode(header.c_str())) {
       auto& cfg = particleVisual.types[i];
+      bool visualChanged = false;
 				
       std::string comboLabel = "Colormap##" + std::to_string(i);
       const char* preview = gColormapDefs[cfg.colormapIndex].name;
@@ -79,56 +101,56 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
 	  bool selected = (cfg.colormapIndex == k);
 	  if (ImGui::Selectable(gColormapDefs[k].name, selected)) {
 	    cfg.colormapIndex = k;
+	    visualChanged = true;
 	  }
 	  if (selected) ImGui::SetItemDefaultFocus();
 	}
 	ImGui::EndCombo();
       }
 				
-      ImGui::Checkbox("Periodic Color Bar", &cfg.periodicColorBar);
+      visualChanged |= ImGui::Checkbox("Periodic Color Bar", &cfg.periodicColorBar);
 				
       std::string sliderLabel = "Point Size##" + std::to_string(i);
-      ImGui::SliderFloat(sliderLabel.c_str(), &cfg.pointSize, 1.0f, 100.0f);
+      visualChanged |= ImGui::SliderFloat(sliderLabel.c_str(), &cfg.pointSize, 1.0f, 100.0f);
       std::string minLabel = "Value Min##" + std::to_string(i);
-      ImGui::InputFloat(minLabel.c_str(), &cfg.colorMin, 0.01f, 0.1f, "%.3f");
+      visualChanged |= ImGui::InputFloat(minLabel.c_str(), &cfg.colorMin, 0.01f, 0.1f, "%.3f");
       std::string maxLabel = "Value Max##" + std::to_string(i);
-      ImGui::InputFloat(maxLabel.c_str(), &cfg.colorMax, 0.01f, 0.1f, "%.3f");
+      visualChanged |= ImGui::InputFloat(maxLabel.c_str(), &cfg.colorMax, 0.01f, 0.1f, "%.3f");
       std::string logLabel = "Use Log Scale##" + std::to_string(i);
-      ImGui::Checkbox(logLabel.c_str(), &cfg.useLogScale);
+      visualChanged |= ImGui::Checkbox(logLabel.c_str(), &cfg.useLogScale);
 				
-      bool flagHideParticles_prev =  static_cast<bool>(cfg.hideParticles);
       std::string hideLabel = "Hide particle##" + std::to_string(i);
-      ImGui::Checkbox(hideLabel.c_str(), &cfg.hideParticles);
-      if(flagHideParticles_prev != cfg.hideParticles)
-	Part->particlesDirty = true;
+      visualChanged |= ImGui::Checkbox(hideLabel.c_str(), &cfg.hideParticles);
 				
-      QuantityId icolor_prev = cfg.selectedQuantity;
       QuantityId& sel = cfg.selectedQuantity;
 
       std::string quantityLabel = "Quantity##ptype_" + std::to_string(i);
       if (ImGui::BeginCombo(quantityLabel.c_str(), QuantityLabel(sel))) {
-	for (int q = 0; q < Part->particleBlock.nUIQ; ++q) {
-	  QuantityId cand = Part->particleBlock.uiQ[q];
+	for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
+	  QuantityId cand = quantity.catalog.uiQ[q];
 	  bool is_selected = (cand == sel);
-	  if (ImGui::Selectable(QuantityLabel(cand), is_selected)) sel = cand;
+	  if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
+	    sel = cand;
+	    visualChanged = true;
+	  }
 	  if (is_selected) ImGui::SetItemDefaultFocus();
 	}
 	ImGui::EndCombo();
       }
 				
       auto findIndex = [&](QuantityId q)->int{
-	for (int k = 0; k < Part->particleBlock.nUIQ; ++k) if (Part->particleBlock.uiQ[k] == q) return k;
+	for (int k = 0; k < quantity.catalog.nUIQ; ++k) if (quantity.catalog.uiQ[k] == q) return k;
 	return 0; // fallback
       };
 				
       int qidx = findIndex(sel);
       ImGui::Text("Current particle %s range: [%g, %g]",
 		  QuantityLabel(sel),
-		  Part->particleValueMin[qidx][i],
-		  Part->particleValueMax[qidx][i]);
+		  quantity.range.valueMin[qidx][i],
+		  quantity.range.valueMax[qidx][i]);
 				
-      if(icolor_prev != cfg.selectedQuantity){
-	Part->particlesDirty = true;  // グローバルなフラグをtrueに設定
+      if (visualChanged) {
+	req.particleRenderDirtyRequested = true;
       }
 				
       ImGui::TreePop();
@@ -136,38 +158,36 @@ static void DrawParticleTypeSettingsSection(ParticleArray* Part, ParticleVisualC
   }    
 }
 
-static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo, FileNavigationRuntimeState& rt, ToolWindowUIState& tools){
+static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
+                                      SnapshotFormatState& format,
+                                      bool isLoading,
+                                      ToolWindowUIState& tools){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
 
-  auto& src = source;
+  auto& nav = rt.navigation;
+  auto& input = rt.input;
   
-  ImGui::InputText("Folder", src.folderPath, IM_ARRAYSIZE(src.folderPath));
-  ImGui::InputText("File Format", src.fileFormat, IM_ARRAYSIZE(src.fileFormat));
-  ImGui::InputInt("initialIndex", &src.initialIndex);
+  ImGui::InputText("Folder", input.folderPath, IM_ARRAYSIZE(input.folderPath));
+  ImGui::InputText("File Format", input.fileFormat, IM_ARRAYSIZE(input.fileFormat));
+  ImGui::InputInt("initialIndex", &nav.initialIndex);
 		
-  char fileNameOnly[255];
-  std::snprintf(fileNameOnly, sizeof(fileNameOnly), src.fileFormat, src.initialIndex);
-  std::snprintf(src.filePath, sizeof(src.filePath), "%s/%s", src.folderPath, fileNameOnly);
+  RefreshSnapshotFilePath(rt);
 		
   if (ImGui::Button("Browse Files")) {
 #ifndef NONATIVEFILEDIALOG
     nfdu8char_t* outPath = nullptr;
-
-    nfdu8filteritem_t filters[] = {
-      { "Snapshot files", "hdf5,h5,bin,dat,*" }
-    };
 
     nfdopendialogu8args_t args = {};
     //args.filterList  = filters;
     //args.filterCount = 1;
     args.filterList  = nullptr; 
     args.filterCount = 0;    
-    args.defaultPath = src.folderPath[0] ? src.folderPath : nullptr;
+    args.defaultPath = input.folderPath[0] ? input.folderPath : nullptr;
 
     nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
     if (result == NFD_OKAY) {
-      fileInfo.applySelectedFilePath(outPath);
+      ApplySelectedSnapshotPath(rt, outPath);
       NFD_FreePathU8(outPath);
     }
     else if (result == NFD_CANCEL) {
@@ -179,7 +199,7 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
     IGFD::FileDialogConfig config;
     // 初期ディレクトリの設定（"path" メンバー）
     //config.path = src.filePath;
-    config.path = src.folderPath;
+    config.path = input.folderPath;
     // 必要なら初期のファイル名を設定（空の場合はユーザー入力待ち）
     config.fileName = "output"; 
     // その他、選択可能なファイル数などの設定はデフォルトのままでOK
@@ -193,7 +213,7 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
       if (ImGuiFileDialog::Instance()->IsOk())
 	{
 	  std::string selectedFile = ImGuiFileDialog::Instance()->GetFilePathName();
-	  fileInfo.applySelectedFilePath(selectedFile.c_str());
+	  ApplySelectedSnapshotPath(rt, selectedFile.c_str());
 	}
       else
 	{
@@ -203,25 +223,25 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
     }
 #endif
   
-  src.currentFileIndex = src.initialIndex + src.currentStep * src.skipStep;
-  ImGui::Text("File: %s", src.filePath);
-  ImGui::Text("Current File: %d", src.currentFileIndex);
+  RecomputeCurrentFileIndex(rt);
+  ImGui::Text("File: %s", input.filePath);
+  ImGui::Text("Current File: %d", nav.currentFileIndex);
 		
-  ImGui::BeginDisabled(fileInfo.isLoading());
+  ImGui::BeginDisabled(isLoading);
 
   if (rt.tempSkipStep <= 0) {
-    rt.tempSkipStep = src.skipStep;
+    rt.tempSkipStep = nav.skipStep;
   }
 
   if (ImGui::InputInt("Skip Step", &rt.tempSkipStep, 1, 100)) {
     rt.request.applySkipStepRequested = true;
   }
 
-  if (ImGui::InputInt("Select File Index", &src.currentStep, 1, 10)) {
+  if (ImGui::InputInt("Select File Index", &nav.currentStep, 1, 10)) {
     rt.request.loadSelectedSnapshotRequested = true;
   }
 
-  if (ImGui::Button("Previous File") && src.currentStep > 0) {
+  if (ImGui::Button("Previous File") && nav.currentStep > 0) {
     rt.request.loadPreviousRequested = true;
   }
 
@@ -231,13 +251,13 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
     rt.request.loadNextRequested = true;
   }
 
-  if (ImGui::InputInt("Batch Size", &src.batchSize)) {
+  if (ImGui::InputInt("Batch Size", &nav.batchSize)) {
     rt.request.loadBatchRequested = true;
   }
 
   ImGui::EndDisabled();
 
-  if (fileInfo.isLoading()) {
+  if (isLoading) {
     ImGui::Text("Loading...");
   }
 
@@ -247,11 +267,11 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
 
   if (ImGui::Button("Edit Data Format")) {
 #ifdef HAVE_HDF5
-    if(source.useHDF5)
-      OpenHDF5FormatDialog(tools.fileFormatDialog, fileInfo.getSource());
+    if (input.useHDF5)
+      OpenHDF5FormatDialog(tools.fileFormatDialog, format.formatTokensHdf5);
     else
 #endif
-      OpenBinaryFormatDialog(tools.fileFormatDialog, fileInfo.getSource());    
+      OpenBinaryFormatDialog(tools.fileFormatDialog, format.formatTokens);
   }
 
   static const char* FileFormatNames[] = {
@@ -260,9 +280,9 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
   static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
                 "FileFormatNames needs to match FileFormat::_Count");
 
-  int fmtIdx = fileInfo.getFormatMode_int();
+  int fmtIdx = static_cast<int>(format.readFormat);
   if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
-    fileInfo.setFormatMode(static_cast<FileFormat>(fmtIdx));
+    format.readFormat = static_cast<FileFormat>(fmtIdx);
   }
 
   if (ImGui::Button("Mask Settings...")) {
@@ -276,13 +296,14 @@ static void DrawFileNavigationSection(SnapshotSource& source, FileInfo& fileInfo
 
 
 
-static void DrawNormalizationSection(ParticleArray* Part, NormalizationContext& normalization) {
+static void DrawNormalizationSection(NormalizationContext& normalization,
+				     SettingsActionRequestState& req) {
   if (!ImGui::CollapsingHeader("Normalization"))
     return;
 
   ImGui::InputFloat("Desired Maximum", &normalization.desiredMax, 0.f, 0.f, "%g");
-  if (ImGui::Button("Normalize Positions")){
-    NormalizeParticlePositions(*Part, normalization);
+  if (ImGui::Button("Normalize Positions")) {
+    req.normalizeRequested = true;
   }
 
   ImGui::Text("Original max coordinate: %.3g", normalization.originalMax);
@@ -403,13 +424,14 @@ static void DrawPythonBridgeSection(PythonBridgeRequestState& request,
 }
 #endif
 
-static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools){
+static void DrawAnalysisSection(RenderRuntimeState& render,
+				AnalysisDerivedState& analysis,
+                                AnalysisRequestRuntimeState& rt,
+                                const FileNavigationRuntimeState& fileNav,
+                                ToolWindowUIState& tools){
   if (!ImGui::CollapsingHeader("Analysis"))
     return;
 
-  auto& source = ctx.fileInfo->editSource();
-  auto* render = ctx.render;
-  
   enum AnalysisMode {
     ANALYSIS_RADIAL_PROFILE,
     ANALYSIS_2D_HISTOGRAM,
@@ -476,7 +498,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     
 #ifdef CLUMP_DATA_READ
     auto& batchReq = rt.clumpBatch;
-    auto& batchRes = ctx.analysis->clumpBatch;
+    auto& batchRes = analysis.clumpBatch;
 
     ImGui::Text("create clump data for continuous snapshots");
 
@@ -495,7 +517,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     ImGui::SameLine();
     if (ImGui::Button("default path")) {
       std::strncpy(batchReq.outputFolderPath,
-		   source.folderPath,
+		   fileNav.input.folderPath,
 		   IM_ARRAYSIZE(batchReq.outputFolderPath));
       batchReq.outputFolderPath[IM_ARRAYSIZE(batchReq.outputFolderPath) - 1] = '\0';
     }
@@ -573,12 +595,12 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 #ifdef GEOMETRICAL_ANALYSIS
   case ANALYSIS_DISK: {
     auto& singleReq = rt.disk;
-    auto& singleRes = ctx.analysis->disk;
+    auto& singleRes = analysis.disk;
     
     ImGui::SeparatorText("Single disk analysis");
 
     ImGui::InputInt("Particle ID1##disk", &singleReq.targetParticleId);
-    ImGui::SliderFloat("Opacity##disk", &render->disks.opacity, 0.0f, 1.0f);
+    ImGui::SliderFloat("Opacity##disk", &render.disks.opacity, 0.0f, 1.0f);
 
     if (ImGui::Button("Find a disk around the particle")) {
       singleReq.runRequested = true;
@@ -593,7 +615,7 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
     }
 
     auto& batchReq  = rt.diskBatch;
-    auto& batchRes  = ctx.analysis->diskBatch;    
+    auto& batchRes  = analysis.diskBatch;    
     ImGui::SeparatorText("Batch disk analysis");
 
     ImGui::InputText("Read target from text file##disk",
@@ -623,15 +645,15 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 
   case ANALYSIS_ISO_DENSITY: {
     auto& singleReq = rt.ellipsoid;
-    auto& singleRes = ctx.analysis->ellipsoid;
+    auto& singleRes = analysis.ellipsoid;
     auto& batchReq  = rt.ellipsoidBatch;
-    auto& batchRes  = ctx.analysis->ellipsoidBatch;
+    auto& batchRes  = analysis.ellipsoidBatch;
 
     ImGui::SeparatorText("Single ellipsoid analysis");
 
     ImGui::InputInt("Particle ID1", &singleReq.particleId1);
     ImGui::InputInt("Particle ID2", &singleReq.particleId2);
-    ImGui::SliderFloat("Opacity##contour_ellipse", &render->ellipsoids.opacity, 0.0f, 1.0f);
+    ImGui::SliderFloat("Opacity##contour_ellipse", &render.ellipsoids.opacity, 0.0f, 1.0f);
 
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
       singleReq.runRequested = true;
@@ -679,12 +701,14 @@ static void DrawAnalysisSection(SettingsUIContext& ctx, AnalysisRequestRuntimeSt
 }
 
 
-static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeState& rt, ToolWindowUIState& tools){
+static void DrawRenderingSection(RenderRuntimeState& render,
+				 AnalysisDerivedState& analysis,
+				 QuantityCatalogState& catalog,
+				 AnalysisRequestRuntimeState& rt,
+				 ToolWindowUIState& tools,
+				 SettingsActionRequestState& settingsReq){
   if (!ImGui::CollapsingHeader("Rendering"))
     return;
-
-  ParticleArray* Part = ctx.P;
-  auto* render = ctx.render;
   
   enum RenderingMode {
     RENDER_PROJECTION_MAP,
@@ -735,7 +759,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
     auto& movieRt = rt.projectionMovie;
     auto& movieReq = movieRt.request;
     auto& movieJob = movieRt.job;
-    auto& movieRes = ctx.analysis->projectionMovie;
+    auto& movieRes = analysis.projectionMovie;
 
     ImGui::Text("create projection maps for continuous snapshots");
 
@@ -871,13 +895,13 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
     auto& req = rt.isoContour;
 
     ImGui::InputFloat("Threshold value for iso-contour", &req.isoLevel);
-    ImGui::SliderFloat("Opacity", &render->isocontour.opacity, 0.0f, 1.0f);
+    ImGui::SliderFloat("Opacity", &render.isocontour.opacity, 0.0f, 1.0f);
     ImGui::SliderInt("Maximum level of OctTree", &req.maxTreeLevel, 5, 20);
 
     if (ImGui::BeginCombo("Quantity for Iso-Contour",
 			  QuantityLabel(req.selectedQuantity))) {
-      for (int q = 0; q < Part->particleBlock.nUIQ; ++q) {
-	QuantityId cand = Part->particleBlock.uiQ[q];
+      for (int q = 0; q < catalog.nUIQ; ++q) {
+	QuantityId cand = catalog.uiQ[q];
 	bool is_selected = (cand == req.selectedQuantity);
 	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
 	  req.selectedQuantity = cand;
@@ -900,13 +924,14 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
 #endif
 			
   case RENDER_VELOCITY_FIELD: {
-    ImGui::InputInt("show velocity field out of n particles", &render->velocity.subtraction);
-    ImGui::InputFloat("Arrow Scale", &render->velocity.arrowScale, 0.1f, 1.0f, "%.2f");
-    ImGui::Checkbox("Use Log Scale", &render->velocity.useLogScale);
+    if (ImGui::InputInt("show velocity field out of n particles", &render.velocity.subtraction)) {
+      settingsReq.velocityRenderDirtyRequested = true;
+    }
+    ImGui::InputFloat("Arrow Scale", &render.velocity.arrowScale, 0.1f, 1.0f, "%.2f");
+    ImGui::Checkbox("Use Log Scale", &render.velocity.useLogScale);
 				
-    if(ImGui::Checkbox("render velocity field", &render->velocity.show)){
-      if(render->velocity.show)
-	Part->velocityDirty = true;
+    if (ImGui::Checkbox("render velocity field", &render.velocity.show)) {
+      settingsReq.velocityRenderDirtyRequested = true;
     }
     break;
   }  
@@ -914,7 +939,7 @@ static void DrawRenderingSection(SettingsUIContext& ctx, AnalysisRequestRuntimeS
 }
 
 
-static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, SettingsRuntimeState& rt, RenderRuntimeState& render)
+static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt, RenderRuntimeState& render)
 {
   if (!ImGui::CollapsingHeader("Other settings"))
     return;
@@ -959,7 +984,6 @@ static void DrawOtherSettingsSection(UnitSystem& units, FileInfo* fileInfo, Sett
 
   if (unitChanged) {
     units.updateDerived();
-    fileInfo->setUnit(units);
   }
 
   if (ImGui::CollapsingHeader("Zoom Range")) {

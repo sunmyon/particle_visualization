@@ -302,7 +302,7 @@ void ClumpChain::build(int initstep,
 		       int nsnapshots,
 		       int dstep,
 		       const std::string& fname,
-		       UnitSystem& units)
+		       const UnitSystem& units)
 {
   makeEvolutionChains(initstep, nsnapshots, dstep, fname);
   calcChainProperties();

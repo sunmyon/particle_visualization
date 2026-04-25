@@ -12,7 +12,6 @@
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "object.h"
-#include "FileIO/file_io.h"
 #include "render/colormap_defs.h"
 #include "render/gizmo_renderer.h"
 #include "data/particle_array.h"
@@ -57,11 +56,11 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
                          const ParticleBlock& partblock,
 			 const glm::vec3& cam_center,
 			 NormalizationContext& normalization,
-			 UnitSystem& units)
+			 QuantityState& quantity)
 {
   if (!state.open) return;
 
-  computer.setUnits(units);
+  computer.setUnits(quantity.units);
 
   ImGui::Begin("Radial Profile", &state.open);
 
@@ -69,7 +68,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   ImGui::Combo("X Axis", &rt.selectedXAxis, xaxes, IM_ARRAYSIZE(xaxes));
   rt.params.xmode = (XAxisMode)rt.selectedXAxis;
 
-  const int baseCount = partblock.nUIQ;
+  const int baseCount = quantity.catalog.nUIQ;
   const bool allowMDot = (rt.params.xmode == XAxisMode::Radius ||
                           rt.params.xmode == XAxisMode::EnclosedMass);
   const int totalCount = baseCount + (allowMDot ? 1 : 0);
@@ -78,14 +77,14 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
     rt.selectedVarIdx = 0;
 
   auto labelAt = [&](int idx)->const char* {
-    if (idx < baseCount) return QuantityLabel(partblock.uiQ[idx]);
+    if (idx < baseCount) return QuantityLabel(quantity.catalog.uiQ[idx]);
     return "mdot";
   };
 
   if (ImGui::BeginCombo("Quantity", labelAt(rt.selectedVarIdx))) {
     for (int i = 0; i < baseCount; ++i) {
       bool sel = (rt.selectedVarIdx == i);
-      if (ImGui::Selectable(QuantityLabel(partblock.uiQ[i]), sel))
+      if (ImGui::Selectable(QuantityLabel(quantity.catalog.uiQ[i]), sel))
         rt.selectedVarIdx = i;
       if (sel) ImGui::SetItemDefaultFocus();
     }
@@ -101,7 +100,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   }
 
   if (rt.selectedVarIdx < baseCount) {
-    rt.params.var1 = partblock.uiQ[rt.selectedVarIdx];
+    rt.params.var1 = quantity.catalog.uiQ[rt.selectedVarIdx];
     rt.params.isMDot = false;
   } else {
     rt.params.isMDot = true;
@@ -164,6 +163,7 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
 		       Histogram2DRuntimeState& rt,
 		       Histogram2DComputer& computer,
                        ParticleBlock& partblock,
+		       const QuantityCatalogState& catalog,
 		       const Histogram2DContext& ctx)
 {
   if (!state.open) return;
@@ -172,8 +172,8 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   ImGui::Begin("histogram 2D", &state.open, ImGuiWindowFlags_None);
 
   if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(rt.params.var1))) {
-    for (int q = 0; q < partblock.nAllQ; ++q) {
-      QuantityId cand = partblock.allQ[q];
+    for (int q = 0; q < catalog.nAllQ; ++q) {
+      QuantityId cand = catalog.allQ[q];
       bool is_selected = (cand == rt.params.var1);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
         rt.params.var1 = cand;
@@ -183,8 +183,8 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   }
 
   if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(rt.params.var2))) {
-    for (int q = 0; q < partblock.nAllQ; ++q) {
-      QuantityId cand = partblock.allQ[q];
+    for (int q = 0; q < catalog.nAllQ; ++q) {
+      QuantityId cand = catalog.allQ[q];
       bool is_selected = (cand == rt.params.var2);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
         rt.params.var2 = cand;
@@ -376,10 +376,11 @@ namespace {
 
 void DrawProjectionMapUI(ProjectionMapUIState& state,
 			 ProjectionMapToolState& tool,
-                         ParticleArray& particles,
+			 const ParticleArray& particles,
                          const NormalizationContext& normalization,
                          CameraContext& camCtx,
                          RenderLayerState& cuboidAnnotationState,
+			 QuantityCatalogState& catalog,
                          int indexfile)
 {
   if (!state.open) return;
@@ -582,8 +583,8 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // -----------------------------
   if (params.dataSource == DataSource::Gas) {
     if (ImGui::BeginCombo("Quantity", QuantityLabel(params.selectedVarGas))) {
-      for (int q = 0; q < particles.particleBlock.nUIQ; ++q) {
-        QuantityId cand = particles.particleBlock.uiQ[q];
+      for (int q = 0; q < catalog.nUIQ; ++q) {
+        QuantityId cand = catalog.uiQ[q];
         bool is_selected = (cand == params.selectedVarGas);
         if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
           params.selectedVarGas = cand;
@@ -778,7 +779,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 }
 
 
-void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post) {
+void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraContext& camCtx, TrackingTargetState& track, SnapshotPostprocessState& post, UnitSystem& units) {
   const int histSizeMax = 10;
 
   ImGui::Begin("Particles Info");
@@ -866,7 +867,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
     char label[512];
     std::snprintf(label, sizeof(label),
                   "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g",
-                  p.ID, p.mass * (P->units.mass_msun / P->units.hubble),
+                  p.ID, p.mass * (units.mass_msun / units.hubble),
                   p.pos[0], p.pos[1], p.pos[2],
                   p.vel[0], p.vel[1], p.vel[2],
                   p.originalHsml, p.density, p.temperature);
@@ -937,7 +938,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
     char label[512];
     std::snprintf(label, sizeof(label),
                   "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
-                  state.filtered[i].ID, state.filtered[i].mass * (P->units.mass_msun / P->units.hubble),
+                  state.filtered[i].ID, state.filtered[i].mass * (units.mass_msun / units.hubble),
                   state.filtered[i].pos[0], state.filtered[i].pos[1], state.filtered[i].pos[2],
                   state.filtered[i].vel[0], state.filtered[i].vel[1], state.filtered[i].vel[2],
                   state.filtered[i].originalHsml,
@@ -999,7 +1000,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
 
     for (const auto& p : state.filtered) {
       float value = p.getValue(var);
-      value *= (P->units.mass_msun / P->units.hubble);
+      value *= (units.mass_msun / units.hubble);
 
       if (value == 0.0f) continue;
       if (!func(p)) continue;
@@ -1024,7 +1025,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state, ParticleArray* P, CameraCont
 
     for (const auto& p : state.filtered) {
       float value = p.getValue(var);
-      value *= (P->units.mass_msun / P->units.hubble);
+      value *= (units.mass_msun / units.hubble);
 
       if (value == 0.0f) continue;
       if (!func(p)) continue;

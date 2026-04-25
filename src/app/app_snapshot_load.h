@@ -2,6 +2,8 @@
 
 struct AppDataState;
 struct AppRuntimeState;
+struct AppServices;
 
 void ProcessSnapshotLoadQueue(AppDataState& data,
-                              AppRuntimeState& runtime);
+                              AppRuntimeState& runtime,
+                              AppServices& services);

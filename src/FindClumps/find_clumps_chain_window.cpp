@@ -4,9 +4,6 @@
 #include "FindClumps/clump_chain.h"
 #include "FindClumps/clump_window_state.h"
 
-#include "FileIO/snapshot_source.h"
-#include "FileIO/file_io.h"
-
 #include "app/runtime_state.h"
 #include "app/normalization_config.h"
 #include "data/particle_array.h"
@@ -27,12 +24,11 @@ static void DrawClumpChainTableSection(ClumpChainWindowState& ui, ClumpChain& ch
 
 static void DrawSelectedClumpChainNavigation(ClumpChainWindowState& ui,
 					     ClumpChain& chain,
-                                             ParticleArray* P,
-					     HeaderInfo& header,
+                                             const SnapshotNavigationState& nav,
+                                             double currentTime,
                                              SnapshotLoadRuntimeState& snapshotLoad,
                                              CameraContext& cam,
-                                             NormalizationContext& normalization,
-                                             const SnapshotSource& src);
+                                             NormalizationContext& normalization);
 
 static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui,
 				       ClumpChain& chain,
@@ -41,23 +37,24 @@ static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui,
 static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
 					       ClumpChain& chain,
                                                ParticleArray* P,
-					       HeaderInfo& header,
-                                               ProjectionMapGenerator* proj,
+					       const UnitSystem& units,
+					       ProjectionMapGenerator* proj,
                                                const ProjectionMapParams& baseParams,
                                                SnapshotLoadRuntimeState& snapshotLoad,
                                                NormalizationContext& normalization,
-                                               const SnapshotSource& src);
+                                               double currentTime);
 
 static void DrawSelectedClumpChainSection(ClumpChainWindowState& ui,
 					  ClumpChain& chain,
                                           ParticleArray* P,
-					  HeaderInfo& header,
+					  const UnitSystem& units,
                                           ProjectionMapGenerator* proj,
                                           const ProjectionMapParams& baseParams,
+                                          const SnapshotNavigationState& nav,
+                                          const SnapshotCurrentState& current,
                                           SnapshotLoadRuntimeState& snapshotLoad,
                                           CameraContext& cam,
-                                          NormalizationContext& normalization,
-                                          const SnapshotSource& src);
+                                          NormalizationContext& normalization);
 
 
 static void DrawVerticalDashedLine(double x_value, const ImU32& col, float thickness, float dash_length, float gap_length);
@@ -65,18 +62,17 @@ static void DrawVerticalDashedLine(double x_value, const ImU32& col, float thick
 void DrawClumpChainListUI(ClumpChainWindowState& ui,
 			  ClumpChain& chain,
 			  ParticleArray* P,
-			  HeaderInfo& header,
+			  const UnitSystem& units,
 			  ProjectionMapGenerator* proj,
 			  const ProjectionMapParams& baseParams,
-			  FileInfo& fileinfo,			 
+			  const SnapshotNavigationState& nav,
+                          const SnapshotCurrentState& current,
 			  SnapshotLoadRuntimeState& snapshotLoad,
 			  CameraContext& cam,
 			  NormalizationContext& normalization)
 {
   if (!ui.open)
     return;
-
-  const auto& src = fileinfo.getSource();
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("Clump chain lists", &ui.open, ImGuiWindowFlags_None);
@@ -86,12 +82,22 @@ void DrawClumpChainListUI(ClumpChainWindowState& ui,
 		ui.clumpChainNsnapshots,
 		ui.clumpChainDFileIndex,
 		ui.clumpChainFileName,
-		P->units);
+		units);
   }
 
   if(chain.computed()){
     DrawClumpChainTableSection(ui, chain);
-    DrawSelectedClumpChainSection(ui, chain, P, header, proj, baseParams, snapshotLoad, cam, normalization, src);
+    DrawSelectedClumpChainSection(ui,
+                                  chain,
+                                  P,
+				  units,
+                                  proj,
+                                  baseParams,
+                                  nav,
+                                  current,
+                                  snapshotLoad,
+                                  cam,
+                                  normalization);
   }
 
   ImGui::End();
@@ -171,15 +177,12 @@ static void RecenterCameraPreservingDistance(CameraContext& cam, const glm::vec3
 
 static void DrawSelectedClumpChainNavigation(ClumpChainWindowState& ui,
 					     ClumpChain& chain,
-                                             ParticleArray* P,
-					     HeaderInfo& header,
+                                             const SnapshotNavigationState& nav,
+                                             double currentTime,
                                              SnapshotLoadRuntimeState& snapshotLoad,
                                              CameraContext& cam,
-                                             NormalizationContext& normalization,
-                                             const SnapshotSource& src)
+                                             NormalizationContext& normalization)
 {
-  (void)P;
-
   if (ui.navigationLoadPending &&
       IsSnapshotLoadedFor(snapshotLoad,
                           SnapshotLoadOwner::UserNavigation,
@@ -231,11 +234,11 @@ static void DrawSelectedClumpChainNavigation(ClumpChainWindowState& ui,
 	    }
 
     ImGui::Text("current snapshot index: %d (init=%d now=%d step=%d) time=%g",
-                src.initialIndex + (selected_chain.first_snapshot + ui.currentSnapshotIndex) * src.skipStep,
+                nav.initialIndex + (selected_chain.first_snapshot + ui.currentSnapshotIndex) * nav.skipStep,
                 selected_chain.first_snapshot,
                 selected_chain.first_snapshot + ui.currentSnapshotIndex,
-                src.skipStep,
-                header.time);
+                nav.skipStep,
+                currentTime);
 
     bool triggerLoad = false;
     if (ui.requestLoadSelected) {
@@ -382,15 +385,13 @@ static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui,
 static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
 					       ClumpChain& chain,
                                                ParticleArray* P,
-					       HeaderInfo& header,
+					       const UnitSystem& units,
                                                ProjectionMapGenerator* proj,
                                                const ProjectionMapParams& baseParams,
                                                SnapshotLoadRuntimeState& snapshotLoad,
                                                NormalizationContext& normalization,
-                                               const SnapshotSource& src)
+                                               double currentTime)
 {
-  (void)src;
-
   ImGui::PushItemWidth(100);
   ImGui::InputFloat("len", &ui.mapLen, 0.0f, 0.0f, "%g");
   ImGui::InputFloat("val_min", &ui.mapValMin, 0.0f, 0.0f, "%g");
@@ -500,7 +501,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
   ProjectionMapContext context =
     BuildProjectionMapContext(frameParams,
                               normalization.toPhysicalScale(),
-                              header.time);
+                              currentTime);
 
   if (useAngularMomentumAxis) {
     auto frame = ComputeAngularMomentumFrame(P->particleBlock.particles,
@@ -513,7 +514,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
     }
   }
 
-  RgbImage image = proj->makeDensityMapImage(*P, frameParams, context);
+  RgbImage image = proj->makeDensityMapImage(*P, units, frameParams, context);
   if (!WritePngRgb(fname_output, image.width, image.height, image.rgb)) {
     std::fprintf(stderr, "Failed to write projection map: %s\n", fname_output);
   }
@@ -534,17 +535,27 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui,
 static void DrawSelectedClumpChainSection(ClumpChainWindowState& ui,
 					  ClumpChain& chain,
                                           ParticleArray* P,
-					  HeaderInfo& header,
+					  const UnitSystem& units,
                                           ProjectionMapGenerator* proj,
                                           const ProjectionMapParams& baseParams,
+                                          const SnapshotNavigationState& nav,
+                                          const SnapshotCurrentState& current,
                                           SnapshotLoadRuntimeState& snapshotLoad,
                                           CameraContext& cam,
-                                          NormalizationContext& normalization,
-                                          const SnapshotSource& src)
+                                          NormalizationContext& normalization)
 {
-  DrawSelectedClumpChainNavigation(ui, chain, P, header, snapshotLoad, cam, normalization, src);
-  DrawSelectedClumpChainPlot(ui, chain, header.time);
-  DrawSelectedClumpProjectionSection(ui, chain, P, header, proj, baseParams, snapshotLoad, normalization, src);
+  const double currentTime = current.loadedTime;
+  DrawSelectedClumpChainNavigation(ui, chain, nav, currentTime, snapshotLoad, cam, normalization);
+  DrawSelectedClumpChainPlot(ui, chain, currentTime);
+  DrawSelectedClumpProjectionSection(ui,
+                                     chain,
+                                     P,
+				     units,
+                                     proj,
+                                     baseParams,
+                                     snapshotLoad,
+                                     normalization,
+                                     currentTime);
 }
       
 

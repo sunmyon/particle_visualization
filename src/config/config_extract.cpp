@@ -1,36 +1,36 @@
 #include "config_extract.h"
 
 #include "config_data.h"
-#include "FileIO/file_io.h"
+#include "app/runtime_state.h"
 #include "core/units.h"
 #include "particle_visual_config.h"
 
-ConfigData ExtractConfigData(const FileInfo& fileInfo,
+ConfigData ExtractConfigData(const FileNavigationRuntimeState& fileNav,
+                             const SnapshotFormatState& format,
                              const UnitSystem& units,
 			     const float desired_max,
                              const ParticleVisualConfig& visual,
                              const ParticleMaskConfig& mask)
 {
   ConfigData config;
-  const auto& src = fileInfo.getSource();
+  const auto& nav = fileNav.navigation;
+  const auto& input = fileNav.input;
 
-  config.persistent.fileFormatPattern = src.fileFormat;
-  config.persistent.folderPath = src.folderPath;
-  config.persistent.readFormat = fileInfo.getFormatMode();
-  config.persistent.formatTokens = src.formatTokens;
-  config.persistent.formatTokensHdf5 = src.formatTokens_hdf5;
+  config.persistent.fileFormatPattern = input.fileFormat;
+  config.persistent.folderPath = input.folderPath;
+  config.persistent.readFormat = format.readFormat;
+  config.persistent.formatTokens = format.formatTokens;
+  config.persistent.formatTokensHdf5 = format.formatTokensHdf5;
   config.persistent.visual = visual;
   config.persistent.mask = mask;
   config.persistent.desiredMax = desired_max;
   config.persistent.units = units;
 
-  config.session.initialIndex = src.initialIndex;
-  config.session.currentFileIndex = src.currentFileIndex;
-  config.session.currentStep = src.currentStep;
-  config.session.skipStep = src.skipStep;
-  config.session.batchSize = src.batchSize;
+  config.session.initialIndex = nav.initialIndex;
+  config.session.currentFileIndex = nav.currentFileIndex;
+  config.session.currentStep = nav.currentStep;
+  config.session.skipStep = nav.skipStep;
+  config.session.batchSize = nav.batchSize;
 
   return config;
 }
-
-

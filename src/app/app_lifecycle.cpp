@@ -21,7 +21,7 @@
 #include "imgui_context.h"
 #include "UI.h"
 
-#include "FileIO/file_io.h"
+#include "FileIO/snapshot_io_service.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/clump_chain.h"
@@ -80,6 +80,7 @@ static void InitAppServices(AppServices& services)
   services.radialProfile   = std::make_unique<RadialProfileComputer>();
   services.histogram2D     = std::make_unique<Histogram2DComputer>();
   services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
+  services.snapshotIO      = std::make_unique<SnapshotIOService>();
   services.clumpFind       = std::make_unique<FindClump>();
   services.clumpLoad       = std::make_unique<LoadedClumpTool>();
   services.clumpChain      = std::make_unique<ClumpChain>();
@@ -100,7 +101,6 @@ void InitApplication(AppState& app, RenderSystem& render)
   InitRenderPrograms(render.programs);
   InitAppServices(app.services);
 
-  app.data.fileInfo  = new FileInfo();
   app.data.particles = new ParticleArray();
 
   InitRenderSystem(render);
@@ -117,22 +117,21 @@ void LoadInitialData(AppState& app)
     PrintConfigValidationIssues(issues);
     
     ApplyConfigData(config,
-                    *app.data.fileInfo,
-                    app.data.particles->units,
+                    app.runtime.settings.fileNavigation,
+                    app.runtime.settings.snapshotFormat,
+                    app.data.quantity.units,
 		    app.runtime.settings.normalization.desiredMax,
                     app.view.particleVisual,
                     app.runtime.settings.inputFilter.mask);
   }
 
-  app.data.particles->units.updateDerived();
-  app.data.fileInfo->setUnit(app.data.particles->units);
+  app.data.quantity.units.updateDerived();
 
-  const auto& src = app.data.fileInfo->getSource();
   RequestSnapshotLoad(app.runtime.snapshotLoad,
                       SnapshotLoadOwner::UserNavigation,
-                      src.currentStep,
+                      app.runtime.settings.fileNavigation.navigation.currentStep,
                       100);
-  ProcessSnapshotLoadQueue(app.data, app.runtime);
+  ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
@@ -148,8 +147,9 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   DestroyRenderPrograms(rs.programs);
 
   const ConfigData config =
-    ExtractConfigData(*app.data.fileInfo,
-                      app.data.particles->units,
+    ExtractConfigData(app.runtime.settings.fileNavigation,
+                      app.runtime.settings.snapshotFormat,
+                      app.data.quantity.units,
 		      app.runtime.settings.normalization.desiredMax,
                       app.view.particleVisual,
                       app.runtime.settings.inputFilter.mask);
@@ -165,7 +165,4 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
 
   delete app.data.particles;
   app.data.particles = nullptr;
-
-  delete app.data.fileInfo;
-  app.data.fileInfo = nullptr;
 }
