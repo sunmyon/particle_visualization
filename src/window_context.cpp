@@ -5,9 +5,11 @@
 #include <iostream>
 #include <cstdlib>
 #include <chrono>
+#include <string>
 
 #ifdef PARTICLE_VIS_HAVE_EGL
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #endif
 
 namespace {
@@ -32,10 +34,65 @@ Clock::time_point& StartTime()
 }
 
 #ifdef PARTICLE_VIS_HAVE_EGL
+bool HasExtension(const char* extensions, const char* name)
+{
+  if (!extensions || !name || name[0] == '\0') return false;
+
+  const std::string haystack(extensions);
+  const std::string needle(name);
+  size_t pos = 0;
+  while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+    const bool startOk = (pos == 0) || (haystack[pos - 1] == ' ');
+    const size_t end = pos + needle.size();
+    const bool endOk = (end == haystack.size()) || (haystack[end] == ' ');
+    if (startOk && endOk) return true;
+    pos = end;
+  }
+  return false;
+}
+
 void PrintEglError(const char* label)
 {
   std::cerr << label << " EGL error=0x"
             << std::hex << eglGetError() << std::dec << std::endl;
+}
+
+EGLDisplay GetPreferredEglDisplay()
+{
+  const char* clientExtensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+  std::cerr << "EGL client extensions: "
+            << (clientExtensions ? clientExtensions : "(null)") << std::endl;
+
+  const bool canPlatformBase =
+    HasExtension(clientExtensions, "EGL_EXT_platform_base") ||
+    HasExtension(clientExtensions, "EGL_KHR_platform_base");
+  const bool canSurfaceless =
+    HasExtension(clientExtensions, "EGL_MESA_platform_surfaceless");
+
+  const char* requested = std::getenv("PARTICLE_VIS_EGL_PLATFORM");
+  const bool forceDefault = requested && std::string(requested) == "default";
+  const bool preferSurfaceless = !forceDefault;
+
+  if (preferSurfaceless && canPlatformBase && canSurfaceless) {
+    auto getPlatformDisplay =
+      reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+        eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (getPlatformDisplay) {
+      std::cerr << "EGL: eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA)"
+                << std::endl;
+      EGLDisplay display =
+        getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,
+                           EGL_DEFAULT_DISPLAY,
+                           nullptr);
+      if (display != EGL_NO_DISPLAY) {
+        return display;
+      }
+      PrintEglError("Surfaceless EGL display unavailable.");
+    }
+  }
+
+  std::cerr << "EGL: eglGetDisplay(EGL_DEFAULT_DISPLAY)" << std::endl;
+  return eglGetDisplay(EGL_DEFAULT_DISPLAY);
 }
 #endif
 }
@@ -122,8 +179,7 @@ bool WindowContext::initHeadless(int width, int height)
 #else
   std::cerr << "Trying EGL headless OpenGL context..." << std::endl;
 
-  std::cerr << "EGL: eglGetDisplay(EGL_DEFAULT_DISPLAY)" << std::endl;
-  EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  EGLDisplay display = GetPreferredEglDisplay();
   if (display == EGL_NO_DISPLAY) {
     PrintEglError("Failed to get EGL display.");
     return false;
@@ -189,14 +245,25 @@ bool WindowContext::initHeadless(int width, int height)
     return false;
   }
 
-  const EGLint contextAttribs[] = {
+  const EGLint strictContextAttribs[] = {
 #ifdef EGL_CONTEXT_MAJOR_VERSION
     EGL_CONTEXT_MAJOR_VERSION, 3,
     EGL_CONTEXT_MINOR_VERSION, 3,
 #endif
     EGL_NONE
   };
-  std::cerr << "EGL: eglCreateContext" << std::endl;
+  const EGLint defaultContextAttribs[] = {
+    EGL_NONE
+  };
+  const char* strictContextEnv = std::getenv("PARTICLE_VIS_EGL_STRICT_CONTEXT");
+  const bool strictContext =
+    strictContextEnv && std::string(strictContextEnv) == "1";
+  const EGLint* contextAttribs =
+    strictContext ? strictContextAttribs : defaultContextAttribs;
+
+  std::cerr << "EGL: eglCreateContext"
+            << (strictContext ? " (OpenGL 3.3 request)" : " (default context)")
+            << std::endl;
   EGLContext context =
     eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
   if (context == EGL_NO_CONTEXT) {
