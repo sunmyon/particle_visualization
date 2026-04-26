@@ -5,13 +5,41 @@
 #include <iostream>
 #include <cstdlib>
 
+namespace {
+void GlfwErrorCallback(int error, const char* description)
+{
+  std::cerr << "GLFW error " << error << ": "
+            << (description ? description : "(no description)") << std::endl;
+}
+
+const char* EnvOrUnset(const char* name)
+{
+  const char* value = std::getenv(name);
+  return (value && value[0] != '\0') ? value : "(unset)";
+}
+}
+
 bool WindowContext::init(int width, int height, const char* title)
 {
   initialWidth_ = width;
   initialHeight_ = height;
 
+  glfwSetErrorCallback(GlfwErrorCallback);
+
+#if defined(GLFW_PLATFORM) && defined(GLFW_PLATFORM_X11)
+  // In SSH X forwarding sessions DISPLAY is set, but some systems still let
+  // GLFW probe Wayland first and fail on missing XDG_RUNTIME_DIR.
+  if (std::getenv("DISPLAY") && !std::getenv("PARTICLE_VIS_GLFW_PLATFORM")) {
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+  }
+#endif
+
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW" << std::endl;
+    std::cerr << "DISPLAY=" << EnvOrUnset("DISPLAY")
+              << " WAYLAND_DISPLAY=" << EnvOrUnset("WAYLAND_DISPLAY")
+              << " XDG_RUNTIME_DIR=" << EnvOrUnset("XDG_RUNTIME_DIR")
+              << std::endl;
     return false;
   }
 
@@ -25,6 +53,10 @@ bool WindowContext::init(int width, int height, const char* title)
   handle_ = glfwCreateWindow(initialWidth_, initialHeight_, title, nullptr, nullptr);
   if (!handle_) {
     std::cerr << "Failed to create GLFW window" << std::endl;
+    std::cerr << "DISPLAY=" << EnvOrUnset("DISPLAY")
+              << " WAYLAND_DISPLAY=" << EnvOrUnset("WAYLAND_DISPLAY")
+              << " XDG_RUNTIME_DIR=" << EnvOrUnset("XDG_RUNTIME_DIR")
+              << std::endl;
     glfwTerminate();
     return false;
   }
