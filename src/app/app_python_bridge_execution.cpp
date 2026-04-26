@@ -7,22 +7,9 @@
 #include "app/runtime_state.h"
 #include "app/app_services.h"
 #include "data/particle_array.h"
+#include "platform/shell_utils.h"
 
 namespace {
-std::string ShellQuote(const std::string& value)
-{
-  std::string quoted = "'";
-  for (char c : value) {
-    if (c == '\'') {
-      quoted += "'\\''";
-    } else {
-      quoted += c;
-    }
-  }
-  quoted += "'";
-  return quoted;
-}
-
 void SyncPythonBridgeView(const PythonBridgeState& service,
                           PythonBridgeViewState& view)
 {

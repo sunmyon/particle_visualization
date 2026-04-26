@@ -10,7 +10,7 @@
 #include "data/particle_array.h"
 #include "app/render_runtime_state.h"
 #include "interaction/camera.h"
-#include "window_context.h"
+#include "render/render_viewport.h"
 
 namespace {
 
@@ -90,7 +90,7 @@ void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
 
 void ParticleLabelOverlay::draw(const glm::mat4& view,
                                 const glm::mat4& proj,
-                                const WindowContext& windowCtx) const
+                                const RenderViewport& viewport) const
 {
   if (labels_.empty())
     return;
@@ -107,7 +107,7 @@ void ParticleLabelOverlay::draw(const glm::mat4& view,
     if (std::abs(ndc.x) > 1.f || std::abs(ndc.y) > 1.f)
       continue;
 
-    const glm::vec2 screen = windowCtx.ndcToImGui(ndc);
+    const glm::vec2 screen = NdcToImGui(viewport, ndc);
 
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%d", item.id);

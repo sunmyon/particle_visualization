@@ -114,8 +114,9 @@ InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
                                         const SettingsRuntimeState& settings)
 {
   InputExecutionResult result;
+  const std::vector<InputEvent> events = input.drain();
 
-  for (const InputEvent& event : input.events) {
+  for (const InputEvent& event : events) {
     if (event.type == InputEventType::Key) {
       if (event.key == InputKey::Escape &&
           event.action == InputAction::Press) {
@@ -152,6 +153,5 @@ InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
     }
   }
 
-  input.clear();
   return result;
 }

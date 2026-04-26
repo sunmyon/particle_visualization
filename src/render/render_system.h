@@ -3,6 +3,7 @@
 #include "render/render_programs.h"
 #include "render/render_resources.h"
 #include "render/frame_matrices.h"
+#include "render/render_viewport.h"
 #include "render/particle_renderer.h"
 #include "render/object_renderer.h"
 #include "render/gizmo_renderer.h"
@@ -15,6 +16,7 @@
 #include "particle_visual_config.h"
 
 struct RenderFrameState {
+  RenderViewport viewport;
   FrameMatrices matrices;
   CameraContext camera;
   ParticleVisualConfig particleVisual;

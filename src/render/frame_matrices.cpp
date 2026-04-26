@@ -3,20 +3,20 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "interaction/camera.h"
-#include "window_context.h"
+#include "render/render_viewport.h"
 
 FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
-                                 const WindowContext& windowCtx)
+                                 const RenderViewport& viewport)
 {
   FrameMatrices fm;
   fm.view = glm::lookAt(camCtx.cameraPos, camCtx.cameraTarget, camCtx.cameraUp);
 
   const float fovY = 45.0f;
-  const float aspect = windowCtx.projectionAspect();
+  const float aspect = viewport.aspect();
 
   fm.projection = glm::perspective(glm::radians(fovY), aspect, 0.1f, 1000.0f);
-  fm.viewportW = windowCtx.viewportWidth();
-  fm.viewportH = windowCtx.viewportHeight();
+  fm.viewportW = viewport.width;
+  fm.viewportH = viewport.height;
 
   fm.invProj = glm::inverse(fm.projection);
   fm.invView = glm::inverse(fm.view);
@@ -31,4 +31,3 @@ FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
 
   return fm;
 }
-

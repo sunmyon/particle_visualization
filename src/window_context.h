@@ -17,6 +17,7 @@ public:
 
   void updateFramebufferSize(int width, int height);
   void requestClose();
+  void present();
 
   GLFWwindow* handle() const { return handle_; }
 
@@ -27,6 +28,8 @@ public:
   int viewportY() const { return viewportY_; }
   int viewportWidth() const { return viewportWidth_; }
   int viewportHeight() const { return viewportHeight_; }
+  int framebufferWidth() const { return framebufferWidth_; }
+  int framebufferHeight() const { return framebufferHeight_; }
 
   glm::vec2 framebufferToImGui(float px, float py) const;
   glm::vec2 ndcToFramebuffer(const glm::vec3& ndc) const;
@@ -44,4 +47,6 @@ private:
   int viewportY_ = 0;
   int viewportWidth_ = 1280;
   int viewportHeight_ = 720;
+  int framebufferWidth_ = 1280;
+  int framebufferHeight_ = 720;
 };

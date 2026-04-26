@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include <vector>
 
 enum class InputEventType {
@@ -65,17 +66,29 @@ struct InputEvent {
 };
 
 struct InputEventQueue {
-  std::vector<InputEvent> events;
-
   void push(const InputEvent& event) {
+    std::lock_guard<std::mutex> lock(mutex_);
     events.push_back(event);
   }
 
+  std::vector<InputEvent> drain() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<InputEvent> out;
+    out.swap(events);
+    return out;
+  }
+
   void clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
     events.clear();
   }
 
   bool empty() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return events.empty();
   }
+
+private:
+  mutable std::mutex mutex_;
+  std::vector<InputEvent> events;
 };

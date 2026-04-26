@@ -8,7 +8,7 @@
 
 class ParticleArray;
 struct CameraContext;
-class WindowContext;
+struct RenderViewport;
 struct ParticleLabelRenderState;
 
 struct ParticleLabelItem {
@@ -28,7 +28,7 @@ public:
 
   void draw(const glm::mat4& view,
             const glm::mat4& proj,
-            const WindowContext& windowCtx) const;
+            const RenderViewport& viewport) const;
 
   void clear() { labels_.clear(); }
 

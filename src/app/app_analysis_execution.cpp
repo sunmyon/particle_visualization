@@ -37,6 +37,7 @@
 #endif
 
 #include "image/image_io.h"
+#include "platform/shell_utils.h"
 
 static bool IsSafeIndexFormat(const char* format)
 {
@@ -88,22 +89,6 @@ static bool IsSafeIndexFormat(const char* format)
   }
 
   return hasIndexSpecifier;
-}
-
-static std::string ShellQuote(const std::string& value)
-{
-  std::string quoted;
-  quoted.reserve(value.size() + 2);
-  quoted.push_back('\'');
-  for (char c : value) {
-    if (c == '\'') {
-      quoted += "'\\''";
-    } else {
-      quoted.push_back(c);
-    }
-  }
-  quoted.push_back('\'');
-  return quoted;
 }
 
 #ifdef GEOMETRICAL_ANALYSIS

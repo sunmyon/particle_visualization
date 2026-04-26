@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 
 struct CameraContext;
-class WindowContext;
+struct RenderViewport;
 
 struct FrameMatrices {
   glm::mat4 model{1.0f};
@@ -18,4 +18,4 @@ struct FrameMatrices {
 };
 
 FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
-                                 const WindowContext& windowCtx);
+                                 const RenderViewport& viewport);

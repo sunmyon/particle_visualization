@@ -9,7 +9,6 @@
 #include "render/frame_matrices.h"
 #include "render/render_draw_helpers.h"
 #include "render/render_system.h"
-#include "window_context.h"
 
 static void DrawSceneObjectsPass(const RenderRuntimeState& render,
                                  RenderSystem& rs,
@@ -75,28 +74,28 @@ static void DrawSceneObjectsPass(const RenderRuntimeState& render,
 #endif
 }
 
-static ColorBarLabelLayout ComputeColorbarLayout(const WindowContext& window,
+static ColorBarLabelLayout ComputeColorbarLayout(const RenderViewport& viewport,
                                                  const ColorbarLayoutSettings& settings)
 {
   ColorBarLabelLayout layout;
 
-  const float width  = static_cast<float>(window.viewportWidth());
-  const float height = static_cast<float>(window.viewportHeight());
+  const float width  = static_cast<float>(viewport.width);
+  const float height = static_cast<float>(viewport.height);
 
   layout.left_pixel   = width  - settings.width  - settings.margin;
   layout.right_pixel  = width  - settings.margin;
   layout.bottom_pixel = height - settings.margin;
   layout.top_pixel    = height - settings.height - settings.margin;
 
-  layout.offsetX = static_cast<float>(window.viewportX());
-  layout.offsetY = static_cast<float>(window.viewportY());
+  layout.offsetX = static_cast<float>(viewport.x);
+  layout.offsetY = static_cast<float>(viewport.y);
 
   return layout;
 }
 
 static ColorbarGizmoState BuildColorbarGizmoState(const RenderRuntimeState& render,
                                                   const ParticleVisualConfig& particleVisual,
-                                                  const WindowContext& window)
+                                                  const RenderViewport& viewport)
 {
   ColorbarGizmoState state;
   state.visible = render.colorbar.show;
@@ -109,9 +108,9 @@ static ColorbarGizmoState BuildColorbarGizmoState(const RenderRuntimeState& rend
   state.content.valueMax      = vis.colorMax;
   state.content.numTicks      = render.colorbar.numTicks;
 
-  state.effectiveWidth  = static_cast<float>(window.viewportWidth());
-  state.effectiveHeight = static_cast<float>(window.viewportHeight());
-  state.layout = ComputeColorbarLayout(window, render.colorbar.layout);
+  state.effectiveWidth  = static_cast<float>(viewport.width);
+  state.effectiveHeight = static_cast<float>(viewport.height);
+  state.layout = ComputeColorbarLayout(viewport, render.colorbar.layout);
 
   return state;
 }
@@ -140,10 +139,10 @@ static void DrawOverlayPass(const OverlayState& overlay,
                             const ParticleVisualConfig& particleVisual,
                             const CameraContext& camera,
                             RenderSystem& rs,
-                            const WindowContext& window,
+                            const RenderViewport& viewport,
                             const FrameMatrices& fm)
 {
-  overlay.particleLabels.draw(fm.view, fm.projection, window);
+  overlay.particleLabels.draw(fm.view, fm.projection, viewport);
 
   GizmoDrawContext gctx;
   gctx.view            = fm.view;
@@ -157,7 +156,7 @@ static void DrawOverlayPass(const OverlayState& overlay,
   const CoordAxesGizmoState axesState =
       BuildCoordAxesGizmoState(render.coordAxes);
   const ColorbarGizmoState colorbarState =
-      BuildColorbarGizmoState(render, particleVisual, window);
+      BuildColorbarGizmoState(render, particleVisual, viewport);
 
   rs.crossGizmo.draw(gctx, crossState);
   rs.coordAxes.draw(gctx, axesState);
@@ -197,11 +196,13 @@ static void DrawParticlePass(const ParticleVisualConfig& particleVisual,
 }
 
 void UpdateRenderFrameInput(RenderFrameInput& input,
+                            const RenderViewport& viewport,
                             const CameraContext& camera,
                             const ParticleVisualConfig& particleVisual,
                             const RenderRuntimeState& render,
                             const OverlayState& overlay)
 {
+  input.viewport = viewport;
   input.camera = camera;
   input.particleVisual = particleVisual;
   input.render = render;
@@ -209,13 +210,14 @@ void UpdateRenderFrameInput(RenderFrameInput& input,
 }
 
 void PrepareRenderFrame(const CameraContext& camera,
-                               const ParticleVisualConfig& particleVisual,
-                               const RenderRuntimeState& render,
-                               const OverlayState& overlay,
-                               RenderSystem& rs,
-                               const WindowContext& window)
+                        const RenderViewport& viewport,
+                        const ParticleVisualConfig& particleVisual,
+                        const RenderRuntimeState& render,
+                        const OverlayState& overlay,
+                        RenderSystem& rs)
 {
-  rs.frame.matrices = BuildFrameMatrices(camera, window);
+  rs.frame.viewport = viewport;
+  rs.frame.matrices = BuildFrameMatrices(camera, viewport);
   rs.frame.camera = camera;
   rs.frame.particleVisual = particleVisual;
   rs.frame.runtime = render;
@@ -224,19 +226,17 @@ void PrepareRenderFrame(const CameraContext& camera,
 }
 
 void PrepareRenderFrame(const RenderFrameInput& input,
-                        RenderSystem& rs,
-                        const WindowContext& window)
+                        RenderSystem& rs)
 {
   PrepareRenderFrame(input.camera,
+                     input.viewport,
                      input.particleVisual,
                      input.render,
                      input.overlay,
-                     rs,
-                     window);
+                     rs);
 }
 
-void RenderScene(RenderSystem& rs,
-                        const WindowContext& window)
+void RenderScene(RenderSystem& rs)
 {
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -246,6 +246,7 @@ void RenderScene(RenderSystem& rs,
   }
 
   const FrameMatrices& fm = rs.frame.matrices;
+  const RenderViewport& viewport = rs.frame.viewport;
   const CameraContext& camera = rs.frame.camera;
   const ParticleVisualConfig& particleVisual = rs.frame.particleVisual;
   const RenderRuntimeState& render = rs.frame.runtime;
@@ -265,6 +266,6 @@ void RenderScene(RenderSystem& rs,
                   particleVisual,
                   camera,
                   rs,
-                  window,
+                  viewport,
                   fm);
 }

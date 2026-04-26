@@ -4,6 +4,7 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 
 #include "app/app_state.h"
 #include "app/app_analysis_dispatch.h"
@@ -27,6 +28,8 @@
 #include "FileIO/snapshot_io_service.h"
 
 #include "render/render_frame.h"
+#include "render/render_viewport.h"
+#include "platform/local_present.h"
 
 #include "imgui_context.h"
 #include "window_context.h"
@@ -38,6 +41,33 @@
 #include "PythonBridge/PythonBridge.h"
 #include "PythonBridge/ShmLayout.h"
 #endif
+
+static RenderViewport MakeRenderViewport(const WindowContext& window)
+{
+  RenderViewport viewport;
+  viewport.x = window.viewportX();
+  viewport.y = window.viewportY();
+  viewport.width = window.viewportWidth();
+  viewport.height = window.viewportHeight();
+  viewport.framebufferWidth = window.framebufferWidth();
+  viewport.framebufferHeight = window.framebufferHeight();
+
+  const ImGuiIO& io = ImGui::GetIO();
+  viewport.framebufferScaleX = io.DisplayFramebufferScale.x;
+  viewport.framebufferScaleY = io.DisplayFramebufferScale.y;
+  const int imguiFramebufferWidth =
+    static_cast<int>(io.DisplaySize.x * io.DisplayFramebufferScale.x);
+  const int imguiFramebufferHeight =
+    static_cast<int>(io.DisplaySize.y * io.DisplayFramebufferScale.y);
+  if (imguiFramebufferWidth > 0) {
+    viewport.framebufferWidth = imguiFramebufferWidth;
+  }
+  if (imguiFramebufferHeight > 0) {
+    viewport.framebufferHeight = imguiFramebufferHeight;
+  }
+
+  return viewport;
+}
 
 static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
                                                    const AppRuntimeState& runtime,
@@ -215,12 +245,6 @@ static void BeginFrame(AppRuntimeState& runtime)
   BeginImGuiFrame();
 }
 
-static void EndFrame(WindowContext& window)
-{
-  EndImGuiFrame();
-  glfwSwapBuffers(window.handle());
-}
-
 static int CurrentFileIndexForRequests(const FileNavigationRuntimeState& fileNav)
 {
   if (fileNav.current.loadedFileIndex >= 0) {
@@ -362,7 +386,8 @@ static void ExecuteRequests(AppDataState& data,
 
 void RunFrame(AppState& app,
               RenderSystem& render,
-              WindowContext& window)
+              WindowContext& window,
+              IFramePresenter& presenter)
 {
   BeginFrame(app.runtime);
 
@@ -442,14 +467,16 @@ void RunFrame(AppState& app,
                           render);
   AcknowledgeParticleRenderUploads(*app.data.particles, uploadResult);
 
+  const RenderViewport renderViewport = MakeRenderViewport(window);
   UpdateRenderFrameInput(app.renderFrameInput,
+                         renderViewport,
                          app.view.camera,
                          app.runtime.particleVisual,
                          app.runtime.render,
                          app.derived.overlay);
-  PrepareRenderFrame(app.renderFrameInput, render, window);
+  PrepareRenderFrame(app.renderFrameInput, render);
 
-  RenderScene(render, window);
+  RenderScene(render);
 
-  EndFrame(window);
+  presenter.present();
 }

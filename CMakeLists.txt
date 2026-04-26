@@ -75,6 +75,8 @@ set(SOURCES_CPP
   ${SRC_DIR}/window_context.cpp
   ${SRC_DIR}/particle_label_overlay.cpp
   ${SRC_DIR}/projection_preview_gl.cpp
+  ${SRC_DIR}/platform/shell_utils.cpp
+  ${SRC_DIR}/platform/local_present.cpp
   ${SRC_DIR}/app/app_services.cpp  
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
@@ -159,6 +161,8 @@ endif()
 
 if(PYTHON_BRIDGE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/app/app_python_bridge_execution.cpp)  
+  list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_frame_presenter.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_receiver.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridge.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/BridgeAdapter.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/ShmCommon.cpp)
@@ -793,4 +797,35 @@ else()
     COMMAND ${CMAKE_COMMAND} -E create_symlink "$<TARGET_FILE:${PROJECT_NAME}>" "${_ROOT_LINK_NAME}"
     COMMENT "Creating symlink to ${PROJECT_NAME} in repo root"
     VERBATIM)
+endif()
+
+if(PYTHON_BRIDGE)
+  add_executable(remote_frame_viewer
+    ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer/main.cpp
+    ${GLAD_SRC}
+  )
+
+  target_include_directories(remote_frame_viewer PRIVATE
+    ${SRC_DIR}
+    ${EXTERNAL_DIR}/glad/include
+    ${EXTERNAL_DIR}/include
+  )
+
+  detect_and_link_glfw(remote_frame_viewer "glfw" "glfw")
+  detect_and_link(remote_frame_viewer "ZeroMQ" "libzmq" CMAKE_TARGET libzmq)
+  detect_and_link(remote_frame_viewer "cppzmq" "cppzmq" HEADER_ONLY)
+  detect_and_link(remote_frame_viewer "nlohmann_json" "nlohmann-json"
+    CMAKE_TARGET nlohmann_json::nlohmann_json HEADER_ONLY)
+
+  if(WIN32)
+    target_link_libraries(remote_frame_viewer PRIVATE opengl32)
+  elseif(APPLE)
+    target_link_libraries(remote_frame_viewer PRIVATE ${OPENGL_FRAMEWORK} ${COCOA_FRAMEWORK})
+  else()
+    target_link_libraries(remote_frame_viewer PRIVATE OpenGL::GL dl pthread)
+  endif()
+
+  if(NOT MSVC)
+    target_compile_options(remote_frame_viewer PRIVATE -Wall -Wextra)
+  endif()
 endif()

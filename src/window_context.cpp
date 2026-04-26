@@ -80,8 +80,18 @@ void WindowContext::requestClose()
   }
 }
 
+void WindowContext::present()
+{
+  if (handle_) {
+    glfwSwapBuffers(handle_);
+  }
+}
+
 void WindowContext::updateFramebufferSize(int width, int height)
 {
+  framebufferWidth_ = width;
+  framebufferHeight_ = height;
+
 #ifdef USE_LETTERBOX
   const float targetAspect =
     static_cast<float>(initialWidth_) / static_cast<float>(initialHeight_);

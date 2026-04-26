@@ -6,22 +6,7 @@
 #include "PythonBridge/BridgeAdapter.h"
 #include "PythonBridge/PythonBridge.h"
 #include "data/particle_array.h"
-
-namespace {
-std::string ShellQuote(const std::string& value)
-{
-  std::string quoted = "'";
-  for (char c : value) {
-    if (c == '\'') {
-      quoted += "'\\''";
-    } else {
-      quoted += c;
-    }
-  }
-  quoted += "'";
-  return quoted;
-}
-}
+#include "platform/shell_utils.h"
 
 void OpenPythonBridge(ParticleArray& particles, PythonBridgeState& py)
 {
