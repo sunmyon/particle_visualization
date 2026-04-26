@@ -247,6 +247,9 @@ add_executable(${PROJECT_NAME}
 # ===== インクルードパス =====
 target_include_directories(${PROJECT_NAME} PRIVATE
   ${SRC_DIR}
+)
+
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
   ${EXTERNAL_DIR}/imgui
   ${EXTERNAL_DIR}/imgui/backends
   ${EXTERNAL_DIR}/implot
@@ -807,6 +810,9 @@ if(PYTHON_BRIDGE)
 
   target_include_directories(remote_frame_viewer PRIVATE
     ${SRC_DIR}
+  )
+
+  target_include_directories(remote_frame_viewer SYSTEM PRIVATE
     ${EXTERNAL_DIR}/glad/include
     ${EXTERNAL_DIR}/include
   )

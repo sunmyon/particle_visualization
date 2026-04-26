@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <cstring>
+
 // ---- helpers (safe load for double/int64 if alignment is uncertain) ----
 static inline float load_f32(const uint8_t* p) { float v; std::memcpy(&v, p, sizeof(v)); return v; }
 static inline double load_f64(const uint8_t* p) { double v; std::memcpy(&v, p, sizeof(v)); return v; }

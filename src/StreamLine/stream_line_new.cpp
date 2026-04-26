@@ -313,7 +313,6 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
   for (size_t n = 0; n < 1; ++n) {
     const size_t id = idx_buf[n];
     const auto& p = cloud.particles[id];
-    const auto& g = gradB[id];
 
     const Eigen::Vector3f pi = toEigen(p.pos);
     const Eigen::Vector3f d = xe - pi;
@@ -387,11 +386,11 @@ bool StreamlineComputer::RK4stepArcLength(const Vec3& x, float& h, float sign, V
 }
 
 std::vector<Vec3> StreamlineComputer::integrateStreamline(const Vec3& seed, float h_init, int maxSteps, float sign) const {
+  (void)h_init;
   std::vector<Vec3> line;
   line.reserve(std::min(maxSteps, 4096));
 
   Vec3 x = seed;
-  float h = std::max(1.0e-6f, std::abs(h_init));
 
   if (!is_inside_(x)) return line;
 
@@ -466,4 +465,3 @@ std::vector<Vec3> StreamlineComputer::sampleByCurvature(const std::vector<Vec3>&
   if (N > 1) out.push_back(fullLine.back());
   return out;
 }
-

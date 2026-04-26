@@ -126,7 +126,7 @@ void PythonBridgeImpl::serverLoop(){
   while (running_) {
     // タイムアウト付き poll
     zmq::pollitem_t items[] = { { static_cast<void*>(rep), 0, ZMQ_POLLIN, 0 } };
-    zmq::poll(items, 1, 50);
+    zmq::poll(items, 1, std::chrono::milliseconds(50));
     if (!(items[0].revents & ZMQ_POLLIN)) continue;
 
     zmq::message_t req;

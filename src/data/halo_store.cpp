@@ -1,6 +1,8 @@
 #include "data/particle_data.h"
 #include "data/halo_store.h"
 
+#include <unordered_map>
+
 void HaloStore::recomputeHaloPositionsFromParticles(const TrackingVector<ParticleData>& particles,
                                                     bool useMassWeight,
                                                     bool useOriginalPos)

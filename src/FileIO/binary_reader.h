@@ -69,6 +69,7 @@ public:
 		 const std::vector<FieldSpec>& fields,
 		 ParticleMask* mask = nullptr) override
   {
+    (void)mask;
     TIME_SCOPE("BinaryReader readRange total");
     
     if(begin + count > npart_) return false;
@@ -235,6 +236,7 @@ public:
 		 const std::vector<FieldSpec>& fields,
 		 ParticleMask* mask = nullptr) override
   {
+    (void)mask;
     TIME_SCOPE("MMapReader readRange total");
 
     const BinaryReadLayout layout = buildBinaryReadLayout(fields);

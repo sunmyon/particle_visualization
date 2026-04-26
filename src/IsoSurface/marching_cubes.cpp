@@ -361,6 +361,7 @@ Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::N
                                const ParticleOctree& tree,
                                float isoLevel)
 {
+  (void)tree;
   Mesh out;
   out.vertices.clear();
   out.indices.clear();

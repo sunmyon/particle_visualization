@@ -826,6 +826,8 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					      const ProjectionMapParams& params,
 					      const ProjectionMapContext& ctx)
 {
+  (void)colormap;
+  (void)countcolormap;
   // (3) カラーバーに ticks (5分割) とラベルを描画 (簡易ドット)
   int nTicks = 5;
   std::vector<double> ticks = generate_ticks(minVal, maxVal, nTicks);

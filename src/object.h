@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <string>
 #include <unordered_map>
 #include <array>
 #include <vector>
@@ -441,4 +443,3 @@ public:
 private:
   std::vector<CuboidAnnotationObject> objects_;
 };
-
