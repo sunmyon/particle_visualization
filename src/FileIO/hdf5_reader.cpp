@@ -10,6 +10,7 @@
 #include "FileIO/file_layout.h"
 #include "FileIO/file_mask.h"
 #include "data/header_info.h"
+#include "core/physics_constants.h"
 
 namespace {
   std::string partPath(int ptype, const std::string& dsName) {
@@ -242,6 +243,16 @@ bool HDF5Reader::readRange(ParticleBlock& out,
 }
 
 bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
+  // HDF5 files may omit /Parameters. Do not let units/comoving flags from the
+  // previously loaded snapshot leak into this file.
+  header.UnitLength_in_cm = physics_constants::pc_cm;
+  header.UnitMass_in_g = physics_constants::solar_mass_g;
+  header.UnitVelocity_in_cm_per_s = 1.0e5;
+  header.HubbleParam = 1.0;
+  header.flag_comoving = false;
+  header.flag_density_in_cgs = true;
+  header.flag_B_in_cgs = true;
+
   npart_ = 0;
   for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; IndexStart_[t]=0; }
   IndexStart_[6]=0;
@@ -280,6 +291,7 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     (void)HDF5Utils::readAttributeScalar(hg, "BoxSize", header.boxSize);
     (void)HDF5Utils::readAttributeScalar(hg, "Omega0", header.Omega0);
     (void)HDF5Utils::readAttributeScalar(hg, "OmegaLambda", header.OmegaLambda);
+    (void)HDF5Utils::readAttributeScalar(hg, "HubbleParam", header.HubbleParam);
 
     double z = 0.0;
     if (HDF5Utils::readAttributeScalar(hg, "Redshift", z)) {
@@ -320,43 +332,56 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
   }
 
-  bool hasParam = false;
   try {
     H5::Group param = file_.openGroup("/Parameters");
-    hasParam = true;
 
-    double UnitLength_in_cm;
-    (void)HDF5Utils::readAttributeScalar(param, "UnitLength_in_cm", UnitLength_in_cm);
-    header.UnitLength_in_cm = UnitLength_in_cm;
+    double UnitLength_in_cm = header.UnitLength_in_cm;
+    if (HDF5Utils::readAttributeScalar(param, "UnitLength_in_cm", UnitLength_in_cm) &&
+        std::isfinite(UnitLength_in_cm) &&
+        UnitLength_in_cm > 0.0) {
+      header.UnitLength_in_cm = UnitLength_in_cm;
+    }
 
-    double UnitMass_in_g;
-    (void)HDF5Utils::readAttributeScalar(param, "UnitMass_in_g", UnitMass_in_g);
-    header.UnitMass_in_g = UnitMass_in_g;
+    double UnitMass_in_g = header.UnitMass_in_g;
+    if (HDF5Utils::readAttributeScalar(param, "UnitMass_in_g", UnitMass_in_g) &&
+        std::isfinite(UnitMass_in_g) &&
+        UnitMass_in_g > 0.0) {
+      header.UnitMass_in_g = UnitMass_in_g;
+    }
 
-    double UnitVelocity_in_cm_per_s;
-    (void)HDF5Utils::readAttributeScalar(param, "UnitVelocity_in_cm_per_s", UnitVelocity_in_cm_per_s);
-    header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
+    double UnitVelocity_in_cm_per_s = header.UnitVelocity_in_cm_per_s;
+    if (HDF5Utils::readAttributeScalar(param, "UnitVelocity_in_cm_per_s", UnitVelocity_in_cm_per_s) &&
+        std::isfinite(UnitVelocity_in_cm_per_s) &&
+        UnitVelocity_in_cm_per_s > 0.0) {
+      header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
+    }
 
-    double HubbleParam;
-    (void)HDF5Utils::readAttributeScalar(param, "HubbleParam", HubbleParam);
-    header.HubbleParam = HubbleParam;
+    double HubbleParam = header.HubbleParam;
+    if (HDF5Utils::readAttributeScalar(param, "HubbleParam", HubbleParam) &&
+        std::isfinite(HubbleParam) &&
+        HubbleParam > 0.0) {
+      header.HubbleParam = HubbleParam;
+    }
 
     bool flag_comoving = false;
     (void)HDF5Utils::readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
     header.flag_comoving = flag_comoving;
 
     bool flag_density_in_cgs = false;
-    (void)HDF5Utils::readAttributeScalar(param, "FlagDensityInCgs", flag_density_in_cgs);
+    (void)HDF5Utils::readAttributeScalar(param,
+                                         "FlagDensityInCgs",
+                                         flag_density_in_cgs);
     header.flag_density_in_cgs = flag_density_in_cgs;
 
     bool flag_B_in_cgs = false;
-    (void)HDF5Utils::readAttributeScalar(param, "FlagBfieldInCgs", flag_B_in_cgs);
+    (void)HDF5Utils::readAttributeScalar(param,
+                                         "FlagBfieldInCgs",
+                                         flag_B_in_cgs);
     header.flag_B_in_cgs = flag_B_in_cgs;
   } catch (...) {
-    hasParam = false;
     header.flag_comoving = false;
-    header.flag_density_in_cgs = false;
-    header.flag_B_in_cgs = false;
+    header.flag_density_in_cgs = true;
+    header.flag_B_in_cgs = true;
   }
 
   bool allZero = true;
