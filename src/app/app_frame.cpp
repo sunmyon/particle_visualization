@@ -235,14 +235,14 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
   }
 }
 
-static void BeginFrame(AppRuntimeState& runtime)
+static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
 {
-  float currentFrame = static_cast<float>(glfwGetTime());
+  float currentFrame = static_cast<float>(window.timeSeconds());
   float deltaTime = runtime.interaction.beginFrame(currentFrame);
   (void)deltaTime;
 
-  glfwPollEvents();
-  BeginImGuiFrame();
+  window.pollEvents();
+  BeginImGuiFrame(window.framebufferWidth(), window.framebufferHeight());
 }
 
 static int CurrentFileIndexForRequests(const FileNavigationRuntimeState& fileNav)
@@ -389,7 +389,7 @@ void RunFrame(AppState& app,
               WindowContext& window,
               IFramePresenter& presenter)
 {
-  BeginFrame(app.runtime);
+  BeginFrame(app.runtime, window);
 
   const InputExecutionResult inputResult =
     ExecuteInputEvents(app.runtime.inputEvents,

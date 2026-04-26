@@ -50,6 +50,7 @@ option(USE_MMAP "Use POSIX mmap for file IO" ${USE_MMAP_DEFAULT})
 
 # グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
+option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote rendering" ON)
 
 # ===== コンパイル定義付与 =====
 function(add_def cond defname)
@@ -685,6 +686,26 @@ else()
 	# Linux: -lGL -ldl -lpthread
 	find_package(OpenGL REQUIRED)
 	target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::GL dl pthread)
+endif()
+
+if(USE_EGL_HEADLESS AND UNIX AND NOT APPLE)
+  find_package(OpenGL COMPONENTS EGL QUIET)
+  if(TARGET OpenGL::EGL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::EGL)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_HAVE_EGL)
+    message(STATUS "EGL headless context support: ON")
+  else()
+    find_path(EGL_INCLUDE_DIR NAMES EGL/egl.h)
+    find_library(EGL_LIBRARY NAMES EGL)
+    if(EGL_INCLUDE_DIR AND EGL_LIBRARY)
+      target_include_directories(${PROJECT_NAME} PRIVATE ${EGL_INCLUDE_DIR})
+      target_link_libraries(${PROJECT_NAME} PRIVATE ${EGL_LIBRARY})
+      target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_HAVE_EGL)
+      message(STATUS "EGL headless context support: ON (${EGL_LIBRARY})")
+    else()
+      message(WARNING "EGL not found. Headless remote rendering will fall back to GLFW.")
+    endif()
+  endif()
 endif()
 
 # デスクトップGLでは glad を使う

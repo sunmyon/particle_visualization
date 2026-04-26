@@ -25,7 +25,7 @@ RenderedFrame ReadBackDefaultFramebuffer(const WindowContext& window)
   GLint prevPackAlignment = 4;
   glGetIntegerv(GL_PACK_ALIGNMENT, &prevPackAlignment);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadBuffer(GL_BACK);
+  glReadBuffer(window.readBufferMode());
   glReadPixels(0,
                0,
                frame.width,

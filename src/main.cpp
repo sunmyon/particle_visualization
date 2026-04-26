@@ -49,7 +49,7 @@ int main()
   }
 #endif
 
-  while (!glfwWindowShouldClose(window.handle())) {
+  while (!window.shouldClose()) {
 #ifdef PYTHON_BRIDGE
     IFramePresenter& presenter =
       (remotePresenter && remotePresenter->active())

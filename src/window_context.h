@@ -8,6 +8,7 @@
 class WindowContext {
 public:
   bool init(int width, int height, const char* title);
+  bool initHeadless(int width, int height);
   void destroy();
 
   void attachCallbacks(GLFWcursorposfun mouseCb,
@@ -16,10 +17,15 @@ public:
                        GLFWframebuffersizefun framebufferCb);
 
   void updateFramebufferSize(int width, int height);
+  void pollEvents();
   void requestClose();
   void present();
+  bool shouldClose() const;
+  double timeSeconds() const;
 
   GLFWwindow* handle() const { return handle_; }
+  bool isHeadless() const { return headless_; }
+  GLenum readBufferMode() const { return headless_ ? GL_FRONT : GL_BACK; }
 
   int initialWidth() const { return initialWidth_; }
   int initialHeight() const { return initialHeight_; }
@@ -39,6 +45,15 @@ public:
   
 private:
   GLFWwindow* handle_ = nullptr;
+  bool glfwInitialized_ = false;
+  bool headless_ = false;
+  bool closeRequested_ = false;
+
+#ifdef PARTICLE_VIS_HAVE_EGL
+  void* eglDisplay_ = nullptr;
+  void* eglSurface_ = nullptr;
+  void* eglContext_ = nullptr;
+#endif
 
   int initialWidth_ = 1280;
   int initialHeight_ = 720;

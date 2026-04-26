@@ -7,6 +7,10 @@
 
 #include <GLFW/glfw3.h>
 
+namespace {
+bool g_useGlfwBackend = false;
+}
+
 void InitImGuiContext(GLFWwindow* window)
 {
   IMGUI_CHECKVERSION();
@@ -22,12 +26,38 @@ void InitImGuiContext(GLFWwindow* window)
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
+  g_useGlfwBackend = true;
 }
 
-void BeginImGuiFrame()
+void InitHeadlessImGuiContext(int width, int height)
+{
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+
+  ImGuiIO& io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(static_cast<float>(width),
+                          static_cast<float>(height));
+  io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+  io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
+  ImGui::StyleColorsDark();
+  ImPlot::CreateContext();
+
+  ImGui_ImplOpenGL3_Init("#version 330");
+  g_useGlfwBackend = false;
+}
+
+void BeginImGuiFrame(int width, int height)
 {
   ImGui_ImplOpenGL3_NewFrame();
-  ImGui_ImplGlfw_NewFrame();
+  if (g_useGlfwBackend) {
+    ImGui_ImplGlfw_NewFrame();
+  } else {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width),
+                            static_cast<float>(height));
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+  }
   ImGui::NewFrame();
 }
 
@@ -40,7 +70,10 @@ void EndImGuiFrame()
 void ShutdownImGuiContext()
 {
   ImGui_ImplOpenGL3_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
+  if (g_useGlfwBackend) {
+    ImGui_ImplGlfw_Shutdown();
+  }
+  g_useGlfwBackend = false;
   ImGui::DestroyContext();
   ImPlot::DestroyContext();
 }

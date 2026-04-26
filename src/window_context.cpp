@@ -4,8 +4,15 @@
 #include <imgui.h>
 #include <iostream>
 #include <cstdlib>
+#include <chrono>
+
+#ifdef PARTICLE_VIS_HAVE_EGL
+#include <EGL/egl.h>
+#endif
 
 namespace {
+using Clock = std::chrono::steady_clock;
+
 void GlfwErrorCallback(int error, const char* description)
 {
   std::cerr << "GLFW error " << error << ": "
@@ -17,12 +24,20 @@ const char* EnvOrUnset(const char* name)
   const char* value = std::getenv(name);
   return (value && value[0] != '\0') ? value : "(unset)";
 }
+
+Clock::time_point& StartTime()
+{
+  static Clock::time_point t0 = Clock::now();
+  return t0;
+}
 }
 
 bool WindowContext::init(int width, int height, const char* title)
 {
   initialWidth_ = width;
   initialHeight_ = height;
+  headless_ = false;
+  closeRequested_ = false;
 
   glfwSetErrorCallback(GlfwErrorCallback);
 
@@ -42,6 +57,7 @@ bool WindowContext::init(int width, int height, const char* title)
               << std::endl;
     return false;
   }
+  glfwInitialized_ = true;
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -58,6 +74,7 @@ bool WindowContext::init(int width, int height, const char* title)
               << " XDG_RUNTIME_DIR=" << EnvOrUnset("XDG_RUNTIME_DIR")
               << std::endl;
     glfwTerminate();
+    glfwInitialized_ = false;
     return false;
   }
 
@@ -68,6 +85,7 @@ bool WindowContext::init(int width, int height, const char* title)
     glfwDestroyWindow(handle_);
     handle_ = nullptr;
     glfwTerminate();
+    glfwInitialized_ = false;
     return false;
   }
 
@@ -83,13 +101,145 @@ bool WindowContext::init(int width, int height, const char* title)
   return true;
 }
 
+bool WindowContext::initHeadless(int width, int height)
+{
+  initialWidth_ = width;
+  initialHeight_ = height;
+  headless_ = true;
+  closeRequested_ = false;
+
+#ifndef PARTICLE_VIS_HAVE_EGL
+  std::cerr << "EGL headless context was not enabled at build time." << std::endl;
+  return false;
+#else
+  EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  if (display == EGL_NO_DISPLAY) {
+    std::cerr << "Failed to get EGL display" << std::endl;
+    return false;
+  }
+
+  EGLint major = 0;
+  EGLint minor = 0;
+  if (!eglInitialize(display, &major, &minor)) {
+    std::cerr << "Failed to initialize EGL" << std::endl;
+    return false;
+  }
+
+  if (!eglBindAPI(EGL_OPENGL_API)) {
+    std::cerr << "Failed to bind EGL OpenGL API" << std::endl;
+    eglTerminate(display);
+    return false;
+  }
+
+  const EGLint configAttribs[] = {
+    EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+    EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+    EGL_RED_SIZE, 8,
+    EGL_GREEN_SIZE, 8,
+    EGL_BLUE_SIZE, 8,
+    EGL_ALPHA_SIZE, 8,
+    EGL_DEPTH_SIZE, 24,
+    EGL_STENCIL_SIZE, 8,
+    EGL_NONE
+  };
+
+  EGLConfig config = nullptr;
+  EGLint numConfigs = 0;
+  if (!eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) ||
+      numConfigs <= 0) {
+    std::cerr << "Failed to choose EGL framebuffer config" << std::endl;
+    eglTerminate(display);
+    return false;
+  }
+
+  const EGLint surfaceAttribs[] = {
+    EGL_WIDTH, width,
+    EGL_HEIGHT, height,
+    EGL_NONE
+  };
+  EGLSurface surface = eglCreatePbufferSurface(display, config, surfaceAttribs);
+  if (surface == EGL_NO_SURFACE) {
+    std::cerr << "Failed to create EGL pbuffer surface" << std::endl;
+    eglTerminate(display);
+    return false;
+  }
+
+  const EGLint contextAttribs[] = {
+#ifdef EGL_CONTEXT_MAJOR_VERSION
+    EGL_CONTEXT_MAJOR_VERSION, 3,
+    EGL_CONTEXT_MINOR_VERSION, 3,
+#endif
+    EGL_NONE
+  };
+  EGLContext context =
+    eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
+  if (context == EGL_NO_CONTEXT) {
+    std::cerr << "Failed to create EGL OpenGL context" << std::endl;
+    eglDestroySurface(display, surface);
+    eglTerminate(display);
+    return false;
+  }
+
+  if (!eglMakeCurrent(display, surface, surface, context)) {
+    std::cerr << "Failed to make EGL context current" << std::endl;
+    eglDestroyContext(display, context);
+    eglDestroySurface(display, surface);
+    eglTerminate(display);
+    return false;
+  }
+
+  if (!gladLoadGLLoader((GLADloadproc)eglGetProcAddress)) {
+    std::cerr << "Failed to initialize GLAD from EGL" << std::endl;
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroyContext(display, context);
+    eglDestroySurface(display, surface);
+    eglTerminate(display);
+    return false;
+  }
+
+  eglDisplay_ = display;
+  eglSurface_ = surface;
+  eglContext_ = context;
+
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  updateFramebufferSize(width, height);
+
+  std::cerr << "Initialized EGL headless OpenGL context "
+            << major << "." << minor << " (" << width << "x" << height
+            << ")" << std::endl;
+  return true;
+#endif
+}
+
 void WindowContext::destroy()
 {
+#ifdef PARTICLE_VIS_HAVE_EGL
+  if (eglDisplay_) {
+    EGLDisplay display = static_cast<EGLDisplay>(eglDisplay_);
+    EGLSurface surface = static_cast<EGLSurface>(eglSurface_);
+    EGLContext context = static_cast<EGLContext>(eglContext_);
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
+    if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
+    eglTerminate(display);
+    eglDisplay_ = nullptr;
+    eglSurface_ = nullptr;
+    eglContext_ = nullptr;
+  }
+#endif
+
   if (handle_) {
     glfwDestroyWindow(handle_);
     handle_ = nullptr;
   }
-  glfwTerminate();
+  if (glfwInitialized_) {
+    glfwTerminate();
+    glfwInitialized_ = false;
+  }
 }
 
 void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
@@ -107,9 +257,35 @@ void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
 
 void WindowContext::requestClose()
 {
+  closeRequested_ = true;
   if (handle_) {
     glfwSetWindowShouldClose(handle_, true);
   }
+}
+
+void WindowContext::pollEvents()
+{
+  if (handle_) {
+    glfwPollEvents();
+  }
+}
+
+bool WindowContext::shouldClose() const
+{
+  if (handle_) {
+    return glfwWindowShouldClose(handle_);
+  }
+  return closeRequested_;
+}
+
+double WindowContext::timeSeconds() const
+{
+  if (glfwInitialized_) {
+    return glfwGetTime();
+  }
+
+  const auto now = Clock::now();
+  return std::chrono::duration<double>(now - StartTime()).count();
 }
 
 void WindowContext::present()
@@ -117,6 +293,12 @@ void WindowContext::present()
   if (handle_) {
     glfwSwapBuffers(handle_);
   }
+#ifdef PARTICLE_VIS_HAVE_EGL
+  else if (eglDisplay_ && eglSurface_) {
+    eglSwapBuffers(static_cast<EGLDisplay>(eglDisplay_),
+                   static_cast<EGLSurface>(eglSurface_));
+  }
+#endif
 }
 
 void WindowContext::updateFramebufferSize(int width, int height)

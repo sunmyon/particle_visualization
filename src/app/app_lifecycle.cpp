@@ -13,6 +13,8 @@
 
 #include <iostream>
 #include <memory>
+#include <cstdlib>
+#include <string>
 
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
@@ -48,21 +50,43 @@ bool InitPlatform(WindowContext& window,
 		  CallbackContext& callbackCtx,
 		  AppState& app)
 {
-  if (!window.init(1280, 720, "3D Particle Visualization")) {
+  bool initialized = false;
+#ifdef PYTHON_BRIDGE
+  const char* remoteFrameEndpoint =
+    std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT");
+  const bool remoteMode =
+    remoteFrameEndpoint && remoteFrameEndpoint[0] != '\0';
+  const char* headlessEnv = std::getenv("PARTICLE_VIS_HEADLESS");
+  const bool allowHeadless = !headlessEnv || std::string(headlessEnv) != "0";
+  if (remoteMode && allowHeadless) {
+    initialized = window.initHeadless(1280, 720);
+  }
+#endif
+
+  if (!initialized) {
+    initialized = window.init(1280, 720, "3D Particle Visualization");
+  }
+
+  if (!initialized) {
     return false;
   }
 
   callbackCtx.app = &app;
   callbackCtx.window = &window;
 
-  glfwSetWindowUserPointer(window.handle(), &callbackCtx);
+  if (window.handle()) {
+    glfwSetWindowUserPointer(window.handle(), &callbackCtx);
 
-  window.attachCallbacks(mouse_callback,
-                         scroll_callback,
-                         key_callback,
-                         framebuffer_size_callback);
+    window.attachCallbacks(mouse_callback,
+                           scroll_callback,
+                           key_callback,
+                           framebuffer_size_callback);
 
-  InitImGuiContext(window.handle());
+    InitImGuiContext(window.handle());
+  } else {
+    InitHeadlessImGuiContext(window.framebufferWidth(),
+                             window.framebufferHeight());
+  }
 
 #ifndef NONATIVEFILEDIALOG
   if (NFD_Init() != NFD_OKAY) {
