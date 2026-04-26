@@ -12,9 +12,11 @@ public:
 
   void attachCallbacks(GLFWcursorposfun mouseCb,
                        GLFWscrollfun scrollCb,
+                       GLFWkeyfun keyCb,
                        GLFWframebuffersizefun framebufferCb);
 
   void updateFramebufferSize(int width, int height);
+  void requestClose();
 
   GLFWwindow* handle() const { return handle_; }
 

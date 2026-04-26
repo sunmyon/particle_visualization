@@ -9,6 +9,7 @@
 #include "app/app_analysis_dispatch.h"
 #include "app/app_analysis_execution.h"
 #include "app/app_derived_rebuild.h"
+#include "app/app_input_execution.h"
 #include "app/app_projection_execution.h"
 #include "app/app_render_sync.h"
 #include "app/app_snapshot_load.h"
@@ -204,13 +205,12 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
   }
 }
 
-static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
+static void BeginFrame(AppRuntimeState& runtime)
 {
   float currentFrame = static_cast<float>(glfwGetTime());
   float deltaTime = runtime.interaction.beginFrame(currentFrame);
   (void)deltaTime;
 
-  processInput(window.handle());
   glfwPollEvents();
   BeginImGuiFrame();
 }
@@ -364,7 +364,16 @@ void RunFrame(AppState& app,
               RenderSystem& render,
               WindowContext& window)
 {
-  BeginFrame(app.runtime, window);
+  BeginFrame(app.runtime);
+
+  const InputExecutionResult inputResult =
+    ExecuteInputEvents(app.runtime.inputEvents,
+                       app.runtime.interaction,
+                       app.view.camera,
+                       app.runtime.settings);
+  if (inputResult.closeRequested) {
+    window.requestClose();
+  }
 
   app.runtime.snapshotLoad.busy =
     (app.services.snapshotIO && app.services.snapshotIO->isLoading());

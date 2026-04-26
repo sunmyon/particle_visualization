@@ -79,6 +79,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
+  ${SRC_DIR}/app/app_input_execution.cpp
   ${SRC_DIR}/app/app_analysis_dispatch.cpp
   ${SRC_DIR}/app/app_analysis_execution.cpp
   ${SRC_DIR}/app/app_clump_window_execution.cpp

@@ -10,6 +10,7 @@
 #include "app/window_commands.h"
 #include "app/app_render_sync.h"
 #include "interaction/camera.h"
+#include "interaction/input_event.h"
 #include "interaction/interaction_utils.h"
 #include "render/render_frame.h"
 #include "data/clump_store.h"
@@ -38,6 +39,7 @@ struct AppUIState {
 
 struct AppRuntimeState {
   InteractionState interaction;
+  InputEventQueue inputEvents;
   SnapshotLoadRuntimeState snapshotLoad;
 
   RenderRuntimeState render;

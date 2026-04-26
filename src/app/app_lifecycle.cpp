@@ -59,6 +59,7 @@ bool InitPlatform(WindowContext& window,
 
   window.attachCallbacks(mouse_callback,
                          scroll_callback,
+                         key_callback,
                          framebuffer_size_callback);
 
   InitImGuiContext(window.handle());

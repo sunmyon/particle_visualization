@@ -62,13 +62,22 @@ void WindowContext::destroy()
 
 void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
                                     GLFWscrollfun scrollCb,
+                                    GLFWkeyfun keyCb,
                                     GLFWframebuffersizefun framebufferCb)
 {
   if (!handle_) return;
 
   glfwSetCursorPosCallback(handle_, mouseCb);
   glfwSetScrollCallback(handle_, scrollCb);
+  glfwSetKeyCallback(handle_, keyCb);
   glfwSetFramebufferSizeCallback(handle_, framebufferCb);
+}
+
+void WindowContext::requestClose()
+{
+  if (handle_) {
+    glfwSetWindowShouldClose(handle_, true);
+  }
 }
 
 void WindowContext::updateFramebufferSize(int width, int height)
