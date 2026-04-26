@@ -1,7 +1,9 @@
 #pragma once
 
 #include <glad/glad.h>
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include <GLFW/glfw3.h>
+#endif
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
@@ -11,10 +13,12 @@ public:
   bool initHeadless(int width, int height);
   void destroy();
 
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   void attachCallbacks(GLFWcursorposfun mouseCb,
                        GLFWscrollfun scrollCb,
                        GLFWkeyfun keyCb,
                        GLFWframebuffersizefun framebufferCb);
+#endif
 
   void updateFramebufferSize(int width, int height);
   void pollEvents();
@@ -23,7 +27,11 @@ public:
   bool shouldClose() const;
   double timeSeconds() const;
 
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   GLFWwindow* handle() const { return handle_; }
+#else
+  void* handle() const { return nullptr; }
+#endif
   bool isHeadless() const { return headless_; }
   GLenum readBufferMode() const { return headless_ ? GL_FRONT : GL_BACK; }
 
@@ -44,7 +52,9 @@ public:
   float projectionAspect() const;
   
 private:
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   GLFWwindow* handle_ = nullptr;
+#endif
   bool glfwInitialized_ = false;
   bool headless_ = false;
   bool closeRequested_ = false;

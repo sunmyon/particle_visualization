@@ -145,6 +145,10 @@ EGLDisplay GetPreferredEglDisplay()
 
 bool WindowContext::init(int width, int height, const char* title)
 {
+#ifdef PARTICLE_VIS_HEADLESS_ONLY
+  (void)title;
+  return initHeadless(width, height);
+#else
   initialWidth_ = width;
   initialHeight_ = height;
   headless_ = false;
@@ -210,6 +214,7 @@ bool WindowContext::init(int width, int height, const char* title)
   updateFramebufferSize(fbW, fbH);
 
   return true;
+#endif
 }
 
 bool WindowContext::initHeadless(int width, int height)
@@ -386,6 +391,7 @@ void WindowContext::destroy()
   }
 #endif
 
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (handle_) {
     glfwDestroyWindow(handle_);
     handle_ = nullptr;
@@ -394,8 +400,10 @@ void WindowContext::destroy()
     glfwTerminate();
     glfwInitialized_ = false;
   }
+#endif
 }
 
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
                                     GLFWscrollfun scrollCb,
                                     GLFWkeyfun keyCb,
@@ -408,35 +416,44 @@ void WindowContext::attachCallbacks(GLFWcursorposfun mouseCb,
   glfwSetKeyCallback(handle_, keyCb);
   glfwSetFramebufferSizeCallback(handle_, framebufferCb);
 }
+#endif
 
 void WindowContext::requestClose()
 {
   closeRequested_ = true;
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (handle_) {
     glfwSetWindowShouldClose(handle_, true);
   }
+#endif
 }
 
 void WindowContext::pollEvents()
 {
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (handle_) {
     glfwPollEvents();
   }
+#endif
 }
 
 bool WindowContext::shouldClose() const
 {
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (handle_) {
     return glfwWindowShouldClose(handle_);
   }
+#endif
   return closeRequested_;
 }
 
 double WindowContext::timeSeconds() const
 {
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (glfwInitialized_) {
     return glfwGetTime();
   }
+#endif
 
   const auto now = Clock::now();
   return std::chrono::duration<double>(now - StartTime()).count();
@@ -444,11 +461,18 @@ double WindowContext::timeSeconds() const
 
 void WindowContext::present()
 {
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (handle_) {
     glfwSwapBuffers(handle_);
   }
+#endif
 #ifdef PARTICLE_VIS_HAVE_EGL
-  else if (eglDisplay_ && eglSurface_) {
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
+  const bool hasWindow = handle_ != nullptr;
+#else
+  const bool hasWindow = false;
+#endif
+  if (!hasWindow && eglDisplay_ && eglSurface_) {
     eglSwapBuffers(static_cast<EGLDisplay>(eglDisplay_),
                    static_cast<EGLSurface>(eglSurface_));
   }

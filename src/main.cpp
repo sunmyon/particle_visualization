@@ -12,7 +12,9 @@
 #endif
 
 #include "app/app_state.h"
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include "app/app_callbacks.h"
+#endif
 #include "app/app_lifecycle.h"
 #include "app/app_frame.h"
 

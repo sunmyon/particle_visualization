@@ -1,6 +1,8 @@
 #include "app/app_state.h"
 #include "app/app_lifecycle.h"
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include "app/app_callbacks.h"
+#endif
 #include "app/app_snapshot_load.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
@@ -74,6 +76,7 @@ bool InitPlatform(WindowContext& window,
   callbackCtx.app = &app;
   callbackCtx.window = &window;
 
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (window.handle()) {
     glfwSetWindowUserPointer(window.handle(), &callbackCtx);
 
@@ -84,9 +87,12 @@ bool InitPlatform(WindowContext& window,
 
     InitImGuiContext(window.handle());
   } else {
+#endif
     InitHeadlessImGuiContext(window.framebufferWidth(),
                              window.framebufferHeight());
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
   }
+#endif
 
 #ifndef NONATIVEFILEDIALOG
   if (NFD_Init() != NFD_OKAY) {

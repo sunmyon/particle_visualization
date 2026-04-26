@@ -52,6 +52,11 @@ option(USE_MMAP "Use POSIX mmap for file IO" ${USE_MMAP_DEFAULT})
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
 option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote rendering" ON)
 option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
+option(PARTICLE_VIS_HEADLESS_ONLY "Build particle_vis without GLFW/window support for EGL remote rendering" OFF)
+
+if(PARTICLE_VIS_HEADLESS_ONLY)
+  set(NONATIVEFILEDIALOG ON CACHE BOOL "Disable native file dialog in headless builds" FORCE)
+endif()
 
 function(add_egl_probe_target)
   find_package(OpenGL COMPONENTS EGL QUIET)
@@ -200,6 +205,10 @@ if(PYTHON_BRIDGE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/JupyterLauncher.cpp)
 endif()
 
+if(PARTICLE_VIS_HEADLESS_ONLY)
+  list(REMOVE_ITEM SOURCES_CPP ${SRC_DIR}/app/app_callbacks.cpp)
+endif()
+
 # ImGui / ImPlot / NFD（必要に応じて）
 set(IMGUI_SRC
   ${EXTERNAL_DIR}/imgui/imgui.cpp
@@ -207,9 +216,12 @@ set(IMGUI_SRC
   ${EXTERNAL_DIR}/imgui/imgui_widgets.cpp
   ${EXTERNAL_DIR}/imgui/imgui_tables.cpp
 	${EXTERNAL_DIR}/imgui/imgui_demo.cpp
-	${EXTERNAL_DIR}/imgui/backends/imgui_impl_glfw.cpp
 	${EXTERNAL_DIR}/imgui/backends/imgui_impl_opengl3.cpp
 )
+
+if(NOT PARTICLE_VIS_HEADLESS_ONLY)
+  list(APPEND IMGUI_SRC ${EXTERNAL_DIR}/imgui/backends/imgui_impl_glfw.cpp)
+endif()
 
 set(IMPLOT_SRC
 	${EXTERNAL_DIR}/implot/implot.cpp
@@ -625,7 +637,9 @@ if(ISO_CONTOUR)
   target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
 endif()
 
-detect_and_link_glfw(${PROJECT_NAME} "glfw" "glfw")
+if(NOT PARTICLE_VIS_HEADLESS_ONLY)
+  detect_and_link_glfw(${PROJECT_NAME} "glfw" "glfw")
+endif()
 detect_and_link(${PROJECT_NAME} "GMP" "gmp")
 detect_and_link(${PROJECT_NAME} "MPFR" "mpfr")
 
@@ -736,6 +750,19 @@ if(USE_EGL_HEADLESS AND UNIX AND NOT APPLE)
     else()
       message(WARNING "EGL not found. Headless remote rendering will fall back to GLFW.")
     endif()
+  endif()
+endif()
+
+if(PARTICLE_VIS_HEADLESS_ONLY)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_HEADLESS_ONLY)
+  if(NOT UNIX OR APPLE)
+    message(FATAL_ERROR "PARTICLE_VIS_HEADLESS_ONLY currently requires Linux/Unix EGL.")
+  endif()
+  if(NOT USE_EGL_HEADLESS)
+    message(FATAL_ERROR "PARTICLE_VIS_HEADLESS_ONLY requires USE_EGL_HEADLESS=ON.")
+  endif()
+  if(NOT PYTHON_BRIDGE)
+    message(FATAL_ERROR "PARTICLE_VIS_HEADLESS_ONLY requires PYTHON_BRIDGE=ON for remote frame/input transport.")
   endif()
 endif()
 
@@ -854,7 +881,7 @@ else()
     VERBATIM)
 endif()
 
-if(PYTHON_BRIDGE)
+if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
   add_executable(remote_frame_viewer
     ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer/main.cpp
     ${GLAD_SRC}

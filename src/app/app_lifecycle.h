@@ -2,6 +2,7 @@
 
 struct RenderSystem;
 struct AppState;
+struct CallbackContext;
 class WindowContext;
 
 bool InitPlatform(WindowContext& window,
