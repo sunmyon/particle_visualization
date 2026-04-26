@@ -66,12 +66,58 @@ EGLDisplay GetPreferredEglDisplay()
   const bool canPlatformBase =
     HasExtension(clientExtensions, "EGL_EXT_platform_base") ||
     HasExtension(clientExtensions, "EGL_KHR_platform_base");
+  const bool canPlatformDevice =
+    HasExtension(clientExtensions, "EGL_EXT_platform_device");
+  const bool canDeviceEnumeration =
+    HasExtension(clientExtensions, "EGL_EXT_device_enumeration") ||
+    HasExtension(clientExtensions, "EGL_EXT_device_base");
   const bool canSurfaceless =
     HasExtension(clientExtensions, "EGL_MESA_platform_surfaceless");
 
   const char* requested = std::getenv("PARTICLE_VIS_EGL_PLATFORM");
   const bool forceDefault = requested && std::string(requested) == "default";
+  const bool forceSurfaceless =
+    requested && std::string(requested) == "surfaceless";
+  const bool skipDevice = forceDefault || forceSurfaceless;
   const bool preferSurfaceless = !forceDefault;
+
+  if (!skipDevice && canPlatformBase && canPlatformDevice && canDeviceEnumeration) {
+    auto queryDevices =
+      reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(
+        eglGetProcAddress("eglQueryDevicesEXT"));
+    auto getPlatformDisplay =
+      reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+        eglGetProcAddress("eglGetPlatformDisplayEXT"));
+
+    if (queryDevices && getPlatformDisplay) {
+      EGLDeviceEXT devices[16] = {};
+      EGLint count = 0;
+      if (queryDevices(16, devices, &count) && count > 0) {
+        int deviceIndex = 0;
+        if (const char* indexEnv = std::getenv("PARTICLE_VIS_EGL_DEVICE_INDEX")) {
+          deviceIndex = std::atoi(indexEnv);
+        }
+        if (deviceIndex < 0 || deviceIndex >= count) {
+          deviceIndex = 0;
+        }
+
+        std::cerr << "EGL: found " << count << " device(s); using device "
+                  << deviceIndex << std::endl;
+        std::cerr << "EGL: eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT)"
+                  << std::endl;
+        EGLDisplay display =
+          getPlatformDisplay(EGL_PLATFORM_DEVICE_EXT,
+                             devices[deviceIndex],
+                             nullptr);
+        if (display != EGL_NO_DISPLAY) {
+          return display;
+        }
+        PrintEglError("EGL device display unavailable.");
+      } else {
+        PrintEglError("EGL device enumeration failed.");
+      }
+    }
+  }
 
   if (preferSurfaceless && canPlatformBase && canSurfaceless) {
     auto getPlatformDisplay =
