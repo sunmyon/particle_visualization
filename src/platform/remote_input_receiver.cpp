@@ -1,5 +1,6 @@
 #include "platform/remote_input_receiver.h"
 
+#ifdef PYTHON_BRIDGE
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -7,7 +8,11 @@
 
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
+#else
+#include <iostream>
+#endif
 
+#ifdef PYTHON_BRIDGE
 namespace {
 
 InputEventType ParseType(const std::string& value)
@@ -68,7 +73,9 @@ InputEvent ParseEvent(const nlohmann::json& json)
 }
 
 } // namespace
+#endif
 
+#ifdef PYTHON_BRIDGE
 struct RemoteInputReceiver::Impl {
   std::atomic<bool> running{false};
   std::thread thread;
@@ -101,6 +108,9 @@ struct RemoteInputReceiver::Impl {
     }
   }
 };
+#else
+struct RemoteInputReceiver::Impl {};
+#endif
 
 RemoteInputReceiver::RemoteInputReceiver() = default;
 
@@ -111,6 +121,15 @@ RemoteInputReceiver::~RemoteInputReceiver()
 
 bool RemoteInputReceiver::start(const std::string& endpoint, InputEventQueue& queue)
 {
+#ifndef PYTHON_BRIDGE
+  (void)queue;
+  endpoint_ = endpoint;
+  std::cerr << "RemoteInputReceiver disabled: build without PYTHON_BRIDGE/ZMQ. "
+            << "Endpoint ignored: " << endpoint_ << '\n';
+  endpoint_.clear();
+  active_ = false;
+  return false;
+#else
   if (active_) {
     return false;
   }
@@ -133,10 +152,16 @@ bool RemoteInputReceiver::start(const std::string& endpoint, InputEventQueue& qu
   impl_->thread = std::thread(&Impl::loop, impl_.get(), &queue);
   active_ = true;
   return true;
+#endif
 }
 
 void RemoteInputReceiver::stop()
 {
+#ifndef PYTHON_BRIDGE
+  active_ = false;
+  endpoint_.clear();
+  return;
+#else
   if (!impl_) {
     active_ = false;
     return;
@@ -149,4 +174,5 @@ void RemoteInputReceiver::stop()
   impl_.reset();
   active_ = false;
   endpoint_.clear();
+#endif
 }

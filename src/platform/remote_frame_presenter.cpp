@@ -2,13 +2,19 @@
 
 #include <iostream>
 
+#ifdef PYTHON_BRIDGE
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
+#endif
 
+#ifdef PYTHON_BRIDGE
 struct RemoteFramePresenter::Impl {
   zmq::context_t context{1};
   zmq::socket_t socket{context, zmq::socket_type::pub};
 };
+#else
+struct RemoteFramePresenter::Impl {};
+#endif
 
 RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
                                            const std::string& endpoint)
@@ -16,6 +22,7 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
   , endpoint_(endpoint)
   , impl_(std::make_unique<Impl>())
 {
+#ifdef PYTHON_BRIDGE
   try {
     impl_->socket.set(zmq::sockopt::sndhwm, 2);
     impl_->socket.bind(endpoint_);
@@ -25,6 +32,11 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
     std::cerr << "RemoteFramePresenter failed to bind " << endpoint_
               << ": " << e.what() << '\n';
   }
+#else
+  std::cerr << "RemoteFramePresenter disabled: build without PYTHON_BRIDGE/ZMQ. "
+            << "Endpoint ignored: " << endpoint_ << '\n';
+  active_ = false;
+#endif
 }
 
 RemoteFramePresenter::~RemoteFramePresenter() = default;
@@ -41,6 +53,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     return result;
   }
 
+#ifdef PYTHON_BRIDGE
   result.frame.frameId = ++frameId_;
 
   nlohmann::json header{
@@ -67,6 +80,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   } catch (const zmq::error_t&) {
     // Dropping frames is acceptable for the prototype path.
   }
+#endif
 
   return result;
 }
