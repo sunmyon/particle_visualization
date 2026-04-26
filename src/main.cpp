@@ -24,12 +24,6 @@ int main()
   LocalFramePresenter localPresenter(window);
 #ifdef PYTHON_BRIDGE
   std::unique_ptr<RemoteFramePresenter> remotePresenter;
-  if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT")) {
-    if (endpoint[0] != '\0') {
-      remotePresenter =
-        std::make_unique<RemoteFramePresenter>(window, std::string(endpoint));
-    }
-  }
   RemoteInputReceiver remoteInput;
 #endif
   CallbackContext callbackCtx;
@@ -37,6 +31,15 @@ int main()
   if (!InitPlatform(window, callbackCtx, app)) {
     return EXIT_FAILURE;
   }
+
+#ifdef PYTHON_BRIDGE
+  if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT")) {
+    if (endpoint[0] != '\0') {
+      remotePresenter =
+        std::make_unique<RemoteFramePresenter>(window, std::string(endpoint));
+    }
+  }
+#endif
 
   InitApplication(app, render);
   LoadInitialData(app);

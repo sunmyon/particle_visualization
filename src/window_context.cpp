@@ -30,6 +30,14 @@ Clock::time_point& StartTime()
   static Clock::time_point t0 = Clock::now();
   return t0;
 }
+
+#ifdef PARTICLE_VIS_HAVE_EGL
+void PrintEglError(const char* label)
+{
+  std::cerr << label << " EGL error=0x"
+            << std::hex << eglGetError() << std::dec << std::endl;
+}
+#endif
 }
 
 bool WindowContext::init(int width, int height, const char* title)
@@ -41,7 +49,7 @@ bool WindowContext::init(int width, int height, const char* title)
 
   glfwSetErrorCallback(GlfwErrorCallback);
 
-#if defined(GLFW_PLATFORM) && defined(GLFW_PLATFORM_X11)
+#if defined(__linux__) && defined(GLFW_PLATFORM) && defined(GLFW_PLATFORM_X11)
   // In SSH X forwarding sessions DISPLAY is set, but some systems still let
   // GLFW probe Wayland first and fail on missing XDG_RUNTIME_DIR.
   if (std::getenv("DISPLAY") && !std::getenv("PARTICLE_VIS_GLFW_PLATFORM")) {
@@ -112,21 +120,36 @@ bool WindowContext::initHeadless(int width, int height)
   std::cerr << "EGL headless context was not enabled at build time." << std::endl;
   return false;
 #else
+  std::cerr << "Trying EGL headless OpenGL context..." << std::endl;
+
+  std::cerr << "EGL: eglGetDisplay(EGL_DEFAULT_DISPLAY)" << std::endl;
   EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (display == EGL_NO_DISPLAY) {
-    std::cerr << "Failed to get EGL display" << std::endl;
+    PrintEglError("Failed to get EGL display.");
     return false;
   }
 
   EGLint major = 0;
   EGLint minor = 0;
+  std::cerr << "EGL: eglInitialize" << std::endl;
   if (!eglInitialize(display, &major, &minor)) {
-    std::cerr << "Failed to initialize EGL" << std::endl;
+    PrintEglError("Failed to initialize EGL.");
     return false;
   }
 
+  std::cerr << "EGL initialized: " << major << "." << minor << std::endl;
+  std::cerr << "EGL vendor: "
+            << (eglQueryString(display, EGL_VENDOR)
+                ? eglQueryString(display, EGL_VENDOR) : "(null)")
+            << std::endl;
+  std::cerr << "EGL extensions: "
+            << (eglQueryString(display, EGL_EXTENSIONS)
+                ? eglQueryString(display, EGL_EXTENSIONS) : "(null)")
+            << std::endl;
+
+  std::cerr << "EGL: eglBindAPI(EGL_OPENGL_API)" << std::endl;
   if (!eglBindAPI(EGL_OPENGL_API)) {
-    std::cerr << "Failed to bind EGL OpenGL API" << std::endl;
+    PrintEglError("Failed to bind EGL OpenGL API.");
     eglTerminate(display);
     return false;
   }
@@ -145,9 +168,10 @@ bool WindowContext::initHeadless(int width, int height)
 
   EGLConfig config = nullptr;
   EGLint numConfigs = 0;
+  std::cerr << "EGL: eglChooseConfig" << std::endl;
   if (!eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) ||
       numConfigs <= 0) {
-    std::cerr << "Failed to choose EGL framebuffer config" << std::endl;
+    PrintEglError("Failed to choose EGL framebuffer config.");
     eglTerminate(display);
     return false;
   }
@@ -157,9 +181,10 @@ bool WindowContext::initHeadless(int width, int height)
     EGL_HEIGHT, height,
     EGL_NONE
   };
+  std::cerr << "EGL: eglCreatePbufferSurface" << std::endl;
   EGLSurface surface = eglCreatePbufferSurface(display, config, surfaceAttribs);
   if (surface == EGL_NO_SURFACE) {
-    std::cerr << "Failed to create EGL pbuffer surface" << std::endl;
+    PrintEglError("Failed to create EGL pbuffer surface.");
     eglTerminate(display);
     return false;
   }
@@ -171,23 +196,26 @@ bool WindowContext::initHeadless(int width, int height)
 #endif
     EGL_NONE
   };
+  std::cerr << "EGL: eglCreateContext" << std::endl;
   EGLContext context =
     eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
   if (context == EGL_NO_CONTEXT) {
-    std::cerr << "Failed to create EGL OpenGL context" << std::endl;
+    PrintEglError("Failed to create EGL OpenGL context.");
     eglDestroySurface(display, surface);
     eglTerminate(display);
     return false;
   }
 
+  std::cerr << "EGL: eglMakeCurrent" << std::endl;
   if (!eglMakeCurrent(display, surface, surface, context)) {
-    std::cerr << "Failed to make EGL context current" << std::endl;
+    PrintEglError("Failed to make EGL context current.");
     eglDestroyContext(display, context);
     eglDestroySurface(display, surface);
     eglTerminate(display);
     return false;
   }
 
+  std::cerr << "EGL: gladLoadGLLoader" << std::endl;
   if (!gladLoadGLLoader((GLADloadproc)eglGetProcAddress)) {
     std::cerr << "Failed to initialize GLAD from EGL" << std::endl;
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
@@ -200,6 +228,19 @@ bool WindowContext::initHeadless(int width, int height)
   eglDisplay_ = display;
   eglSurface_ = surface;
   eglContext_ = context;
+
+  std::cerr << "OpenGL vendor: "
+            << (glGetString(GL_VENDOR)
+                ? reinterpret_cast<const char*>(glGetString(GL_VENDOR)) : "(null)")
+            << std::endl;
+  std::cerr << "OpenGL renderer: "
+            << (glGetString(GL_RENDERER)
+                ? reinterpret_cast<const char*>(glGetString(GL_RENDERER)) : "(null)")
+            << std::endl;
+  std::cerr << "OpenGL version: "
+            << (glGetString(GL_VERSION)
+                ? reinterpret_cast<const char*>(glGetString(GL_VERSION)) : "(null)")
+            << std::endl;
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_PROGRAM_POINT_SIZE);
