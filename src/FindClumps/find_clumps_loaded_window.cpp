@@ -9,11 +9,8 @@
 #include "FindClumps/clump_window_state.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/find_clumps_IO.h"
-#include "app/runtime_state.h"
 #include "data/clump_store.h"
-#include "data/clump_loader.h"
 #include "app/tracking_view_state.h"
-#include "app/normalization_config.h"
 #include "interaction/camera.h"
 
 namespace {
@@ -118,97 +115,52 @@ void LoadedClumpTool::rebuildEvolutionCache(const LoadedClumpWindowState& ui,
   needCacheUpdate_ = false;
 }
 
-void OpenClumpListUI(LoadedClumpWindowState& state){
-  state.open = true;
-}
+static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui);
 
-static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
-				     ClumpStore& clumpStore,
-				     TrackingTargetState& state,
-                                     int currentFileIndex,
-                                     const SnapshotInputState& input,
-                                     const NormalizationContext& normalization);
+static void DrawLoadedClumpTable(LoadedClumpWindowState& ui);
 
-static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
-				 ClumpStore& clumpStore,
-                                 CameraContext& cam);
+static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui);
 
-static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui,
-				       LoadedClumpTool& ctool);
+static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui);
 
-static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui,
-				   LoadedClumpTool& ctool,
-				   ClumpStore& clumpStore,
-                                   int currentFileIndex);
-
-void DrawClumpListUI(LoadedClumpWindowState& ui,
-		     LoadedClumpTool& ctool,
-		     ClumpStore& clump,
-		     TrackingTargetState& view,
-		     int currentFileIndex,
-		     const SnapshotInputState& input,
-		     CameraContext& cam,
-		     const NormalizationContext& normalization)
+void DrawClumpListUI(LoadedClumpWindowState& ui)
 {
   if (!ui.open) return;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("Clump lists", &ui.open, ImGuiWindowFlags_None);
 
-  DrawClumpFileLoadSection(ui, clump, view, currentFileIndex, input, normalization);
-  DrawLoadedClumpTable(ui, clump, cam);
-  DrawClumpEvolutionControls(ui, ctool);
-  DrawClumpEvolutionPlot(ui, ctool, clump, currentFileIndex);
+  DrawClumpFileLoadSection(ui);
+  DrawLoadedClumpTable(ui);
+  DrawClumpEvolutionControls(ui);
+  DrawClumpEvolutionPlot(ui);
 
   ImGui::End();
 }
 
-static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui,
-				     ClumpStore& clumpStore,
-				     TrackingTargetState& view,
-                                     int currentFileIndex,
-                                     const SnapshotInputState& input,
-                                     const NormalizationContext& normalization)
+static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui)
 {
-  static char buf[255];
-  ImGui::InputText("File name of clumpList", buf, IM_ARRAYSIZE(buf));
+  ImGui::InputText("File name of clumpList",
+                   ui.clumpListPath,
+                   IM_ARRAYSIZE(ui.clumpListPath));
 
   ImGui::SameLine();
   if (ImGui::Button("path")) {
-    std::strcpy(buf, input.folderPath);
-  }
-
-  if (view.renewAfterSnapshot) {
-    if (view.followClump) 
-      ui.selectedClumpID = clumpStore.findIndexByClumpID(view.targetClumpID);
-    
-    view.renewAfterSnapshot = false;
+    ui.requestUseInputPath = true;
   }
 
   if (ImGui::Button("read clump list")) {
-    clumpStore.setFilePath(buf);
-    auto clumps = loadClumpData(clumpStore.filePath().c_str(),
-                                currentFileIndex,
-                                normalization.toNormalizedScale());
-    
-    if (!clumps.empty()) {
-      clumpStore.setClumps(std::move(clumps));
-      ui.showEvolve.resize(clumpStore.size(), false);
-    }
+    ui.requestReload = true;
   }
 
   if (ImGui::Button("follow clump center") && ui.selectedClumpID >= 0) {
-    view.targetClumpID = clumpStore.clump(ui.selectedClumpID).clumpID;
-    view.followClump = true;
-    view.followParticle = false;
+    ui.requestFollowSelected = true;
   }
 }
 
-static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
-				 ClumpStore& clumpStore,
-                                 CameraContext& cam)
+static void DrawLoadedClumpTable(LoadedClumpWindowState& ui)
 {
-  if (!clumpStore.loaded())
+  if (ui.rows.empty())
     return;
 
   if (ImGui::BeginTable("ClumpTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
@@ -217,24 +169,22 @@ static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
     ImGui::TableSetupColumn("Evolve", ImGuiTableColumnFlags_WidthFixed, 50.0f);
     ImGui::TableHeadersRow();
 
-    for (size_t i = 0; i < clumpStore.size(); i++) {
-      const auto& cp = clumpStore.clump(i);
+    for (size_t i = 0; i < ui.rows.size(); i++) {
+      const auto& cp = ui.rows[i];
 
       char label[256];
       std::snprintf(label, sizeof(label),
                     "%4zu   %4d    %g  %g  (%.3f, %.3f, %.3f)  %d  %.3g %d",
                     i, cp.count, cp.mass, cp.density,
-                    cp.Pos[0], cp.Pos[1], cp.Pos[2],
-                    cp.stellar_count, cp.stellar_mass, cp.stellar_id);
+                    cp.pos[0], cp.pos[1], cp.pos[2],
+                    cp.stellarCount, cp.stellarMass, cp.stellarID);
 
       ImGui::TableNextRow();
 
       ImGui::TableSetColumnIndex(0);
       if (ImGui::Selectable(label, false)) {
-        float dist = glm::length(cam.cameraPos - cam.cameraTarget);
-        glm::vec3 direction = cam.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-        cam.cameraTarget = glm::vec3(cp.Pos[0], cp.Pos[1], cp.Pos[2]);
-        cam.cameraPos = cam.cameraTarget - direction * dist;
+        ui.requestFocusSelected = true;
+        ui.focusClumpIndex = static_cast<int>(i);
       }
 
       ImGui::TableSetColumnIndex(1);
@@ -245,8 +195,11 @@ static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
       
       ImGui::TableSetColumnIndex(2);
       std::string checkboxLabel = "##evolve" + std::to_string(i);
-      bool tmp = ui.showEvolve[i];
+      bool tmp = (i < ui.showEvolve.size()) ? ui.showEvolve[i] : false;
       if (ImGui::Checkbox(checkboxLabel.c_str(), &tmp)) {
+        if (i >= ui.showEvolve.size()) {
+          ui.showEvolve.resize(ui.rows.size(), false);
+        }
         ui.showEvolve[i] = tmp;
       }
     }
@@ -256,7 +209,7 @@ static void DrawLoadedClumpTable(LoadedClumpWindowState& ui,
 }
 
 
-static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui, LoadedClumpTool& ctool)
+static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui)
 {
   ImGui::InputInt("final snapshot index", &ui.finalFileIndex);
   ImGui::InputInt("snapshot interval", &ui.dsnapshot);
@@ -281,33 +234,14 @@ static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui, LoadedClumpTo
   }
 
   if (ImGui::Button("Plot Clump Evolution")) {
-    ctool.requestEvolutionPlotUpdate();
+    ui.requestUpdateEvolutionCache = true;
+    ui.showEvolutionPlot = true;
   }
 }
 
-static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui,
-                                   LoadedClumpTool& ctool,
-                                   ClumpStore& clumpStore,
-                                   int currentFileIndex)
+static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui)
 {
-  float tMin = 0.0f, tMax = 1.0f;
-  float valMin = 0.0f, valMax = 1.0f;
-
-  if (ctool.needCacheUpdate()) {
-    ctool.rebuildEvolutionCache(ui, clumpStore, currentFileIndex,
-                                tMin, tMax, valMin, valMax);
-
-    if (ui.autoRangeX) {
-      ui.tMinInput = tMin;
-      ui.tMaxInput = tMax;
-    }
-    if (ui.autoRangeY) {
-      ui.valMinInput = valMin;
-      ui.valMaxInput = valMax;
-    }
-  }
-
-  if (!ctool.showEvolution())
+  if (!ui.showEvolutionPlot)
     return;
 
   std::string var = kEvolutionQuantities[ui.selectedEvolutionVar];
@@ -322,10 +256,8 @@ static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui,
     ImPlot::SetupAxisLimits(ImAxis_X1, ui.tMinInput, ui.tMaxInput, ImGuiCond_Always);
     ImPlot::SetupAxisLimits(ImAxis_Y1, ui.valMinInput, ui.valMaxInput, ImGuiCond_Always);
 
-    for (const auto& cache : ctool.evolutionCache()) {
-      int index = cache.index;
-      const auto& ch = clumpStore.clump(index);
-      std::string label = "Clump " + std::to_string(ch.clumpID);
+    for (const auto& cache : ui.evolutionCache) {
+      std::string label = "Clump " + std::to_string(cache.clumpID);
 
       ImPlot::PlotLine(label.c_str(),
                        cache.timeFloats.data(),

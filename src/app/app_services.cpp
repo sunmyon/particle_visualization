@@ -1,7 +1,5 @@
 #include "app_services.h"
 
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
 #include "projection/make_2D_projection_map.h"
 #include "FileIO/snapshot_io_service.h"
 #include "FindClumps/find_clumps.h"

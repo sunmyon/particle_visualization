@@ -1,6 +1,7 @@
 #include "FindClumps/find_clumps_IO.h"
 #include "FindClumps/clump_chain.h"
 #include "data/clump_loader.h"
+#include "core/quantity.h"
 #include "core/units.h"
 
 void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname){
@@ -302,12 +303,19 @@ void ClumpChain::build(int initstep,
 		       int nsnapshots,
 		       int dstep,
 		       const std::string& fname,
-		       const UnitSystem& units)
+		       const UnitSystem& units,
+		       double scaleFactor)
 {
   makeEvolutionChains(initstep, nsnapshots, dstep, fname);
   calcChainProperties();
-  
-  double unit_mass_in_msun = units.mass_msun / units.hubble;
+
+  QuantityUnitConverter converter;
+  converter.rebuild(units, scaleFactor);
+  const UnitSpace space = units.useComovingCoordinate
+    ? UnitSpace::Comoving
+    : UnitSpace::Physical;
+  const double unit_mass_in_msun = converter.factor(QuantityId::Mass, space);
+
   for (auto& clump : props_) {
     clump.mstar *= unit_mass_in_msun;
     clump.mstar_maximum *= unit_mass_in_msun;

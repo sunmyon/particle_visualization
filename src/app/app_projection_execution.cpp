@@ -2,16 +2,23 @@
 
 #include "app/analysis_state.h"
 #include "app/normalization_config.h"
+#include "app/render_runtime_state.h"
 #include "data/particle_array.h"
 #include "image/image_io.h"
+#include "interaction/camera.h"
+#include "interaction/interaction_utils.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_tool_state.h"
 #include "projection/projection_map_context.h"
+#include "projection/projection_geometry.h"
 
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <utility>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 static bool IsSafeIndexFormat(const char* format)
 {
@@ -65,16 +72,108 @@ static bool IsSafeIndexFormat(const char* format)
   return hasIndexSpecifier;
 }
 
-void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
+static void StoreQuatAsEulerDegrees(const glm::quat& q, float outEuler[3])
+{
+  const glm::vec3 euler = glm::degrees(glm::eulerAngles(glm::normalize(q)));
+  outEuler[0] = euler.x;
+  outEuler[1] = euler.y;
+  outEuler[2] = euler.z;
+}
+
+static void SyncInteractiveCuboidFromParams(ProjectionMapToolState& tool)
+{
+  tool.interactiveCuboid.center = glm::vec3(tool.params.xoffset[0],
+                                            tool.params.xoffset[1],
+                                            tool.params.xoffset[2]);
+  tool.interactiveCuboid.halfSize = 0.5f * glm::vec3(tool.params.xlen[0],
+                                                     tool.params.xlen[1],
+                                                     tool.params.xlen[2]);
+  tool.interactiveCuboid.orientation =
+    BuildProjectionTransformFromEuler(tool.params.tilt);
+  tool.appliedSelectedAxis = tool.params.selectedAxis;
+}
+
+static void SyncParamsFromInteractiveCuboid(ProjectionMapToolState& tool)
+{
+  tool.params.xoffset[0] = tool.interactiveCuboid.center.x;
+  tool.params.xoffset[1] = tool.interactiveCuboid.center.y;
+  tool.params.xoffset[2] = tool.interactiveCuboid.center.z;
+  StoreQuatAsEulerDegrees(tool.interactiveCuboid.orientation, tool.params.tilt);
+}
+
+static void MarkProjectionToolChanged(ProjectionMapToolState& tool,
+                                      RenderLayerState& cuboidAnnotation)
+{
+  ++tool.revision;
+  cuboidAnnotation.show = tool.params.flagShowCuboid;
+  cuboidAnnotation.cpuUpdated = true;
+}
+
+void ExecuteProjectionMapRequests(ProjectionMapRequestState& request,
+                                  ProjectionMapToolState& tool,
                                   ProjectionMapGenerator& generator,
                                   ParticleArray& particles,
 				  const UnitSystem& units,
                                   const NormalizationContext& normalization,
+                                  const CameraContext& camera,
+                                  RenderLayerState& cuboidAnnotation,
 				  int currentFileIndex,
                                   ProjectionPreviewDerivedState& preview,
 				  double time)
 {
-  if (!tool.renderRequested) return;
+  if (request.paramsChanged) {
+    tool.params = request.params;
+    SyncInteractiveCuboidFromParams(tool);
+    MarkProjectionToolChanged(tool, cuboidAnnotation);
+    request.paramsChanged = false;
+  }
+
+  if (request.moveCenterToCameraRequested) {
+    tool.params.xoffset[0] = camera.cameraTarget.x;
+    tool.params.xoffset[1] = camera.cameraTarget.y;
+    tool.params.xoffset[2] = camera.cameraTarget.z;
+    SyncInteractiveCuboidFromParams(tool);
+    MarkProjectionToolChanged(tool, cuboidAnnotation);
+    request.moveCenterToCameraRequested = false;
+  }
+
+  if (request.setAxisFromAngularMomentumRequested) {
+    ProjectionAngularMomentumFrame frame =
+      ComputeAngularMomentumFrame(particles.particleBlock.particles,
+                                  glm::vec3(tool.params.xoffset[0],
+                                            tool.params.xoffset[1],
+                                            tool.params.xoffset[2]),
+                                  tool.params.xlen);
+    if (frame.valid) {
+      tool.params.xoffset[0] = frame.center.x;
+      tool.params.xoffset[1] = frame.center.y;
+      tool.params.xoffset[2] = frame.center.z;
+      StoreQuatAsEulerDegrees(BuildRotationFromZAxisTo(frame.axis),
+                              tool.params.tilt);
+      SyncInteractiveCuboidFromParams(tool);
+      MarkProjectionToolChanged(tool, cuboidAnnotation);
+    }
+    request.setAxisFromAngularMomentumRequested = false;
+  }
+
+  if (request.arcballDragRequested) {
+    const glm::mat4 view =
+      glm::lookAt(camera.cameraPos, camera.cameraTarget, camera.cameraUp);
+    UpdateCuboidTransformArcball(tool.interactiveCuboid,
+                                 request.dragOldX,
+                                 request.dragOldY,
+                                 request.dragNewX,
+                                 request.dragNewY,
+                                 request.displayWidth,
+                                 request.displayHeight,
+                                 view,
+                                 tool.interactiveCuboid.center);
+    SyncParamsFromInteractiveCuboid(tool);
+    MarkProjectionToolChanged(tool, cuboidAnnotation);
+    request.arcballDragRequested = false;
+  }
+
+  if (!request.renderRequested) return;
 
   ProjectionMapParams& params = tool.params;
 
@@ -128,5 +227,5 @@ void ExecuteProjectionMapRequests(ProjectionMapToolState& tool,
     preview.computed = false;
   }
   
-  tool.renderRequested = false;
+  request.renderRequested = false;
 }

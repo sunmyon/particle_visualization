@@ -19,6 +19,20 @@ static int pick_port(){ return 8888 + (int)(std::random_device{}()%50); }
 // jupyter 実行ファイルのパスが怪しい場合、フルパスに置き換える（例: /usr/local/bin/jupyter や $HOME/.pyenv/...）
 static const char* JUPYTER = "jupyter";
 
+static std::string shell_quote(const std::string& value)
+{
+  std::string quoted = "'";
+  for (char c : value) {
+    if (c == '\'') {
+      quoted += "'\\''";
+    } else {
+      quoted += c;
+    }
+  }
+  quoted += "'";
+  return quoted;
+}
+
 static bool wait_until_ready(const std::string& logPath, int port, int timeout_ms=15000){
   // ログに "http://127.0.0.1:PORT" が現れるまで待つ（最大 timeout_ms）
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -50,8 +64,8 @@ bool launchJupyterNotebook(const std::string& workdir, JupyterInfo& out){
        << " --ServerApp.port=" << port
        << " --ServerApp.port_retries=0"
        << " --ServerApp.token=" << token
-       << " --ServerApp.root_dir=\"" << workdir << "\""
-       << " > \"" << logPath << "\" 2>&1 &";
+       << " --ServerApp.root_dir=" << shell_quote(workdir)
+       << " > " << shell_quote(logPath) << " 2>&1 &";
 
   int rc = std::system(cmd1.str().c_str());
 
@@ -63,8 +77,8 @@ bool launchJupyterNotebook(const std::string& workdir, JupyterInfo& out){
          << " --NotebookApp.port=" << port
          << " --NotebookApp.port_retries=0"
          << " --NotebookApp.token=" << token
-         << " --NotebookApp.notebook_dir=\"" << workdir << "\""
-         << " > \"" << logPath << "\" 2>&1 &";
+         << " --NotebookApp.notebook_dir=" << shell_quote(workdir)
+         << " > " << shell_quote(logPath) << " 2>&1 &";
     rc = std::system(cmd2.str().c_str());
     if(rc != 0) return false;
   }
@@ -78,9 +92,9 @@ bool launchJupyterNotebook(const std::string& workdir, JupyterInfo& out){
   std::stringstream url; url << "http://127.0.0.1:" << port << "/tree?token=" << token;
 
 #if defined(__APPLE__)
-  std::string openCmd = "open \"" + url.str() + "\"";
+  std::string openCmd = "open " + shell_quote(url.str());
 #elif defined(__linux__)
-  std::string openCmd = "xdg-open \"" + url.str() + "\"";
+  std::string openCmd = "xdg-open " + shell_quote(url.str());
 #else
   std::string openCmd = "";
 #endif

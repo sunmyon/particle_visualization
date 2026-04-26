@@ -7,6 +7,22 @@
 #include "PythonBridge/PythonBridge.h"
 #include "data/particle_array.h"
 
+namespace {
+std::string ShellQuote(const std::string& value)
+{
+  std::string quoted = "'";
+  for (char c : value) {
+    if (c == '\'') {
+      quoted += "'\\''";
+    } else {
+      quoted += c;
+    }
+  }
+  quoted += "'";
+  return quoted;
+}
+}
+
 void OpenPythonBridge(ParticleArray& particles, PythonBridgeState& py)
 {
   if (py.ptr) {
@@ -51,10 +67,10 @@ void OpenPythonBridgeInBrowser(const PythonBridgeState& py)
   const auto& info = py.ptr->notebookInfo();
 
 #if defined(__APPLE__)
-  std::string cmd = "open \"" + info.url + "\"";
+  std::string cmd = "open " + ShellQuote(info.url);
   std::system(cmd.c_str());
 #elif defined(__linux__)
-  std::string cmd = "xdg-open \"" + info.url + "\"";
+  std::string cmd = "xdg-open " + ShellQuote(info.url);
   std::system(cmd.c_str());
 #elif defined(_WIN32)
   std::string cmd = "cmd /c start \"\" \"" + info.url + "\"";

@@ -1,12 +1,6 @@
 #include "FileIO/file_format_dialog.h"
 #include <imgui.h>
 
-void OpenBinaryFormatDialog(FileFormatDialogState& state,
-                            const std::vector<FieldSpec>& formatTokens){
-  state.showFormatDialog = true;
-  state.formatTokensEdit = formatTokens;
-}
-
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens) {
   if (!state.showFormatDialog) return;
@@ -239,9 +233,4 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
   ImGui::End();
 }
 
-void OpenHDF5FormatDialog(FileFormatDialogState& state,
-                          const std::vector<FieldSpec>& formatTokens){
-  state.showHDF5MappingDialog = true;
-  state.formatTokensEdit = formatTokens;
-}
 #endif

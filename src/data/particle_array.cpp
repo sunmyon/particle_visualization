@@ -3,6 +3,7 @@
 #include "core/PerfTimer.h"
 #include "core/units.h"
 #include "app/normalization_config.h"
+#include "data/quantity_catalog_builder.h"
 
 void ParticleArray::rescalePositions(NormalizationContext& ctx){
   float scale = ctx.toNormalizedScale();
@@ -26,12 +27,24 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
   }
   particleBlock = std::move(newBlock);
 
+  BuildQuantityCatalog(particleBlock, quantity.catalog);
   auto stats = particleBlock.rebuild(ctx.desiredMax, quantity.catalog);
 
-  for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
+  for (int q = 0; q < kMaxQ; ++q) {
     for (int t = 0; t < kNumTypes; ++t) {
-      quantity.range.valueMin[q][t] = stats.valueMin[q][t];
-      quantity.range.valueMax[q][t] = stats.valueMax[q][t];
+      quantity.range.valueMin[q][t] = 0.0f;
+      quantity.range.valueMax[q][t] = 0.0f;
+    }
+  }
+
+  for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
+    const int qidx = static_cast<int>(quantity.catalog.uiQ[q]);
+    if (qidx < 0 || qidx >= kMaxQ) {
+      continue;
+    }
+    for (int t = 0; t < kNumTypes; ++t) {
+      quantity.range.valueMin[qidx][t] = stats.valueMin[q][t];
+      quantity.range.valueMax[qidx][t] = stats.valueMax[q][t];
     }
   }
 

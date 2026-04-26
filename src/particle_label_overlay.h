@@ -24,7 +24,7 @@ public:
 
   void rebuild(const ParticleArray& particles,
                const CameraContext& camCtx,
-               ParticleLabelRenderState& state);
+               const ParticleLabelRenderState& state);
 
   void draw(const glm::mat4& view,
             const glm::mat4& proj,

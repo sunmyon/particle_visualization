@@ -275,8 +275,17 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     double time = 0.0;
     (void)HDF5Utils::readAttributeScalar(hg, "Time", time);
     header.time = (float)time;
+    header.has_redshift = false;
 
-    printf("time is %g\n", header.time);
+    (void)HDF5Utils::readAttributeScalar(hg, "BoxSize", header.boxSize);
+    (void)HDF5Utils::readAttributeScalar(hg, "Omega0", header.Omega0);
+    (void)HDF5Utils::readAttributeScalar(hg, "OmegaLambda", header.OmegaLambda);
+
+    double z = 0.0;
+    if (HDF5Utils::readAttributeScalar(hg, "Redshift", z)) {
+      header.redshift = z;
+      header.has_redshift = true;
+    }
       
     // MassTable double[6]
     double mt[6]{};
@@ -306,6 +315,8 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   } catch (...) {
     hasHeader = false;
     header.time = 0.0f;
+    header.redshift = 0.0;
+    header.has_redshift = false;
     for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
   }
 

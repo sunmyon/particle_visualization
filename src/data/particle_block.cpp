@@ -40,7 +40,13 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
       for (int i = 0; i < (int)particles.size(); ++i) {
         ParticleData& p = particles[i];
         int type = p.type;
-        local_npart_type[type]++;
+        const bool validType = (type >= 0 && type < kNumTypes);
+        if (!validType) {
+          type = 0;
+        }
+        if (validType) {
+          local_npart_type[type]++;
+        }
 
         // maxVal
         float m = std::max(std::fabs(p.original_pos[0]),
@@ -53,10 +59,12 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
         p.flag_stress = 0;
 
         // renew min/max
-        for (int q = 0; q < catalog.nUIQ; ++q) {
-          float v = getScalarValue(*this, p, i, catalog.uiQ[q]);
-          localMin[q][type]  = std::min(localMin[q][type],  v);
-          localMaxV[q][type] = std::max(localMaxV[q][type], v);
+        if (validType) {
+          for (int q = 0; q < catalog.nUIQ; ++q) {
+            float v = getScalarValue(*this, p, i, catalog.uiQ[q]);
+            localMin[q][type]  = std::min(localMin[q][type],  v);
+            localMaxV[q][type] = std::max(localMaxV[q][type], v);
+          }
         }
       }
 

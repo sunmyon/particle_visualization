@@ -1,6 +1,6 @@
 #include <vector>
 
-#include "data/particle_array.h"
+#include "data/particle_block.h"
 
 #include "particle_visual_config.h"
 #include "app/runtime_state.h"
@@ -11,30 +11,6 @@
 #include "colormap_defs.h"
 #include "object.h"
 #include "render_system.h"
-
-namespace {
-  const std::vector<std::pair<int,int>> kEdgesX = {
-    {0,1}, {3,2}, {4,5}, {7,6}
-  };
-
-  const std::vector<std::pair<int,int>> kEdgesY = {
-    {1,2}, {0,3}, {5,6}, {4,7}
-  };
-
-  const std::vector<std::pair<int,int>> kEdgesZ = {
-    {0,4}, {1,5}, {2,6}, {3,7}
-  };
-
-  const std::vector<std::pair<int,int>>& selectedAxisEdges(CuboidAxis axis)
-  {
-    switch (axis) {
-    case CuboidAxis::X: return kEdgesX;
-    case CuboidAxis::Y: return kEdgesY;
-    case CuboidAxis::Z: return kEdgesZ;
-    }
-    return kEdgesZ;
-  }
-}
 
 void InitRenderSystem(RenderSystem& rs)
 {
@@ -87,18 +63,31 @@ void DestroyRenderSystem(RenderSystem& rs)
 }
 
 
-void BuildRenderParticles(ParticleArray& P,
+void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,
                           std::vector<RenderParticle>& out)
 {
   out.clear();
-  out.reserve(P.particleBlock.particles.size());
 
-  for (size_t i = 0; i < P.particleBlock.particles.size(); ++i) {
-    auto& p = P.particleBlock.particles[i];
+  if (!input.valid()) {
+    return;
+  }
+
+  const ParticleBlock& block = *input.block;
+  out.reserve(block.particles.size());
+
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const auto& p = block.particles[i];
 
     const int type = p.type;
-    if (P.flag_mask[i] != 0) continue;
+    if (type < 0 || type >= kNumTypes) {
+      continue;
+    }
+    if (input.visibilityMask &&
+        i < input.visibilityMask->size() &&
+        (*input.visibilityMask)[i] != 0) {
+      continue;
+    }
     if (visualConfig.types[type].hideParticles) continue;
 
     RenderParticle rp;
@@ -108,7 +97,7 @@ void BuildRenderParticles(ParticleArray& P,
     rp.type = static_cast<uint8_t>(p.type);
     rp.flag_stress = static_cast<uint8_t>(p.flag_stress);
     rp.hsml = p.Hsml;
-    rp.val_show = getScalarValue(P.particleBlock,
+    rp.val_show = getScalarValue(block,
                                  p,
                                  i,
                                  visualConfig.types[type].selectedQuantity);
@@ -144,11 +133,16 @@ std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>&
 }
 
 
-void UpdateVelocityRenderData(ParticleArray& particleArray,
+void UpdateVelocityRenderData(const ParticleRenderInput& input,
 			      const int velocity_subtraction,
 			      std::vector<float>& velocityInstanceData)
 {
-  velocityInstanceData = BuildVelocityInstanceData(particleArray.particleBlock.particles,
+  if (!input.valid()) {
+    velocityInstanceData.clear();
+    return;
+  }
+
+  velocityInstanceData = BuildVelocityInstanceData(input.block->particles,
                                                    velocity_subtraction);
 }
 

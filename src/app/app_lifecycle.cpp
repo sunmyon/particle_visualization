@@ -19,15 +19,12 @@
 #endif
 
 #include "imgui_context.h"
-#include "UI.h"
 
 #include "FileIO/snapshot_io_service.h"
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "FindClumps/clump_chain.h"
 
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
 #include "projection/make_2D_projection_map.h"
 
 #ifdef USE_CONVEX_HULL
@@ -77,8 +74,6 @@ bool InitPlatform(WindowContext& window,
 
 static void InitAppServices(AppServices& services)
 {
-  services.radialProfile   = std::make_unique<RadialProfileComputer>();
-  services.histogram2D     = std::make_unique<Histogram2DComputer>();
   services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
   services.snapshotIO      = std::make_unique<SnapshotIOService>();
   services.clumpFind       = std::make_unique<FindClump>();
@@ -119,13 +114,18 @@ void LoadInitialData(AppState& app)
     ApplyConfigData(config,
                     app.runtime.settings.fileNavigation,
                     app.runtime.settings.snapshotFormat,
-                    app.data.quantity.units,
+                    app.runtime.quantity.units,
 		    app.runtime.settings.normalization.desiredMax,
-                    app.view.particleVisual,
+                    app.runtime.particleVisual,
                     app.runtime.settings.inputFilter.mask);
   }
 
-  app.data.quantity.units.updateDerived();
+  app.runtime.quantity.units.updateDerived();
+  app.runtime.quantity.conversion.displaySpace =
+    app.runtime.quantity.units.useComovingCoordinate
+    ? UnitSpace::Comoving
+    : UnitSpace::Physical;
+  app.runtime.quantity.rebuildConversion(1.0);
 
   RequestSnapshotLoad(app.runtime.snapshotLoad,
                       SnapshotLoadOwner::UserNavigation,
@@ -149,9 +149,9 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   const ConfigData config =
     ExtractConfigData(app.runtime.settings.fileNavigation,
                       app.runtime.settings.snapshotFormat,
-                      app.data.quantity.units,
+                      app.runtime.quantity.units,
 		      app.runtime.settings.normalization.desiredMax,
-                      app.view.particleVisual,
+                      app.runtime.particleVisual,
                       app.runtime.settings.inputFilter.mask);
   SaveConfigFile("config.txt", config);
 

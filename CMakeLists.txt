@@ -65,8 +65,9 @@ set(EXTERNAL_DIR ${CMAKE_SOURCE_DIR}/external)
 # ===== ソース一覧 =====
 set(SOURCES_CPP
   ${SRC_DIR}/main.cpp
-  ${SRC_DIR}/UI.cpp
-  ${SRC_DIR}/settingUI.cpp
+  ${SRC_DIR}/UI/common_ui.cpp
+  ${SRC_DIR}/UI/tool_window_ui.cpp
+  ${SRC_DIR}/UI/settings_ui.cpp
   ${SRC_DIR}/render_actions.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
@@ -78,14 +79,28 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
+  ${SRC_DIR}/app/app_analysis_dispatch.cpp
   ${SRC_DIR}/app/app_analysis_execution.cpp
+  ${SRC_DIR}/app/app_clump_window_execution.cpp
+  ${SRC_DIR}/app/app_derived_rebuild.cpp
+  ${SRC_DIR}/app/app_render_sync.cpp
   ${SRC_DIR}/app/app_projection_execution.cpp
+  ${SRC_DIR}/app/settings_analysis_requests.cpp
   ${SRC_DIR}/app/app_snapshot_load.cpp
+  ${SRC_DIR}/app/app_tool_window_dispatch.cpp
+  ${SRC_DIR}/app/app_tool_particle_execution.cpp
+  ${SRC_DIR}/app/app_tool_analysis_execution.cpp
+  ${SRC_DIR}/app/app_tool_projection_execution.cpp
+  ${SRC_DIR}/app/app_tool_filter_execution.cpp
+  ${SRC_DIR}/app/app_tool_halo_execution.cpp
+  ${SRC_DIR}/app/app_tool_clump_execution.cpp
+  ${SRC_DIR}/app/app_tool_window_execution.cpp
   ${SRC_DIR}/app/app_data_actions.cpp
   ${SRC_DIR}/app/app_visibility_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
   ${SRC_DIR}/render/render_programs.cpp
+  ${SRC_DIR}/render/render_frame.cpp
   ${SRC_DIR}/render/shader_utils.cpp
   ${SRC_DIR}/render/shader_sources.cpp
   ${SRC_DIR}/render/field_renderer.cpp
@@ -99,6 +114,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/config/config_extract.cpp
   ${SRC_DIR}/config/config_validation.cpp
   ${SRC_DIR}/data/particle_block.cpp
+  ${SRC_DIR}/data/particle_block_validation.cpp
   ${SRC_DIR}/data/particle_array.cpp
   ${SRC_DIR}/data/clump_loader.cpp
   ${SRC_DIR}/data/halo_store.cpp

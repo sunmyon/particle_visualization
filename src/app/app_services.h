@@ -2,8 +2,6 @@
 #include <memory>
 #include "core/tracking_vector.h"
 
-class RadialProfileComputer;
-class Histogram2DComputer;
 class ProjectionMapGenerator;
 class SnapshotIOService;
 class FindClump;
@@ -30,8 +28,6 @@ struct PythonBridgeState {
 #endif
 
 struct AppServices {
-  std::unique_ptr<RadialProfileComputer> radialProfile;
-  std::unique_ptr<Histogram2DComputer> histogram2D;
   std::unique_ptr<ProjectionMapGenerator> projectionMap2D;
   std::unique_ptr<SnapshotIOService> snapshotIO;
   std::unique_ptr<FindClump> clumpFind;

@@ -4,35 +4,33 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 
 #include "app/app_state.h"
+#include "app/app_analysis_dispatch.h"
 #include "app/app_analysis_execution.h"
+#include "app/app_derived_rebuild.h"
 #include "app/app_projection_execution.h"
+#include "app/app_render_sync.h"
 #include "app/app_snapshot_load.h"
+#include "app/app_tool_window_dispatch.h"
 #include "app/app_callbacks.h"
 #include "app/normalization_config.h"
+#include "app/settings_analysis_requests.h"
+#include "app/tool_window_commands.h"
 #include "render/render_system.h"
 
-#include "UI.h"
-#include "settingUI.h"
+#include "UI/common_ui.h"
+#include "UI/tool_window_ui.h"
+#include "UI/settings_ui.h"
 #include "FileIO/file_format_dialog.h"
 #include "FileIO/snapshot_io_service.h"
 
-#include "render/frame_matrices.h"
-#include "render/render_draw_helpers.h"
-#include "render/render_resources.h"
+#include "render/render_frame.h"
 
 #include "imgui_context.h"
 #include "window_context.h"
-#include "projection/make_2D_projection_map.h"
 
-#include "FindClumps/find_clumps.h"
 #include "FindClumps/find_clumps_ui.h"
-
-#ifdef USE_CONVEX_HULL
-#include "geometry/convex_hull_generator.h"
-#endif
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
@@ -40,137 +38,130 @@
 #include "PythonBridge/ShmLayout.h"
 #endif
 
-static SettingsUIContext MakeSettingsUIContext(AppDataState& data,
-                                               AppViewState& view,
-                                               AppRuntimeState& runtime,
-                                               AnalysisDerivedState& analysis,
-                                               ToolWindowUIState& toolWindows)
+static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
+                                                   const AppRuntimeState& runtime,
+                                                   const AnalysisDerivedState& analysis)
 {
-  SettingsUIContext ctx;
-  ctx.quantity       = &data.quantity;
-  ctx.camCtx         = &view.camera;
-  ctx.particleVisual = &view.particleVisual;
-  ctx.render         = &runtime.render;
-  ctx.analysis       = &analysis;
-  ctx.windows        = &toolWindows;
-  
+  SettingsViewContext ctx;
+  ctx.camera.position[0] = view.camera.cameraPos.x;
+  ctx.camera.position[1] = view.camera.cameraPos.y;
+  ctx.camera.position[2] = view.camera.cameraPos.z;
+  ctx.camera.target[0] = view.camera.cameraTarget.x;
+  ctx.camera.target[1] = view.camera.cameraTarget.y;
+  ctx.camera.target[2] = view.camera.cameraTarget.z;
+  ctx.snapshotLoading = runtime.snapshotLoad.busy;
+
+#ifdef CLUMP_DATA_READ
+  ctx.analysis.clumpBatch = &analysis.clumpBatch;
+#endif
+  ctx.analysis.disk = &analysis.disk;
+  ctx.analysis.diskBatch = &analysis.diskBatch;
+  ctx.analysis.ellipsoid = &analysis.ellipsoid;
+  ctx.analysis.ellipsoidBatch = &analysis.ellipsoidBatch;
+  ctx.analysis.projectionMovie = &analysis.projectionMovie;
+#ifdef PYTHON_BRIDGE
+  ctx.pythonBridge = &runtime.analysisView.py;
+#endif
+
   return ctx;
 }
 
-static void DrawSettingsPanels(AppDataState& data,
-                               AppViewState& view,
+static void DrawSettingsPanels(AppViewState& view,
                                AppRuntimeState& runtime,
                                AnalysisDerivedState& analysis,
-			       ToolWindowUIState& toolWindows)
+                               SettingsUIState& settingsUI,
+                               WindowCommandQueue& windowCommands)
 {
-  SettingsUIContext settingsCtx =
-    MakeSettingsUIContext(data, view, runtime, analysis, toolWindows);
-  ShowSettingsUI(settingsCtx, runtime);
+  SettingsViewContext settingsView =
+    MakeSettingsViewContext(view, runtime, analysis);
+  SyncSettingsAnalysisDraftsFromRuntime(settingsUI.analysisEdit,
+                                        runtime.analysisRequests);
+  ShowSettingsUI(settingsUI,
+                 runtime.settings,
+                 runtime.analysisJobs,
+                 runtime.render,
+                 runtime.particleVisual,
+                 runtime.quantity,
+                 settingsView,
+                 windowCommands);
   ShowCameraSettingsUI();
 }
 
-static void DrawFileDialogPanels(SnapshotFormatState& format,
-                                 ToolWindowUIState& toolWindows)
-{
-  DrawBinaryFormatDialog(toolWindows.fileFormatDialog,
-                         format.formatTokens);
-#ifdef HAVE_HDF5
-  DrawHDF5FormatDialog(toolWindows.fileFormatDialog,
-                       format.formatTokensHdf5);
-#endif
-}
-
-static void ApplyMaskIfRequested(MaskUIState& mask, InputFilterConfig& inputFilter)
-{
-  const bool applied = DrawMaskWindow(mask, inputFilter.mask);
-  if (!applied) {
-    return;
-  }
-}
-
-
-static void DrawMainUI(AppDataState& data,
-		       AppViewState& view,
+static void DrawMainUI(AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AnalysisDerivedState& analysis,
-		       ToolWindowUIState& toolWindows,
-		       double time)
+                       SettingsUIState& settingsUI,
+                       WindowCommandQueue& windowCommands,
+		       const SnapshotCurrentState& current)
 {
-  ShowTime(time);
-  DrawSettingsPanels(data, view, runtime, analysis, toolWindows);
+  ShowTime(current);
+  DrawSettingsPanels(view, runtime, analysis, settingsUI, windowCommands);
 }
 
-static void DrawToolWindows(AppDataState& data,
-                            CameraContext& camera,
-                            AppRuntimeState& runtime,
+static void DrawToolWindows(AppRuntimeState& runtime,
 			    ToolWindowUIState& tools,
-                            AnalysisDerivedState& analysis,
-                            AppServices& services)
+                            WindowCommandQueue& windowCommands,
+                            const RadialProfileResultState& radialProfileResult,
+                            const Histogram2DResultState& histogram2DResult,
+                            const ProjectionPreviewUIState& projectionPreview)
 {
-  DrawTopParticlesUI(tools.topParticles, data.particles, camera, runtime.settings.tracking, runtime.settings.snapshotPostprocess, data.quantity.units);
+  TopParticlesViewContext topParticlesCtx;
+  topParticlesCtx.quantity = &runtime.quantity;
+  DrawTopParticlesUI(tools.topParticles,
+                     tools.topParticlesRequest,
+                     tools.topParticlesResult,
+                     topParticlesCtx);
   
-  DrawFileDialogPanels(runtime.settings.snapshotFormat, tools);
-  ApplyMaskIfRequested(tools.mask, runtime.settings.inputFilter);
+  DrawBinaryFormatDialog(tools.fileFormatDialog,
+                         runtime.settings.snapshotFormat.formatTokens);
+#ifdef HAVE_HDF5
+  DrawHDF5FormatDialog(tools.fileFormatDialog,
+                       runtime.settings.snapshotFormat.formatTokensHdf5);
+#endif
+  DrawMaskWindow(tools.mask,
+                 tools.maskRequest,
+                 runtime.settings.inputFilter.mask);
 
-  DrawRadialProfileUI(tools.radialProfile, analysis.radial, *services.radialProfile, data.particles->particleBlock, camera.cameraTarget, runtime.settings.normalization, data.quantity);
+  RadialProfileViewContext radialProfileCtx{runtime.quantity};
+  DrawRadialProfileUI(tools.radialProfile,
+                      tools.radialProfileRequest,
+                      radialProfileResult,
+                      radialProfileCtx);
 
-  const int currentFileIndex = runtime.settings.fileNavigation.navigation.currentFileIndex;
+  ProjectionMapViewContext projectionMapCtx{
+    windowCommands,
+    runtime.analysisTools.projectionMap,
+    runtime.settings.normalization
+  };
   DrawProjectionMapUI(tools.projectionMap,
-		      runtime.analysis.projectionMap,
-		      *data.particles,
-		      runtime.settings.normalization,
-		      camera,
-		      runtime.render.cuboidAnnotations,
-		      data.quantity.catalog,
-		      currentFileIndex);
+                      runtime.analysisRequests.projectionMapRequest,
+                      projectionMapCtx);
   
-  DrawProjectionFontSelectionUI(*services.projectionMap2D, tools.projectionMap);
+  DrawProjectionFontSelectionUI(tools.projectionMap,
+                                tools.projectionFontSelectionRequest);
   
 #ifdef HAVE_HDF5
-  DrawHaloesUI(tools.haloes, data.haloStore, camera, runtime.settings.normalization);
+  HaloesViewContext haloesCtx{};
+  DrawHaloesUI(tools.haloes,
+               tools.haloesRequest,
+               haloesCtx);
 #endif
   
-  Histogram2DContext histCtx;
-  histCtx.cameraCenter = &camera.cameraTarget;
-  
-  auto visibleHulls = analysis.convexHulls.visibleHulls();
-  histCtx.convexHulls = &visibleHulls;
-
+  Histogram2DViewContext histogram2DCtx{runtime.quantity.catalog};
   DrawHistogram2DUI(tools.histogram2D,
-		    analysis.hist2D,
-		    *services.histogram2D,
-		    data.particles->particleBlock,
-		    data.quantity.catalog,
-		    histCtx);
+                    tools.histogram2DRequest,
+		    histogram2DResult,
+		    histogram2DCtx);
 
-  DrawClumpFinderUI(tools.clumpFind,
-		    *services.clumpFind,
-		    data.particles->particleBlock.particles,
-		    data.header,
-		    runtime.settings.fileNavigation.input,
-                    runtime.settings.fileNavigation.current,
-		    camera);
+  DrawClumpFinderUI(tools.clumpFind);
   
-  DrawClumpListUI(tools.clumpList,
-		  *services.clumpLoad,
-		  data.clumpStore,
-		  runtime.settings.tracking,
-		  currentFileIndex,
-                  runtime.settings.fileNavigation.input,
-		  camera,
-		  runtime.settings.normalization);
+  DrawClumpListUI(tools.clumpList);
   
   DrawClumpChainListUI(tools.clumpChain,
-		       *services.clumpChain,
-		       data.particles,
-		       data.quantity.units,
-		       services.projectionMap2D.get(),
-		       runtime.analysis.projectionMap.params,
 		       runtime.settings.fileNavigation.navigation,
-                       runtime.settings.fileNavigation.current,
-		       runtime.snapshotLoad,
-		       camera,
-		       runtime.settings.normalization);
+                       runtime.settings.fileNavigation.current);
+
+  DrawProjectionPreviewUI(projectionPreview);
 }
 
 static void UpdateExternalInputs(AppServices& services,
@@ -190,546 +181,27 @@ static void UpdateExternalInputs(AppServices& services,
 #endif
 }
 
-static void UpdateOverlayState(ParticleArray& particles,
-                               const CameraContext& camera,
-                               ParticleLabelRenderState& state,
-                               OverlayState& overlay)
+static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
+                                              ToolWindowUIState& tools,
+                                              WindowCommandQueue& windowCommands)
 {
-  auto& labels = overlay.particleLabels;
+  auto& fileNavReq = settings.fileNavigation.request;
 
-  if (!state.show) {
-    labels.clear();
-    return;
+#ifdef HAVE_HDF5
+  if (fileNavReq.openHDF5FormatDialogRequested) {
+    tools.fileFormatDialog.formatTokensEdit =
+      settings.snapshotFormat.formatTokensHdf5;
+    windowCommands.open(WindowId::HDF5FormatDialog);
+    fileNavReq.openHDF5FormatDialogRequested = false;
   }
-
-  if (labels.needsRebuild(particles, camera, state)) {
-    labels.rebuild(particles, camera, state);
-    particles.flagParticleIndexDirty = false;
-  }
-}
-
-#ifdef GEOMETRICAL_ANALYSIS
-static void RebuildDiskDerivedState(DiskAnalysisResultState& result,
-                                    RenderLayerState& diskRenderState,
-                                    DiskManager& disks)
-{
-  if (!result.cpuUpdated) {
-    return;
-  }
-
-  disks.clearGroup("main_disk");
-
-  if (result.valid) {
-    DiskObject disk = result.disk;
-    disk.opacity = diskRenderState.opacity;
-    disk.color   = glm::vec3(1.0f);
-    disk.tag     = "main_disk";
-    disks.add(disk);
-    diskRenderState.show = true;
-  }
-
-  diskRenderState.cpuUpdated = true;
-  result.cpuUpdated = false;
-}
-
-static void RebuildEllipsoidDerivedState(EllipsoidAnalysisResultState& result,
-                                         RenderLayerState& ellipsoidState,
-                                         EllipsoidManager& ellipsoids)
-{
-  if (!result.cpuUpdated) {
-    return;
-  }
-
-  ellipsoids.clearGroup("analysis_ellipsoid");
-
-  if (result.valid) {
-    EllipsoidObject obj = result.ellipsoid;
-    obj.opacity = ellipsoidState.opacity;
-    obj.color   = glm::vec3(1.0f);
-    obj.tag     = "analysis_ellipsoid";
-    obj.renderMode = EllipsoidRenderMode::Solid;
-    ellipsoids.add(obj);
-    ellipsoidState.show = true;
-  } else {
-    ellipsoidState.show = false;
-  }
-
-  ellipsoidState.cpuUpdated = true;
-  result.cpuUpdated = false;
-}
 #endif
 
-#ifdef STREAM_LINE
-static void RebuildStreamlinePreviewDerivedState(StreamlinePreviewResultState& result,
-                                                 RenderLayerState& cubeRenderState,
-                                                 CubeManager& cubes)
-{
-  if (!result.cpuUpdated) {
-    return;
+  if (fileNavReq.openFormatDialogRequested) {
+    tools.fileFormatDialog.formatTokensEdit =
+      settings.snapshotFormat.formatTokens;
+    windowCommands.open(WindowId::FileFormatDialog);
+    fileNavReq.openFormatDialogRequested = false;
   }
-
-  cubes.clearGroup("streamline_seed_region");
-
-  if (result.valid) {
-    CubeObject cube = result.cube;
-    cube.tag = "streamline_seed_region";
-    cubes.add(cube);
-    cubeRenderState.show = true;
-  }
-
-  cubeRenderState.cpuUpdated = true;
-  result.cpuUpdated = false;
-}
-
-static void RebuildStreamlineDerivedState(StreamlineBuildResultState& result,
-                                          RenderLayerState& lineRenderState,
-                                          LineManager& lines)
-{
-  if (!result.cpuUpdated) {
-    return;
-  }
-
-  lines.clearGroup("streamline");
-
-  for (auto& line : result.lines) {
-    lines.add(line);
-  }
-
-  lineRenderState.show = !result.lines.empty();
-  lineRenderState.cpuUpdated = true;
-  result.cpuUpdated = false;
-}
-#endif
-
-static void PropagateDirtyFlags(const ParticleArray& particles,
-                                RenderSystem& rs)
-{
-  if (particles.particlesDirty) {
-    rs.resources.particleRenderDataDirty = true;
-  }
-
-  if (particles.velocityDirty) {
-    rs.resources.velocityInstanceDataDirty = true;
-  }
-}
-
-static void UpdateParticleRenderResources(ParticleArray& particles,
-                                          const ParticleVisualConfig& particleVisual,
-                                          const VelocityRenderState& velocityState,
-                                          RenderSystem& rs)
-{
-  if (rs.resources.particleRenderDataDirty) {
-    BuildRenderParticles(particles,
-                         particleVisual,
-                         rs.resources.renderParticles);
-    rs.resources.particleRenderDataDirty = false;
-    rs.resources.particlesGpuDirty = true;
-    particles.particlesDirty = false;
-  }
-
-  if (rs.resources.velocityInstanceDataDirty) {
-    UpdateVelocityRenderData(particles,
-                             velocityState.subtraction,
-                             rs.resources.velocityInstanceData);
-    rs.resources.velocityInstanceDataDirty = false;
-    rs.resources.velocityGpuDirty = true;
-    particles.velocityDirty = false;
-  }
-}
-
-static void UpdateSceneRenderResources(const SceneManagers& scene,
-				       RenderRuntimeState& render,
-				       RenderSystem& rs)
-{
-  if (render.cubes.cpuUpdated) {
-    BuildCubeRenderData(scene.cube, rs.resources.cubeRenderData);
-    render.cubes.cpuUpdated = false;
-    rs.resources.cubesGpuDirty = true;
-  }
-
-  if (rs.resources.ellipsoidRenderDataDirty) {
-    BuildEllipsoidRenderData(scene.ellipsoid,
-                             rs.resources.ellipsoidRenderData);
-    rs.resources.ellipsoidRenderDataDirty = false;
-    rs.resources.ellipsoidsGpuDirty = true;
-  }
-
-  if (rs.resources.diskRenderDataDirty) {
-    BuildDiskRenderData(scene.disk, rs.resources.diskRenderData);
-    rs.resources.diskRenderDataDirty = false;
-    rs.resources.disksGpuDirty = true;
-  }
-
-  if (rs.resources.lineRenderDataDirty) {
-    BuildLineRenderData(scene.line, rs.resources.lineRenderData);
-    rs.resources.lineRenderDataDirty = false;
-    rs.resources.linesGpuDirty = true;
-  }
-}
-
-#ifdef ISO_CONTOUR
-static void UpdateIsoContourRenderResources(const IsoContourGeometryState& isoContour,
-                                            RenderRuntimeState& render,
-                                            RenderSystem& rs)
-{
-  if (!render.isocontour.cpuUpdated) {
-    return;
-  }
-
-  BuildIsoContourRenderData(isoContour.verts,
-                            isoContour.inds,
-                            rs.resources.isoContourRenderData);
-  render.isocontour.cpuUpdated = false;
-  rs.resources.isoContourGpuDirty = true;
-}
-#endif
-
-#ifdef USE_CONVEX_HULL
-static void RebuildConvexHullDerivedState(const ConvexHullRuntimeState& convexState,
-                                          RenderLayerState& polyhedraState,
-					  PolyhedronManager& polyhedra)
-{
-  if (!polyhedraState.cpuUpdated) {
-    return;
-  }
-
-  polyhedra.clearGroup("convex_hull");
-
-  bool anyVisible = false;
-  for (const auto& entry : convexState.entries) {
-    if (!entry.visible || entry.lineVertices.empty()) {
-      continue;
-    }
-
-    PolyhedronObject obj;
-    obj.vertices.reserve(entry.lineVertices.size() / 3);
-    for (size_t k = 0; k + 2 < entry.lineVertices.size(); k += 3) {
-      obj.vertices.emplace_back(entry.lineVertices[k],
-                                entry.lineVertices[k + 1],
-                                entry.lineVertices[k + 2]);
-    }
-
-    obj.color   = glm::vec3(1.0f);
-    obj.opacity = polyhedraState.opacity;
-    obj.tag     = "convex_hull";
-
-    polyhedra.add(entry.sourceId, obj);
-    anyVisible = true;
-  }
-
-  polyhedraState.show = anyVisible;
-  polyhedraState.cpuUpdated = false;
-  polyhedraState.gpuUpdated = true;
-}
-
-static void UpdateConvexHullRenderState(RenderLayerState& polyhedraState,
-					const PolyhedronManager& polyhedra,
-					RenderSystem& rs)
-{
-  if (!polyhedraState.gpuUpdated) {
-    return;
-  }
-
-  BuildPolyhedronRenderData(polyhedra,
-                            rs.resources.polyhedronRenderData);
-  
-  polyhedraState.gpuUpdated = false; 
-  rs.resources.polyhedraGpuDirty = true;
-  rs.polyhedron.requestResetGroup("convex_hull");
-}
-#endif
-
-static void UpdateCuboidAnnotationDerivedState(RenderLayerState& annotationState,
-					       RenderLayerState& cuboidsState,
-					       RenderLayerState& linesState,
-					       CuboidAnnotationManager& annotations,
-					       const ProjectionMapToolState& rt)
-{
-  if (!annotationState.cpuUpdated) {
-    return;
-  }
-
-  annotations.clear();
-
-  if (annotationState.show) {
-    CuboidAnnotationObject obj;
-    obj.cuboid = rt.interactiveCuboid;
-
-    obj.cuboid.edgeColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    obj.highlightColor   = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    obj.arrowColor       = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-
-    const int axis = rt.params.selectedAxis;
-    if (axis == 0)      obj.selectedAxis = CuboidAxis::X;
-    else if (axis == 1) obj.selectedAxis = CuboidAxis::Y;
-    else                obj.selectedAxis = CuboidAxis::Z;
-
-    obj.showAxisHighlight = true;
-    obj.showArrow         = true;
-    obj.arrowLength       = 0.2f;
-    obj.arrowHeadLength   = 0.05f;
-    obj.arrowHeadWidth    = 0.03f;
-    obj.tag               = "interactive_cuboid";
-
-    annotations.add(obj);
-  }
-
-  cuboidsState.show = annotationState.show;
-  linesState.show = annotationState.show;
-      
-  annotationState.gpuUpdated = true;
-  annotationState.cpuUpdated = false;
-}
-
-
-static void UpdateCuboidAnnotationRenderResources(RenderLayerState& annotationState,
-						  const CuboidAnnotationManager& annotations,
-						  RenderSystem& rs)
-{
-  if (!annotationState.gpuUpdated) {
-    return;
-  }
-
-  AppendCuboidAnnotationRenderData(annotations,
-				   rs.resources.cuboidRenderData);
-  rs.resources.cuboidsGpuDirty = true;
-  
-
-  AppendCuboidArrowRenderData(annotations,
-			      rs.resources.lineRenderData);
-  rs.resources.linesGpuDirty = true;
-
-  annotationState.gpuUpdated = false;
-}
-
-static void DrawSceneObjectsPass(const RenderRuntimeState& render,
-                                 RenderSystem& rs,
-                                 const FrameMatrices& fm)
-{
-  RenderDrawContext ctx;
-  ctx.model            = fm.model;
-  ctx.view             = fm.view;
-  ctx.projection       = fm.projection;
-  ctx.solidProgram     = rs.programs.instancedSolid;
-  ctx.wireProgram      = rs.programs.line;
-  ctx.lineProgram      = rs.programs.line;
-  ctx.coordProgram     = rs.programs.coord;
-  ctx.colorbarProgram  = rs.programs.colorbar;
-#ifdef ISO_CONTOUR
-  ctx.isoContourProgram = rs.programs.isocontour;
-#endif
-
-  SyncAndDraw(rs.ellipsoid,
-              rs.resources.ellipsoidRenderData,
-              rs.resources.ellipsoidsGpuDirty,
-              ctx,
-              render.ellipsoids);
-
-  SyncAndDraw(rs.disk,
-              rs.resources.diskRenderData,
-              rs.resources.disksGpuDirty,
-              ctx,
-              render.disks);
-
-  SyncAndDraw(rs.cube,
-              rs.resources.cubeRenderData,
-              rs.resources.cubesGpuDirty,
-              ctx,
-              render.cubes);
-
-  SyncAndDraw(rs.cuboid,
-              rs.resources.cuboidRenderData,
-              rs.resources.cuboidsGpuDirty,
-              ctx,
-              render.cuboids);
-
-  SyncAndDraw(rs.line,
-              rs.resources.lineRenderData,
-              rs.resources.linesGpuDirty,
-              ctx,
-              render.lines);
-
-#ifdef USE_CONVEX_HULL
-  SyncAndDraw(rs.polyhedron,
-              rs.resources.polyhedronRenderData,
-              rs.resources.polyhedraGpuDirty,
-              ctx,
-              render.polyhedra);
-#endif
-
-#ifdef ISO_CONTOUR
-  SyncAndDraw(rs.isocontour,
-              rs.resources.isoContourRenderData,
-              rs.resources.isoContourGpuDirty,
-              ctx,
-              render.isocontour);
-#endif
-}
-
-static ColorBarLabelLayout ComputeColorbarLayout(const WindowContext& window,
-                                                 const ColorbarLayoutSettings& settings)
-{
-  ColorBarLabelLayout layout;
-
-  const float width  = static_cast<float>(window.viewportWidth());
-  const float height = static_cast<float>(window.viewportHeight());
-
-  layout.left_pixel   = width  - settings.width  - settings.margin;
-  layout.right_pixel  = width  - settings.margin;
-  layout.bottom_pixel = height - settings.margin;
-  layout.top_pixel    = height - settings.height - settings.margin;
-
-  layout.offsetX = static_cast<float>(window.viewportX());
-  layout.offsetY = static_cast<float>(window.viewportY());
-
-  return layout;
-}
-
-static ColorbarGizmoState BuildColorbarGizmoState(const RenderRuntimeState& render,
-                                                  const ParticleVisualConfig& particleVisual,
-                                                  const WindowContext& window)
-{
-  ColorbarGizmoState state;
-  state.visible = render.colorbar.show;
-
-  const int ptype = render.colorbar.sourceParticleType;
-  const auto& vis = particleVisual.types[ptype];
-
-  state.content.colormapIndex = vis.colormapIndex;
-  state.content.valueMin      = vis.colorMin;
-  state.content.valueMax      = vis.colorMax;
-  state.content.numTicks      = render.colorbar.numTicks;
-
-  state.effectiveWidth  = static_cast<float>(window.viewportWidth());
-  state.effectiveHeight = static_cast<float>(window.viewportHeight());
-  state.layout = ComputeColorbarLayout(window, render.colorbar.layout);
-
-  return state;
-}
-
-static CrossGizmoState BuildCrossGizmoState(const CameraContext& camera,
-                                            const CrossGizmoRenderState& gizmo)
-{
-  CrossGizmoState state;
-  state.visible      = gizmo.show;
-  state.cameraPos    = camera.cameraPos;
-  state.cameraTarget = camera.cameraTarget;
-  state.cameraUp     = camera.cameraUp;
-  state.crossSize    = gizmo.size;
-  return state;
-}
-
-static CoordAxesGizmoState BuildCoordAxesGizmoState(const CoordAxesRenderState& axes)
-{
-  CoordAxesGizmoState state;
-  state.visible = axes.show;
-  return state;
-}
-
-static void DrawOverlayPass(const OverlayState& overlay,
-                            const RenderRuntimeState& render,
-                            const ParticleVisualConfig& particleVisual,
-                            const CameraContext& camera,
-                            RenderSystem& rs,
-                            const WindowContext& window,
-                            const FrameMatrices& fm)
-{
-  overlay.particleLabels.draw(fm.view, fm.projection, window);
-
-  GizmoDrawContext gctx;
-  gctx.view            = fm.view;
-  gctx.projection      = fm.projection;
-  gctx.lineProgram     = rs.programs.line;
-  gctx.coordProgram    = rs.programs.coord;
-  gctx.colorbarProgram = rs.programs.colorbar;
-
-  const CrossGizmoState crossState =
-      BuildCrossGizmoState(camera, render.crossGizmo);
-  const CoordAxesGizmoState axesState =
-      BuildCoordAxesGizmoState(render.coordAxes);
-  const ColorbarGizmoState colorbarState =
-      BuildColorbarGizmoState(render, particleVisual, window);
-
-  rs.crossGizmo.draw(gctx, crossState);
-  rs.coordAxes.draw(gctx, axesState);
-  rs.colorbar.draw(gctx, colorbarState);
-  rs.colorbarLabels.draw(colorbarState);
-}
-
-static void DrawParticlePass(const ParticleVisualConfig& particleVisual,
-                             const RenderRuntimeState& render,
-                             RenderSystem& rs,
-                             const FrameMatrices& fm)
-{
-  if (rs.resources.particlesGpuDirty) {
-    rs.particle.sync(rs.resources.renderParticles);
-    rs.resources.particlesGpuDirty = false;
-  }
-
-  rs.particle.draw(rs.programs.particle,
-                   fm.model,
-                   fm.view,
-                   fm.projection,
-                   particleVisual,
-                   rs.colorbar);
-
-  if (render.velocity.show) {
-    if (rs.resources.velocityGpuDirty) {
-      rs.velocity.sync(rs.resources.velocityInstanceData);
-      rs.resources.velocityGpuDirty = false;
-    }
-
-    rs.velocity.draw(rs.programs.velocityArrow,
-                     fm.view,
-                     fm.projection,
-                     render.velocity.arrowScale,
-                     render.velocity.useLogScale);
-  }
-}
-
-static void RenderScene(const CameraContext& camera,
-			const ParticleVisualConfig& particleVisual,
-                        const RenderRuntimeState& render,
-                        const OverlayState& overlay,
-                        RenderSystem& rs,
-                        const WindowContext& window)
-{
-  glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-  FrameMatrices fm = BuildFrameMatrices(camera, window);
-
-  DrawParticlePass(particleVisual,
-                   render,
-                   rs,
-                   fm);
-
-  DrawSceneObjectsPass(render,
-                       rs,
-                       fm);
-
-  DrawOverlayPass(overlay,
-                  render,
-                  particleVisual,
-                  camera,
-                  rs,
-                  window,
-                  fm);
-}
-
-
-static void UpdateProjectionPreview(ProjectionPreviewDerivedState& source,
-                                    RenderSystem& render)
-{
-  if (!source.image.valid()) return;
-
-  if(source.computed){
-    render.preview.update(source.image);
-    source.computed = false;
-  }
-  
-  ProjectionPreviewUIState previewUI = render.preview.makeUIState();
-  DrawProjectionPreviewUI(previewUI);
 }
 
 static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
@@ -749,223 +221,143 @@ static void EndFrame(WindowContext& window)
   glfwSwapBuffers(window.handle());
 }
 
-static void RebuildDerivedState(ParticleArray& particles,
-                                CameraContext& camera,
-                                RenderRuntimeState& render,				
-                                AppDerivedState& derived,
-				const ProjectionMapToolState& projection)
+static int CurrentFileIndexForRequests(const FileNavigationRuntimeState& fileNav)
 {
-#ifdef GEOMETRICAL_ANALYSIS
-  RebuildDiskDerivedState(derived.analysis.disk,
-			  render.disks,
-			  derived.scene.disk);
-
-  RebuildEllipsoidDerivedState(derived.analysis.ellipsoid,
-			       render.ellipsoids,
-			       derived.scene.ellipsoid);
-#endif
-
-#ifdef STREAM_LINE
-  RebuildStreamlinePreviewDerivedState(derived.analysis.streamlinePreview,
-				       render.cubes,
-				       derived.scene.cube);
-  
-  RebuildStreamlineDerivedState(derived.analysis.streamlineBuild,
-				render.lines,
-				derived.scene.line);
-#endif
-  
-  UpdateOverlayState(particles,
-                     camera,
-                     render.particleLabels,
-                     derived.overlay);
-
-#ifdef USE_CONVEX_HULL
-  RebuildConvexHullDerivedState(derived.analysis.convexHulls,
-                                render.polyhedra,
-                                derived.scene.polyhedron);
-#endif
-
-  UpdateCuboidAnnotationDerivedState(render.cuboidAnnotations,
-				     render.cuboids,
-				     render.lines,
-				     derived.scene.cuboidAnnotation,
-				     projection
-				     );
+  if (fileNav.current.loadedFileIndex >= 0) {
+    return fileNav.current.loadedFileIndex;
+  }
+  return fileNav.navigation.currentFileIndex;
 }
 
-static void UpdateRenderResources(ParticleArray& particles,
-                                  const ParticleVisualConfig& particleVisual,
-                                  RenderRuntimeState& render,
-                                  const AppDerivedState& derived,
-                                  RenderSystem& rs)
+static void ExecuteSettingsAndNavigationRequests(AppDataState& data,
+                                                 AppRuntimeState& runtime,
+                                                 CameraContext& camera)
 {
-  rs.resources.cuboidRenderData.clear();
-  rs.resources.lineRenderData.clear();
-
-  PropagateDirtyFlags(particles, rs);
-
-  UpdateParticleRenderResources(particles,
-                                particleVisual,
-                                render.velocity,
-                                rs);
-
-  UpdateSceneRenderResources(derived.scene,
-                             render,
-                             rs);
-
-#ifdef ISO_CONTOUR
-  UpdateIsoContourRenderResources(derived.analysis.isoContour,
-                                  render,
-                                  rs);
-#endif
-  
-#ifdef USE_CONVEX_HULL
-  UpdateConvexHullRenderState(render.polyhedra,
-                              derived.scene.polyhedron,
-                              rs);
-#endif
-  
-  UpdateCuboidAnnotationRenderResources(render.cuboidAnnotations,
-                                        derived.scene.cuboidAnnotation,
-                                        rs);
-}
-
-static void ExecuteAnalysisRequests(AppDataState& data,
-                                    AppRuntimeState& runtime,
-                                    AnalysisDerivedState& analysis,
-                                    AppServices& services,
-				    CameraContext& camera)
-{
-#ifdef GEOMETRICAL_ANALYSIS
-  ExecuteSingleDiskAnalysisRequest(*data.particles,
-				   runtime.settings.normalization,
-                                   *services.diskFinder,
-                                   runtime.analysis.disk,
-                                   analysis.disk,
-				   data.quantity.units);
-  
-  ExecuteDiskBatchRequest(*data.particles,
-			  data.header,
-			  runtime.settings.normalization,
-                          runtime.settings.fileNavigation,
-                          runtime.snapshotLoad,
-                          *services.diskFinder,
-                          runtime.render.disks,
-                          runtime.analysis.diskBatch,
-                          analysis.diskBatch,
-			  data.quantity.units);
-
-  ExecuteSingleEllipsoidAnalysisRequest(*data.particles,
-                                        *services.ellipsoid,
-                                        runtime.analysis.ellipsoid,
-                                        analysis.ellipsoid);
-  
-  ExecuteEllipsoidBatchRequest(*data.particles,
-                               runtime.settings.fileNavigation,
-                               runtime.snapshotLoad,
-                               *services.ellipsoid,
-                               runtime.analysis.ellipsoidBatch,
-                               analysis.ellipsoidBatch);
-#endif
-
-#ifdef STREAM_LINE
-  ExecuteStreamlinePreviewRequest(runtime.analysis.streamlinePreview,
-				  analysis.streamlinePreview);
-  
-  ExecuteStreamlineBuildRequest(*data.particles,
-				*services.streamLine,
-				runtime.analysis.streamlineBuild,
-				analysis.streamlineBuild);
-#endif
-
-  ExecuteStellarDensityRequest(*data.particles,
-			       data.quantity.units,
-			       runtime.settings.normalization, 
-			       runtime.analysis.stellarDensity,
-			       data.header.time);
-
-#ifdef ISO_CONTOUR
-  ExecuteIsoContourRequest(*data.particles,
-			   runtime.analysis.isoContour,
-			   analysis.isoContour,
-			   runtime.render.isocontour);
-#endif
-
-#ifdef CLUMP_DATA_READ
-  ExecuteClumpBatchRequest(*data.particles,
-			   data.header,
-			   runtime.settings.fileNavigation,
-			   runtime.snapshotLoad,
-			   *services.clumpFind,
-			   runtime.analysis.clumpBatch,
-			   analysis.clumpBatch);
-#endif
-
-#ifdef USE_CONVEX_HULL
-  ExecuteConvexHullRequests(*data.particles,
-                            *services.clumpFind,
-                            *services.convexHull,
-                            analysis.convexHulls,
-                            runtime.render.polyhedra);
-#endif
-
   ExecuteFileNavigationRequests(runtime.settings.fileNavigation,
                                 runtime.snapshotLoad);
 
   ExecuteSettingsActionRequests(*data.particles,
-                                data.quantity,
-                                runtime.settings);
+                                runtime.quantity,
+                                runtime.particleVisual,
+                                runtime.render,
+                                runtime.settings,
+                                runtime.snapshotPostprocess);
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
 				 runtime.settings.viewFilter,
 				 camera,
 				 runtime.settings,
-				 runtime.settings.snapshotPostprocess);
+				 runtime.snapshotPostprocess);
+}
 
-  int currentFileIndex = runtime.settings.fileNavigation.current.loadedFileIndex;
-  if (currentFileIndex < 0) {
-    currentFileIndex = runtime.settings.fileNavigation.navigation.currentFileIndex;
-  }
-
+static void ExecutePostSnapshotLoadPhase(AppDataState& data,
+                                         AppRuntimeState& runtime,
+                                         CameraContext& camera)
+{
+  const int currentFileIndex =
+    CurrentFileIndexForRequests(runtime.settings.fileNavigation);
   ExecutePostSnapshotLoadActions(*data.particles,
 				 data.clumpStore,
 				 runtime.settings.normalization,
 				 runtime.settings.tracking,
 				 camera,
-				 runtime.settings.snapshotPostprocess,
-				 currentFileIndex);
+				 runtime.snapshotPostprocess,
+                                 currentFileIndex);
+}
 
-  ExecuteProjectionMapRequests(runtime.analysis.projectionMap,
-			       *services.projectionMap2D,
-			       *data.particles,
-			       data.quantity.units,
-			       runtime.settings.normalization,
-			       currentFileIndex,
-			       analysis.projectionPreview,
-                               runtime.settings.fileNavigation.current.loadedTime);
-
-  ExecuteProjectionMovieRequest(*data.particles,
-				data.header,
-				data.quantity.units,
-				runtime.settings.normalization,
-				runtime.settings.tracking,
-				runtime.settings.fileNavigation,
-				*services.projectionMap2D,
-				runtime.analysis.projectionMap.params,
-				camera,
-				runtime.analysis.projectionMovie,
-				runtime.snapshotLoad,
-				runtime.settings.snapshotPostprocess,
-				analysis.projectionMovie);
-
+static void ExecuteExternalServiceRequests(AppDataState& data,
+                                           AppRuntimeState& runtime,
+                                           AppServices& services)
+{
 #ifdef PYTHON_BRIDGE
   ExecutePythonBridgeRequests(*data.particles,
 			      services.py,
-			      runtime.analysis.py.request,
-			      runtime.analysis.py.view);
+			      runtime.analysisRequests.py,
+			      runtime.analysisView.py);
+#else
+  (void)data;
+  (void)runtime;
+  (void)services;
 #endif
+}
+
+static void ExecuteRequests(AppDataState& data,
+                            AppRuntimeState& runtime,
+                            AnalysisDerivedState& analysis,
+                            ToolWindowUIState& tools,
+                            AppServices& services,
+			    CameraContext& camera)
+{
+  const int currentFileIndex =
+    CurrentFileIndexForRequests(runtime.settings.fileNavigation);
+
+  ParticleToolExecutionInput particleToolInput{
+    *data.particles,
+    camera,
+    runtime.settings.tracking,
+    runtime.snapshotPostprocess,
+    runtime.quantity
+  };
+
+  AnalysisToolExecutionInput analysisToolInput{
+    *data.particles,
+    runtime.quantity,
+    runtime.settings.normalization,
+    analysis,
+    camera
+  };
+
+  ProjectionToolExecutionInput projectionToolInput{
+    services.projectionMap2D.get(),
+    services.clumpChain.get(),
+    *data.particles,
+    runtime.quantity.units,
+    runtime.analysisTools.projectionMap,
+    runtime.settings.fileNavigation.current,
+    runtime.snapshotLoad,
+    camera,
+    runtime.settings.normalization
+  };
+
+  HaloToolExecutionInput haloToolInput{
+    data.haloStore,
+    *data.particles,
+    camera,
+    runtime.settings.normalization
+  };
+
+  ClumpToolExecutionInput clumpToolInput{
+    services.clumpFind.get(),
+    services.clumpLoad.get(),
+    data.clumpStore,
+    *data.particles,
+    runtime.settings.tracking,
+    camera,
+    runtime.settings.fileNavigation.input,
+    runtime.settings.fileNavigation.current,
+    runtime.settings.normalization,
+    currentFileIndex
+  };
+  ExecuteToolWindowRequests(tools,
+                            particleToolInput,
+                            analysisToolInput,
+                            projectionToolInput,
+                            haloToolInput,
+                            clumpToolInput);
+
+  ExecuteSettingsAndNavigationRequests(data,
+                                       runtime,
+                                       camera);
+
+  ExecuteAnalysisJobRequests(data,
+                             runtime,
+                             analysis,
+                             services,
+                             camera,
+                             currentFileIndex);
+
+  ExecuteExternalServiceRequests(data, runtime, services);
 }
 
 void RunFrame(AppState& app,
@@ -977,45 +369,78 @@ void RunFrame(AppState& app,
   app.runtime.snapshotLoad.busy =
     (app.services.snapshotIO && app.services.snapshotIO->isLoading());
 
-  DrawMainUI(app.data,
-	     app.view,
+  DrawMainUI(app.view,
 	     app.runtime,
 	     app.derived.analysis,
-	     app.ui.toolWindows,
-             app.runtime.settings.fileNavigation.current.loadedTime);
+	     app.ui.settings,
+             app.ui.windowCommands,
+             app.runtime.settings.fileNavigation.current);
 
-  DrawToolWindows(app.data,
-                  app.view.camera,
-                  app.runtime,
+  ExecuteSettingsWindowOpenRequests(app.runtime.settings,
+                                    app.ui.toolWindows,
+                                    app.ui.windowCommands);
+
+  ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
+
+  UpdateProjectionPreviewTexture(app.derived.analysis.projectionPreview, render);
+  const ProjectionPreviewUIState projectionPreviewUI =
+    render.preview.makeUIState();
+
+  DrawToolWindows(app.runtime,
                   app.ui.toolWindows,
-                  app.derived.analysis,
-                  app.services);
+                  app.ui.windowCommands,
+                  app.derived.analysis.radial,
+                  app.derived.analysis.hist2D,
+                  projectionPreviewUI);
+
+  ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
 
   UpdateExternalInputs(app.services, *app.data.particles);
 
   ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
-  ExecuteAnalysisRequests(app.data, app.runtime, app.derived.analysis, app.services, app.view.camera);
+  ExecutePostSnapshotLoadPhase(app.data,
+                               app.runtime,
+                               app.view.camera);
+  ApplySettingsAnalysisEditRequests(app.ui.settings.analysisEdit,
+                                    app.runtime.analysisRequests);
+  ExecuteRequests(app.data,
+                  app.runtime,
+                  app.derived.analysis,
+                  app.ui.toolWindows,
+                  app.services,
+                  app.view.camera);
   
-  RebuildDerivedState(*app.data.particles,
-                      app.view.camera,
-                      app.runtime.render,
-                      app.derived,
-		      app.runtime.analysis.projectionMap);
-  
-  UpdateRenderResources(*app.data.particles,
-                        app.view.particleVisual,
-                        app.runtime.render,
+  const DerivedRebuildResult derivedRebuild =
+    RebuildDerivedState(*app.data.particles,
+                        app.view.camera,
                         app.derived,
-                        render);
+                        app.runtime.render,
+		        app.runtime.analysisTools.projectionMap);
+  ApplyDerivedRenderInvalidation(derivedRebuild,
+                                 app.view.camera,
+                                 app.runtime.render);
+  AcknowledgeDerivedRebuild(*app.data.particles,
+                            app.derived,
+                            derivedRebuild);
+  
+  const ParticleRenderInput particleRenderInput =
+    MakeParticleRenderInput(*app.data.particles);
+  const ParticleRenderUploadResult uploadResult =
+    UpdateRenderResources(particleRenderInput,
+                          app.runtime.particleVisual,
+                          app.runtime.render,
+                          app.derived,
+                          render);
+  AcknowledgeParticleRenderUploads(*app.data.particles, uploadResult);
 
-  UpdateProjectionPreview(app.derived.analysis.projectionPreview, render);
+  UpdateRenderFrameInput(app.renderFrameInput,
+                         app.view.camera,
+                         app.runtime.particleVisual,
+                         app.runtime.render,
+                         app.derived.overlay);
+  PrepareRenderFrame(app.renderFrameInput, render, window);
 
-  RenderScene(app.view.camera,
-	      app.view.particleVisual,
-              app.runtime.render,
-              app.derived.overlay,
-              render,
-              window);
+  RenderScene(render, window);
 
   EndFrame(window);
 }

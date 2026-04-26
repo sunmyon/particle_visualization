@@ -3,8 +3,9 @@
 class ParticleArray;
 class HaloStore;
 class ProjectionMapGenerator;
-struct HeaderInfo;
 struct RenderLayerState;
+struct RenderRuntimeState;
+struct ParticleVisualConfig;
 struct QuantityState;
 struct UnitSystem;
 struct SettingsRuntimeState;
@@ -14,7 +15,7 @@ struct TrackingTargetState;
 struct HaloesUIState;
 struct CameraContext;
 struct ProjectionMapParams;
-struct ProjectionMovieAnalysisRuntime;
+struct ProjectionMovieRuntimeState;
 struct SnapshotLoadRuntimeState;
 struct SnapshotPostprocessState;
 
@@ -34,13 +35,13 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      const UnitSystem& units);
 
 void ExecuteDiskBatchRequest(ParticleArray& particles,
-			     HeaderInfo& header,
 			     NormalizationContext& normalization,
                              FileNavigationRuntimeState& fileNav,
                              SnapshotLoadRuntimeState& snapshotLoad,
                              DiskRadiusFinder& diskFinder,
                              const RenderLayerState& diskRenderState,
                              DiskAnalysisBatchRequestState& request,
+                             DiskAnalysisBatchRuntimeState& runtime,
                              DiskAnalysisBatchResultState& result,
 			     const UnitSystem& units);
 
@@ -51,10 +52,11 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
 
 void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
                                   FileNavigationRuntimeState& fileNav,
-                                  SnapshotLoadRuntimeState& snapshotLoad,
-                                  EllipseFitter& ellipsoidFitter,
-                                  EllipsoidAnalysisBatchRequestState& request,
-                                  EllipsoidAnalysisBatchResultState& result);
+	                                  SnapshotLoadRuntimeState& snapshotLoad,
+	                                  EllipseFitter& ellipsoidFitter,
+	                                  EllipsoidAnalysisBatchRequestState& request,
+	                                  EllipsoidAnalysisBatchRuntimeState& runtime,
+	                                  EllipsoidAnalysisBatchResultState& result);
 #endif
 
 
@@ -92,29 +94,32 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
 
 void ExecuteSettingsActionRequests(ParticleArray& particles,
                                    QuantityState& quantity,
-                                   SettingsRuntimeState& settings);
+                                   ParticleVisualConfig& particleVisual,
+                                   RenderRuntimeState& render,
+                                   SettingsRuntimeState& settings,
+                                   SnapshotPostprocessState& post);
 
 #ifdef CLUMP_DATA_READ
 void ExecuteClumpBatchRequest(ParticleArray& particles,
-			      HeaderInfo& header,
                               FileNavigationRuntimeState& fileNav,
-                              SnapshotLoadRuntimeState& snapshotLoad,
-                              FindClump& clumpFind,
-                              ClumpBatchRequestState& request,
-                              ClumpBatchResultState& result);
+	                              SnapshotLoadRuntimeState& snapshotLoad,
+	                              FindClump& clumpFind,
+	                              ClumpBatchRequestState& request,
+	                              ClumpBatchRuntimeState& runtime,
+	                              ClumpBatchResultState& result);
 #endif
 
 void ExecuteProjectionMovieRequest(ParticleArray& particles,
-                                   HeaderInfo& header,
 				   const UnitSystem& units,
                                    NormalizationContext& normalization,
                                    TrackingTargetState& track,
                                    FileNavigationRuntimeState& fileNav,
                                    ProjectionMapGenerator& projectionMap,
-                                   const ProjectionMapParams& baseParams,
-                                   CameraContext& camera,
-                                   ProjectionMovieAnalysisRuntime& movie,
-                                   SnapshotLoadRuntimeState& snapshotLoad,
+	                                   const ProjectionMapParams& baseParams,
+	                                   CameraContext& camera,
+	                                   ProjectionMovieRequestState& request,
+	                                   ProjectionMovieRuntimeState& runtime,
+	                                   SnapshotLoadRuntimeState& snapshotLoad,
                                    SnapshotPostprocessState& post,
                                    ProjectionMovieResultState& result);
 
@@ -135,10 +140,6 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    CameraContext& camCtx,
 				    SnapshotPostprocessState &post,
 				    int currentFileIndex);
-
-void ExecuteHaloesUIRequests(HaloesUIState& state,
-                             HaloStore& haloes,
-                             ParticleArray& particles);
 
 #ifdef PYTHON_BRIDGE
 void ExecutePythonBridgeRequests(ParticleArray& particles,

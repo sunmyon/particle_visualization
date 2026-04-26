@@ -9,6 +9,20 @@
 #include "data/particle_array.h"
 
 namespace {
+std::string ShellQuote(const std::string& value)
+{
+  std::string quoted = "'";
+  for (char c : value) {
+    if (c == '\'') {
+      quoted += "'\\''";
+    } else {
+      quoted += c;
+    }
+  }
+  quoted += "'";
+  return quoted;
+}
+
 void SyncPythonBridgeView(const PythonBridgeState& service,
                           PythonBridgeViewState& view)
 {
@@ -34,10 +48,10 @@ void OpenPythonBridgeInBrowser(const PythonBridgeViewState& view)
     return;
 
 #if defined(__APPLE__)
-  std::string cmd = "open \"" + view.url + "\"";
+  std::string cmd = "open " + ShellQuote(view.url);
   std::system(cmd.c_str());
 #elif defined(__linux__)
-  std::string cmd = "xdg-open \"" + view.url + "\"";
+  std::string cmd = "xdg-open " + ShellQuote(view.url);
   std::system(cmd.c_str());
 #elif defined(_WIN32)
   std::string cmd = "cmd /c start \"\" \"" + view.url + "\"";

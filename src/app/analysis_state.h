@@ -77,19 +77,13 @@ struct ProjectionMovieResultState {
 #include "compute_radial_profile.h"
 #include "compute_2D_histogram.h"
 
-struct RadialProfileRuntimeState {
+struct RadialProfileResultState {
   bool computed = false;
-  int selectedXAxis = 0;
-  int selectedVarIdx = 0;
-  
-  RadialProfileParams params;
   RadialProfileResult result;
 };
 
-struct Histogram2DRuntimeState {
+struct Histogram2DResultState {
   bool computed = false;
-
-  Histogram2DParams params;
   Histogram2DResult result;
 };
 
@@ -126,6 +120,6 @@ struct AnalysisDerivedState {
   ProjectionMovieResultState projectionMovie;
   ProjectionPreviewDerivedState projectionPreview;
   
-  RadialProfileRuntimeState radial;
-  Histogram2DRuntimeState hist2D;
+  RadialProfileResultState radial;
+  Histogram2DResultState hist2D;
 };

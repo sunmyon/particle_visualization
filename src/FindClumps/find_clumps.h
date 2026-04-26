@@ -9,7 +9,6 @@
 class ProjectionMapGenerator;
 struct NormalizationContext;
 struct InputFilterConfig;
-struct HeaderInfo;
 
 class FindClump{
 public:
@@ -219,7 +218,10 @@ public:
   void buildMassHistogram(bool useLogScaleX, float& outMin, float& outMax);
   bool histogramComputed() const { return histogramComputed_; }
   
-  void writeFOFtoHDF5(const TrackingVector<ParticleData>& particles, const HeaderInfo& header, const std::string &filename, int snapshotIndex);
+  void writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
+                      double snapshotTime,
+                      const std::string &filename,
+                      int snapshotIndex);
   
   int get_nclumps() const{
     return nodeList.size();
@@ -243,11 +245,14 @@ public:
     return (flagFOFComputed || flagDendrogramComputed);
   }
 
-  void do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particle, const HeaderInfo& header, char *filename, int snpashotIndex);
+  void do_FOF_and_output_clump_data(int method,
+                                    TrackingVector<ParticleData>&particle,
+                                    double snapshotTime,
+                                    char *filename,
+                                    int snpashotIndex);
   
   void initialize_prev_nodes(){
     nodeList_prev = {};
     snapshotIndex_prev = -1;
   }
 };
-

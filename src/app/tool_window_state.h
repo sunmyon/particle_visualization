@@ -1,0 +1,211 @@
+#pragma once
+
+#include <deque>
+#include <string>
+#include <vector>
+
+#include "FindClumps/clump_window_state.h"
+#include "app/file_format_dialog_state.h"
+#include "compute_2D_histogram.h"
+#include "compute_radial_profile.h"
+#include "core/quantity.h"
+#include "core/tracking_vector.h"
+#include "data/particle_data.h"
+#include "data/particle_mask_config.h"
+#include "projection/projection_map_params.h"
+#include "projection/projection_map_ui_state.h"
+
+struct QuantityState;
+
+struct RadialProfileUIState {
+  bool open = false;
+  int selectedXAxis = 0;
+  int selectedVarIdx = 0;
+  RadialProfileParams params;
+};
+
+struct RadialProfileRequestState {
+  bool runRequested = false;
+};
+
+struct Histogram2DUIState {
+  bool open = false;
+  Histogram2DParams params;
+};
+
+struct Histogram2DRequestState {
+  bool runRequested = false;
+};
+
+struct ImFont;
+struct ProjectionMapUIState {
+  bool open = false;
+  bool paramsInitialized = false;
+  uint64_t observedToolRevision = 0;
+  ProjectionMapParams params;
+  bool useOriginalCoordinate = true;
+  bool selectMode = false;
+
+  bool fontWindowOpen = false;
+  bool fontListRefreshRequested = true;
+  int currentFontIndex = 0;
+  int appliedFontIndex = -1;
+
+  float xlen_input[3] = {2.0f, 2.0f, 1.0f};
+  TrackingVector<QuantityId> gasQuantityOptions;
+  std::vector<std::string> availableFontPaths;
+  std::vector<ImFont*> previewFonts;
+};
+
+struct ProjectionFontSelectionRequestState {
+  bool applySelectedFontRequested = false;
+};
+
+struct TopParticlesUIState {
+  bool open = true;
+  int queryID = -1;
+
+  int particleType = 3;
+  int m = 10;
+
+  int historySel = -1;
+
+  bool selectType[6] = {false, false, false, false, false, false};
+
+  int selectedVar = 4;
+  int bins = 50;
+
+  bool histogramLogScaleX = true;
+  bool histogramLogScaleY = true;
+  bool autoRange = true;
+
+  float range1_min = 0.0f;
+  float range1_max = 1.0f;
+  float range2_min = 0.0f;
+  float range2_max = 1.0f;
+
+  bool useCameraCenter = false;
+  float cameraRadius = 10.0f;
+};
+
+struct TopParticlesRequestState {
+  bool queryParticleRequested = false;
+  bool refreshHistoryRequested = false;
+  bool clearHistoryRequested = false;
+  bool refreshFilteredRequested = false;
+  bool computeHistogramRequested = false;
+  bool centerParticleRequested = false;
+  bool followParticleRequested = false;
+  bool disableFollowParticleRequested = false;
+
+  int centerParticleId = -1;
+};
+
+struct TopParticlesResultState {
+  bool hasFound = false;
+  bool queryFailed = false;
+  ParticleData foundParticle{};
+
+  std::deque<ParticleData> historyData;
+  TrackingVector<ParticleData> filtered;
+
+  bool histogramComputed = false;
+  TrackingVector<float> histBins;
+  TrackingVector<float> binCenters;
+
+  float vmin = 0.0f;
+  float vmax = 1.0f;
+  float binSize = 1.0f;
+};
+
+struct TopParticlesViewContext {
+  const QuantityState* quantity = nullptr;
+};
+
+struct HaloRowView {
+  int sourceIndex = -1;
+  int groupLen = 0;
+  float groupMass = 0.0f;
+  float groupMassType[6] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+  float groupPos[3] = {0.f, 0.f, 0.f};
+  float groupVel[3] = {0.f, 0.f, 0.f};
+  float groupMetallicity[2] = {0.f, 0.f};
+};
+
+struct HaloesUIState {
+  bool open = false;
+  char fname[255] = "";
+
+  bool loaded = false;
+  bool idsLoaded = false;
+  TrackingVector<HaloRowView> rows;
+  std::vector<uint8_t> selectedForStress;
+
+  int m = 50;
+
+  bool recomputeUseMassWeight = true;
+  bool recomputeUseOriginalPos = true;
+  int recomputeMinParticles = 20;
+
+  int selectedVar = 0;
+  int bins = 20;
+
+  bool histogramLogScaleX = true;
+  bool histogramLogScaleY = true;
+  bool autoRange = true;
+
+  float range1_min = 0.0f;
+  float range1_max = 1.0f;
+  float range2_min = 0.0f;
+  float range2_max = 1.0f;
+
+  bool histogramComputed = false;
+  TrackingVector<float> histBins;
+  TrackingVector<float> binCenters;
+  float vmin = 0.0f;
+  float vmax = 1.0f;
+  float binSize = 1.0f;
+};
+
+struct HaloesRequestState {
+  bool loadWithoutIdsRequested = false;
+  bool loadWithIdsRequested = false;
+  bool clearIdsRequested = false;
+  bool resetSelectionRequested = false;
+  bool recomputePositionsRequested = false;
+  bool stressSelectionChanged = false;
+  bool focusHaloRequested = false;
+  bool computeHistogramRequested = false;
+
+  int focusHaloIndex = -1;
+};
+
+struct MaskUIState {
+  bool open = false;
+  bool autoApply = true;
+  uint64_t revision = 0;
+};
+
+struct MaskRequestState {
+  bool applyRequested = false;
+};
+
+struct ToolWindowUIState {
+  RadialProfileUIState radialProfile;
+  RadialProfileRequestState radialProfileRequest;
+  Histogram2DUIState histogram2D;
+  Histogram2DRequestState histogram2DRequest;
+  ProjectionMapUIState projectionMap;
+  ProjectionFontSelectionRequestState projectionFontSelectionRequest;
+  TopParticlesUIState topParticles;
+  TopParticlesRequestState topParticlesRequest;
+  TopParticlesResultState topParticlesResult;
+  HaloesUIState haloes;
+  HaloesRequestState haloesRequest;
+  MaskUIState mask;
+  MaskRequestState maskRequest;
+  FileFormatDialogState fileFormatDialog;
+  ClumpFinderWindowState clumpFind;
+  LoadedClumpWindowState clumpList;
+  ClumpChainWindowState clumpChain;
+};

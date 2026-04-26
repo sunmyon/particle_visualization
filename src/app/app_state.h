@@ -1,19 +1,19 @@
 #pragma once
 
 #include "core/tracking_vector.h"
-#include "core/quantity.h"
 #include "scene_manager.h"
-#include "particle_visual_config.h"
 #include "app/runtime_state.h"
 #include "app/overlay_state.h"
 #include "app/analysis_state.h"
 #include "app/ui_state.h"
-#include "app/render_runtime_state.h"
+#include "app/tool_window_state.h"
+#include "app/window_commands.h"
+#include "app/app_render_sync.h"
 #include "interaction/camera.h"
 #include "interaction/interaction_utils.h"
+#include "render/render_frame.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
-#include "data/header_info.h"
 
 class ParticleArray;
 class WindowContext;
@@ -24,26 +24,32 @@ struct AppDataState {
   ParticleArray* particles = nullptr;
   ClumpStore clumpStore;
   HaloStore haloStore;
-
-  HeaderInfo header;
-  QuantityState quantity;
 };
 
 struct AppViewState {
   CameraContext camera;
-  ParticleVisualConfig particleVisual;
 };
 
 struct AppUIState {
+  SettingsUIState settings;
   ToolWindowUIState toolWindows;
+  WindowCommandQueue windowCommands;
 };
 
 struct AppRuntimeState {
   InteractionState interaction;
   SnapshotLoadRuntimeState snapshotLoad;
-  SettingsRuntimeState settings;
+
   RenderRuntimeState render;
-  AnalysisRequestRuntimeState analysis;
+  AnalysisRequestState analysisRequests;
+  AnalysisViewState analysisView;
+  AnalysisToolState analysisTools;
+  AnalysisJobRuntimeState analysisJobs;
+  ParticleVisualConfig particleVisual;
+  QuantityState quantity;
+  SnapshotPostprocessState snapshotPostprocess;
+
+  SettingsRuntimeState settings;
 };
 
 struct AppDerivedState {
@@ -59,6 +65,7 @@ struct AppState {
   AppRuntimeState runtime;
   AppUIState ui;
   AppDerivedState derived;
+  RenderFrameInput renderFrameInput;
 };
 
 struct CallbackContext {

@@ -38,6 +38,7 @@ struct ProjectionMapParams;
 struct ProjectionMapContext;
 struct RgbImage;
 struct FluxSettings;
+struct UnitSystem;
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
                                                double scaleToPhysical,

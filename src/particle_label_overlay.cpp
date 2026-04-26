@@ -66,9 +66,8 @@ bool ParticleLabelOverlay::needsRebuild(const ParticleArray& particles,
 
 void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
                                    const CameraContext& camCtx,
-                                   ParticleLabelRenderState& state)
+                                   const ParticleLabelRenderState& state)
 {
-  state.lastCameraPos = camCtx.cameraPos;
   labels_.clear();
 
   const std::vector<Hit> hits =

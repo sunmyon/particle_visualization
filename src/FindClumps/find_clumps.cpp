@@ -776,7 +776,11 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
 
 #ifdef CLUMP_DATA_READ
-void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<ParticleData>&particles, const HeaderInfo& header, char *filename, int snapshotIndex){
+void FindClump::do_FOF_and_output_clump_data(int method,
+                                             TrackingVector<ParticleData>&particles,
+                                             double snapshotTime,
+                                             char *filename,
+                                             int snapshotIndex){
   char var_name[]="Density";
   std::string var(var_name);
   
@@ -789,7 +793,7 @@ void FindClump::do_FOF_and_output_clump_data(int method, TrackingVector<Particle
     node->construct_ID_array(particles);
 
   std::string fname(filename);
-  writeFOFtoHDF5(particles, header, fname, snapshotIndex);  
+  writeFOFtoHDF5(particles, snapshotTime, fname, snapshotIndex);  
 
   if(nodeList_prev.size() > 0){
     if(nodeList_prev.size())
@@ -876,7 +880,8 @@ void FindClump::findClumpsInNextSnapshot(void){
 
 
 
-void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles, const HeaderInfo& header,
+void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
+			       double snapshotTime,
 			       const std::string &filename,
 			       int snapshotIndex)
 {
@@ -893,7 +898,7 @@ void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles, co
   size_t nClumps = count;
 
   ClumpInfoIO out;
-  out.time = header.time;
+  out.time = snapshotTime;
   
   out.particle_type.resize(totalParticles);
   out.particle_ids.resize(totalParticles);

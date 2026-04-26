@@ -102,10 +102,11 @@ public:
   }
   
   void build(int initstep,
-             int nsnapshots,
-             int dstep,
-             const std::string& fname,
-	     const UnitSystem& units);
+	     int nsnapshots,
+	     int dstep,
+	     const std::string& fname,
+	     const UnitSystem& units,
+	     double scaleFactor = 1.0);
 
 private:
   TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumpLists_;

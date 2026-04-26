@@ -19,12 +19,12 @@ namespace {
     std::string fullPath;
   };
 
-  ReaderSelection makeReaderSelection(const SnapshotSource& source, int fileNumber) {
+  ReaderSelection makeReaderSelection(const SnapshotLoadParams& params, int fileNumber) {
     ReaderSelection sel;
 
     char fileName[512];
-    std::snprintf(fileName, sizeof(fileName), source.fileFormat, fileNumber);
-    sel.fullPath = std::string(source.folderPath) + fileName;
+    std::snprintf(fileName, sizeof(fileName), params.fileFormat, fileNumber);
+    sel.fullPath = std::string(params.folderPath) + fileName;
 
     std::string ext;
     auto pos = sel.fullPath.find_last_of('.');
@@ -34,12 +34,12 @@ namespace {
                      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     }
 
-    switch (source.getFormatMode()) {
+    switch (params.readFormat) {
     case FileFormat::Auto:
 #ifdef HAVE_HDF5
       if (ext == ".h5" || ext == ".hdf5") {
         sel.reader = std::make_unique<HDF5Reader>();
-        sel.format = source.formatTokens_hdf5;
+        sel.format = params.formatTokensHdf5;
         break;
       }
 #endif
@@ -48,13 +48,13 @@ namespace {
 #else
       sel.reader = std::make_unique<BinaryReader>();
 #endif
-      sel.format = source.formatTokens;
+      sel.format = params.formatTokens;
       break;
 
 #ifdef HAVE_HDF5
     case FileFormat::HDF5:
       sel.reader = std::make_unique<HDF5Reader>();
-      sel.format = source.formatTokens_hdf5;
+      sel.format = params.formatTokensHdf5;
       break;
 #endif
 
@@ -64,7 +64,7 @@ namespace {
 #else
       sel.reader = std::make_unique<BinaryReader>();
 #endif
-      sel.format = source.formatTokens;
+      sel.format = params.formatTokens;
       break;
 
     case FileFormat::Gadget:
@@ -81,23 +81,22 @@ namespace {
   }
 }
 
-SnapshotLoader::SnapshotLoader(SnapshotSource& source)
-  : source_(source) {}
-
 bool SnapshotLoader::readFile(int fileNumber,
+                              const SnapshotLoadParams& params,
                               SnapshotReadResult& outResult,
                               const InputFilterConfig& filter) {
   TIME_FUNCTION();
 
   HeaderInfo& header = outResult.header;
   ParticleBlock& outBlock = outResult.block;
+  header = HeaderInfo{};
 
-  header.UnitLength_in_cm         = source_.units.length_cm;
-  header.UnitMass_in_g            = source_.units.mass_g;
-  header.UnitVelocity_in_cm_per_s = source_.units.velocity_cm_per_s;
-  header.HubbleParam              = source_.units.hubble;
+  header.UnitLength_in_cm         = params.units.length_cm;
+  header.UnitMass_in_g            = params.units.mass_g;
+  header.UnitVelocity_in_cm_per_s = params.units.velocity_cm_per_s;
+  header.HubbleParam              = params.units.hubble;
 
-  ReaderSelection sel = makeReaderSelection(source_, fileNumber);
+  ReaderSelection sel = makeReaderSelection(params, fileNumber);
   if (!sel.reader) {
     std::cerr << "Failed to select reader for file #" << fileNumber << "\n";
     return false;
@@ -137,9 +136,11 @@ bool SnapshotLoader::readFile(int fileNumber,
   return true;
 }
 
-TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile, const InputFilterConfig& filter) {
+TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile,
+                                                      const SnapshotLoadParams& params,
+                                                      const InputFilterConfig& filter) {
   SnapshotReadResult result;
-  if (!readFile(indexFile, result, filter)) {
+  if (!readFile(indexFile, params, result, filter)) {
     return {};
   }
 

@@ -5,10 +5,13 @@
 #include <vector>
 #include <glm/vec3.hpp>
 
+#include "core/quantity.h"
 #include "app/normalization_config.h"
 #include "app/input_filter_config.h"
 #include "app/view_filter_config.h"
 #include "app/tracking_view_state.h"
+#include "app/render_runtime_state.h"
+#include "particle_visual_config.h"
 #include "projection/projection_map_tool_state.h"
 #include "FileIO/file_format_types.h"
 
@@ -68,8 +71,10 @@ struct SnapshotLoadRequestState {
 
 struct SnapshotLoadResultState {
   bool loadedThisFrame = false;
+  bool failedThisFrame = false;
   int loadedStep = -1;
   SnapshotLoadOwner owner = SnapshotLoadOwner::None;
+  char errorMessage[256] = "";
 };
 
 struct SnapshotLoadRuntimeState {
@@ -102,6 +107,15 @@ inline bool IsSnapshotLoadedFor(const SnapshotLoadRuntimeState& load,
          load.result.loadedStep == step;
 }
 
+inline bool IsSnapshotLoadFailedFor(const SnapshotLoadRuntimeState& load,
+                                    SnapshotLoadOwner owner,
+                                    int step)
+{
+  return load.result.failedThisFrame &&
+         load.result.owner == owner &&
+         load.result.loadedStep == step;
+}
+
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
@@ -109,20 +123,24 @@ struct DiskAnalysisRequestState {
   bool clearRequested = false;
 };
 
+struct DiskAnalysisBatchTargetRow {
+  int idx = 0;
+  int idA = 0;
+  int idB = 0;
+  int snap = -1;
+};
+
 struct DiskAnalysisBatchRequestState {
   bool runRequested = false;
   bool cancelRequested = false;
   char inputFile[255] = "binary_fragmentation_ellipticity_all_w_mode.txt";
   char outputFile[255] = "binary_fragmentation_disks.txt";
+};
 
+struct DiskAnalysisBatchRuntimeState {
   SnapshotJobRuntimeState job;
-  struct TargetRow {
-    int idx = 0;
-    int idA = 0;
-    int idB = 0;
-    int snap = -1;
-  };
-  std::vector<TargetRow> rows;
+  DiskAnalysisBatchRequestState params;
+  std::vector<DiskAnalysisBatchTargetRow> rows;
   int rowCursor = 0;
   int scanOffset = 0;
   bool firstOutput = true;
@@ -144,20 +162,24 @@ struct EllipsoidAnalysisRequestState {
   bool clearRequested = false;
 };
 
+struct EllipsoidAnalysisBatchTargetRow {
+  int idx = 0;
+  int idA = 0;
+  int idB = 0;
+  int snap = -1;
+};
+
 struct EllipsoidAnalysisBatchRequestState {
   bool runRequested = false;
   bool cancelRequested = false;
   char inputFile[255] = "binary_fragmentation.txt";
   char outputFile[255] = "binary_fragmentation_output.txt";
+};
 
+struct EllipsoidAnalysisBatchRuntimeState {
   SnapshotJobRuntimeState job;
-  struct TargetRow {
-    int idx = 0;
-    int idA = 0;
-    int idB = 0;
-    int snap = -1;
-  };
-  std::vector<TargetRow> rows;
+  EllipsoidAnalysisBatchRequestState params;
+  std::vector<EllipsoidAnalysisBatchTargetRow> rows;
   int rowCursor = 0;
   bool firstOutput = true;
 };
@@ -211,8 +233,11 @@ struct ClumpBatchRequestState {
   char outputFolderPath[255] = "./output/";
   bool cancelRequested = false;
   bool runRequested = false;
+};
 
+struct ClumpBatchRuntimeState {
   SnapshotJobRuntimeState job;
+  ClumpBatchRequestState params;
 };
 
 struct ProjectionMovieRequestState {
@@ -241,9 +266,10 @@ struct ProjectionMovieRequestState {
   bool runRequested = false;
 };
 
-struct ProjectionMovieAnalysisRuntime {
-  ProjectionMovieRequestState request;
+struct ProjectionMovieRuntimeState {
   SnapshotJobRuntimeState job;
+  ProjectionMovieRequestState params;
+  ProjectionMapParams projectionParams;
 };
 
 #ifdef PYTHON_BRIDGE
@@ -262,13 +288,9 @@ struct PythonBridgeViewState {
   std::string lastError;
 };
 
-struct PythonBridgeRuntimeState {
-  PythonBridgeRequestState request;
-  PythonBridgeViewState view;
-};
 #endif
 
-struct AnalysisRequestRuntimeState {
+struct AnalysisRequestState {
   StellarDensityRequestState stellarDensity;
 
   DiskAnalysisRequestState disk;
@@ -291,11 +313,32 @@ struct AnalysisRequestRuntimeState {
 #endif
 
 #ifdef PYTHON_BRIDGE
-  PythonBridgeRuntimeState py;
+  PythonBridgeRequestState py;
 #endif
   
-  ProjectionMovieAnalysisRuntime projectionMovie;
+  ProjectionMovieRequestState projectionMovie;
+  ProjectionMapRequestState projectionMapRequest;
+};
+
+struct AnalysisViewState {
+#ifdef PYTHON_BRIDGE
+  PythonBridgeViewState py;
+#endif
+};
+
+struct AnalysisToolState {
   ProjectionMapToolState projectionMap;
+};
+
+struct AnalysisJobRuntimeState {
+  DiskAnalysisBatchRuntimeState diskBatch;
+  EllipsoidAnalysisBatchRuntimeState ellipsoidBatch;
+
+#ifdef CLUMP_DATA_READ
+  ClumpBatchRuntimeState clumpBatch;
+#endif
+
+  ProjectionMovieRuntimeState projectionMovie;
 };
 
 struct CameraPlacementRequestState {
@@ -319,6 +362,7 @@ struct FileNavigationRequestState {
   bool loadBatchRequested = false;
   bool reloadRequested = false;
   bool openFormatDialogRequested = false;
+  bool openHDF5FormatDialogRequested = false;
   bool generateTestDataRequested = false;
 };
 
@@ -342,6 +386,11 @@ struct SnapshotInputState {
 struct SnapshotCurrentState {
   int loadedFileIndex = -1;
   double loadedTime = 0.0;
+  double loadedScaleFactor = 1.0;
+  double loadedRedshift = 0.0;
+  double loadedCosmicTime = 0.0;
+  bool hasCosmicTime = false;
+  bool useComovingCoordinates = false;
 };
 
 inline std::vector<FieldSpec> MakeDefaultSnapshotFormatTokens()
@@ -395,17 +444,38 @@ struct SnapshotPostprocessState {
   bool applyTrackingToCamera = false;
 };
 
+struct SettingsRenderEditDraft {
+  ParticleLabelRenderState particleLabels;
+  VelocityRenderState velocity;
+  float diskOpacity = 1.0f;
+  float ellipsoidOpacity = 1.0f;
+  float isoContourOpacity = 1.0f;
+  float crossGizmoSize = 0.05f;
+};
+
 struct SettingsActionRequestState {
   bool normalizeRequested = false;
   bool particleRenderDirtyRequested = false;
   bool velocityRenderDirtyRequested = false;
+  bool unitConversionRebuildRequested = false;
+
+  bool particleVisualDraftDirty = false;
+  bool applyParticleVisualRequested = false;
+  ParticleVisualConfig particleVisualDraft;
+
+  bool renderDraftDirty = false;
+  bool applyRenderRequested = false;
+  SettingsRenderEditDraft renderDraft;
+
+  bool unitsDraftDirty = false;
+  bool applyUnitsRequested = false;
+  UnitSystem unitsDraft;
 };
 
 struct SettingsRuntimeState {
   float minZoom = 0.1f;
   float maxZoom = 500.0f;
 
-  SnapshotPostprocessState snapshotPostprocess;
   ViewFilterConfig viewFilter;
   InputFilterConfig inputFilter;
   SnapshotFormatState snapshotFormat;

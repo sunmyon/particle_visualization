@@ -5,10 +5,12 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 
+#include "core/tracking_vector.h"
 #include "object.h"
 #include "render_types.h"
 
 struct ParticleVisualConfig;
+struct ParticleBlock;
 
 struct RenderParticle {
   float pos[3];
@@ -103,15 +105,24 @@ struct RenderResources {
 };
 
 class ParticleData;
-class ParticleArray;
-void BuildRenderParticles(ParticleArray& P,
+
+struct ParticleRenderInput {
+  const ParticleBlock* block = nullptr;
+  const TrackingVector<uint8_t>* visibilityMask = nullptr;
+  bool particlesDirty = false;
+  bool velocityDirty = false;
+
+  bool valid() const { return block != nullptr; }
+};
+
+void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,
                           std::vector<RenderParticle>& out);
 
 std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>& particles,
                                              const int velocity_subtraction);
 
-void UpdateVelocityRenderData(ParticleArray& particleArray,
+void UpdateVelocityRenderData(const ParticleRenderInput& input,
 			      const int velocity_subtraction,
 			      std::vector<float>& velocityInstanceData);
 

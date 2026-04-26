@@ -1,16 +1,18 @@
-#include "UI.h"
-#include "settingUI.h"
-#include "app/app_state.h"
+#include "settings_ui.h"
+#include "app/analysis_state.h"
+#include "app/render_runtime_state.h"
+#include "app/runtime_state.h"
+#include "app/ui_state.h"
 #include "app/snapshot_state_sync.h"
+#include "app/window_commands.h"
 #include "render_actions.h"
 
 #include "interaction/camera.h"
 #include "particle_visual_config.h"   // ParticleVisualConfig の実定義
 #include "FileIO/file_format_dialog.h"
 #include "render/colormap_defs.h"  
-#include "data/particle_array.h"
 
-#include "FindClumps/find_clumps_ui.h"
+#include <cstring>
 #include <imgui.h>
 
 #ifndef NONATIVEFILEDIALOG
@@ -25,73 +27,132 @@ struct PullDownItem {
   int mode;
 };
 
-static void DrawCameraInfoSection(const CameraContext& camCtx);
-static void DrawParticleTypeSettingsSection(QuantityState& quantity,
-					    ParticleVisualConfig& particleVisual,
+static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
+                                          const ParticleVisualConfig& particleVisual,
+                                          const RenderRuntimeState& render,
+                                          const QuantityState& quantity);
+static void DrawCameraInfoSection(const SettingsCameraView& camera);
+static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
 					    SettingsActionRequestState& req);
 static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       SnapshotFormatState& format,
                                       bool isLoading,
-                                      ToolWindowUIState& tools);
+                                      WindowCommandQueue& windowCommands);
 static void DrawNormalizationSection(NormalizationContext& ctx,
 				     SettingsActionRequestState& req);
-static void DrawSinkIdSection(const CameraContext& camCtx, ParticleLabelRenderState& labels);
-static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const CameraContext& camCtx);
+static void DrawSinkIdSection(const SettingsCameraView& camera,
+	                              SettingsActionRequestState& req);
+static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const SettingsCameraView& camera);
 #ifdef PYTHON_BRIDGE
-static void DrawPythonBridgeSection(PythonBridgeRequestState& request, const PythonBridgeViewState& view);
+static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit, const PythonBridgeViewState& view);
 #endif
-static void DrawAnalysisSection(RenderRuntimeState& render,
-				AnalysisDerivedState& analysis,
-                                AnalysisRequestRuntimeState& rt,
+static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
+                                const AnalysisJobRuntimeState& jobs,
                                 const FileNavigationRuntimeState& fileNav,
-                                ToolWindowUIState& tools);
+                                const SettingsAnalysisResultView& result,
+                                SettingsUIState& ui,
+                                WindowCommandQueue& windowCommands,
+                                SettingsActionRequestState& settingsReq);
 
-static void DrawRenderingSection(RenderRuntimeState& render,
-				 AnalysisDerivedState& analysis,
-				 QuantityCatalogState& catalog,
-				 AnalysisRequestRuntimeState& rt,
-				 ToolWindowUIState& tools,
+static void DrawRenderingSection(const QuantityCatalogState& catalog,
+				 SettingsAnalysisEditState& edit,
+                                 const AnalysisJobRuntimeState& jobs,
+                                 const SettingsAnalysisResultView& result,
+                                 SettingsUIState& ui,
+                                 WindowCommandQueue& windowCommands,
 				 SettingsActionRequestState& settingsReq);
 
-static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt, RenderRuntimeState& render);
+static void DrawOtherSettingsSection(SettingsRuntimeState& rt);
 
-void ShowSettingsUI(SettingsUIContext& ctx, AppRuntimeState& rt) {
+void ShowSettingsUI(SettingsUIState& ui,
+                    SettingsRuntimeState& settings,
+                    const AnalysisJobRuntimeState& analysisJobs,
+                    const RenderRuntimeState& render,
+                    const ParticleVisualConfig& particleVisual,
+                    const QuantityState& quantity,
+                    const SettingsViewContext& view,
+                    WindowCommandQueue& windowCommands) {
   ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
-  DrawCameraInfoSection(*ctx.camCtx);
-  DrawParticleTypeSettingsSection(*ctx.quantity, *ctx.particleVisual, rt.settings.request);
-  DrawFileNavigationSection(rt.settings.fileNavigation,
-                            rt.settings.snapshotFormat,
-                            rt.snapshotLoad.busy,
-                            *ctx.windows);
-  DrawNormalizationSection(rt.settings.normalization, rt.settings.request);
-  DrawSinkIdSection(*ctx.camCtx, ctx.render->particleLabels);
-  DrawCameraPlacementSection(rt.settings, *ctx.camCtx);
+  SyncSettingsDraftsFromRuntime(settings.request,
+                                particleVisual,
+                                render,
+                                quantity);
+
+  DrawCameraInfoSection(view.camera);
+  DrawParticleTypeSettingsSection(quantity, settings.request);
+  DrawFileNavigationSection(settings.fileNavigation,
+                            settings.snapshotFormat,
+                            view.snapshotLoading,
+                            windowCommands);
+  DrawNormalizationSection(settings.normalization, settings.request);
+  DrawSinkIdSection(view.camera, settings.request);
+  DrawCameraPlacementSection(settings, view.camera);
 #ifdef PYTHON_BRIDGE
-  DrawPythonBridgeSection(rt.analysis.py.request, rt.analysis.py.view);
+  if (view.pythonBridge) {
+    if (DrawPythonBridgeSection(ui.analysisEdit.py, *view.pythonBridge)) {
+      ui.analysisEdit.pyDirty = true;
+    }
+  }
 #endif
-  DrawAnalysisSection(*ctx.render, *ctx.analysis, rt.analysis, rt.settings.fileNavigation, *ctx.windows);
-  DrawRenderingSection(*ctx.render, *ctx.analysis, ctx.quantity->catalog, rt.analysis, *ctx.windows, rt.settings.request);
-  DrawOtherSettingsSection(ctx.quantity->units, rt.settings, rt.render);
+  DrawAnalysisSection(ui.analysisEdit,
+	                      analysisJobs,
+                      settings.fileNavigation,
+                      view.analysis,
+                      ui,
+                      windowCommands,
+                      settings.request);
+  DrawRenderingSection(quantity.catalog,
+		                       ui.analysisEdit,
+                       analysisJobs,
+                       view.analysis,
+                       ui,
+                       windowCommands,
+                       settings.request);
+  DrawOtherSettingsSection(settings);
 
   ImGui::End();
 }
 
-static void DrawCameraInfoSection(const CameraContext& camCtx) {
-  ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)", camCtx.cameraPos.x, camCtx.cameraPos.y, camCtx.cameraPos.z);
-  ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)", camCtx.cameraTarget.x, camCtx.cameraTarget.y, camCtx.cameraTarget.z);
+static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
+                                          const ParticleVisualConfig& particleVisual,
+                                          const RenderRuntimeState& render,
+                                          const QuantityState& quantity)
+{
+  if (!request.particleVisualDraftDirty && !request.applyParticleVisualRequested) {
+    request.particleVisualDraft = particleVisual;
+  }
+
+  if (!request.renderDraftDirty && !request.applyRenderRequested) {
+    request.renderDraft.particleLabels = render.particleLabels;
+    request.renderDraft.velocity = render.velocity;
+    request.renderDraft.diskOpacity = render.disks.opacity;
+    request.renderDraft.ellipsoidOpacity = render.ellipsoids.opacity;
+    request.renderDraft.isoContourOpacity = render.isocontour.opacity;
+    request.renderDraft.crossGizmoSize = render.crossGizmo.size;
+  }
+
+  if (!request.unitsDraftDirty && !request.applyUnitsRequested) {
+    request.unitsDraft = quantity.units;
+  }
 }
 
-static void DrawParticleTypeSettingsSection(QuantityState& quantity,
-					    ParticleVisualConfig& particleVisual,
+static void DrawCameraInfoSection(const SettingsCameraView& camera) {
+  ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)",
+              camera.position[0], camera.position[1], camera.position[2]);
+  ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)",
+              camera.target[0], camera.target[1], camera.target[2]);
+}
+
+static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
 					    SettingsActionRequestState& req) {
   if (!ImGui::CollapsingHeader("Particle Type Settings"))
     return;
-    
+
   for (int i = 0; i < 6; i++) {
     std::string header = "Type " + std::to_string(i);
     if (ImGui::TreeNode(header.c_str())) {
-      auto& cfg = particleVisual.types[i];
+      auto& cfg = req.particleVisualDraft.types[i];
       bool visualChanged = false;
 				
       std::string comboLabel = "Colormap##" + std::to_string(i);
@@ -138,18 +199,15 @@ static void DrawParticleTypeSettingsSection(QuantityState& quantity,
 	ImGui::EndCombo();
       }
 				
-      auto findIndex = [&](QuantityId q)->int{
-	for (int k = 0; k < quantity.catalog.nUIQ; ++k) if (quantity.catalog.uiQ[k] == q) return k;
-	return 0; // fallback
-      };
-				
-      int qidx = findIndex(sel);
+      const int qidx = static_cast<int>(sel);
       ImGui::Text("Current particle %s range: [%g, %g]",
 		  QuantityLabel(sel),
 		  quantity.range.valueMin[qidx][i],
 		  quantity.range.valueMax[qidx][i]);
 				
       if (visualChanged) {
+        req.particleVisualDraftDirty = true;
+        req.applyParticleVisualRequested = true;
 	req.particleRenderDirtyRequested = true;
       }
 				
@@ -161,7 +219,7 @@ static void DrawParticleTypeSettingsSection(QuantityState& quantity,
 static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       SnapshotFormatState& format,
                                       bool isLoading,
-                                      ToolWindowUIState& tools){
+                                      WindowCommandQueue& windowCommands){
   if(!ImGui::CollapsingHeader("File Navigation"))
     return;
 
@@ -267,11 +325,13 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
 
   if (ImGui::Button("Edit Data Format")) {
 #ifdef HAVE_HDF5
-    if (input.useHDF5)
-      OpenHDF5FormatDialog(tools.fileFormatDialog, format.formatTokensHdf5);
-    else
+    if (input.useHDF5) {
+      rt.request.openHDF5FormatDialogRequested = true;
+    } else
 #endif
-      OpenBinaryFormatDialog(tools.fileFormatDialog, format.formatTokens);
+    {
+      rt.request.openFormatDialogRequested = true;
+    }
   }
 
   static const char* FileFormatNames[] = {
@@ -286,7 +346,7 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
   }
 
   if (ImGui::Button("Mask Settings...")) {
-    OpenMaskUI(tools.mask);
+    windowCommands.open(WindowId::Mask);
   }
 
   if (ImGui::Button("Generate test data")) {
@@ -310,29 +370,41 @@ static void DrawNormalizationSection(NormalizationContext& normalization,
   ImGui::Text("Max coordinate is normalized to: %.3f", normalization.desiredMax);
 }
 
-static void DrawSinkIdSection(const CameraContext& camCtx,
-                              ParticleLabelRenderState& labels)
+static void DrawSinkIdSection(const SettingsCameraView& camera,
+	                              SettingsActionRequestState& req)
 {
   if (!ImGui::CollapsingHeader("set sink ID visualization"))
     return;
 
-  ImGui::InputFloat("radius", &labels.queryRadius, 0.f, 0.f, "%g");
-  ImGui::InputInt("number of particles", &labels.maxLabels);
+  auto& labels = req.renderDraft.particleLabels;
+  bool changed = false;
+
+  changed |= ImGui::InputFloat("radius", &labels.queryRadius, 0.f, 0.f, "%g");
+  changed |= ImGui::InputInt("number of particles", &labels.maxLabels);
 
   labels.moveThreshold = 0.1f * labels.queryRadius;
 
   if (ImGui::Button("show sink IDs")) {
     labels.show = true;
-    labels.lastCameraPos = camCtx.cameraPos;
+    labels.lastCameraPos = glm::vec3(camera.position[0],
+                                     camera.position[1],
+                                     camera.position[2]);
+    changed = true;
   }
 
   if (ImGui::Button("disable sink IDs")) {
     labels.show = false;
+    changed = true;
+  }
+
+  if (changed) {
+    req.renderDraftDirty = true;
+    req.applyRenderRequested = true;
   }
 }
 
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
-				       const CameraContext& camCtx)
+				       const SettingsCameraView& camera)
 {
   if (!ImGui::CollapsingHeader("Set camera pos"))
     return;
@@ -367,7 +439,9 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   ImGui::Checkbox("Culling Radius in Original Coordinates", &rt.viewFilter.radiusIsOriginal);
 
   if (ImGui::Button("Use Camera Target")) {
-    rt.viewFilter.center = camCtx.cameraTarget;
+    rt.viewFilter.center = glm::vec3(camera.target[0],
+                                     camera.target[1],
+                                     camera.target[2]);
     rt.viewFilter.centerIsOriginal = false;
   }
 
@@ -381,19 +455,22 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
 }
 
 #ifdef PYTHON_BRIDGE
-static void DrawPythonBridgeSection(PythonBridgeRequestState& request,
-                             const PythonBridgeViewState& view)
+static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit,
+                                    const PythonBridgeViewState& view)
 {
   if (!ImGui::CollapsingHeader("Python:Jupyter notebook"))
-    return;
+    return false;
 
+  bool changed = false;
   const bool isOpen = view.available;
 
   if (ImGui::Button(isOpen ? "Close notebook" : "Open notebook")) {
-    if (isOpen)
-      request.shutdownRequested = true;
-    else
-      request.launchRequested = true;
+    if (isOpen) {
+      edit.shutdownClicked = true;
+    } else {
+      edit.launchClicked = true;
+    }
+    changed = true;
   }
 
   if (view.available) {
@@ -414,21 +491,26 @@ static void DrawPythonBridgeSection(PythonBridgeRequestState& request,
     }
 
     if (ImGui::SmallButton("Open in Browser")) {
-      request.openBrowserRequested = true;
+      edit.openBrowserClicked = true;
+      changed = true;
     }
 
     if (!view.lastError.empty()) {
       ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "%s", view.lastError.c_str());
     }
   }
+
+  return changed;
 }
 #endif
 
-static void DrawAnalysisSection(RenderRuntimeState& render,
-				AnalysisDerivedState& analysis,
-                                AnalysisRequestRuntimeState& rt,
+static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
+                                const AnalysisJobRuntimeState& jobs,
                                 const FileNavigationRuntimeState& fileNav,
-                                ToolWindowUIState& tools){
+                                const SettingsAnalysisResultView& result,
+                                SettingsUIState& ui,
+                                WindowCommandQueue& windowCommands,
+                                SettingsActionRequestState& settingsReq){
   if (!ImGui::CollapsingHeader("Analysis"))
     return;
 
@@ -458,12 +540,10 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
 #endif
   };
 		
-  static int analysisMode = ANALYSIS_RADIAL_PROFILE;
-		
   // 現在選択中のラベルを探す
   const char* currentLabel = "unknown";
   for (const auto& item : analysisItems) {
-    if (item.mode == analysisMode) {
+    if (item.mode == ui.analysisMode) {
       currentLabel = item.label;
       break;
     }
@@ -471,9 +551,9 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
 		
   if (ImGui::BeginCombo("Analysis mode", currentLabel)) {
     for (const auto& item : analysisItems) {
-      bool isSelected = (analysisMode == item.mode);
+      bool isSelected = (ui.analysisMode == item.mode);
       if (ImGui::Selectable(item.label, isSelected)) {
-	analysisMode = item.mode;
+	ui.analysisMode = item.mode;
       }
       if (isSelected)
 	ImGui::SetItemDefaultFocus();
@@ -481,38 +561,41 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
     ImGui::EndCombo();
   }
 		
-  switch (analysisMode) {  
+  switch (ui.analysisMode) {  
   case ANALYSIS_RADIAL_PROFILE: {
     if (ImGui::Button("Compute radial profile"))
-      OpenRadialProfileUI(tools.radialProfile);
+      windowCommands.open(WindowId::RadialProfile);
     break;
   }
   case ANALYSIS_2D_HISTOGRAM: {
     if (ImGui::Button("Compute 2D histogram"))
-      OpenHistogram2DUI(tools.histogram2D);
+      windowCommands.open(WindowId::Histogram2D);
     break;
   }
   case ANALYSIS_CLUMP_FIND: {
     if (ImGui::Button("Run Clumps finder")) 
-      OpenClumpFindUI(tools.clumpFind);
+      windowCommands.open(WindowId::ClumpFinder);
     
 #ifdef CLUMP_DATA_READ
-    auto& batchReq = rt.clumpBatch;
-    auto& batchRes = analysis.clumpBatch;
+    auto& batchReq = edit.clumpBatch;
+    bool clumpBatchDirty = false;
+    const auto& batchJob = jobs.clumpBatch.job;
+    const auto* batchRes = result.clumpBatch;
 
     ImGui::Text("create clump data for continuous snapshots");
 
-    ImGui::RadioButton("FOF",        &batchReq.method, 0);
+    clumpBatchDirty |= ImGui::RadioButton("FOF",        &batchReq.method, 0);
     ImGui::SameLine();
-    ImGui::RadioButton("Dendrogram", &batchReq.method, 1);
+    clumpBatchDirty |= ImGui::RadioButton("Dendrogram", &batchReq.method, 1);
 
-    ImGui::InputInt("number of snapshots##FOF", &batchReq.nSnapshots);
-    ImGui::InputText("Output File Name##FOF",
-		     batchReq.outputFileName,
-		     IM_ARRAYSIZE(batchReq.outputFileName));
-    ImGui::InputText("Output Folder##FOF",
-		     batchReq.outputFolderPath,
-		     IM_ARRAYSIZE(batchReq.outputFolderPath));
+    clumpBatchDirty |= ImGui::InputInt("number of snapshots##FOF",
+                                       &batchReq.nSnapshots);
+    clumpBatchDirty |= ImGui::InputText("Output File Name##FOF",
+                                        batchReq.outputFileName,
+                                        IM_ARRAYSIZE(batchReq.outputFileName));
+    clumpBatchDirty |= ImGui::InputText("Output Folder##FOF",
+                                        batchReq.outputFolderPath,
+                                        IM_ARRAYSIZE(batchReq.outputFolderPath));
 
     ImGui::SameLine();
     if (ImGui::Button("default path")) {
@@ -520,60 +603,70 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
 		   fileNav.input.folderPath,
 		   IM_ARRAYSIZE(batchReq.outputFolderPath));
       batchReq.outputFolderPath[IM_ARRAYSIZE(batchReq.outputFolderPath) - 1] = '\0';
+      clumpBatchDirty = true;
     }
 
     if (ImGui::Button("generate clump data")) {
-      batchReq.runRequested = true;
+      batchReq.generateClicked = true;
     }
     ImGui::SameLine();
-    if (batchReq.job.status == JobStatus::Running) {
+    if (batchJob.status == JobStatus::Running) {
       if (ImGui::Button("cancel clump batch")) {
-        batchReq.cancelRequested = true;
+        batchReq.cancelClicked = true;
       }
-      ImGui::Text("running %d / %d", batchReq.job.processed, batchReq.nSnapshots);
+      ImGui::Text("running %d / %d", batchJob.processed, batchReq.nSnapshots);
     }
 
-    if (batchRes.completed) {
-      ImGui::Text("Processed snapshots: %d", batchRes.processedSnapshots);
-      ImGui::Text("Output: %s", batchRes.outputPath);
+    if (batchRes && batchRes->completed) {
+      ImGui::Text("Processed snapshots: %d", batchRes->processedSnapshots);
+      ImGui::Text("Output: %s", batchRes->outputPath);
     }
 
-    if (batchRes.errorMessage[0] != '\0') {
-      ImGui::TextColored(ImVec4(1,0,0,1), "%s", batchRes.errorMessage);
+    if (batchRes && batchRes->errorMessage[0] != '\0') {
+      ImGui::TextColored(ImVec4(1,0,0,1), "%s", batchRes->errorMessage);
     }
 
     if (ImGui::Button("show clump list")) {
-      OpenClumpListUI(tools.clumpList);
+      windowCommands.open(WindowId::ClumpList);
     }
 
     if (ImGui::Button("show clump chain list")) {
-      OpenClumpChainUI(tools.clumpChain);
+      windowCommands.open(WindowId::ClumpChain);
+    }
+    if (clumpBatchDirty) {
+      edit.clumpBatchDirty = true;
     }
 #endif
     break;
   }
   case ANALYSIS_STELLAR_DENSITY: {
-    auto& req = rt.stellarDensity;
+    auto& req = edit.stellarDensity;
+    bool stellarDensityDirty = false;
 
     ImGui::Text("Particle types to include:");
-    ImGui::Checkbox("Type 0##stellar_density", &req.selectedTypes[0]); ImGui::SameLine();
-    ImGui::Checkbox("Type 1##stellar_density", &req.selectedTypes[1]); ImGui::SameLine();
-    ImGui::Checkbox("Type 2##stellar_density", &req.selectedTypes[2]);
-    ImGui::Checkbox("Type 3##stellar_density", &req.selectedTypes[3]); ImGui::SameLine();
-    ImGui::Checkbox("Type 4##stellar_density", &req.selectedTypes[4]); ImGui::SameLine();
-    ImGui::Checkbox("Type 5##stellar_density", &req.selectedTypes[5]);
+    stellarDensityDirty |= ImGui::Checkbox("Type 0##stellar_density", &req.selectedTypes[0]); ImGui::SameLine();
+    stellarDensityDirty |= ImGui::Checkbox("Type 1##stellar_density", &req.selectedTypes[1]); ImGui::SameLine();
+    stellarDensityDirty |= ImGui::Checkbox("Type 2##stellar_density", &req.selectedTypes[2]);
+    stellarDensityDirty |= ImGui::Checkbox("Type 3##stellar_density", &req.selectedTypes[3]); ImGui::SameLine();
+    stellarDensityDirty |= ImGui::Checkbox("Type 4##stellar_density", &req.selectedTypes[4]); ImGui::SameLine();
+    stellarDensityDirty |= ImGui::Checkbox("Type 5##stellar_density", &req.selectedTypes[5]);
 
-    ImGui::Checkbox("overwrite hsml##stellar_density", &req.overwriteHsml);
+    stellarDensityDirty |= ImGui::Checkbox("overwrite hsml##stellar_density",
+                                           &req.overwriteHsml);
 
     if (ImGui::Button("Select 3,4,5##stellar_density")) {
       for (int t = 0; t < 6; ++t) req.selectedTypes[t] = false;
       req.selectedTypes[3] = true;
       req.selectedTypes[4] = true;
       req.selectedTypes[5] = true;
+      stellarDensityDirty = true;
     }
 
     if (ImGui::Button("Compute stellar density##stellar_density")) {
-      req.runRequested = true;
+      req.computeClicked = true;
+    }
+    if (stellarDensityDirty) {
+      edit.stellarDensityDirty = true;
     }
 
     break;
@@ -581,7 +674,7 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
 #ifdef HAVE_HDF5
   case ANALYSIS_HALO_CATALOGUE: {
     if(ImGui::Button("Load Halo"))
-      OpenHaloesUI(tools.haloes);
+      windowCommands.open(WindowId::Haloes);
     break;
   }
 #endif
@@ -594,104 +687,138 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
     
 #ifdef GEOMETRICAL_ANALYSIS
   case ANALYSIS_DISK: {
-    auto& singleReq = rt.disk;
-    auto& singleRes = analysis.disk;
+    auto& singleReq = edit.disk;
+    const auto* singleRes = result.disk;
     
     ImGui::SeparatorText("Single disk analysis");
 
-    ImGui::InputInt("Particle ID1##disk", &singleReq.targetParticleId);
-    ImGui::SliderFloat("Opacity##disk", &render.disks.opacity, 0.0f, 1.0f);
+    if (ImGui::InputInt("Particle ID1##disk", &singleReq.targetParticleId)) {
+      edit.diskDirty = true;
+    }
+    if (ImGui::SliderFloat("Opacity##disk",
+                           &settingsReq.renderDraft.diskOpacity,
+                           0.0f,
+                           1.0f)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
 
     if (ImGui::Button("Find a disk around the particle")) {
-      singleReq.runRequested = true;
+      singleReq.findClicked = true;
     }
 
     if (ImGui::Button("disable disks")) {
-      singleReq.clearRequested = true;
+      singleReq.clearClicked = true;
     }
 
-    if (singleRes.valid) {
-      ImGui::Text("Disk radius: %g", singleRes.radius);
+    if (singleRes && singleRes->valid) {
+      ImGui::Text("Disk radius: %g", singleRes->radius);
     }
 
-    auto& batchReq  = rt.diskBatch;
-    auto& batchRes  = analysis.diskBatch;    
+    auto& batchReq  = edit.diskBatch;
+    bool diskBatchDirty = false;
+    const auto& batchJob = jobs.diskBatch.job;
+    const auto& batchRuntime = jobs.diskBatch;
+    const auto* batchRes  = result.diskBatch;    
     ImGui::SeparatorText("Batch disk analysis");
 
-    ImGui::InputText("Read target from text file##disk",
-		     batchReq.inputFile,
-		     IM_ARRAYSIZE(batchReq.inputFile));
-    ImGui::InputText("Output target from text file##disk",
-		     batchReq.outputFile,
-		     IM_ARRAYSIZE(batchReq.outputFile));
+    diskBatchDirty |= ImGui::InputText("Read target from text file##disk",
+                                       batchReq.inputFile,
+                                       IM_ARRAYSIZE(batchReq.inputFile));
+    diskBatchDirty |= ImGui::InputText("Output target from text file##disk",
+                                       batchReq.outputFile,
+                                       IM_ARRAYSIZE(batchReq.outputFile));
 
     if (ImGui::Button("calc disk radius from text file")) {
-      batchReq.runRequested = true;
+      batchReq.runClicked = true;
     }
     ImGui::SameLine();
-    if (batchReq.job.status == JobStatus::Running) {
+    if (batchJob.status == JobStatus::Running) {
       if (ImGui::Button("cancel disk batch")) {
-        batchReq.cancelRequested = true;
+        batchReq.cancelClicked = true;
       }
-      ImGui::Text("running %d / %d", batchReq.rowCursor, static_cast<int>(batchReq.rows.size()));
+      ImGui::Text("running %d / %d",
+                  batchRuntime.rowCursor,
+                  static_cast<int>(batchRuntime.rows.size()));
     }
 
-    if (batchRes.completed) {
-      ImGui::Text("Processed rows: %d", batchRes.processedRows);
+    if (batchRes && batchRes->completed) {
+      ImGui::Text("Processed rows: %d", batchRes->processedRows);
+    }
+    if (diskBatchDirty) {
+      edit.diskBatchDirty = true;
     }
 
     break;
   }
 
   case ANALYSIS_ISO_DENSITY: {
-    auto& singleReq = rt.ellipsoid;
-    auto& singleRes = analysis.ellipsoid;
-    auto& batchReq  = rt.ellipsoidBatch;
-    auto& batchRes  = analysis.ellipsoidBatch;
+    auto& singleReq = edit.ellipsoid;
+    const auto* singleRes = result.ellipsoid;
+    auto& batchReq  = edit.ellipsoidBatch;
+    bool ellipsoidBatchDirty = false;
+    const auto& batchJob = jobs.ellipsoidBatch.job;
+    const auto& batchRuntime = jobs.ellipsoidBatch;
+    const auto* batchRes  = result.ellipsoidBatch;
 
     ImGui::SeparatorText("Single ellipsoid analysis");
 
-    ImGui::InputInt("Particle ID1", &singleReq.particleId1);
-    ImGui::InputInt("Particle ID2", &singleReq.particleId2);
-    ImGui::SliderFloat("Opacity##contour_ellipse", &render.ellipsoids.opacity, 0.0f, 1.0f);
+    if (ImGui::InputInt("Particle ID1", &singleReq.particleId1)) {
+      edit.ellipsoidDirty = true;
+    }
+    if (ImGui::InputInt("Particle ID2", &singleReq.particleId2)) {
+      edit.ellipsoidDirty = true;
+    }
+    if (ImGui::SliderFloat("Opacity##contour_ellipse",
+                           &settingsReq.renderDraft.ellipsoidOpacity,
+                           0.0f,
+                           1.0f)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
 
     if (ImGui::Button("Fit Iso-density ellipsoid")) {
-      singleReq.runRequested = true;
+      singleReq.fitClicked = true;
     }
 
     if (ImGui::Button("disable Ellipsoid")) {
-      singleReq.clearRequested = true;
+      singleReq.clearClicked = true;
     }
 
-    if (singleRes.valid) {
+    if (singleRes && singleRes->valid) {
       ImGui::Text("a=%g b=%g c=%g",
-		  singleRes.ellipsoid.radii.x,
-		  singleRes.ellipsoid.radii.y,
-		  singleRes.ellipsoid.radii.z);
+		  singleRes->ellipsoid.radii.x,
+		  singleRes->ellipsoid.radii.y,
+		  singleRes->ellipsoid.radii.z);
     }
 
     ImGui::SeparatorText("Batch ellipsoid analysis");
 
-    ImGui::InputText("Read target from text file",
-		     batchReq.inputFile,
-		     IM_ARRAYSIZE(batchReq.inputFile));
-    ImGui::InputText("Output target from text file",
-		     batchReq.outputFile,
-		     IM_ARRAYSIZE(batchReq.outputFile));
+    ellipsoidBatchDirty |= ImGui::InputText("Read target from text file",
+                                            batchReq.inputFile,
+                                            IM_ARRAYSIZE(batchReq.inputFile));
+    ellipsoidBatchDirty |= ImGui::InputText("Output target from text file",
+                                            batchReq.outputFile,
+                                            IM_ARRAYSIZE(batchReq.outputFile));
 
     if (ImGui::Button("ellipsoidal fit from text file")) {
-      batchReq.runRequested = true;
+      batchReq.runClicked = true;
     }
     ImGui::SameLine();
-    if (batchReq.job.status == JobStatus::Running) {
+    if (batchJob.status == JobStatus::Running) {
       if (ImGui::Button("cancel ellipsoid batch")) {
-        batchReq.cancelRequested = true;
+        batchReq.cancelClicked = true;
       }
-      ImGui::Text("running %d / %d", batchReq.rowCursor, static_cast<int>(batchReq.rows.size()));
+      ImGui::Text("running %d / %d",
+                  batchRuntime.rowCursor,
+                  static_cast<int>(batchRuntime.rows.size()));
     }
 
-    if (batchRes.completed) {
-      ImGui::Text("Processed rows: %d", batchRes.processedRows);
+    if (batchRes && batchRes->completed) {
+      ImGui::Text("Processed rows: %d", batchRes->processedRows);
+    }
+    if (ellipsoidBatchDirty) {
+      edit.ellipsoidBatchDirty = true;
     }
 
     break;
@@ -701,15 +828,16 @@ static void DrawAnalysisSection(RenderRuntimeState& render,
 }
 
 
-static void DrawRenderingSection(RenderRuntimeState& render,
-				 AnalysisDerivedState& analysis,
-				 QuantityCatalogState& catalog,
-				 AnalysisRequestRuntimeState& rt,
-				 ToolWindowUIState& tools,
+static void DrawRenderingSection(const QuantityCatalogState& catalog,
+				 SettingsAnalysisEditState& edit,
+                                 const AnalysisJobRuntimeState& jobs,
+                                 const SettingsAnalysisResultView& result,
+                                 SettingsUIState& ui,
+                                 WindowCommandQueue& windowCommands,
 				 SettingsActionRequestState& settingsReq){
   if (!ImGui::CollapsingHeader("Rendering"))
     return;
-  
+
   enum RenderingMode {
     RENDER_PROJECTION_MAP,
     RENDER_STREAM_LINE,
@@ -728,12 +856,10 @@ static void DrawRenderingSection(RenderRuntimeState& render,
     { "velocity field", RENDER_VELOCITY_FIELD},
   };
 		
-  static int renderingMode = RENDER_PROJECTION_MAP;
-		
   // 現在選択中のラベルを探す
   const char* currentLabel = "unknown";
   for (const auto& item : renderingItems) {
-    if (item.mode == renderingMode) {
+    if (item.mode == ui.renderingMode) {
       currentLabel = item.label;
       break;
     }
@@ -741,9 +867,9 @@ static void DrawRenderingSection(RenderRuntimeState& render,
 		
   if (ImGui::BeginCombo("Rendering mode", currentLabel)) {
     for (const auto& item : renderingItems) {
-      bool isSelected = (renderingMode == item.mode);
+      bool isSelected = (ui.renderingMode == item.mode);
       if (ImGui::Selectable(item.label, isSelected)) {
-	renderingMode = item.mode;
+	ui.renderingMode = item.mode;
       }
       if (isSelected)
 	ImGui::SetItemDefaultFocus();
@@ -751,49 +877,54 @@ static void DrawRenderingSection(RenderRuntimeState& render,
     ImGui::EndCombo();
   }
 		
-  switch (renderingMode) {
+  switch (ui.renderingMode) {
   case RENDER_PROJECTION_MAP: {
     if (ImGui::Button("make projection map"))
-      OpenProjectionMapUI(tools.projectionMap);    
-    
-    auto& movieRt = rt.projectionMovie;
-    auto& movieReq = movieRt.request;
-    auto& movieJob = movieRt.job;
-    auto& movieRes = analysis.projectionMovie;
+      windowCommands.open(WindowId::ProjectionMap);
+	    
+    auto& movieReq = edit.projectionMovie;
+    bool movieDirty = false;
+    const auto& movieJob = jobs.projectionMovie.job;
+    const auto* movieRes = result.projectionMovie;
 
     ImGui::Text("create projection maps for continuous snapshots");
 
-    ImGui::InputInt("number of snapshots##render", &movieReq.nSnapshots);
-    if (movieReq.nSnapshots < 1) movieReq.nSnapshots = 1;
-    ImGui::InputText("Output File Format##render",
-		     movieReq.outputFileFormat,
-		     IM_ARRAYSIZE(movieReq.outputFileFormat));
-    ImGui::InputText("Output Folder##render",
-		     movieReq.outputFolderPath,
-		     IM_ARRAYSIZE(movieReq.outputFolderPath));
-    ImGui::InputText("Output Name of Movie##render",
-		     movieReq.outputMovieName,
-		     IM_ARRAYSIZE(movieReq.outputMovieName));
+    if (ImGui::InputInt("number of snapshots##render", &movieReq.nSnapshots)) {
+      movieDirty = true;
+    }
+    if (movieReq.nSnapshots < 1) {
+      movieReq.nSnapshots = 1;
+      movieDirty = true;
+    }
+    movieDirty |= ImGui::InputText("Output File Format##render",
+		                   movieReq.outputFileFormat,
+		                   IM_ARRAYSIZE(movieReq.outputFileFormat));
+    movieDirty |= ImGui::InputText("Output Folder##render",
+		                   movieReq.outputFolderPath,
+		                   IM_ARRAYSIZE(movieReq.outputFolderPath));
+    movieDirty |= ImGui::InputText("Output Name of Movie##render",
+		                   movieReq.outputMovieName,
+		                   IM_ARRAYSIZE(movieReq.outputMovieName));
 
-    ImGui::Checkbox("restore camera after movie", &movieReq.restoreCameraOnFinish);
+    movieDirty |= ImGui::Checkbox("restore camera after movie", &movieReq.restoreCameraOnFinish);
     ImGui::SeparatorText("Movie Tracking");
-    ImGui::Checkbox("follow the center around the sink particle", &movieReq.followSinkCenter);
+    movieDirty |= ImGui::Checkbox("follow the center around the sink particle", &movieReq.followSinkCenter);
     if (movieReq.followSinkCenter) {
-      ImGui::Checkbox("the most massive sink particle", &movieReq.followMostMassiveSink);
+      movieDirty |= ImGui::Checkbox("the most massive sink particle", &movieReq.followMostMassiveSink);
       if (!movieReq.followMostMassiveSink) {
-	ImGui::InputInt("particle ID", &movieReq.particleIdCenter);
+	movieDirty |= ImGui::InputInt("particle ID", &movieReq.particleIdCenter);
       }
 
-      ImGui::Checkbox("mass center around the particle", &movieReq.useMassCenter);
+      movieDirty |= ImGui::Checkbox("mass center around the particle", &movieReq.useMassCenter);
       if (movieReq.useMassCenter) {
-	ImGui::InputFloat("distance from the particle", &movieReq.massCenterRadius);
-	ImGui::InputFloat("the minimum density", &movieReq.massCenterMinDensity);
+	movieDirty |= ImGui::InputFloat("distance from the particle", &movieReq.massCenterRadius);
+	movieDirty |= ImGui::InputFloat("the minimum density", &movieReq.massCenterMinDensity);
       }
     }
 
     ImGui::SeparatorText("Angular Momentum");
-    ImGui::Checkbox("force face-on view", &movieReq.faceOn);
-    ImGui::Checkbox("align camera to angular momentum", &movieReq.alignToAngularMomentum);
+    movieDirty |= ImGui::Checkbox("force face-on view", &movieReq.faceOn);
+    movieDirty |= ImGui::Checkbox("align camera to angular momentum", &movieReq.alignToAngularMomentum);
 
     const bool useAm = (movieReq.faceOn || movieReq.alignToAngularMomentum);
     if (useAm) {
@@ -801,36 +932,42 @@ static void DrawRenderingSection(RenderRuntimeState& render,
       int amMode = movieReq.faceOn ? 0 : static_cast<int>(movieReq.amViewMode);
       if (ImGui::Combo("AM view mode", &amMode, amModes, IM_ARRAYSIZE(amModes)) && !movieReq.faceOn) {
         movieReq.amViewMode = static_cast<AngularMomentumViewMode>(amMode);
+        movieDirty = true;
       }
-      ImGui::InputFloat("AM radius", &movieReq.amRadius, 0.f, 0.f, "%g");
-      ImGui::Checkbox("Subtract bulk velocity", &movieReq.amSubtractBulkVelocity);
-      ImGui::Checkbox("Keep axis sign continuity", &movieReq.amKeepSignContinuity);
+      movieDirty |= ImGui::InputFloat("AM radius", &movieReq.amRadius, 0.f, 0.f, "%g");
+      movieDirty |= ImGui::Checkbox("Subtract bulk velocity", &movieReq.amSubtractBulkVelocity);
+      movieDirty |= ImGui::Checkbox("Keep axis sign continuity", &movieReq.amKeepSignContinuity);
       for (int t = 0; t < 6; ++t) {
         char label[64];
         std::snprintf(label, sizeof(label), "use type %d##movie_am_type", t);
-        ImGui::Checkbox(label, &movieReq.amUseType[t]);
+        movieDirty |= ImGui::Checkbox(label, &movieReq.amUseType[t]);
         if (t < 5) ImGui::SameLine();
       }
     }
 
     if (movieJob.status == JobStatus::Running) {
       if (ImGui::Button("cancel movie")) {
-        movieReq.cancelRequested = true;
+        movieReq.cancelClicked = true;
       }
       ImGui::SameLine();
       ImGui::Text("running %d / %d", movieJob.processed, movieReq.nSnapshots);
     } else if (ImGui::Button("generate maps")) {
-      movieReq.cancelRequested = false;
-      movieReq.runRequested = true;
+      movieReq.cancelClicked = false;
+      movieReq.generateClicked = true;
+      edit.projectionMovieDirty = true;
     }
 
-    if (movieRes.completed) {
-      ImGui::Text("Processed snapshots: %d", movieRes.processedSnapshots);
-      ImGui::Text("Movie: %s", movieRes.outputMoviePath);
+    if (movieDirty) {
+      edit.projectionMovieDirty = true;
     }
 
-    if (movieRes.errorMessage[0] != '\0') {
-      ImGui::TextColored(ImVec4(1,0,0,1), "%s", movieRes.errorMessage);
+    if (movieRes && movieRes->completed) {
+      ImGui::Text("Processed snapshots: %d", movieRes->processedSnapshots);
+      ImGui::Text("Movie: %s", movieRes->outputMoviePath);
+    }
+
+    if (movieRes && movieRes->errorMessage[0] != '\0') {
+      ImGui::TextColored(ImVec4(1,0,0,1), "%s", movieRes->errorMessage);
     }
     
     break;
@@ -838,11 +975,12 @@ static void DrawRenderingSection(RenderRuntimeState& render,
 			
 #ifdef STREAM_LINE
   case RENDER_STREAM_LINE: {
-    auto& previewReq = rt.streamlinePreview;
-    auto& buildReq   = rt.streamlineBuild;
+    auto& previewReq = edit.streamlinePreview;
+    auto& buildReq   = edit.streamlineBuild;
+    bool buildDirty = false;
 
     ImGui::Text("Seed setup");
-    ImGui::InputInt("number of seed points", &buildReq.nSeeds);
+    buildDirty |= ImGui::InputInt("number of seed points", &buildReq.nSeeds);
 
     bool previewDirty = false;
 
@@ -862,28 +1000,32 @@ static void DrawRenderingSection(RenderRuntimeState& render,
     }
 
     if (previewDirty) {
-      previewReq.updateRequested = true;
+      previewReq.updateClicked = true;
+      edit.streamlinePreviewDirty = true;
     }
 
     ImGui::Text("Stream line setting");
 
     if (ImGui::Checkbox("limit stream lines in box", &buildReq.limitRegion)) {
-      //Just change the request state here.
+      buildDirty = true;
     }
 
     if (buildReq.limitRegion) {
-      ImGui::InputFloat3("center of stream line region",
-			 buildReq.regionCenter, "%.3f");
-      ImGui::InputFloat3("side len##stream line",
-			 buildReq.regionSize, "%.3f");
+      buildDirty |= ImGui::InputFloat3("center of stream line region",
+                                       buildReq.regionCenter, "%.3f");
+      buildDirty |= ImGui::InputFloat3("side len##stream line",
+                                       buildReq.regionSize, "%.3f");
     }
 
     if (ImGui::Button("Build stream lines")) {
-      buildReq.runRequested = true;
+      buildReq.buildClicked = true;
     }
 
     if (ImGui::Button("disable Grid & Mesh")) {
-      buildReq.clearRequested = true;
+      buildReq.clearClicked = true;
+    }
+    if (buildDirty) {
+      edit.streamlineBuildDirty = true;
     }
 
     break;
@@ -892,11 +1034,22 @@ static void DrawRenderingSection(RenderRuntimeState& render,
 
 #ifdef ISO_CONTOUR
   case RENDER_ISO_CONTOUR: {
-    auto& req = rt.isoContour;
+    auto& req = edit.isoContour;
+    bool isoContourDirty = false;
 
-    ImGui::InputFloat("Threshold value for iso-contour", &req.isoLevel);
-    ImGui::SliderFloat("Opacity", &render.isocontour.opacity, 0.0f, 1.0f);
-    ImGui::SliderInt("Maximum level of OctTree", &req.maxTreeLevel, 5, 20);
+    isoContourDirty |= ImGui::InputFloat("Threshold value for iso-contour",
+                                         &req.isoLevel);
+    if (ImGui::SliderFloat("Opacity",
+                           &settingsReq.renderDraft.isoContourOpacity,
+                           0.0f,
+                           1.0f)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
+    isoContourDirty |= ImGui::SliderInt("Maximum level of OctTree",
+                                        &req.maxTreeLevel,
+                                        5,
+                                        20);
 
     if (ImGui::BeginCombo("Quantity for Iso-Contour",
 			  QuantityLabel(req.selectedQuantity))) {
@@ -905,6 +1058,7 @@ static void DrawRenderingSection(RenderRuntimeState& render,
 	bool is_selected = (cand == req.selectedQuantity);
 	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
 	  req.selectedQuantity = cand;
+          isoContourDirty = true;
 	}
 	if (is_selected) ImGui::SetItemDefaultFocus();
       }
@@ -912,25 +1066,39 @@ static void DrawRenderingSection(RenderRuntimeState& render,
     }
 
     if (ImGui::Button("Build OctTree & Mesh")) {
-      req.runRequested = true;
+      req.buildClicked = true;
     }
 
     if (ImGui::Button("disable Grid & Mesh")) {
-      req.clearRequested = true;
+      req.clearClicked = true;
+    }
+    if (isoContourDirty) {
+      edit.isoContourDirty = true;
     }
 
     break;
   }
 #endif
 			
-  case RENDER_VELOCITY_FIELD: {
-    if (ImGui::InputInt("show velocity field out of n particles", &render.velocity.subtraction)) {
+	  case RENDER_VELOCITY_FIELD: {
+    auto& velocity = settingsReq.renderDraft.velocity;
+    if (ImGui::InputInt("show velocity field out of n particles", &velocity.subtraction)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
       settingsReq.velocityRenderDirtyRequested = true;
     }
-    ImGui::InputFloat("Arrow Scale", &render.velocity.arrowScale, 0.1f, 1.0f, "%.2f");
-    ImGui::Checkbox("Use Log Scale", &render.velocity.useLogScale);
-				
-    if (ImGui::Checkbox("render velocity field", &render.velocity.show)) {
+    if (ImGui::InputFloat("Arrow Scale", &velocity.arrowScale, 0.1f, 1.0f, "%.2f")) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
+    if (ImGui::Checkbox("Use Log Scale", &velocity.useLogScale)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
+					
+    if (ImGui::Checkbox("render velocity field", &velocity.show)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
       settingsReq.velocityRenderDirtyRequested = true;
     }
     break;
@@ -939,12 +1107,14 @@ static void DrawRenderingSection(RenderRuntimeState& render,
 }
 
 
-static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt, RenderRuntimeState& render)
+static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
 {
   if (!ImGui::CollapsingHeader("Other settings"))
     return;
 
+  auto& req = rt.request;
   bool unitChanged = false;
+  auto& units = req.unitsDraft;
   if (ImGui::CollapsingHeader("Units")) {
     unitChanged |= ImGui::InputDouble("UnitLength_in_cm",
                                       &units.length_cm,
@@ -983,7 +1153,9 @@ static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt
   }
 
   if (unitChanged) {
-    units.updateDerived();
+    req.unitsDraftDirty = true;
+    req.applyUnitsRequested = true;
+    req.unitConversionRebuildRequested = true;
   }
 
   if (ImGui::CollapsingHeader("Zoom Range")) {
@@ -992,6 +1164,12 @@ static void DrawOtherSettingsSection(UnitSystem& units, SettingsRuntimeState& rt
   }
 
   if (ImGui::CollapsingHeader("Cross Marker")) {
-    ImGui::SliderFloat("Cross Marker Size", &render.crossGizmo.size, 0.01f, 1.0f);
+    if (ImGui::SliderFloat("Cross Marker Size",
+                           &req.renderDraft.crossGizmoSize,
+                           0.01f,
+                           1.0f)) {
+      req.renderDraftDirty = true;
+      req.applyRenderRequested = true;
+    }
   }
 }

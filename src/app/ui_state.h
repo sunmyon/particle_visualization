@@ -1,123 +1,159 @@
 #pragma once
-#include <vector>
-#include "core/tracking_vector.h"
-#include "data/particle_data.h"
-#include "data/particle_mask_config.h"
-#include "app/file_format_dialog_state.h"
-#include "FindClumps/clump_window_state.h"
-#include "projection/projection_map_ui_state.h"
 
-struct RadialProfileUIState {
-  bool open = false;
+#include <array>
+
+#include "app/tracking_view_state.h"
+#include "core/quantity.h"
+
+struct SettingsStellarDensityEdit {
+  bool selectedTypes[6] = { false, false, false, true, true, true };
+  bool overwriteHsml = false;
+  bool computeClicked = false;
 };
 
-struct Histogram2DUIState {
-  bool open = false;
+#ifdef CLUMP_DATA_READ
+struct SettingsClumpBatchEdit {
+  int method = 0;
+  int nSnapshots = 10;
+  char outputFileName[255] = "clump_data.hdf5";
+  char outputFolderPath[255] = "./output/";
+  bool generateClicked = false;
+  bool cancelClicked = false;
+};
+#endif
+
+struct SettingsDiskAnalysisEdit {
+  int targetParticleId = 0;
+  bool findClicked = false;
+  bool clearClicked = false;
 };
 
-struct ImFont;
-struct ProjectionMapUIState {
-  bool open = false;
-  bool useOriginalCoordinate = true;
-  bool selectMode = false;
-
-  bool fontWindowOpen = false;
-  bool previewFontsInitialized = false;
-  int currentFontIndex = 0;
-  int appliedFontIndex = -1;
-
-  float xlen_input[3] = {2.0f, 2.0f, 1.0f};
-  std::vector<ImFont*> previewFonts;
+struct SettingsDiskBatchEdit {
+  char inputFile[255] = "binary_fragmentation_ellipticity_all_w_mode.txt";
+  char outputFile[255] = "binary_fragmentation_disks.txt";
+  bool runClicked = false;
+  bool cancelClicked = false;
 };
 
-struct TopParticlesUIState {
-  int queryID = -1;
-  bool hasFound = false;
-  ParticleData foundParticle{};
-
-  int particleType = 3;
-  int m = 10;
-
-  std::deque<ParticleData> historyData;
-  int historySel = -1;
-
-  bool selectType[6] = {false, false, false, false, false, false};
-
-  TrackingVector<ParticleData> filtered;
-
-  int selectedVar = 4;
-  int bins = 50;
-
-  bool histogramLogScaleX = true;
-  bool histogramLogScaleY = true;
-  bool autoRange = true;
-
-  float range1_min = 0.0f;
-  float range1_max = 1.0f;
-  float range2_min = 0.0f;
-  float range2_max = 1.0f;
-
-  bool useCameraCenter = false;
-  float cameraRadius = 10.0f;
-
-  bool histogramComputed = false;
-  TrackingVector<float> histBins;
-  TrackingVector<float> binCenters;
-
-  float vmin = 0.0f;
-  float vmax = 1.0f;
-  float binSize = 1.0f;
+struct SettingsEllipsoidAnalysisEdit {
+  int particleId1 = 0;
+  int particleId2 = 0;
+  bool fitClicked = false;
+  bool clearClicked = false;
 };
 
-struct HaloesUIState {
-  bool open = false;
-  char fname[255] = "";
-
-  std::vector<uint8_t> selectedForStress;
-  bool stressSelectionDirty = false;
-  bool requestRecomputePositions = false;
-  
-  int m = 50;
-
-  bool recomputeUseMassWeight = true;
-  bool recomputeUseOriginalPos = true;
-  int recomputeMinParticles = 20;
-
-  int selectedVar = 0;
-  int bins = 20;
-
-  bool histogramLogScaleX = true;
-  bool histogramLogScaleY = true;
-  bool autoRange = true;
-
-  float range1_min = 0.0f;
-  float range1_max = 1.0f;
-  float range2_min = 0.0f;
-  float range2_max = 1.0f;
-
-  bool histogramComputed = false;
-  TrackingVector<float> histBins;
-  TrackingVector<float> binCenters;
-  float vmin = 0.0f;
-  float vmax = 1.0f;
-  float binSize = 1.0f;
+struct SettingsEllipsoidBatchEdit {
+  char inputFile[255] = "binary_fragmentation.txt";
+  char outputFile[255] = "binary_fragmentation_output.txt";
+  bool runClicked = false;
+  bool cancelClicked = false;
 };
 
-struct MaskUIState {
-  bool open = false;
-  bool autoApply = true;
-  uint64_t revision = 0;
+#ifdef ISO_CONTOUR
+struct SettingsIsoContourEdit {
+  float isoLevel = 0.0f;
+  int maxTreeLevel = 15;
+  QuantityId selectedQuantity = QuantityId::Density;
+  bool buildClicked = false;
+  bool clearClicked = false;
+};
+#endif
+
+#ifdef STREAM_LINE
+struct SettingsStreamlinePreviewEdit {
+  float seedCenter[3] = {0.f, 0.f, 0.f};
+  float seedSize[3] = {100.f, 100.f, 100.f};
+  float opacity = 0.1f;
+  bool updateClicked = false;
+  bool clearClicked = false;
 };
 
-struct ToolWindowUIState {
-  RadialProfileUIState radialProfile;
-  Histogram2DUIState histogram2D;
-  ProjectionMapUIState projectionMap;
-  TopParticlesUIState topParticles;
-  HaloesUIState haloes;
-  MaskUIState mask;
-  FileFormatDialogState fileFormatDialog;
-  ClumpFinderWindowState clumpFind;
-  LoadedClumpWindowState clumpList;
-  ClumpChainWindowState clumpChain;
+struct SettingsStreamlineBuildEdit {
+  int nSeeds = 1;
+  bool limitRegion = false;
+  float regionCenter[3] = {0.f, 0.f, 0.f};
+  float regionSize[3] = {0.f, 0.f, 0.f};
+  bool buildClicked = false;
+  bool clearClicked = false;
+};
+#endif
+
+#ifdef PYTHON_BRIDGE
+struct SettingsPythonBridgeEdit {
+  bool launchClicked = false;
+  bool shutdownClicked = false;
+  bool openBrowserClicked = false;
+};
+#endif
+
+struct SettingsProjectionMovieEdit {
+  int nSnapshots = 10;
+  char outputFileFormat[255] = "image_%04d.png";
+  char outputFolderPath[255] = "./output";
+  char outputMovieName[255] = "output.mp4";
+
+  bool faceOn = false;
+  bool alignToAngularMomentum = false;
+  AngularMomentumViewMode amViewMode = AngularMomentumViewMode::FaceOn;
+  float amRadius = 0.0f;
+  bool amSubtractBulkVelocity = true;
+  std::array<bool, 6> amUseType = {true, true, true, true, true, true};
+  bool amKeepSignContinuity = true;
+
+  bool followSinkCenter = false;
+  bool followMostMassiveSink = false;
+  int particleIdCenter = 0;
+  bool useMassCenter = false;
+  float massCenterRadius = 0.0f;
+  float massCenterMinDensity = 0.0f;
+
+  bool restoreCameraOnFinish = true;
+  bool generateClicked = false;
+  bool cancelClicked = false;
+};
+
+struct SettingsAnalysisEditState {
+  SettingsStellarDensityEdit stellarDensity;
+  bool stellarDensityDirty = false;
+
+#ifdef CLUMP_DATA_READ
+  SettingsClumpBatchEdit clumpBatch;
+  bool clumpBatchDirty = false;
+#endif
+
+  SettingsDiskAnalysisEdit disk;
+  bool diskDirty = false;
+  SettingsDiskBatchEdit diskBatch;
+  bool diskBatchDirty = false;
+
+  SettingsEllipsoidAnalysisEdit ellipsoid;
+  bool ellipsoidDirty = false;
+  SettingsEllipsoidBatchEdit ellipsoidBatch;
+  bool ellipsoidBatchDirty = false;
+
+#ifdef ISO_CONTOUR
+  SettingsIsoContourEdit isoContour;
+  bool isoContourDirty = false;
+#endif
+
+#ifdef STREAM_LINE
+  SettingsStreamlinePreviewEdit streamlinePreview;
+  bool streamlinePreviewDirty = false;
+  SettingsStreamlineBuildEdit streamlineBuild;
+  bool streamlineBuildDirty = false;
+#endif
+
+#ifdef PYTHON_BRIDGE
+  SettingsPythonBridgeEdit py;
+  bool pyDirty = false;
+#endif
+
+  SettingsProjectionMovieEdit projectionMovie;
+  bool projectionMovieDirty = false;
+};
+
+struct SettingsUIState {
+  int analysisMode = 0;
+  int renderingMode = 0;
+  SettingsAnalysisEditState analysisEdit;
 };

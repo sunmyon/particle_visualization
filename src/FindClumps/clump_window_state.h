@@ -2,13 +2,44 @@
 #include <string>
 #include "core/tracking_vector.h"
 
+struct ClumpFinderRowView {
+  int sourceIndex = -1;
+  int count = 0;
+  double mass = 0.0;
+  float pos[3] = {0.f, 0.f, 0.f};
+  float vpeak = 0.0f;
+  bool isLeaf = false;
+};
+
 struct ClumpFinderWindowState {
   bool open = false;
 
   int selectedVar = 0;
 
+  float densityThreshold = 10.0f;
+  int minParticles = 30;
+  float minDepth = 1.0f;
+  bool useHsml = true;
+  float linkingLength = 0.01f;
+  float linkingLengthOverCellSize = 2.0f;
+
+  bool requestRunFOF = false;
+  bool requestRunDendrogram = false;
+  bool requestSortByMass = false;
+  bool requestSortByHierarchy = false;
+  bool requestApplyHullSelection = false;
+  bool requestComputeHistogram = false;
+  bool requestFocusRow = false;
+  int focusRowIndex = -1;
+  bool clumpsComputed = false;
+
   float minPeakDensity = 0.0f;
   bool showLeaves = false;
+
+#ifdef CLUMP_DATA_READ
+  char outputFileName[255] = "clumpList.hdf5";
+  bool requestOutputHdf5 = false;
+#endif
 
   bool histogramAutoRange = true;
   float histogramRangeMin = 0.0f;
@@ -19,11 +50,37 @@ struct ClumpFinderWindowState {
 
   int histogramBins = 50;
   bool histogramBinsAuto = false;
+
+  bool histogramComputed = false;
+  TrackingVector<float> massHistogramValues;
+  TrackingVector<ClumpFinderRowView> rows;
+  TrackingVector<bool> showHull;
+};
+
+struct LoadedClumpEvolutionCacheView {
+  TrackingVector<float> timeFloats;
+  TrackingVector<float> valueFloats;
+  int index = -1;
+  int clumpID = -1;
+};
+
+struct LoadedClumpRowView {
+  int sourceIndex = -1;
+  int clumpID = -1;
+  int count = 0;
+  float mass = 0.0f;
+  float density = 0.0f;
+  float pos[3] = {0.f, 0.f, 0.f};
+  int stellarCount = 0;
+  float stellarMass = 0.0f;
+  int stellarID = -1;
 };
 
 struct LoadedClumpWindowState {
   bool open = false;
 
+  char clumpListPath[255] = "";
+  bool requestUseInputPath = false;
   int selectedClumpID = -1;
 
   int finalFileIndex = 1000;
@@ -44,12 +101,41 @@ struct LoadedClumpWindowState {
   bool requestReload = false;
   bool requestUpdateEvolutionCache = false;
   bool requestFollowSelected = false;
+  bool requestFocusSelected = false;
+  int focusClumpIndex = -1;
 
   TrackingVector<bool> showEvolve;
+  TrackingVector<LoadedClumpRowView> rows;
+  TrackingVector<LoadedClumpEvolutionCacheView> evolutionCache;
+};
+
+struct ClumpChainSnapshotView {
+  float time = 0.0f;
+  float pos[3] = {0.f, 0.f, 0.f};
+  float density = 0.0f;
+  float temperature = 0.0f;
+  float mass = 0.0f;
+  float stellarMass = 0.0f;
+};
+
+struct ClumpChainSeriesView {
+  int firstSnapshot = -1;
+  int lastSnapshot = -1;
+  int globalId = -1;
+  int stellarId = -1;
+  int nstar = 0;
+  float mstar = 0.0f;
+  float mstarMaximum = 0.0f;
+  float massMaximum = 0.0f;
+  float temperature_d = 0.0f;
+  bool plot = false;
+  TrackingVector<ClumpChainSnapshotView> snapshots;
 };
 
 struct ClumpChainWindowState {
   bool open = false;
+  bool computed = false;
+  TrackingVector<ClumpChainSeriesView> series;
 
   int selectedChainIndex = -1;
   int currentSnapshotIndex = 0;
