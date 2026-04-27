@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/physics_constants.h"
-#include "app/normalization_config.h"
+#include "app/state/normalization_config.h"
 
 RadialProfileResult
 RadialProfileComputer::compute(const ParticleBlock& partblock,

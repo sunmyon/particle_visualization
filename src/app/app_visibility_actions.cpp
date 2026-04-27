@@ -1,6 +1,6 @@
 #include "app/app_visibility_actions.h"
-#include "app/view_filter_config.h"
-#include "app/normalization_config.h"
+#include "app/state/view_filter_config.h"
+#include "app/state/normalization_config.h"
 
 #include "data/particle_array.h"
 #include "interaction/camera.h"

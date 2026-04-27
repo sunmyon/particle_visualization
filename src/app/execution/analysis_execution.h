@@ -1,7 +1,12 @@
 #pragma once
 
+#include "app/state/analysis_state.h"
+#include "app/state/runtime_state.h"
+
 class ParticleArray;
 class HaloStore;
+class ClumpStore;
+class EllipseFitter;
 class ProjectionMapGenerator;
 struct RenderLayerState;
 struct RenderRuntimeState;
@@ -18,9 +23,17 @@ struct ProjectionMapParams;
 struct ProjectionMovieRuntimeState;
 struct SnapshotLoadRuntimeState;
 struct SnapshotPostprocessState;
+struct PythonBridgeState;
+
+#ifdef STREAM_LINE
+class StreamlineComputer;
+#endif
 
 #ifdef USE_CONVEX_HULL
 class FindClump;
+#endif
+
+#ifdef USE_CONVEX_HULL
 class ConvexHullGenerator;
 #endif
 
@@ -42,7 +55,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
                              const RenderLayerState& diskRenderState,
                              DiskAnalysisBatchRequestState& request,
                              DiskAnalysisBatchRuntimeState& runtime,
-                             DiskAnalysisBatchResultState& result,
+				     DiskAnalysisBatchResultState& result,
 			     const UnitSystem& units);
 
 void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
@@ -98,30 +111,6 @@ void ExecuteSettingsActionRequests(ParticleArray& particles,
                                    RenderRuntimeState& render,
                                    SettingsRuntimeState& settings,
                                    SnapshotPostprocessState& post);
-
-#ifdef CLUMP_DATA_READ
-void ExecuteClumpBatchRequest(ParticleArray& particles,
-                              FileNavigationRuntimeState& fileNav,
-	                              SnapshotLoadRuntimeState& snapshotLoad,
-	                              FindClump& clumpFind,
-	                              ClumpBatchRequestState& request,
-	                              ClumpBatchRuntimeState& runtime,
-	                              ClumpBatchResultState& result);
-#endif
-
-void ExecuteProjectionMovieRequest(ParticleArray& particles,
-				   const UnitSystem& units,
-                                   NormalizationContext& normalization,
-                                   TrackingTargetState& track,
-                                   FileNavigationRuntimeState& fileNav,
-                                   ProjectionMapGenerator& projectionMap,
-	                                   const ProjectionMapParams& baseParams,
-	                                   CameraContext& camera,
-	                                   ProjectionMovieRequestState& request,
-	                                   ProjectionMovieRuntimeState& runtime,
-	                                   SnapshotLoadRuntimeState& snapshotLoad,
-                                   SnapshotPostprocessState& post,
-                                   ProjectionMovieResultState& result);
 
 void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad);

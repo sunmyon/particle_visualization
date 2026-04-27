@@ -1,7 +1,7 @@
 #include "app/app_derived_rebuild.h"
 
-#include "app/app_state.h"
-#include "app/render_runtime_state.h"
+#include "app/state/app_state.h"
+#include "app/state/render_runtime_state.h"
 #include "data/particle_array.h"
 #include "interaction/camera.h"
 #include "projection/projection_map_tool_state.h"

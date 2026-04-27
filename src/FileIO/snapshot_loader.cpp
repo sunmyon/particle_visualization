@@ -2,8 +2,9 @@
 
 #include "FileIO/hdf5_reader.h"
 #include "FileIO/binary_reader.h"
+#include "FileIO/gadget_binary_reader.h"
 #include "core/PerfTimer.h"
-#include "app/input_filter_config.h"
+#include "app/state/input_filter_config.h"
 #include "data/header_info.h"
 
 #include <algorithm>
@@ -68,6 +69,8 @@ namespace {
       break;
 
     case FileFormat::Gadget:
+      sel.reader = std::make_unique<GadgetBinaryReader>();
+      sel.format = params.formatTokens;
       break;
 
     case FileFormat::Framed:

@@ -1,4 +1,4 @@
-#include "app/app_input_execution.h"
+#include "app/execution/input_execution.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "app/runtime_state.h"
+#include "app/state/runtime_state.h"
 #include "interaction/camera.h"
 #include "interaction/interaction_utils.h"
 

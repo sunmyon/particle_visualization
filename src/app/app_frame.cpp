@@ -5,18 +5,18 @@
 #include <glad/glad.h>
 #include <imgui.h>
 
-#include "app/app_state.h"
-#include "app/app_analysis_dispatch.h"
-#include "app/app_analysis_execution.h"
+#include "app/state/app_state.h"
+#include "app/execution/analysis_dispatch.h"
+#include "app/execution/analysis_execution.h"
 #include "app/app_derived_rebuild.h"
-#include "app/app_input_execution.h"
-#include "app/app_projection_execution.h"
+#include "app/execution/input_execution.h"
+#include "app/execution/projection_execution.h"
 #include "app/app_render_sync.h"
 #include "app/app_snapshot_load.h"
-#include "app/app_tool_window_dispatch.h"
-#include "app/normalization_config.h"
+#include "app/execution/tool_window_dispatch.h"
+#include "app/state/normalization_config.h"
 #include "app/settings_analysis_requests.h"
-#include "app/tool_window_commands.h"
+#include "app/state/tool_window_commands.h"
 #include "render/render_system.h"
 
 #include "UI/common_ui.h"
@@ -361,12 +361,12 @@ static void ExecuteRequests(AppDataState& data,
     runtime.settings.normalization,
     currentFileIndex
   };
-  ExecuteToolWindowRequests(tools,
-                            particleToolInput,
-                            analysisToolInput,
-                            projectionToolInput,
-                            haloToolInput,
-                            clumpToolInput);
+  ExecuteParticleToolRequests(tools, particleToolInput);
+  ExecuteAnalysisToolRequests(tools, analysisToolInput);
+  ExecuteProjectionToolRequests(tools, projectionToolInput);
+  ExecuteDataFilterToolRequests(tools);
+  ExecuteHaloToolRequests(tools, haloToolInput);
+  ExecuteClumpToolRequests(tools, clumpToolInput);
 
   ExecuteSettingsAndNavigationRequests(data,
                                        runtime,
@@ -433,8 +433,8 @@ void RunFrame(AppState& app,
   ExecutePostSnapshotLoadPhase(app.data,
                                app.runtime,
                                app.view.camera);
-  ApplySettingsAnalysisEditRequests(app.ui.settings.analysisEdit,
-                                    app.runtime.analysisRequests);
+  SubmitSettingsAnalysisRequests(app.ui.settings.analysisEdit,
+                                 app.runtime.analysisRequests);
   ExecuteRequests(app.data,
                   app.runtime,
                   app.derived.analysis,

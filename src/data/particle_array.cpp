@@ -2,7 +2,7 @@
 #include "data/header_info.h"
 #include "core/PerfTimer.h"
 #include "core/units.h"
-#include "app/normalization_config.h"
+#include "app/state/normalization_config.h"
 #include "data/quantity_catalog_builder.h"
 
 void ParticleArray::rescalePositions(NormalizationContext& ctx){

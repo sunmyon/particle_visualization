@@ -70,13 +70,6 @@ struct ClumpToolExecutionInput {
   int currentFileIndex = -1;
 };
 
-void ExecuteToolWindowRequests(ToolWindowUIState& tools,
-                               ParticleToolExecutionInput& particleInput,
-                               AnalysisToolExecutionInput& analysisInput,
-                               ProjectionToolExecutionInput& projectionInput,
-                               HaloToolExecutionInput& haloInput,
-                               ClumpToolExecutionInput& clumpInput);
-
 void ExecuteParticleToolRequests(ToolWindowUIState& tools,
                                  ParticleToolExecutionInput& input);
 

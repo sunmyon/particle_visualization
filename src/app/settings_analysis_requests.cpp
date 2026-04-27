@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include "app/runtime_state.h"
-#include "app/ui_state.h"
+#include "app/state/runtime_state.h"
+#include "app/state/ui_state.h"
 
 namespace {
 void CopyCStr(char* dst, std::size_t dstSize, const char* src)
@@ -143,9 +143,9 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
 
 namespace {
 
-void ApplyEdit(SettingsStellarDensityEdit& edit,
-               bool& dirty,
-               StellarDensityRequestState& request)
+void SubmitStellarDensityRequest(SettingsStellarDensityEdit& edit,
+                                 bool& dirty,
+                                 StellarDensityRequestState& request)
 {
   if (!dirty && !edit.computeClicked) return;
 
@@ -160,9 +160,9 @@ void ApplyEdit(SettingsStellarDensityEdit& edit,
 }
 
 #ifdef CLUMP_DATA_READ
-void ApplyEdit(SettingsClumpBatchEdit& edit,
-               bool& dirty,
-               ClumpBatchRequestState& request)
+void SubmitClumpBatchRequest(SettingsClumpBatchEdit& edit,
+                             bool& dirty,
+                             ClumpBatchRequestState& request)
 {
   if (!dirty && !edit.generateClicked && !edit.cancelClicked) return;
 
@@ -185,9 +185,9 @@ void ApplyEdit(SettingsClumpBatchEdit& edit,
 }
 #endif
 
-void ApplyEdit(SettingsDiskAnalysisEdit& edit,
-               bool& dirty,
-               DiskAnalysisRequestState& request)
+void SubmitDiskAnalysisRequest(SettingsDiskAnalysisEdit& edit,
+                               bool& dirty,
+                               DiskAnalysisRequestState& request)
 {
   if (!dirty && !edit.findClicked && !edit.clearClicked) return;
 
@@ -200,9 +200,9 @@ void ApplyEdit(SettingsDiskAnalysisEdit& edit,
   dirty = false;
 }
 
-void ApplyEdit(SettingsDiskBatchEdit& edit,
-               bool& dirty,
-               DiskAnalysisBatchRequestState& request)
+void SubmitDiskBatchRequest(SettingsDiskBatchEdit& edit,
+                            bool& dirty,
+                            DiskAnalysisBatchRequestState& request)
 {
   if (!dirty && !edit.runClicked && !edit.cancelClicked) return;
 
@@ -222,9 +222,9 @@ void ApplyEdit(SettingsDiskBatchEdit& edit,
   dirty = false;
 }
 
-void ApplyEdit(SettingsEllipsoidAnalysisEdit& edit,
-               bool& dirty,
-               EllipsoidAnalysisRequestState& request)
+void SubmitEllipsoidAnalysisRequest(SettingsEllipsoidAnalysisEdit& edit,
+                                    bool& dirty,
+                                    EllipsoidAnalysisRequestState& request)
 {
   if (!dirty && !edit.fitClicked && !edit.clearClicked) return;
 
@@ -238,9 +238,9 @@ void ApplyEdit(SettingsEllipsoidAnalysisEdit& edit,
   dirty = false;
 }
 
-void ApplyEdit(SettingsEllipsoidBatchEdit& edit,
-               bool& dirty,
-               EllipsoidAnalysisBatchRequestState& request)
+void SubmitEllipsoidBatchRequest(SettingsEllipsoidBatchEdit& edit,
+                                 bool& dirty,
+                                 EllipsoidAnalysisBatchRequestState& request)
 {
   if (!dirty && !edit.runClicked && !edit.cancelClicked) return;
 
@@ -261,9 +261,9 @@ void ApplyEdit(SettingsEllipsoidBatchEdit& edit,
 }
 
 #ifdef ISO_CONTOUR
-void ApplyEdit(SettingsIsoContourEdit& edit,
-               bool& dirty,
-               IsoContourRequestState& request)
+void SubmitIsoContourRequest(SettingsIsoContourEdit& edit,
+                             bool& dirty,
+                             IsoContourRequestState& request)
 {
   if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
 
@@ -280,9 +280,9 @@ void ApplyEdit(SettingsIsoContourEdit& edit,
 #endif
 
 #ifdef STREAM_LINE
-void ApplyEdit(SettingsStreamlinePreviewEdit& edit,
-               bool& dirty,
-               StreamlinePreviewRequestState& request)
+void SubmitStreamlinePreviewRequest(SettingsStreamlinePreviewEdit& edit,
+                                    bool& dirty,
+                                    StreamlinePreviewRequestState& request)
 {
   if (!dirty && !edit.updateClicked && !edit.clearClicked) return;
 
@@ -299,9 +299,9 @@ void ApplyEdit(SettingsStreamlinePreviewEdit& edit,
   dirty = false;
 }
 
-void ApplyEdit(SettingsStreamlineBuildEdit& edit,
-               bool& dirty,
-               StreamlineBuildRequestState& request)
+void SubmitStreamlineBuildRequest(SettingsStreamlineBuildEdit& edit,
+                                  bool& dirty,
+                                  StreamlineBuildRequestState& request)
 {
   if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
 
@@ -321,9 +321,9 @@ void ApplyEdit(SettingsStreamlineBuildEdit& edit,
 #endif
 
 #ifdef PYTHON_BRIDGE
-void ApplyEdit(SettingsPythonBridgeEdit& edit,
-               bool& dirty,
-               PythonBridgeRequestState& request)
+void SubmitPythonBridgeRequest(SettingsPythonBridgeEdit& edit,
+                               bool& dirty,
+                               PythonBridgeRequestState& request)
 {
   if (!dirty &&
       !edit.launchClicked &&
@@ -343,9 +343,9 @@ void ApplyEdit(SettingsPythonBridgeEdit& edit,
 }
 #endif
 
-void ApplyEdit(SettingsProjectionMovieEdit& edit,
-               bool& dirty,
-               ProjectionMovieRequestState& request)
+void SubmitProjectionMovieRequest(SettingsProjectionMovieEdit& edit,
+                                  bool& dirty,
+                                  ProjectionMovieRequestState& request)
 {
   if (!dirty && !edit.generateClicked && !edit.cancelClicked) return;
 
@@ -388,54 +388,54 @@ void ApplyEdit(SettingsProjectionMovieEdit& edit,
 }
 }
 
-void ApplySettingsAnalysisEditRequests(SettingsAnalysisEditState& edit,
-                                       AnalysisRequestState& requests)
+void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
+                                    AnalysisRequestState& requests)
 {
-  ApplyEdit(edit.stellarDensity,
-            edit.stellarDensityDirty,
-            requests.stellarDensity);
+  SubmitStellarDensityRequest(edit.stellarDensity,
+                              edit.stellarDensityDirty,
+                              requests.stellarDensity);
 
 #ifdef CLUMP_DATA_READ
-  ApplyEdit(edit.clumpBatch,
-            edit.clumpBatchDirty,
-            requests.clumpBatch);
+  SubmitClumpBatchRequest(edit.clumpBatch,
+                          edit.clumpBatchDirty,
+                          requests.clumpBatch);
 #endif
 
-  ApplyEdit(edit.disk,
-            edit.diskDirty,
-            requests.disk);
-  ApplyEdit(edit.diskBatch,
-            edit.diskBatchDirty,
-            requests.diskBatch);
-  ApplyEdit(edit.ellipsoid,
-            edit.ellipsoidDirty,
-            requests.ellipsoid);
-  ApplyEdit(edit.ellipsoidBatch,
-            edit.ellipsoidBatchDirty,
-            requests.ellipsoidBatch);
+  SubmitDiskAnalysisRequest(edit.disk,
+                            edit.diskDirty,
+                            requests.disk);
+  SubmitDiskBatchRequest(edit.diskBatch,
+                         edit.diskBatchDirty,
+                         requests.diskBatch);
+  SubmitEllipsoidAnalysisRequest(edit.ellipsoid,
+                                 edit.ellipsoidDirty,
+                                 requests.ellipsoid);
+  SubmitEllipsoidBatchRequest(edit.ellipsoidBatch,
+                              edit.ellipsoidBatchDirty,
+                              requests.ellipsoidBatch);
 
 #ifdef ISO_CONTOUR
-  ApplyEdit(edit.isoContour,
-            edit.isoContourDirty,
-            requests.isoContour);
+  SubmitIsoContourRequest(edit.isoContour,
+                          edit.isoContourDirty,
+                          requests.isoContour);
 #endif
 
 #ifdef STREAM_LINE
-  ApplyEdit(edit.streamlinePreview,
-            edit.streamlinePreviewDirty,
-            requests.streamlinePreview);
-  ApplyEdit(edit.streamlineBuild,
-            edit.streamlineBuildDirty,
-            requests.streamlineBuild);
+  SubmitStreamlinePreviewRequest(edit.streamlinePreview,
+                                 edit.streamlinePreviewDirty,
+                                 requests.streamlinePreview);
+  SubmitStreamlineBuildRequest(edit.streamlineBuild,
+                               edit.streamlineBuildDirty,
+                               requests.streamlineBuild);
 #endif
 
 #ifdef PYTHON_BRIDGE
-  ApplyEdit(edit.py,
-            edit.pyDirty,
-            requests.py);
+  SubmitPythonBridgeRequest(edit.py,
+                            edit.pyDirty,
+                            requests.py);
 #endif
 
-  ApplyEdit(edit.projectionMovie,
-            edit.projectionMovieDirty,
-            requests.projectionMovie);
+  SubmitProjectionMovieRequest(edit.projectionMovie,
+                               edit.projectionMovieDirty,
+                               requests.projectionMovie);
 }

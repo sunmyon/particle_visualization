@@ -1,4 +1,4 @@
-#include "app/app_clump_window_execution.h"
+#include "app/execution/clump_window_execution.h"
 
 #include <cstdio>
 #include <cstring>
@@ -13,9 +13,9 @@
 #include "FindClumps/find_clumps.h"
 #include "FindClumps/loaded_clump_tool.h"
 #include "app/app_snapshot_load.h"
-#include "app/normalization_config.h"
-#include "app/runtime_state.h"
-#include "app/tracking_view_state.h"
+#include "app/state/normalization_config.h"
+#include "app/state/runtime_state.h"
+#include "app/state/tracking_view_state.h"
 #include "core/quantity.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"

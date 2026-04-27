@@ -10,14 +10,17 @@
 #include <cmath>
 #include <cstdlib>
 
+#include <glm/geometric.hpp>
 #include <glm/vec3.hpp>
 
-#include "app/app_state.h"
-#include "app/analysis_state.h"
-#include "app/runtime_state.h"
-#include "app/normalization_config.h"
-#include "app/tracking_view_state.h"
-#include "app/snapshot_state_sync.h"
+#include "app/execution/analysis_execution.h"
+#include "app/state/app_state.h"
+#include "app/state/analysis_state.h"
+#include "app/state/runtime_state.h"
+#include "app/state/normalization_config.h"
+#include "app/state/tracking_view_state.h"
+#include "app/state/snapshot_state_sync.h"
+#include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/particle_array.h"
@@ -26,70 +29,12 @@
 #include "data/clump_store.h"
 #include "data/halo_store.h"
 #include "object.h"
-#include "projection/make_2D_projection_map.h"
-#include "projection/projection_map_context.h"
-#include "FindClumps/find_clumps_helpers.h"
 
 #ifdef USE_CONVEX_HULL
 #include "FindClumps/find_clumps.h"
 #include "geometry/convex_hull_generator.h"
-#include "app/convex_hull_state.h"
+#include "app/state/convex_hull_state.h"
 #endif
-
-#include "image/image_io.h"
-#include "platform/shell_utils.h"
-
-static bool IsSafeIndexFormat(const char* format)
-{
-  if (!format || format[0] == '\0') {
-    return false;
-  }
-
-  bool hasIndexSpecifier = false;
-  const char* p = format;
-  while (*p) {
-    if (*p != '%') {
-      ++p;
-      continue;
-    }
-
-    ++p;
-    if (*p == '\0') {
-      return false;
-    }
-    if (*p == '%') {
-      ++p;
-      continue;
-    }
-
-    while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#') ++p;
-    while (*p >= '0' && *p <= '9') ++p;
-    if (*p == '.') {
-      ++p;
-      while (*p >= '0' && *p <= '9') ++p;
-    }
-    if (*p == 'h' || *p == 'l' || *p == 'j' || *p == 'z' || *p == 't') {
-      const char m = *p++;
-      if ((m == 'h' && *p == 'h') || (m == 'l' && *p == 'l')) {
-        ++p;
-      }
-    }
-
-    if (*p == '\0') {
-      return false;
-    }
-
-    if (*p == 'd' || *p == 'i' || *p == 'u') {
-      hasIndexSpecifier = true;
-      ++p;
-      continue;
-    }
-
-    return false;
-  }
-
-  return hasIndexSpecifier;
-}
 
 #ifdef GEOMETRICAL_ANALYSIS
 #include "GeometricAnalysis/DiskRadius.hpp"
@@ -118,15 +63,19 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 
   DiskRadiusFinder::Params param{};
   bool found = false;
-
   for (const auto& p : particles.particleBlock.particles) {
     if (p.ID != request.targetParticleId) {
       continue;
     }
+    if (request.rejectTypeZeroTarget && p.type == 0) {
+      result.valid = false;
+      result.cpuUpdated = true;
+      return;
+    }
 
     param.mass = p.mass;
     for (int k = 0; k < 3; ++k) {
-      param.center[k]   = p.pos[k];
+      param.center[k] = p.pos[k];
       param.v_center[k] = p.vel[k];
     }
     found = true;
@@ -139,13 +88,14 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
     return;
   }
 
-  param.G         = units.grav_const_internal;
+  param.G = units.grav_const_internal;
   param.max_shell = 100;
   param.scale_fac = normalization.toPhysicalScale();
 
   DiskObject disk;
-  disk.color   = glm::vec3(1.0f);
-  disk.tag     = "main_disk";
+  disk.color = glm::vec3(1.0f);
+  disk.opacity = request.diskOpacity;
+  disk.tag = request.diskTag;
 
   if (diskFinder.compute(particles.particleBlock.particles, param, disk)) {
     result.valid  = true;
@@ -249,19 +199,21 @@ static bool AppendDiskBatchEvolution(DiskAnalysisBatchRuntimeState& runtime,
   return true;
 }
 
-void ExecuteDiskBatchRequest(ParticleArray& particles,
-			     NormalizationContext& normalization,
-			     FileNavigationRuntimeState& fileNav,
-			     SnapshotLoadRuntimeState& snapshotLoad,
-				     DiskRadiusFinder& diskFinder,
-				     const RenderLayerState& diskRenderState,
-				     DiskAnalysisBatchRequestState& request,
-                                     DiskAnalysisBatchRuntimeState& runtime,
-				     DiskAnalysisBatchResultState& result,
-				     const UnitSystem& units)
+struct DiskBatchFrameSpec {
+  const DiskAnalysisBatchTargetRow* row = nullptr;
+  int snapInit = 0;
+  int targetFileIndex = 0;
+  int targetStep = 0;
+};
+
+static bool PrepareDiskBatchExecution(FileNavigationRuntimeState& fileNav,
+                                      SnapshotLoadRuntimeState& snapshotLoad,
+                                      DiskAnalysisBatchRequestState& request,
+                                      DiskAnalysisBatchRuntimeState& runtime,
+                                      DiskAnalysisBatchResultState& result,
+                                      DiskBatchFrameSpec& spec)
 {
   auto& nav = fileNav.navigation;
-  auto& current = fileNav.current;
   auto& job = runtime.job;
 
   if (request.cancelRequested) {
@@ -284,7 +236,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       result.running = false;
       result.completed = true;
       result.success = false;
-      return;
+      return false;
     }
 
     runtime.rows.clear();
@@ -293,7 +245,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
       result.running = false;
       result.completed = true;
       result.success = false;
-      return;
+      return false;
     }
 
     job = SnapshotJobRuntimeState{};
@@ -304,171 +256,140 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
     ResetDiskBatchRowState(runtime);
   }
 
-  if (job.status != JobStatus::Running) return;
+  if (job.status != JobStatus::Running) return false;
 
   if (job.cancelRequested) {
     job.status = JobStatus::Cancelled;
+    return false;
   }
 
-  if (job.status == JobStatus::Running) {
-    while (runtime.rowCursor < static_cast<int>(runtime.rows.size())) {
-      const auto& row = runtime.rows[runtime.rowCursor];
-      if (row.snap >= 0) break;
-      ++runtime.rowCursor;
-    }
+  while (runtime.rowCursor < static_cast<int>(runtime.rows.size())) {
+    const auto& row = runtime.rows[runtime.rowCursor];
+    if (row.snap >= 0) break;
+    ++runtime.rowCursor;
+  }
 
-    if (runtime.rowCursor >= static_cast<int>(runtime.rows.size())) {
-      job.status = JobStatus::Completed;
+  if (runtime.rowCursor >= static_cast<int>(runtime.rows.size())) {
+    job.status = JobStatus::Completed;
+    return false;
+  }
+
+  spec.row = &runtime.rows[runtime.rowCursor];
+  spec.snapInit = static_cast<int>(spec.row->snap / nav.skipStep) * nav.skipStep;
+  spec.targetFileIndex = spec.snapInit + nav.skipStep * runtime.scanOffset;
+  spec.targetStep = (nav.skipStep != 0)
+                  ? ((spec.targetFileIndex - nav.initialIndex) / nav.skipStep)
+                  : nav.currentStep;
+
+  if (runtime.scanOffset == 0) {
+    std::snprintf(runtime.evolutionOutputFile,
+                  sizeof(runtime.evolutionOutputFile),
+                  "binary_evolution_%d.txt",
+                  spec.row->idx);
+    runtime.snapNotDisk = spec.snapInit;
+  }
+
+  const SnapshotSequenceLoadState loadState =
+    EnsureSnapshotSequenceStepLoaded(snapshotLoad,
+                                     SnapshotLoadOwner::DiskBatch,
+                                     spec.targetStep,
+                                     20,
+                                     nullptr,
+                                     0);
+  if (loadState == SnapshotSequenceLoadState::Failed) {
+    std::cerr << snapshotLoad.result.errorMessage << '\n';
+    job.status = JobStatus::Error;
+    return false;
+  }
+  if (loadState == SnapshotSequenceLoadState::Waiting) {
+    return false;
+  }
+  return true;
+}
+
+static void ApplyDiskBatchFrameResult(const DiskBatchFrameSpec& spec,
+                                      const DiskAnalysisResultState& disk1,
+                                      const DiskAnalysisResultState& disk2,
+                                      double physicalScale,
+                                      FileNavigationRuntimeState& fileNav,
+                                      SnapshotLoadRuntimeState& snapshotLoad,
+                                      DiskAnalysisBatchRuntimeState& runtime,
+                                      DiskAnalysisBatchResultState& result)
+{
+  auto& nav = fileNav.navigation;
+  auto& current = fileNav.current;
+  auto& job = runtime.job;
+
+  bool rowDone = false;
+  if (disk1.valid && disk2.valid) {
+    const double dist =
+      glm::length(disk1.disk.position - disk2.disk.position) * physicalScale;
+    const double rDisk1 = disk1.disk.radius * physicalScale;
+    const double rDisk2 = disk2.disk.radius * physicalScale;
+    const bool flagDisk = (dist < rDisk1 + rDisk2);
+
+    if (!AppendDiskBatchEvolution(runtime,
+                                  spec.targetFileIndex,
+                                  current.loadedTime,
+                                  dist,
+                                  rDisk1,
+                                  rDisk2,
+                                  flagDisk)) {
+      std::cerr << "cannot open " << runtime.evolutionOutputFile << '\n';
+      job.status = JobStatus::Error;
+    } else if (flagDisk) {
+      runtime.timeDisk = current.loadedTime;
+      runtime.snapDisk = spec.targetFileIndex;
+      runtime.distDisk = dist;
+      runtime.rDisk1 = rDisk1;
+      runtime.rDisk2 = rDisk2;
+      rowDone = true;
     } else {
-      const auto& row = runtime.rows[runtime.rowCursor];
-      const int snapInit = static_cast<int>(row.snap / nav.skipStep) * nav.skipStep;
-      const int targetFileIndex = snapInit + nav.skipStep * runtime.scanOffset;
-      const int targetStep = (nav.skipStep != 0)
-                           ? ((targetFileIndex - nav.initialIndex) / nav.skipStep)
-                           : nav.currentStep;
-
-      if (runtime.scanOffset == 0) {
-        std::snprintf(runtime.evolutionOutputFile,
-                      sizeof(runtime.evolutionOutputFile),
-                      "binary_evolution_%d.txt",
-                      row.idx);
-        runtime.snapNotDisk = snapInit;
-      }
-
-      if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::DiskBatch, targetStep)) {
-        if (IsSnapshotLoadFailedFor(snapshotLoad, SnapshotLoadOwner::DiskBatch, targetStep)) {
-          job.status = JobStatus::Error;
-          goto finish_disk_batch;
-        }
-        RequestSnapshotLoad(snapshotLoad,
-                            SnapshotLoadOwner::DiskBatch,
-                            targetStep,
-                            20);
-        return;
-      }
-
-      bool rowDone = false;
-      if (!particles.particleBlock.particles.empty()) {
-        double r1 = 0.0;
-        double r2 = 0.0;
-        float pos1[3] = {0.f, 0.f, 0.f};
-        float pos2[3] = {0.f, 0.f, 0.f};
-        bool foundBinary = true;
-
-        for (int ibin = 0; ibin < 2; ++ibin) {
-          const int id = (ibin == 0) ? row.idA : row.idB;
-          float* pos = (ibin == 0) ? pos1 : pos2;
-          double* rDisk = (ibin == 0) ? &r1 : &r2;
-
-          DiskRadiusFinder::Params param{};
-          bool found = false;
-          for (const auto& p : particles.particleBlock.particles) {
-            if (p.ID != id) continue;
-            if (p.type == 0) break;
-
-            param.mass = p.mass;
-            for (int k = 0; k < 3; ++k) {
-              param.center[k] = pos[k] = p.pos[k];
-              param.v_center[k] = p.vel[k];
-            }
-            found = true;
-            break;
-          }
-          if (!found) {
-            foundBinary = false;
-            break;
-          }
-
-          param.G = units.grav_const_internal;
-          param.max_shell = 100;
-          param.scale_fac = normalization.toPhysicalScale();
-
-          DiskObject disk;
-          disk.color = glm::vec3(1.0f);
-          disk.opacity = diskRenderState.opacity;
-          disk.tag = "main_disk";
-          if (!diskFinder.compute(particles.particleBlock.particles, param, disk)) {
-            foundBinary = false;
-            break;
-          }
-          *rDisk = disk.radius;
-        }
-
-        if (foundBinary) {
-          const double dist2 =
-            (pos1[0] - pos2[0]) * (pos1[0] - pos2[0]) +
-            (pos1[1] - pos2[1]) * (pos1[1] - pos2[1]) +
-            (pos1[2] - pos2[2]) * (pos1[2] - pos2[2]);
-
-          const bool flagDisk = (std::sqrt(dist2) < r1 + r2);
-          const double scale = normalization.toPhysicalScale();
-          const double dist = std::sqrt(dist2) * scale;
-          const double r1Scaled = r1 * scale;
-          const double r2Scaled = r2 * scale;
-
-          if (!AppendDiskBatchEvolution(runtime,
-                                        targetFileIndex,
-                                        current.loadedTime,
-                                        dist,
-                                        r1Scaled,
-                                        r2Scaled,
-                                        flagDisk)) {
-            std::cerr << "cannot open " << runtime.evolutionOutputFile << '\n';
-            job.status = JobStatus::Error;
-          } else if (flagDisk) {
-            runtime.timeDisk = current.loadedTime;
-            runtime.snapDisk = targetFileIndex;
-            runtime.distDisk = dist;
-            runtime.rDisk1 = r1Scaled;
-            runtime.rDisk2 = r2Scaled;
-            rowDone = true;
-          } else {
-            runtime.timeNotDisk = current.loadedTime;
-            runtime.snapNotDisk = targetFileIndex;
-          }
-        }
-      }
-
-      if (!rowDone) {
-        ++runtime.scanOffset;
-        if (runtime.scanOffset < 100) {
-          const int nextFileIndex = snapInit + nav.skipStep * runtime.scanOffset;
-          const int nextStep = (nav.skipStep != 0)
-                             ? ((nextFileIndex - nav.initialIndex) / nav.skipStep)
-                             : nav.currentStep;
-          RequestSnapshotLoad(snapshotLoad,
-                              SnapshotLoadOwner::DiskBatch,
-                              nextStep,
-                              20);
-          return;
-        }
-        rowDone = true;
-      }
-
-      if (rowDone) {
-        if (!AppendDiskBatchSummary(runtime.params, runtime, row)) {
-          std::cerr << "cannot open " << runtime.params.outputFile << '\n';
-          job.status = JobStatus::Error;
-        } else {
-          ++result.processedRows;
-          job.processed = result.processedRows;
-          ++runtime.rowCursor;
-          ResetDiskBatchRowState(runtime);
-        }
-      }
+      runtime.timeNotDisk = current.loadedTime;
+      runtime.snapNotDisk = spec.targetFileIndex;
     }
   }
 
-finish_disk_batch:
+  if (!rowDone) {
+    ++runtime.scanOffset;
+    if (runtime.scanOffset < 100) {
+      const int nextFileIndex = spec.snapInit + nav.skipStep * runtime.scanOffset;
+      const int nextStep = (nav.skipStep != 0)
+                         ? ((nextFileIndex - nav.initialIndex) / nav.skipStep)
+                         : nav.currentStep;
+      RequestSnapshotLoad(snapshotLoad,
+                          SnapshotLoadOwner::DiskBatch,
+                          nextStep,
+                          20);
+      return;
+    }
+    rowDone = true;
+  }
+
+  if (rowDone) {
+    if (!AppendDiskBatchSummary(runtime.params, runtime, *spec.row)) {
+      std::cerr << "cannot open " << runtime.params.outputFile << '\n';
+      job.status = JobStatus::Error;
+    } else {
+      ++result.processedRows;
+      job.processed = result.processedRows;
+      ++runtime.rowCursor;
+      ResetDiskBatchRowState(runtime);
+    }
+  }
+}
+
+static void FinishDiskBatchExecution(FileNavigationRuntimeState& fileNav,
+                                     SnapshotLoadRuntimeState& snapshotLoad,
+                                     DiskAnalysisBatchRuntimeState& runtime,
+                                     DiskAnalysisBatchResultState& result)
+{
+  auto& job = runtime.job;
+
   if (job.status == JobStatus::Cancelled ||
       job.status == JobStatus::Error ||
       job.status == JobStatus::Completed) {
-    nav.currentStep = job.savedCurrentStep;
-    RecomputeCurrentFileIndex(fileNav);
-    RequestSnapshotLoad(snapshotLoad,
-                        SnapshotLoadOwner::UserNavigation,
-                        nav.currentStep,
-                        50);
+    RestoreSnapshotSequenceNavigation(fileNav, snapshotLoad, job, 50);
 
     result.running = false;
     result.completed = true;
@@ -480,6 +401,63 @@ finish_disk_batch:
     runtime.firstOutput = true;
     runtime.job = SnapshotJobRuntimeState{};
   }
+}
+
+void ExecuteDiskBatchRequest(ParticleArray& particles,
+			     NormalizationContext& normalization,
+			     FileNavigationRuntimeState& fileNav,
+			     SnapshotLoadRuntimeState& snapshotLoad,
+				     DiskRadiusFinder& diskFinder,
+				     const RenderLayerState& diskRenderState,
+				     DiskAnalysisBatchRequestState& request,
+                                     DiskAnalysisBatchRuntimeState& runtime,
+				     DiskAnalysisBatchResultState& result,
+				     const UnitSystem& units)
+{
+  DiskBatchFrameSpec spec;
+  const bool canExecuteFrame =
+    PrepareDiskBatchExecution(fileNav, snapshotLoad, request, runtime, result, spec);
+
+  if (canExecuteFrame) {
+    const auto& row = *spec.row;
+
+    DiskAnalysisRequestState diskRequest1;
+    diskRequest1.targetParticleId = row.idA;
+    diskRequest1.rejectTypeZeroTarget = true;
+    diskRequest1.diskOpacity = diskRenderState.opacity;
+    diskRequest1.runRequested = true;
+    DiskAnalysisResultState diskResult1;
+    ExecuteSingleDiskAnalysisRequest(particles,
+                                     normalization,
+                                     diskFinder,
+                                     diskRequest1,
+                                     diskResult1,
+                                     units);
+
+    DiskAnalysisRequestState diskRequest2;
+    diskRequest2.targetParticleId = row.idB;
+    diskRequest2.rejectTypeZeroTarget = true;
+    diskRequest2.diskOpacity = diskRenderState.opacity;
+    diskRequest2.runRequested = true;
+    DiskAnalysisResultState diskResult2;
+    ExecuteSingleDiskAnalysisRequest(particles,
+                                     normalization,
+                                     diskFinder,
+                                     diskRequest2,
+                                     diskResult2,
+                                     units);
+
+    ApplyDiskBatchFrameResult(spec,
+                              diskResult1,
+                              diskResult2,
+                              normalization.toPhysicalScale(),
+                              fileNav,
+                              snapshotLoad,
+                              runtime,
+                              result);
+  }
+
+  FinishDiskBatchExecution(fileNav, snapshotLoad, runtime, result);
 }
 
 void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
@@ -518,13 +496,39 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
   result.cpuUpdated = true;
 }
 
-void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
-				  FileNavigationRuntimeState& fileNav,
-					  SnapshotLoadRuntimeState& snapshotLoad,
-					  EllipseFitter& ellipsoidFitter,
-					  EllipsoidAnalysisBatchRequestState& request,
-                                          EllipsoidAnalysisBatchRuntimeState& runtime,
-					  EllipsoidAnalysisBatchResultState& result)
+static bool AppendEllipsoidBatchResult(const char* outputFile,
+                                       bool& firstOutput,
+                                       const EllipsoidAnalysisBatchTargetRow& row,
+                                       double densityThreshold,
+                                       const EllipsoidObject& ellipsoid)
+{
+  FILE* fp = std::fopen(outputFile, firstOutput ? "w" : "a");
+  if (!fp) {
+    return false;
+  }
+
+  if (firstOutput) {
+    std::fprintf(fp, "index ID1 ID2 snap n a b c\n");
+    firstOutput = false;
+  }
+  std::fprintf(fp, "%d %d %d %d %g %g %g %g\n",
+               row.idx,
+               row.idA,
+               row.idB,
+               row.snap,
+               densityThreshold,
+               ellipsoid.radii.x,
+               ellipsoid.radii.y,
+               ellipsoid.radii.z);
+  std::fclose(fp);
+  return true;
+}
+
+static bool PrepareEllipsoidBatchExecution(FileNavigationRuntimeState& fileNav,
+                                           SnapshotLoadRuntimeState& snapshotLoad,
+                                           EllipsoidAnalysisBatchRequestState& request,
+                                           EllipsoidAnalysisBatchRuntimeState& runtime,
+                                           EllipsoidAnalysisBatchResultState& result)
 {
   auto& nav = fileNav.navigation;
   auto& job = runtime.job;
@@ -547,7 +551,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
       std::cerr << "invalid skipStep for ellipsoid batch: " << nav.skipStep << '\n';
       result.completed = true;
       result.success = false;
-      return;
+      return false;
     }
 
     runtime.rows.clear();
@@ -556,7 +560,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
       std::cerr << "cannot open " << runtime.params.inputFile << '\n';
       result.completed = true;
       result.success = false;
-      return;
+      return false;
     }
 
     std::string line;
@@ -578,81 +582,57 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
     job.savedCurrentStep = nav.currentStep;
   }
 
-  if (job.status != JobStatus::Running) return;
+  if (job.status != JobStatus::Running) return false;
+
   if (job.cancelRequested) {
     job.status = JobStatus::Cancelled;
+    return false;
   }
 
-  if (job.status == JobStatus::Running) {
-    while (runtime.rowCursor < static_cast<int>(runtime.rows.size())) {
-      const auto& row = runtime.rows[runtime.rowCursor];
-      if (row.snap >= 0) break;
-      ++runtime.rowCursor;
-    }
-
-    if (runtime.rowCursor >= static_cast<int>(runtime.rows.size())) {
-      job.status = JobStatus::Completed;
-    } else {
-      const auto& row = runtime.rows[runtime.rowCursor];
-      const int targetStep = (nav.skipStep != 0)
-                           ? ((row.snap - nav.initialIndex) / nav.skipStep)
-                           : nav.currentStep;
-
-      if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::EllipsoidBatch, targetStep)) {
-        if (IsSnapshotLoadFailedFor(snapshotLoad, SnapshotLoadOwner::EllipsoidBatch, targetStep)) {
-          job.status = JobStatus::Error;
-          goto finish_ellipsoid_batch;
-        }
-        RequestSnapshotLoad(snapshotLoad,
-                            SnapshotLoadOwner::EllipsoidBatch,
-                            targetStep,
-                            20);
-        return;
-      }
-
-      if (!particles.particleBlock.particles.empty()) {
-        EllipsoidObject obj;
-        const bool ok = ellipsoidFitter.computeEllipse(particles.particleBlock.particles,
-                                                       row.idA,
-                                                       row.idB,
-                                                       obj);
-        if (ok) {
-          FILE* fp = std::fopen(runtime.params.outputFile, runtime.firstOutput ? "w" : "a");
-          if (!fp) {
-            std::cerr << "cannot open " << runtime.params.outputFile << '\n';
-            job.status = JobStatus::Error;
-          } else {
-            if (runtime.firstOutput) {
-              std::fprintf(fp, "index ID1 ID2 snap n a b c\n");
-              runtime.firstOutput = false;
-            }
-            const double n = ellipsoidFitter.getDensityThreshold();
-            std::fprintf(fp, "%d %d %d %d %g %g %g %g\n",
-                         row.idx, row.idA, row.idB, row.snap,
-                         n, obj.radii.x, obj.radii.y, obj.radii.z);
-            std::fclose(fp);
-            ++result.processedRows;
-            job.processed = result.processedRows;
-          }
-        }
-      }
-
-      if (job.status == JobStatus::Running) {
-        ++runtime.rowCursor;
-      }
-    }
+  while (runtime.rowCursor < static_cast<int>(runtime.rows.size())) {
+    const auto& row = runtime.rows[runtime.rowCursor];
+    if (row.snap >= 0) break;
+    ++runtime.rowCursor;
   }
 
-finish_ellipsoid_batch:
+  if (runtime.rowCursor >= static_cast<int>(runtime.rows.size())) {
+    job.status = JobStatus::Completed;
+    return false;
+  }
+
+  const auto& row = runtime.rows[runtime.rowCursor];
+  const int targetStep = (nav.skipStep != 0)
+                       ? ((row.snap - nav.initialIndex) / nav.skipStep)
+                       : nav.currentStep;
+  const SnapshotSequenceLoadState loadState =
+    EnsureSnapshotSequenceStepLoaded(snapshotLoad,
+                                     SnapshotLoadOwner::EllipsoidBatch,
+                                     targetStep,
+                                     20,
+                                     nullptr,
+                                     0);
+  if (loadState == SnapshotSequenceLoadState::Failed) {
+    std::cerr << snapshotLoad.result.errorMessage << '\n';
+    job.status = JobStatus::Error;
+    return false;
+  }
+  if (loadState == SnapshotSequenceLoadState::Waiting) {
+    return false;
+  }
+  return true;
+}
+
+static void FinishEllipsoidBatchExecution(FileNavigationRuntimeState& fileNav,
+                                          SnapshotLoadRuntimeState& snapshotLoad,
+                                          EllipsoidAnalysisBatchRuntimeState& runtime,
+                                          EllipsoidAnalysisBatchResultState& result)
+{
+  auto& job = runtime.job;
+
   if (job.status == JobStatus::Cancelled ||
       job.status == JobStatus::Error ||
       job.status == JobStatus::Completed) {
-    nav.currentStep = job.savedCurrentStep;
-    RecomputeCurrentFileIndex(fileNav);
-    RequestSnapshotLoad(snapshotLoad,
-                        SnapshotLoadOwner::UserNavigation,
-                        nav.currentStep,
-                        50);
+    RestoreSnapshotSequenceNavigation(fileNav, snapshotLoad, job, 50);
 
     result.completed = true;
     result.success = (job.status == JobStatus::Completed);
@@ -662,6 +642,51 @@ finish_ellipsoid_batch:
     runtime.firstOutput = true;
     runtime.job = SnapshotJobRuntimeState{};
   }
+}
+
+void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+				  FileNavigationRuntimeState& fileNav,
+					  SnapshotLoadRuntimeState& snapshotLoad,
+					  EllipseFitter& ellipsoidFitter,
+					  EllipsoidAnalysisBatchRequestState& request,
+                                          EllipsoidAnalysisBatchRuntimeState& runtime,
+					  EllipsoidAnalysisBatchResultState& result)
+{
+  const bool canExecuteFrame =
+    PrepareEllipsoidBatchExecution(fileNav, snapshotLoad, request, runtime, result);
+
+  if (canExecuteFrame) {
+    const auto& row = runtime.rows[runtime.rowCursor];
+    EllipsoidAnalysisRequestState frameRequest;
+    frameRequest.particleId1 = row.idA;
+    frameRequest.particleId2 = row.idB;
+    frameRequest.runRequested = true;
+    EllipsoidAnalysisResultState frameResult;
+    ExecuteSingleEllipsoidAnalysisRequest(particles,
+                                          ellipsoidFitter,
+                                          frameRequest,
+                                          frameResult);
+
+    if (frameResult.valid) {
+      if (!AppendEllipsoidBatchResult(runtime.params.outputFile,
+                                      runtime.firstOutput,
+                                      row,
+                                      ellipsoidFitter.getDensityThreshold(),
+                                      frameResult.ellipsoid)) {
+        std::cerr << "cannot open " << runtime.params.outputFile << '\n';
+        runtime.job.status = JobStatus::Error;
+      } else {
+        ++result.processedRows;
+        runtime.job.processed = result.processedRows;
+      }
+    }
+
+    if (runtime.job.status == JobStatus::Running) {
+      ++runtime.rowCursor;
+    }
+  }
+
+  FinishEllipsoidBatchExecution(fileNav, snapshotLoad, runtime, result);
 }
 #endif
 
@@ -855,139 +880,6 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
   clumpFind.clearDirtyFlag();
   polyhedraState.show = !convexState.entries.empty();
   polyhedraState.cpuUpdated = true;
-}
-#endif
-
-#ifdef CLUMP_DATA_READ
-void ExecuteClumpBatchRequest(ParticleArray& particles,
-			      FileNavigationRuntimeState& fileNav,
-				      SnapshotLoadRuntimeState& snapshotLoad,
-				      FindClump& clumpFind,
-				      ClumpBatchRequestState& request,
-                                      ClumpBatchRuntimeState& runtime,
-				      ClumpBatchResultState& result)
-{
-  auto& nav = fileNav.navigation;
-  auto& job = runtime.job;
-
-  if (request.cancelRequested) {
-    job.cancelRequested = true;
-    request.cancelRequested = false;
-  }
-
-  if (request.runRequested && job.status != JobStatus::Running) {
-    runtime.params = request;
-    runtime.params.runRequested = false;
-    runtime.params.cancelRequested = false;
-    request.runRequested = false;
-    result = ClumpBatchResultState{};
-
-    char filename[512];
-    std::snprintf(filename, sizeof(filename), "%s/%s",
-                  runtime.params.outputFolderPath,
-                  runtime.params.outputFileName);
-    std::snprintf(result.outputPath, sizeof(result.outputPath), "%s", filename);
-
-    if (runtime.params.nSnapshots <= 0) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "nSnapshots must be > 0");
-      result.completed = true;
-      return;
-    }
-
-    if (nav.skipStep <= 0) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage),
-                    "invalid skipStep for clump batch: %d", nav.skipStep);
-      result.completed = true;
-      return;
-    }
-
-    clumpFind.initialize_prev_nodes();
-    job = SnapshotJobRuntimeState{};
-    job.status = JobStatus::Running;
-    job.savedCurrentStep = nav.currentStep;
-    job.beginStep = nav.currentStep;
-    job.endStep = nav.currentStep + runtime.params.nSnapshots - 1;
-    job.nextStep = job.beginStep;
-    job.stepStride = 1;
-  }
-
-  if (job.status != JobStatus::Running) return;
-
-  if (job.cancelRequested) {
-    job.status = JobStatus::Cancelled;
-  }
-
-  if (job.status == JobStatus::Running) {
-    const int targetStep = job.nextStep;
-    if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::ClumpBatch, targetStep)) {
-      if (IsSnapshotLoadFailedFor(snapshotLoad, SnapshotLoadOwner::ClumpBatch, targetStep)) {
-        std::snprintf(result.errorMessage,
-                      sizeof(result.errorMessage),
-                      "%s",
-                      snapshotLoad.result.errorMessage);
-        job.status = JobStatus::Error;
-      } else {
-        RequestSnapshotLoad(snapshotLoad,
-                            SnapshotLoadOwner::ClumpBatch,
-                            targetStep,
-                            20);
-        return;
-      }
-    }
-
-    if (job.status == JobStatus::Running) {
-      const int newFileIndex = nav.initialIndex + targetStep * nav.skipStep;
-      if (!particles.particleBlock.particles.empty()) {
-        clumpFind.do_FOF_and_output_clump_data(runtime.params.method,
-                                               particles.particleBlock.particles,
-                                               fileNav.current.loadedTime,
-                                               result.outputPath,
-                                               newFileIndex);
-        result.processedSnapshots++;
-        job.processed = result.processedSnapshots;
-      }
-
-      job.nextStep += job.stepStride;
-      if (job.nextStep > job.endStep) {
-        job.status = JobStatus::Completed;
-      } else {
-        RequestSnapshotLoad(snapshotLoad,
-                            SnapshotLoadOwner::ClumpBatch,
-                            job.nextStep,
-                            20);
-        return;
-      }
-    }
-  }
-
-  if (job.status == JobStatus::Cancelled ||
-      job.status == JobStatus::Error ||
-      job.status == JobStatus::Completed) {
-    nav.currentStep = job.savedCurrentStep;
-    RecomputeCurrentFileIndex(fileNav);
-
-    if (job.status == JobStatus::Completed) {
-      const int initstep = nav.currentFileIndex;
-      const int dstep = nav.skipStep;
-      give_stellar_id_to_clumps(initstep,
-                                runtime.params.nSnapshots,
-                                dstep,
-                                std::string(result.outputPath));
-      result.completed = true;
-    } else {
-      if (job.status == JobStatus::Cancelled) {
-        std::snprintf(result.errorMessage, sizeof(result.errorMessage), "Cancelled by user");
-      }
-      result.completed = true;
-    }
-
-    RequestSnapshotLoad(snapshotLoad,
-                        SnapshotLoadOwner::UserNavigation,
-                        nav.currentStep,
-                        50);
-
-    runtime.job = SnapshotJobRuntimeState{};
-  }
 }
 #endif
 
@@ -1225,325 +1117,6 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
     if(viewFilter.enabled)
       ApplyCullingSphere(particles, normalization, viewFilter);
     post.refreshCulling = false;
-  }
-}
-
-static void SaveCameraToJob(const CameraContext& camera, SnapshotJobRuntimeState& job)
-{
-  job.savedCameraValid = true;
-  job.savedCameraPos = {
-    camera.cameraPos.x, camera.cameraPos.y, camera.cameraPos.z
-  };
-  job.savedCameraTarget = {
-    camera.cameraTarget.x, camera.cameraTarget.y, camera.cameraTarget.z
-  };
-  job.savedCameraUp = {
-    camera.cameraUp.x, camera.cameraUp.y, camera.cameraUp.z
-  };
-#ifdef ROTATE_QUATERNION
-  job.savedCameraOrientation = {
-    camera.cameraOrientation.w,
-    camera.cameraOrientation.x,
-    camera.cameraOrientation.y,
-    camera.cameraOrientation.z
-  };
-#endif
-  job.savedCameraDistance = camera.distance;
-}
-
-static void RestoreCameraFromJob(CameraContext& camera, const SnapshotJobRuntimeState& job)
-{
-  if (!job.savedCameraValid) return;
-
-  camera.cameraPos = glm::vec3(job.savedCameraPos[0], job.savedCameraPos[1], job.savedCameraPos[2]);
-  camera.cameraTarget = glm::vec3(job.savedCameraTarget[0], job.savedCameraTarget[1], job.savedCameraTarget[2]);
-  camera.cameraUp = glm::vec3(job.savedCameraUp[0], job.savedCameraUp[1], job.savedCameraUp[2]);
-  camera.distance = job.savedCameraDistance;
-#ifdef ROTATE_QUATERNION
-  camera.cameraOrientation = glm::quat(job.savedCameraOrientation[0],
-                                       job.savedCameraOrientation[1],
-                                       job.savedCameraOrientation[2],
-                                       job.savedCameraOrientation[3]);
-#endif
-}
-
-static void ApplyMovieRequestToTracking(const ProjectionMovieRequestState& request,
-                                        TrackingTargetState& track)
-{
-  track.followParticle = false;
-  track.followClump = false;
-  track.followSinkParticle = request.followSinkCenter;
-  track.followSinkParticleMostMassive = request.followMostMassiveSink;
-  track.targetSinkParticleID = request.particleIdCenter;
-  track.useMassCenter = request.useMassCenter;
-  track.massCenterRadius = request.massCenterRadius;
-  track.massCenterMinDensity = request.massCenterMinDensity;
-
-  track.alignToAngularMomentum = (request.alignToAngularMomentum || request.faceOn);
-  track.amViewMode = request.faceOn ? AngularMomentumViewMode::FaceOn : request.amViewMode;
-  track.amRadius = request.amRadius;
-  track.amSubtractBulkVelocity = request.amSubtractBulkVelocity;
-  track.amUseType = request.amUseType;
-  track.amKeepSignContinuity = request.amKeepSignContinuity;
-  track.amHasLastAxis = false;
-  track.renewAfterSnapshot = true;
-}
-
-static bool RenderProjectionMovieFrame(ParticleArray& particles,				       
-				       const UnitSystem& units,
-                                       NormalizationContext& normalization,
-                                       ProjectionMapGenerator& projectionMap,
-                                       const ProjectionMapParams& baseParams,
-                                       const CameraContext& camera,
-                                       const ProjectionMovieRequestState& request,
-                                       int frameSerial,
-                                       int newFileIndex,
-                                       double snapshotTime,
-                                       ProjectionMovieResultState& result)
-{
-  namespace fs = std::filesystem;
-
-  char filename_format[512];
-  std::snprintf(filename_format, sizeof(filename_format), "%s/%s",
-                request.outputFolderPath,
-                request.outputFileFormat);
-
-  char filename[512];
-  if (IsSafeIndexFormat(request.outputFileFormat)) {
-    std::snprintf(filename, sizeof(filename), filename_format, newFileIndex);
-  } else {
-    if (std::strchr(request.outputFileFormat, '%') != nullptr) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage),
-                    "Unsafe outputFileFormat for movie: %s",
-                    request.outputFileFormat);
-      return false;
-    }
-    std::snprintf(filename, sizeof(filename), "%s/%s",
-                  request.outputFolderPath,
-                  request.outputFileFormat);
-  }
-
-  ProjectionMapParams frameParams = baseParams;
-  frameParams.xoffset[0] = camera.cameraTarget[0];
-  frameParams.xoffset[1] = camera.cameraTarget[1];
-  frameParams.xoffset[2] = camera.cameraTarget[2];  
-
-  ProjectionMapContext context =
-    BuildProjectionMapContext(frameParams,
-                              normalization.toPhysicalScale(),
-                              snapshotTime);
-
-  RgbImage image =
-    projectionMap.makeDensityMapImage(particles, units, frameParams, context);
-
-  if (!WritePngRgb(filename, image.width, image.height, image.rgb)) {
-    std::snprintf(result.errorMessage, sizeof(result.errorMessage),
-                  "Failed to write projection frame: %s", filename);
-    return false;
-  }
-
-  char linkname[512];
-  std::snprintf(linkname, sizeof(linkname), "ffmpeg_frames/frame_%04d.png", frameSerial);
-  fs::remove(linkname);
-  fs::create_symlink(fs::absolute(filename), linkname);
-
-  return true;
-}
-
-void ExecuteProjectionMovieRequest(ParticleArray& particles,
-				   const UnitSystem& units,
-                                   NormalizationContext& normalization,
-                                   TrackingTargetState& track,
-                                   FileNavigationRuntimeState& fileNav,
-	                                   ProjectionMapGenerator& projectionMap,
-	                                   const ProjectionMapParams& baseParams,
-	                                   CameraContext& camera,
-	                                   ProjectionMovieRequestState& request,
-	                                   ProjectionMovieRuntimeState& runtime,
-	                                   SnapshotLoadRuntimeState& snapshotLoad,
-	                                   SnapshotPostprocessState& post,
-	                                   ProjectionMovieResultState& result)
-{
-  namespace fs = std::filesystem;
-  const fs::path framesDir = "ffmpeg_frames";
-
-  auto& job = runtime.job;
-  auto& nav = fileNav.navigation;
-
-  if (request.cancelRequested) {
-    job.cancelRequested = true;
-    request.cancelRequested = false;
-  }
-
-  if (request.runRequested && job.status != JobStatus::Running) {
-    runtime.params = request;
-    runtime.params.runRequested = false;
-    runtime.params.cancelRequested = false;
-    runtime.projectionParams = baseParams;
-    request.runRequested = false;
-    result = ProjectionMovieResultState{};
-    job = SnapshotJobRuntimeState{};
-
-    if (runtime.params.nSnapshots <= 0) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "nSnapshots must be > 0");
-      result.success = false;
-      result.completed = true;
-      return;
-    }
-
-    try {
-      fs::remove_all(framesDir);
-      fs::create_directories(framesDir);
-      fs::create_directories(runtime.params.outputFolderPath);
-    } catch (const std::exception& e) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
-      result.success = false;
-      result.completed = true;
-      return;
-    }
-
-    if (runtime.params.restoreCameraOnFinish) {
-      SaveCameraToJob(camera, job);
-    }
-    job.savedTracking = track;
-    job.savedTrackingValid = true;
-    ApplyMovieRequestToTracking(runtime.params, track);
-    post.applyTrackingToCamera = true;
-
-    job.status = JobStatus::Running;
-    job.savedCurrentStep = nav.currentStep;
-    job.beginStep = nav.currentStep;
-    job.endStep = nav.currentStep + runtime.params.nSnapshots - 1;
-    job.nextStep = job.beginStep;
-    job.stepStride = 1;
-    job.processed = 0;
-  }
-
-  if (job.status != JobStatus::Running) {
-    return;
-  }
-
-  if (job.cancelRequested) {
-    job.status = JobStatus::Cancelled;
-  }
-
-  if (job.status == JobStatus::Running) {
-    const int targetStep = job.nextStep;
-
-    if (!IsSnapshotLoadedFor(snapshotLoad, SnapshotLoadOwner::ProjectionMovie, targetStep)) {
-      if (IsSnapshotLoadFailedFor(snapshotLoad, SnapshotLoadOwner::ProjectionMovie, targetStep)) {
-        std::snprintf(result.errorMessage,
-                      sizeof(result.errorMessage),
-                      "%s",
-                      snapshotLoad.result.errorMessage);
-        job.status = JobStatus::Error;
-      } else {
-        RequestSnapshotLoad(snapshotLoad,
-                            SnapshotLoadOwner::ProjectionMovie,
-                            targetStep,
-                            10);
-        return;
-      }
-    }
-
-    if (job.status == JobStatus::Running) {
-      const int newFileIndex = nav.initialIndex + targetStep * nav.skipStep;
-
-      try {
-        if (!RenderProjectionMovieFrame(particles,
-                                        units,
-                                        normalization,
-                                        projectionMap,
-                                        runtime.projectionParams,
-                                        camera,
-                                        runtime.params,
-                                        job.processed,
-                                        newFileIndex,
-                                        fileNav.current.loadedTime,
-                                        result)) {
-          job.status = JobStatus::Error;
-        } else {
-          result.processedSnapshots++;
-          job.processed++;
-          job.nextStep += job.stepStride;
-
-          if (job.nextStep > job.endStep) {
-            job.status = JobStatus::Completed;
-          } else {
-            RequestSnapshotLoad(snapshotLoad,
-                                SnapshotLoadOwner::ProjectionMovie,
-                                job.nextStep,
-                                10);
-          }
-        }
-      } catch (const std::exception& e) {
-        std::snprintf(result.errorMessage, sizeof(result.errorMessage), "%s", e.what());
-        job.status = JobStatus::Error;
-      }
-    }
-  }
-
-  if (job.status == JobStatus::Completed) {
-    if (result.processedSnapshots <= 0) {
-      std::snprintf(result.errorMessage, sizeof(result.errorMessage), "No frames were generated");
-      job.status = JobStatus::Error;
-    } else {
-      const std::string outputMoviePath =
-        std::string(runtime.params.outputFolderPath) + "/" + std::string(runtime.params.outputMovieName);
-      std::string ffmpegCommand =
-        "ffmpeg -y -framerate 30 -i " +
-        ShellQuote("ffmpeg_frames/frame_%04d.png") +
-        " -vf " +
-        ShellQuote("scale=ceil(iw/2)*2:ceil(ih/2)*2") +
-        " -c:v libx264 -pix_fmt yuv420p " +
-        ShellQuote(outputMoviePath);
-
-      const int ffmpegExit = std::system(ffmpegCommand.c_str());
-      if (ffmpegExit != 0) {
-        std::snprintf(result.errorMessage, sizeof(result.errorMessage),
-                      "ffmpeg failed with exit code %d", ffmpegExit);
-        job.status = JobStatus::Error;
-      } else {
-        std::snprintf(result.outputMoviePath, sizeof(result.outputMoviePath),
-                      "%s/%s", runtime.params.outputFolderPath, runtime.params.outputMovieName);
-        result.success = true;
-        result.completed = true;
-      }
-    }
-  }
-
-  if (job.status == JobStatus::Cancelled ||
-      job.status == JobStatus::Error ||
-      job.status == JobStatus::Completed) {
-    fs::remove_all(framesDir);
-
-    if (job.savedTrackingValid) {
-      track = job.savedTracking;
-    }
-
-    if (runtime.params.restoreCameraOnFinish) {
-      RestoreCameraFromJob(camera, job);
-    }
-
-    nav.currentStep = job.savedCurrentStep;
-    RecomputeCurrentFileIndex(fileNav);
-    RequestSnapshotLoad(snapshotLoad,
-                        SnapshotLoadOwner::UserNavigation,
-                        nav.currentStep,
-                        50);
-
-    if (job.status == JobStatus::Cancelled) {
-      if (result.errorMessage[0] == '\0') {
-        std::snprintf(result.errorMessage, sizeof(result.errorMessage), "Cancelled by user");
-      }
-      result.success = false;
-      result.completed = true;
-    } else if (job.status == JobStatus::Error) {
-      result.success = false;
-      result.completed = true;
-    }
-
-    job = SnapshotJobRuntimeState{};
   }
 }
 

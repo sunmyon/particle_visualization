@@ -2,12 +2,12 @@
 
 #include "core/tracking_vector.h"
 #include "scene_manager.h"
-#include "app/runtime_state.h"
-#include "app/overlay_state.h"
-#include "app/analysis_state.h"
-#include "app/ui_state.h"
-#include "app/tool_window_state.h"
-#include "app/window_commands.h"
+#include "app/state/runtime_state.h"
+#include "app/state/overlay_state.h"
+#include "app/state/analysis_state.h"
+#include "app/state/ui_state.h"
+#include "app/state/tool_window_state.h"
+#include "app/state/window_commands.h"
 #include "app/app_render_sync.h"
 #include "interaction/camera.h"
 #include "interaction/input_event.h"
@@ -19,7 +19,7 @@
 class ParticleArray;
 class WindowContext;
 
-#include "app_services.h"
+#include "app/app_services.h"
 
 struct AppDataState {
   ParticleArray* particles = nullptr;

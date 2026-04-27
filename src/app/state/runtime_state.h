@@ -6,11 +6,11 @@
 #include <glm/vec3.hpp>
 
 #include "core/quantity.h"
-#include "app/normalization_config.h"
-#include "app/input_filter_config.h"
-#include "app/view_filter_config.h"
-#include "app/tracking_view_state.h"
-#include "app/render_runtime_state.h"
+#include "app/state/normalization_config.h"
+#include "app/state/input_filter_config.h"
+#include "app/state/view_filter_config.h"
+#include "app/state/tracking_view_state.h"
+#include "app/state/render_runtime_state.h"
 #include "particle_visual_config.h"
 #include "projection/projection_map_tool_state.h"
 #include "FileIO/file_format_types.h"
@@ -119,6 +119,9 @@ inline bool IsSnapshotLoadFailedFor(const SnapshotLoadRuntimeState& load,
 
 struct DiskAnalysisRequestState {
   int targetParticleId = 0;
+  bool rejectTypeZeroTarget = false;
+  float diskOpacity = 1.0f;
+  char diskTag[64] = "main_disk";
   bool runRequested = false;
   bool clearRequested = false;
 };
@@ -224,6 +227,10 @@ struct IsoContourRequestState {
 struct ClumpRequestState {
   bool openRequested = false;
   bool runRequested = false;
+  int method = 0;
+  int snapshotIndex = -1;
+  double snapshotTime = 0.0;
+  char outputPath[512] = "";
 };
 
 struct ClumpBatchRequestState {

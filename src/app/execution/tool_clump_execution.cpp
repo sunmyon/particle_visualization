@@ -1,8 +1,8 @@
-#include "app/app_tool_window_dispatch.h"
+#include "app/execution/tool_window_dispatch.h"
 
-#include "app/app_clump_window_execution.h"
-#include "app/runtime_state.h"
-#include "app/tool_window_state.h"
+#include "app/execution/clump_window_execution.h"
+#include "app/state/runtime_state.h"
+#include "app/state/tool_window_state.h"
 #include "data/particle_array.h"
 
 void ExecuteClumpToolRequests(ToolWindowUIState& tools,

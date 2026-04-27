@@ -1,6 +1,6 @@
 #include "FileIO/snapshot_io_service.h"
 
-#include "app/input_filter_config.h"
+#include "app/state/input_filter_config.h"
 
 SnapshotIOService::SnapshotIOService()
   : loader_(),

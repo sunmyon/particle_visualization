@@ -1,7 +1,7 @@
 #include "FileIO/snapshot_prefetch_controller.h"
 
 #include "core/PerfTimer.h"
-#include "app/input_filter_config.h"
+#include "app/state/input_filter_config.h"
 
 namespace {
 void HashCombine(std::size_t& seed, std::size_t value)

@@ -5,7 +5,7 @@
 
 #include <imgui.h>
 
-#include "app/runtime_state.h"
+#include "app/state/runtime_state.h"
 #include "render/gizmo_renderer.h"
 
 void ColorbarLabelRenderer::draw(const ColorbarGizmoState& gizmo) const

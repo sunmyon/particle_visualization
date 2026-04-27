@@ -5,4 +5,3 @@
 struct OverlayState {
   ParticleLabelOverlay particleLabels;
 };
-

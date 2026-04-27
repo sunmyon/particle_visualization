@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "FindClumps/clump_window_state.h"
-#include "app/file_format_dialog_state.h"
+#include "app/state/file_format_dialog_state.h"
 #include "compute_2D_histogram.h"
 #include "compute_radial_profile.h"
 #include "core/quantity.h"
@@ -21,19 +21,21 @@ struct RadialProfileUIState {
   bool open = false;
   int selectedXAxis = 0;
   int selectedVarIdx = 0;
-  RadialProfileParams params;
+  RadialProfileParams draftParams;
 };
 
 struct RadialProfileRequestState {
+  RadialProfileParams params;
   bool runRequested = false;
 };
 
 struct Histogram2DUIState {
   bool open = false;
-  Histogram2DParams params;
+  Histogram2DParams draftParams;
 };
 
 struct Histogram2DRequestState {
+  Histogram2DParams params;
   bool runRequested = false;
 };
 
@@ -42,7 +44,7 @@ struct ProjectionMapUIState {
   bool open = false;
   bool paramsInitialized = false;
   uint64_t observedToolRevision = 0;
-  ProjectionMapParams params;
+  ProjectionMapParams draftParams;
   bool useOriginalCoordinate = true;
   bool selectMode = false;
 
@@ -98,7 +100,22 @@ struct TopParticlesRequestState {
   bool followParticleRequested = false;
   bool disableFollowParticleRequested = false;
 
+  int queryParticleId = -1;
   int centerParticleId = -1;
+
+  bool selectedTypes[6] = {false, false, false, false, false, false};
+
+  int histogramSelectedVar = 4;
+  int histogramBins = 50;
+  bool histogramLogScaleX = true;
+  bool histogramLogScaleY = true;
+  bool histogramAutoRange = true;
+  float histogramRange1Min = 0.0f;
+  float histogramRange1Max = 1.0f;
+  float histogramRange2Min = 0.0f;
+  float histogramRange2Max = 1.0f;
+  bool histogramUseCameraCenter = false;
+  float histogramCameraRadius = 10.0f;
 };
 
 struct TopParticlesResultState {
@@ -177,7 +194,23 @@ struct HaloesRequestState {
   bool focusHaloRequested = false;
   bool computeHistogramRequested = false;
 
+  char filename[255] = "";
+  bool recomputeUseMassWeight = true;
+  bool recomputeUseOriginalPos = true;
+  int recomputeMinParticles = 20;
+  std::vector<uint8_t> selectedForStress;
+
   int focusHaloIndex = -1;
+
+  int histogramSelectedVar = 0;
+  int histogramBins = 20;
+  bool histogramLogScaleX = true;
+  bool histogramLogScaleY = true;
+  bool histogramAutoRange = true;
+  float histogramRange1Min = 0.0f;
+  float histogramRange1Max = 1.0f;
+  float histogramRange2Min = 0.0f;
+  float histogramRange2Max = 1.0f;
 };
 
 struct MaskUIState {

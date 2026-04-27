@@ -1,13 +1,14 @@
 #include "tool_window_ui.h"
+#include <cstdio>
 #include <imgui.h>
 #include "implot.h"
 
-#include "app/runtime_state.h"
-#include "app/tool_window_state.h"
-#include "app/analysis_state.h"
-#include "app/render_runtime_state.h"
-#include "app/normalization_config.h"
-#include "app/window_commands.h"
+#include "app/state/runtime_state.h"
+#include "app/state/tool_window_state.h"
+#include "app/state/analysis_state.h"
+#include "app/state/render_runtime_state.h"
+#include "app/state/normalization_config.h"
+#include "app/state/window_commands.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
 #include "object.h"
@@ -29,6 +30,107 @@ extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          const glm::mat4& view,
                                          const glm::vec3& pivot);
 
+namespace {
+void SubmitRadialProfileRequest(const RadialProfileUIState& state,
+                                RadialProfileRequestState& request)
+{
+  request.params = state.draftParams;
+  request.runRequested = true;
+}
+
+void SubmitHistogram2DRequest(const Histogram2DUIState& state,
+                              Histogram2DRequestState& request)
+{
+  request.params = state.draftParams;
+  request.runRequested = true;
+}
+
+void SubmitProjectionMapParamsRequest(const ProjectionMapParams& draftParams,
+                                      ProjectionMapRequestState& request,
+                                      bool renderRequested)
+{
+  request.params = draftParams;
+  request.paramsChanged = true;
+  request.renderRequested = request.renderRequested || renderRequested;
+}
+
+void SubmitTopParticleQueryRequest(const TopParticlesUIState& state,
+                                   TopParticlesRequestState& request)
+{
+  request.queryParticleId = state.queryID;
+  request.queryParticleRequested = true;
+}
+
+void SubmitTopParticleFilterRequest(const TopParticlesUIState& state,
+                                    TopParticlesRequestState& request)
+{
+  for (int i = 0; i < 6; ++i) {
+    request.selectedTypes[i] = state.selectType[i];
+  }
+  request.refreshFilteredRequested = true;
+}
+
+void SubmitTopParticleHistogramRequest(const TopParticlesUIState& state,
+                                       TopParticlesRequestState& request)
+{
+  request.histogramSelectedVar = state.selectedVar;
+  request.histogramBins = state.bins;
+  request.histogramLogScaleX = state.histogramLogScaleX;
+  request.histogramLogScaleY = state.histogramLogScaleY;
+  request.histogramAutoRange = state.autoRange;
+  request.histogramRange1Min = state.range1_min;
+  request.histogramRange1Max = state.range1_max;
+  request.histogramRange2Min = state.range2_min;
+  request.histogramRange2Max = state.range2_max;
+  request.histogramUseCameraCenter = state.useCameraCenter;
+  request.histogramCameraRadius = state.cameraRadius;
+  request.computeHistogramRequested = true;
+}
+
+void SubmitHaloLoadRequest(const HaloesUIState& state,
+                           HaloesRequestState& request,
+                           bool loadIds)
+{
+  std::snprintf(request.filename,
+                sizeof(request.filename),
+                "%s",
+                state.fname);
+  request.loadWithoutIdsRequested = !loadIds;
+  request.loadWithIdsRequested = loadIds;
+}
+
+void SubmitHaloRecomputeRequest(const HaloesUIState& state,
+                                HaloesRequestState& request)
+{
+  request.recomputeUseMassWeight = state.recomputeUseMassWeight;
+  request.recomputeUseOriginalPos = state.recomputeUseOriginalPos;
+  request.recomputeMinParticles = state.recomputeMinParticles;
+  request.recomputePositionsRequested = true;
+}
+
+void SubmitHaloStressSelectionRequest(const HaloesUIState& state,
+                                      HaloesRequestState& request)
+{
+  request.selectedForStress = state.selectedForStress;
+  request.stressSelectionChanged = true;
+}
+
+void SubmitHaloHistogramRequest(const HaloesUIState& state,
+                                HaloesRequestState& request)
+{
+  request.histogramSelectedVar = state.selectedVar;
+  request.histogramBins = state.bins;
+  request.histogramLogScaleX = state.histogramLogScaleX;
+  request.histogramLogScaleY = state.histogramLogScaleY;
+  request.histogramAutoRange = state.autoRange;
+  request.histogramRange1Min = state.range1_min;
+  request.histogramRange1Max = state.range1_max;
+  request.histogramRange2Min = state.range2_min;
+  request.histogramRange2Max = state.range2_max;
+  request.computeHistogramRequested = true;
+}
+}
+
 void DrawRadialProfileUI(RadialProfileUIState& state,
                          RadialProfileRequestState& request,
                          const RadialProfileResultState& result,
@@ -36,16 +138,17 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 {
   if (!state.open) return;
   const QuantityState& quantity = ctx.quantity;
+  auto& params = state.draftParams;
 
   ImGui::Begin("Radial Profile", &state.open);
 
   const char* xaxes[] = { "r", "x", "y", "z", "M(<r)" };
   ImGui::Combo("X Axis", &state.selectedXAxis, xaxes, IM_ARRAYSIZE(xaxes));
-  state.params.xmode = (XAxisMode)state.selectedXAxis;
+  params.xmode = (XAxisMode)state.selectedXAxis;
 
   const int baseCount = quantity.catalog.nUIQ;
-  const bool allowMDot = (state.params.xmode == XAxisMode::Radius ||
-                          state.params.xmode == XAxisMode::EnclosedMass);
+  const bool allowMDot = (params.xmode == XAxisMode::Radius ||
+                          params.xmode == XAxisMode::EnclosedMass);
   const int totalCount = baseCount + (allowMDot ? 1 : 0);
 
   if (state.selectedVarIdx < 0 || state.selectedVarIdx >= totalCount)
@@ -75,44 +178,44 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   }
 
   if (state.selectedVarIdx < baseCount) {
-    state.params.var1 = quantity.catalog.uiQ[state.selectedVarIdx];
-    state.params.isMDot = false;
+    params.var1 = quantity.catalog.uiQ[state.selectedVarIdx];
+    params.isMDot = false;
   } else {
-    state.params.isMDot = true;
+    params.isMDot = true;
   }
 
-  ImGui::InputInt("Number of Bins", &state.params.bins);
-  ImGui::Checkbox("Use Original Coordinates", &state.params.useOriginal);
-  ImGui::Checkbox("Log X Axis", &state.params.plotXAxisLog);
-  ImGui::Checkbox("Log Y Axis", &state.params.plotYAxisLog);
-  ImGui::Checkbox("Auto Range", &state.params.autorange);
-  ImGui::Checkbox("Take absolute value", &state.params.flagAbsolute);
+  ImGui::InputInt("Number of Bins", &params.bins);
+  ImGui::Checkbox("Use Original Coordinates", &params.useOriginal);
+  ImGui::Checkbox("Log X Axis", &params.plotXAxisLog);
+  ImGui::Checkbox("Log Y Axis", &params.plotYAxisLog);
+  ImGui::Checkbox("Auto Range", &params.autorange);
+  ImGui::Checkbox("Take absolute value", &params.flagAbsolute);
 
-  if (!state.params.autorange) {
-    ImGui::InputFloat("X Axis Min", &state.params.xmin, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &state.params.xmax, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Min", &state.params.ymin, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Max", &state.params.ymax, 0.0f, 0.0f, "%g");
+  if (!params.autorange) {
+    ImGui::InputFloat("X Axis Min", &params.xmin, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("X Axis Max", &params.xmax, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Min", &params.ymin, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Max", &params.ymax, 0.0f, 0.0f, "%g");
   }
 
-  ImGui::InputFloat("Maximum Radius (cut)", &state.params.rmax, 0.0f, 0.0f, "%g");
+  ImGui::InputFloat("Maximum Radius (cut)", &params.rmax, 0.0f, 0.0f, "%g");
 
   if (ImGui::Button("Compute profile")) {
-    request.runRequested = true;
+    SubmitRadialProfileRequest(state, request);
   }
 
   if (result.computed && result.result.valid) {
     if (ImPlot::BeginPlot("Profile", ImVec2(-1, 300))) {
-      const char* ylabel = state.params.isMDot ? "mdot" : QuantityLabel(state.params.var1);
-      ImPlot::SetupAxes(XAxisLabel(state.params.xmode), ylabel);
+      const char* ylabel = params.isMDot ? "mdot" : QuantityLabel(params.var1);
+      ImPlot::SetupAxes(XAxisLabel(params.xmode), ylabel);
 
-      if (state.params.plotXAxisLog)
+      if (params.plotXAxisLog)
         ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
-      if (state.params.plotYAxisLog)
+      if (params.plotYAxisLog)
         ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
 
-      ImPlot::SetupAxisLimits(ImAxis_X1, state.params.xmin, state.params.xmax, ImGuiCond_Always);
-      ImPlot::SetupAxisLimits(ImAxis_Y1, state.params.ymin, state.params.ymax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_X1, params.xmin, params.xmax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, params.ymin, params.ymax, ImGuiCond_Always);
 
       ImPlot::PlotLine("Profile",
                        result.result.x.data(),
@@ -132,59 +235,60 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
 {
   if (!state.open) return;
   const QuantityCatalogState& catalog = ctx.catalog;
+  auto& params = state.draftParams;
 
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("histogram 2D", &state.open, ImGuiWindowFlags_None);
 
-  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(state.params.var1))) {
+  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(params.var1))) {
     for (int q = 0; q < catalog.nAllQ; ++q) {
       QuantityId cand = catalog.allQ[q];
-      bool is_selected = (cand == state.params.var1);
+      bool is_selected = (cand == params.var1);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        state.params.var1 = cand;
+        params.var1 = cand;
       if (is_selected) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
   }
 
-  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(state.params.var2))) {
+  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(params.var2))) {
     for (int q = 0; q < catalog.nAllQ; ++q) {
       QuantityId cand = catalog.allQ[q];
-      bool is_selected = (cand == state.params.var2);
+      bool is_selected = (cand == params.var2);
       if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        state.params.var2 = cand;
+        params.var2 = cand;
       if (is_selected) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
   }
 
-  ImGui::InputInt("Bins X", &state.params.bins1);
-  ImGui::InputInt("Bins Y", &state.params.bins2);
+  ImGui::InputInt("Bins X", &params.bins1);
+  ImGui::InputInt("Bins Y", &params.bins2);
 
-  ImGui::Checkbox("Use Log scale X", &state.params.logScaleX);
-  ImGui::Checkbox("Use Log scale Y", &state.params.logScaleY);
-  ImGui::Checkbox("Use Log color scale", &state.params.logScaleColor);
+  ImGui::Checkbox("Use Log scale X", &params.logScaleX);
+  ImGui::Checkbox("Use Log scale Y", &params.logScaleY);
+  ImGui::Checkbox("Use Log color scale", &params.logScaleColor);
 
-  ImGui::Checkbox("Auto Range", &state.params.autoRange);
+  ImGui::Checkbox("Auto Range", &params.autoRange);
 
-  if (!state.params.autoRange) {
-    ImGui::InputFloat("X Axis Min", &state.params.range1_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &state.params.range1_max, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Min", &state.params.range2_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Max", &state.params.range2_max, 0.0f, 0.0f, "%g");
+  if (!params.autoRange) {
+    ImGui::InputFloat("X Axis Min", &params.range1_min, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("X Axis Max", &params.range1_max, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Min", &params.range2_min, 0.0f, 0.0f, "%g");
+    ImGui::InputFloat("Y Axis Max", &params.range2_max, 0.0f, 0.0f, "%g");
   }
 
 #ifdef USE_CONVEX_HULL
-  ImGui::Checkbox("Filter: Use Convex Hull", &state.params.useConvexHull);
+  ImGui::Checkbox("Filter: Use Convex Hull", &params.useConvexHull);
 #endif
 
-  ImGui::Checkbox("Filter: Use Camera Center", &state.params.useCameraCenter);
-  if (state.params.useCameraCenter) {
-    ImGui::InputFloat("Camera Radius", &state.params.cameraRadius, 0.1f, 1.0f, "%.2f");
+  ImGui::Checkbox("Filter: Use Camera Center", &params.useCameraCenter);
+  if (params.useCameraCenter) {
+    ImGui::InputFloat("Camera Radius", &params.cameraRadius, 0.1f, 1.0f, "%.2f");
   }
 
   if (ImGui::Button("Compute Histogram")) {
-    request.runRequested = true;
+    SubmitHistogram2DRequest(state, request);
   }
 
   if (result.computed && result.result.valid) {
@@ -201,15 +305,15 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
     }
 
     if (ImPlot::BeginPlot("2D Histogram", ImVec2(-1, 300))) {
-      ImPlot::SetupAxes(QuantityLabel(state.params.var1), QuantityLabel(state.params.var2));
+      ImPlot::SetupAxes(QuantityLabel(params.var1), QuantityLabel(params.var2));
 
       ImPlot::SetupAxisLimits(ImAxis_X1,
-                              state.params.range1_min,
-                              state.params.range1_max,
+                              params.range1_min,
+                              params.range1_max,
                               ImGuiCond_Always);
       ImPlot::SetupAxisLimits(ImAxis_Y1,
-                              state.params.range2_min,
-                              state.params.range2_max,
+                              params.range2_min,
+                              params.range2_max,
                               ImGuiCond_Always);
 
       ImPlot::PushColormap(ImPlotColormap_Viridis);
@@ -219,8 +323,8 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
                           (int)computedBins2,
                           (int)computedBins1,
                           0, 0, "",
-                          ImPlotPoint(state.params.range1_min, state.params.range2_min),
-                          ImPlotPoint(state.params.range1_max, state.params.range2_max));
+                          ImPlotPoint(params.range1_min, params.range2_min),
+                          ImPlotPoint(params.range1_max, params.range2_max));
 
       ImPlot::EndPlot();
     }
@@ -294,15 +398,15 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
   if (!state.paramsInitialized ||
       state.observedToolRevision != ctx.tool.revision) {
-    state.params = ctx.tool.params;
-    state.xlen_input[0] = state.params.xlen[0] * sideLengthInputScale;
-    state.xlen_input[1] = state.params.xlen[1] * sideLengthInputScale;
-    state.xlen_input[2] = state.params.xlen[2] * sideLengthInputScale;
+    state.draftParams = ctx.tool.params;
+    state.xlen_input[0] = state.draftParams.xlen[0] * sideLengthInputScale;
+    state.xlen_input[1] = state.draftParams.xlen[1] * sideLengthInputScale;
+    state.xlen_input[2] = state.draftParams.xlen[2] * sideLengthInputScale;
     state.paramsInitialized = true;
     state.observedToolRevision = ctx.tool.revision;
   }
 
-  auto& params = state.params;
+  auto& params = state.draftParams;
   bool paramsDirty = false;
   
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
@@ -636,6 +740,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // -----------------------------
   // render
   // -----------------------------
+  bool renderRequested = false;
   if (ImGui::Button("render 2D projection map")) {
     if (params.selectedType == 0) {
       params.dataSource = DataSource::Gas;
@@ -645,13 +750,12 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
       params.dataSource = DataSource::Stars;
     }
 
-    request.renderRequested = true;
+    renderRequested = true;
     paramsDirty = true;
   }
 
-  if (paramsDirty) {
-    request.params = params;
-    request.paramsChanged = true;
+  if (paramsDirty || renderRequested) {
+    SubmitProjectionMapParamsRequest(params, request, renderRequested);
   }
 
   ImGui::End();
@@ -672,7 +776,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   ImGui::SameLine();
 
   if (ImGui::Button("Show Info")) {
-    request.queryParticleRequested = true;
+    SubmitTopParticleQueryRequest(state, request);
   }
 
   if (result.queryFailed && state.queryID >= 0) {
@@ -741,7 +845,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   if (state.m < 1) state.m = 1;
 
   if (flag_pushed) {
-    request.refreshFilteredRequested = true;
+    SubmitTopParticleFilterRequest(state, request);
   }
 
   int count = std::min(state.m, (int)result.filtered.size());
@@ -767,7 +871,6 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
 
   const char* quantities[] = { "x", "y", "z", "r", "Density", "Temperature", "Hsml", "Mass" };
   ImGui::Combo("Quantity", &state.selectedVar, quantities, IM_ARRAYSIZE(quantities));
-  std::string var = quantities[state.selectedVar];
 
   ImGui::InputInt("Number of bins", &state.bins);
   if (state.bins < 1) state.bins = 1;
@@ -789,7 +892,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
     ImGui::InputFloat("Camera Radius", &state.cameraRadius, 0.1f, 1.0f, "%.2f");
 
   if (ImGui::Button("Compute 1D Histogram")) {
-    request.computeHistogramRequested = true;
+    SubmitTopParticleHistogramRequest(state, request);
   }
 
   if (result.histogramComputed) {
@@ -830,12 +933,12 @@ void DrawHaloesUI(HaloesUIState& state,
 
   {
     if (ImGui::Button("Load halo catalog (no IDs)")) {
-      request.loadWithoutIdsRequested = true;
+      SubmitHaloLoadRequest(state, request, false);
     }
 
     ImGui::SameLine();
     if (ImGui::Button("Load halo catalog (+ IDs)")) {
-      request.loadWithIdsRequested = true;
+      SubmitHaloLoadRequest(state, request, true);
     }
   }
 
@@ -862,7 +965,9 @@ void DrawHaloesUI(HaloesUIState& state,
 
     ImGui::SameLine();
     if (ImGui::Button("Reset halo selection")) {
+      state.selectedForStress.assign(state.selectedForStress.size(), 0);
       request.resetSelectionRequested = true;
+      SubmitHaloStressSelectionRequest(state, request);
     }
 
     ImGui::Separator();
@@ -876,7 +981,7 @@ void DrawHaloesUI(HaloesUIState& state,
     if (state.recomputeMinParticles < 1) state.recomputeMinParticles = 1;
 
     if (ImGui::Button("Recompute halo positions from particle distribution")) {
-      request.recomputePositionsRequested = true;
+      SubmitHaloRecomputeRequest(state, request);
     }
   }
 
@@ -911,7 +1016,7 @@ void DrawHaloesUI(HaloesUIState& state,
           checked = false;
         } else {
           state.selectedForStress[i] = checked ? 1 : 0;
-	  request.stressSelectionChanged = true;
+	  SubmitHaloStressSelectionRequest(state, request);
         }
       }
       ImGui::PopID();
@@ -976,7 +1081,7 @@ void DrawHaloesUI(HaloesUIState& state,
   }
 
   if (ImGui::Button("Compute 1D Histogram")) {
-    request.computeHistogramRequested = true;
+    SubmitHaloHistogramRequest(state, request);
   }
 
   if (state.histogramComputed) {
@@ -992,7 +1097,7 @@ void DrawHaloesUI(HaloesUIState& state,
       ImPlot::PlotBars("Mass",
                        state.binCenters.data(),
                        state.histBins.data(),
-                       state.bins,
+                       static_cast<int>(state.histBins.size()),
                        state.binSize);
       ImPlot::EndPlot();
     }

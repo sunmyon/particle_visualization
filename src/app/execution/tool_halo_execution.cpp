@@ -1,7 +1,7 @@
-#include "app/app_tool_window_dispatch.h"
+#include "app/execution/tool_window_dispatch.h"
 
-#include "app/app_tool_window_execution.h"
-#include "app/tool_window_state.h"
+#include "app/execution/tool_window_execution.h"
+#include "app/state/tool_window_state.h"
 
 void ExecuteHaloToolRequests(ToolWindowUIState& tools,
                              HaloToolExecutionInput& input)

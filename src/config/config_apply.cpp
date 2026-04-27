@@ -1,5 +1,5 @@
-#include "app/runtime_state.h"
-#include "app/snapshot_state_sync.h"
+#include "app/state/runtime_state.h"
+#include "app/state/snapshot_state_sync.h"
 #include "particle_visual_config.h"
 #include "config/config_data.h"
 

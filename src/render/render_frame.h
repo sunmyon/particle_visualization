@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/overlay_state.h"
-#include "app/render_runtime_state.h"
+#include "app/state/overlay_state.h"
+#include "app/state/render_runtime_state.h"
 #include "interaction/camera.h"
 #include "particle_visual_config.h"
 #include "render/render_viewport.h"

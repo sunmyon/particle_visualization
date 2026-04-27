@@ -1,7 +1,7 @@
 #include "app/app_snapshot_load.h"
 
-#include "app/app_state.h"
-#include "app/snapshot_state_sync.h"
+#include "app/state/app_state.h"
+#include "app/state/snapshot_state_sync.h"
 #include "app/app_services.h"
 #include "FileIO/snapshot_io_service.h"
 #include "data/particle_block.h"

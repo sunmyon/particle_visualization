@@ -2,7 +2,7 @@
 
 #include <array>
 
-#include "app/tracking_view_state.h"
+#include "app/state/tracking_view_state.h"
 #include "core/quantity.h"
 
 struct SettingsStellarDensityEdit {

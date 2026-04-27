@@ -9,7 +9,7 @@
 #include "platform/remote_input_receiver.h"
 #include "platform/remote_frame_presenter.h"
 
-#include "app/app_state.h"
+#include "app/state/app_state.h"
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include "app/app_callbacks.h"
 #endif

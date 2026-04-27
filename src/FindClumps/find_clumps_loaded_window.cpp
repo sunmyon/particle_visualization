@@ -12,7 +12,7 @@
 #include "FindClumps/find_clumps_IO.h"
 #endif
 #include "data/clump_store.h"
-#include "app/tracking_view_state.h"
+#include "app/state/tracking_view_state.h"
 #include "interaction/camera.h"
 
 namespace {

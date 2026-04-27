@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "FileIO/file_format_types.h"
-#include "app/file_format_dialog_state.h"
+#include "app/state/file_format_dialog_state.h"
 
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens);

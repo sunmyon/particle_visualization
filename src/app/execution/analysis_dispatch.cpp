@@ -1,8 +1,9 @@
-#include "app/app_analysis_dispatch.h"
+#include "app/execution/analysis_dispatch.h"
 
-#include "app/app_state.h"
-#include "app/app_analysis_execution.h"
-#include "app/app_projection_execution.h"
+#include "app/state/app_state.h"
+#include "app/execution/analysis_execution.h"
+#include "app/execution/clump_batch_execution.h"
+#include "app/execution/projection_execution.h"
 #include "app/app_services.h"
 
 void ExecuteAnalysisJobRequests(AppDataState& data,
@@ -91,30 +92,37 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
 #endif
 
   if (services.projectionMap2D) {
-    ExecuteProjectionMapRequests(runtime.analysisRequests.projectionMapRequest,
-                                 runtime.analysisTools.projectionMap,
-                                 *services.projectionMap2D,
-                                 *data.particles,
-                                 runtime.quantity.units,
-                                 runtime.settings.normalization,
-                                 camera,
-                                 runtime.render.cuboidAnnotations,
-                                 currentFileIndex,
-                                 analysis.projectionPreview,
-                                 runtime.settings.fileNavigation.current.loadedTime);
+    ProjectionFrameExecutionContext projectionCtx{
+      *data.particles,
+      *services.projectionMap2D,
+      runtime.quantity.units,
+      runtime.settings.normalization.toPhysicalScale()
+    };
 
-    ExecuteProjectionMovieRequest(*data.particles,
-				  runtime.quantity.units,
-				  runtime.settings.normalization,
-				  runtime.settings.tracking,
-				  runtime.settings.fileNavigation,
-				  *services.projectionMap2D,
-				  runtime.analysisTools.projectionMap.params,
-				  camera,
-				  runtime.analysisRequests.projectionMovie,
-				  runtime.analysisJobs.projectionMovie,
-				  runtime.snapshotLoad,
-				  runtime.snapshotPostprocess,
-				  analysis.projectionMovie);
+    ProjectionMapExecutionContext projectionMapCtx{
+      projectionCtx,
+      camera,
+      currentFileIndex,
+      runtime.settings.fileNavigation.current.loadedTime,
+      &runtime.analysisTools.projectionMap,
+      &runtime.render.cuboidAnnotations,
+      &analysis.projectionPreview
+    };
+    ExecuteProjectionMapRequests(runtime.analysisRequests.projectionMapRequest,
+                                 projectionMapCtx);
+
+    ProjectionMovieExecutionContext movieCtx{
+      projectionCtx,
+      runtime.settings.tracking,
+      runtime.settings.fileNavigation,
+      runtime.analysisTools.projectionMap.params,
+      camera,
+      runtime.analysisRequests.projectionMovie,
+      runtime.analysisJobs.projectionMovie,
+      runtime.snapshotLoad,
+      runtime.snapshotPostprocess,
+      analysis.projectionMovie
+    };
+    ExecuteProjectionMovieRequest(movieCtx);
   }
 }

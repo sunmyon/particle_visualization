@@ -1,4 +1,4 @@
-#include "app/app_tool_window_execution.h"
+#include "app/execution/tool_window_execution.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,11 +10,12 @@
 
 #include <glm/glm.hpp>
 
-#include "app/analysis_state.h"
-#include "app/normalization_config.h"
-#include "app/runtime_state.h"
-#include "app/tracking_view_state.h"
-#include "app/tool_window_state.h"
+#include "app/state/analysis_state.h"
+#include "app/state/normalization_config.h"
+#include "app/state/runtime_state.h"
+#include "app/state/tracking_view_state.h"
+#include "app/state/tool_window_state.h"
+#include "app/execution/profile_histogram_execution.h"
 #include "compute_2D_histogram.h"
 #include "compute_radial_profile.h"
 #include "data/particle_array.h"
@@ -73,7 +74,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     result.hasFound = false;
     result.queryFailed = false;
 
-    if (const ParticleData* p = FindParticleById(particles, ui.queryID)) {
+    if (const ParticleData* p = FindParticleById(particles, req.queryParticleId)) {
       result.foundParticle = *p;
       result.hasFound = true;
       result.historyData.push_front(*p);
@@ -139,7 +140,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
       if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) {
         continue;
       }
-      if (p.type >= 0 && p.type < 6 && ui.selectType[p.type]) {
+      if (p.type >= 0 && p.type < 6 && req.selectedTypes[p.type]) {
         result.filtered.push_back(p);
       }
     }
@@ -179,18 +180,19 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   const int quantityCount = static_cast<int>(sizeof(kQuantities) / sizeof(kQuantities[0]));
-  int selectedVar = ui.selectedVar;
+  int selectedVar = req.histogramSelectedVar;
   if (selectedVar < 0 || selectedVar >= quantityCount) {
     selectedVar = 0;
   }
   const std::string var = kQuantities[selectedVar];
+  const int bins = std::max(1, req.histogramBins);
 
   std::function<bool(const ParticleData&)> includeParticle =
     [](const ParticleData&) { return true; };
 
-  if (ui.useCameraCenter) {
+  if (req.histogramUseCameraCenter) {
     const glm::vec3 camCenter = camera.cameraTarget;
-    const float radius = ui.cameraRadius;
+    const float radius = req.histogramCameraRadius;
     includeParticle = [camCenter, radius](const ParticleData& p) {
       glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
       return glm::length(pos - camCenter) <= radius;
@@ -214,7 +216,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 
     float value = particleValue(p);
     if (value == 0.0f) continue;
-    if (ui.histogramLogScaleX) {
+    if (req.histogramLogScaleX) {
       if (value <= 0.0f) continue;
       value = std::log10(value);
     }
@@ -236,13 +238,13 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     valueMax = valueMin + 1.0f;
   }
 
-  if (ui.autoRange) {
-    ui.range1_min = valueMin;
-    ui.range1_max = valueMax;
+  if (req.histogramAutoRange) {
+    req.histogramRange1Min = valueMin;
+    req.histogramRange1Max = valueMax;
   }
 
-  TrackingVector<int> binCounts(ui.bins, 0);
-  result.binSize = (ui.range1_max - ui.range1_min) / ui.bins;
+  TrackingVector<int> binCounts(bins, 0);
+  result.binSize = (req.histogramRange1Max - req.histogramRange1Min) / bins;
   if (result.binSize <= 0.0f) {
     result.binSize = 1.0f;
   }
@@ -252,27 +254,27 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 
     float value = particleValue(p);
     if (value == 0.0f) continue;
-    if (ui.histogramLogScaleX) {
+    if (req.histogramLogScaleX) {
       if (value <= 0.0f) continue;
       value = std::log10(value);
     }
 
-    int bin = static_cast<int>((value - ui.range1_min) / result.binSize);
+    int bin = static_cast<int>((value - req.histogramRange1Min) / result.binSize);
     if (bin < 0) bin = 0;
-    if (bin >= ui.bins) bin = ui.bins - 1;
+    if (bin >= bins) bin = bins - 1;
     binCounts[bin]++;
   }
 
-  result.histBins.resize(ui.bins);
-  result.binCenters.resize(ui.bins);
+  result.histBins.resize(bins);
+  result.binCenters.resize(bins);
   result.vmin = std::numeric_limits<float>::max();
   result.vmax = std::numeric_limits<float>::lowest();
 
-  for (int i = 0; i < ui.bins; i++) {
+  for (int i = 0; i < bins; i++) {
     result.histBins[i] = static_cast<float>(binCounts[i]);
 
     float value = result.histBins[i];
-    if (ui.histogramLogScaleY) {
+    if (req.histogramLogScaleY) {
       if (value == 0.0f) continue;
       value = std::log10(value);
     }
@@ -284,7 +286,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   if (result.vmin == std::numeric_limits<float>::max()) {
     result.vmin = 0.0f;
     result.vmax = 1.0f;
-  } else if (ui.histogramLogScaleY) {
+  } else if (req.histogramLogScaleY) {
     result.vmin = std::floor(result.vmin);
     result.vmax = std::ceil(result.vmax);
     result.vmin = 0.8f * std::pow(10.0f, result.vmin);
@@ -296,13 +298,18 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     result.vmax = std::ceil(result.vmax / scale) * scale;
   }
 
-  if (ui.autoRange) {
-    ui.range2_min = result.vmin;
-    ui.range2_max = result.vmax;
+  if (req.histogramAutoRange) {
+    req.histogramRange2Min = result.vmin;
+    req.histogramRange2Max = result.vmax;
   }
 
-  for (int i = 0; i < ui.bins; i++) {
-    result.binCenters[i] = ui.range1_min + (i + 0.5f) * result.binSize;
+  ui.range1_min = req.histogramRange1Min;
+  ui.range1_max = req.histogramRange1Max;
+  ui.range2_min = req.histogramRange2Min;
+  ui.range2_max = req.histogramRange2Max;
+
+  for (int i = 0; i < bins; i++) {
+    result.binCenters[i] = req.histogramRange1Min + (i + 0.5f) * result.binSize;
   }
 
   result.histogramComputed = true;
@@ -321,20 +328,16 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
     return;
   }
 
-  static RadialProfileComputer computer;
-  computer.setUnits(quantity.units);
+  ExecuteRadialProfileRequest(request,
+                              result,
+                              partblock,
+                              camCenter,
+                              normalization,
+                              quantity);
 
-  result.result = computer.compute(partblock, normalization, ui.params, camCenter);
-  result.computed = result.result.valid;
-
-  if (ui.params.autorange && result.result.valid) {
-    ui.params.xmin = result.result.xmin;
-    ui.params.xmax = result.result.xmax;
-    ui.params.ymin = result.result.ymin;
-    ui.params.ymax = result.result.ymax;
+  if (request.params.autorange && result.result.valid) {
+    ui.draftParams = request.params;
   }
-
-  request.runRequested = false;
 }
 
 void ExecuteHistogram2DWindowRequests(Histogram2DUIState& ui,
@@ -347,18 +350,14 @@ void ExecuteHistogram2DWindowRequests(Histogram2DUIState& ui,
     return;
   }
 
-  static Histogram2DComputer computer;
-  result.result = computer.compute(partblock, ui.params, ctx);
-  result.computed = result.result.valid;
+  ExecuteHistogram2DRequest(request,
+                            result,
+                            partblock,
+                            ctx);
 
   if (result.result.valid) {
-    ui.params.range1_min = result.result.range1_min;
-    ui.params.range1_max = result.result.range1_max;
-    ui.params.range2_min = result.result.range2_min;
-    ui.params.range2_max = result.result.range2_max;
+    ui.draftParams = request.params;
   }
-
-  request.runRequested = false;
 }
 
 void ExecuteProjectionFontSelectionRequests(ProjectionMapUIState& ui,
@@ -448,8 +447,9 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
 
   if (request.loadWithoutIdsRequested || request.loadWithIdsRequested) {
     const bool loadIds = request.loadWithIdsRequested;
-    haloes.loadFromHDF5(ui.fname, loadIds);
+    haloes.loadFromHDF5(request.filename, loadIds);
     ui.selectedForStress.assign(haloes.size(), 0);
+    request.selectedForStress = ui.selectedForStress;
     ui.histogramComputed = false;
     syncRowsFromStore();
     request.loadWithoutIdsRequested = false;
@@ -464,6 +464,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
 
   if (request.resetSelectionRequested) {
     std::fill(ui.selectedForStress.begin(), ui.selectedForStress.end(), 0);
+    request.selectedForStress = ui.selectedForStress;
     request.stressSelectionChanged = true;
     request.resetSelectionRequested = false;
   }
@@ -471,8 +472,8 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
   if (request.recomputePositionsRequested) {
     haloes.recomputeHaloPositionsFromParticles(
       particles.particleBlock.particles,
-      ui.recomputeUseMassWeight,
-      ui.recomputeUseOriginalPos
+      request.recomputeUseMassWeight,
+      request.recomputeUseOriginalPos
     );
     syncRowsFromStore();
     request.recomputePositionsRequested = false;
@@ -484,13 +485,14 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
     }
 
     if (haloes.idsLoaded()) {
-      const int n = static_cast<int>(std::min(haloes.size(), ui.selectedForStress.size()));
+      const int n = static_cast<int>(std::min(haloes.size(), request.selectedForStress.size()));
       for (int i = 0; i < n; ++i) {
-        if (!ui.selectedForStress[i]) continue;
+        if (!request.selectedForStress[i]) continue;
         particles.ApplyIDStress(haloes.ids(i));
       }
     }
 
+    ui.selectedForStress = request.selectedForStress;
     particles.particlesDirty = true;
     request.stressSelectionChanged = false;
   }
@@ -526,12 +528,13 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
   static constexpr const char* kQuantities[] = {
     "Mass", "GasMass", "StellarMass", "GasMetallicity", "StellarMetallicity"
   };
-  int selected = ui.selectedVar;
+  int selected = request.histogramSelectedVar;
   const int nQuantities = static_cast<int>(sizeof(kQuantities) / sizeof(kQuantities[0]));
   if (selected < 0 || selected >= nQuantities) {
     selected = 0;
   }
   const std::string var = kQuantities[selected];
+  const int bins = std::max(1, request.histogramBins);
 
   float valueMin = std::numeric_limits<float>::max();
   float valueMax = std::numeric_limits<float>::lowest();
@@ -539,7 +542,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
 
   for (const auto& h : haloes.allHaloes()) {
     float value = h.getHaloValue(var);
-    if (ui.histogramLogScaleX) {
+    if (request.histogramLogScaleX) {
       if (value <= 0.0f) continue;
       value = std::log10(value);
     }
@@ -561,40 +564,40 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
     valueMax = valueMin + 1.0f;
   }
 
-  if (ui.autoRange) {
-    ui.range1_min = valueMin;
-    ui.range1_max = valueMax;
+  if (request.histogramAutoRange) {
+    request.histogramRange1Min = valueMin;
+    request.histogramRange1Max = valueMax;
   }
 
-  TrackingVector<int> binCounts(ui.bins, 0);
-  ui.binSize = (ui.range1_max - ui.range1_min) / ui.bins;
+  TrackingVector<int> binCounts(bins, 0);
+  ui.binSize = (request.histogramRange1Max - request.histogramRange1Min) / bins;
   if (ui.binSize <= 0.0f) {
     ui.binSize = 1.0f;
   }
 
   for (const auto& h : haloes.allHaloes()) {
     float value = h.getHaloValue(var);
-    if (ui.histogramLogScaleX) {
+    if (request.histogramLogScaleX) {
       if (value <= 0.0f) continue;
       value = std::log10(value);
     }
 
-    int bin = static_cast<int>((value - ui.range1_min) / ui.binSize);
+    int bin = static_cast<int>((value - request.histogramRange1Min) / ui.binSize);
     if (bin < 0) bin = 0;
-    if (bin >= ui.bins) bin = ui.bins - 1;
+    if (bin >= bins) bin = bins - 1;
     binCounts[bin]++;
   }
 
   ui.vmin = std::numeric_limits<float>::max();
   ui.vmax = std::numeric_limits<float>::lowest();
-  ui.histBins.resize(ui.bins);
-  ui.binCenters.resize(ui.bins);
+  ui.histBins.resize(bins);
+  ui.binCenters.resize(bins);
 
-  for (int i = 0; i < ui.bins; i++) {
+  for (int i = 0; i < bins; i++) {
     ui.histBins[i] = static_cast<float>(binCounts[i]);
 
     float value = ui.histBins[i];
-    if (ui.histogramLogScaleY) {
+    if (request.histogramLogScaleY) {
       if (value == 0.0f) continue;
       value = std::log10(value);
     }
@@ -606,7 +609,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
   if (ui.vmin == std::numeric_limits<float>::max()) {
     ui.vmin = 0.0f;
     ui.vmax = 1.0f;
-  } else if (ui.histogramLogScaleY) {
+  } else if (request.histogramLogScaleY) {
     ui.vmin = std::floor(ui.vmin);
     ui.vmax = std::ceil(ui.vmax);
     ui.vmin = 0.8f * std::pow(10.0f, ui.vmin);
@@ -618,13 +621,18 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
     ui.vmax = std::ceil(ui.vmax / scale) * scale;
   }
 
-  if (ui.autoRange) {
-    ui.range2_min = ui.vmin;
-    ui.range2_max = ui.vmax;
+  if (request.histogramAutoRange) {
+    request.histogramRange2Min = ui.vmin;
+    request.histogramRange2Max = ui.vmax;
   }
 
-  for (int i = 0; i < ui.bins; i++) {
-    ui.binCenters[i] = ui.range1_min + (i + 0.5f) * ui.binSize;
+  ui.range1_min = request.histogramRange1Min;
+  ui.range1_max = request.histogramRange1Max;
+  ui.range2_min = request.histogramRange2Min;
+  ui.range2_max = request.histogramRange2Max;
+
+  for (int i = 0; i < bins; i++) {
+    ui.binCenters[i] = request.histogramRange1Min + (i + 0.5f) * ui.binSize;
   }
 
   ui.histogramComputed = true;

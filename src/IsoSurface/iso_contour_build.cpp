@@ -7,7 +7,7 @@
 #include "data/particle_array.h"
 #include "core/quantity.h"
 #include "IsoSurface/IsoSurfaceGenerator.h"
-#include "app/app_state.h"
+#include "app/state/app_state.h"
 
 void BuildIsoContourGeometry(ParticleArray& part,
                              QuantityId selectedVar,

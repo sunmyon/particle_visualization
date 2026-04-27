@@ -6,5 +6,5 @@ struct SettingsAnalysisEditState;
 void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
                                            const AnalysisRequestState& requests);
 
-void ApplySettingsAnalysisEditRequests(SettingsAnalysisEditState& edit,
-                                       AnalysisRequestState& requests);
+void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
+                                    AnalysisRequestState& requests);

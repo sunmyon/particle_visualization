@@ -53,6 +53,7 @@ option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
 option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote rendering" ON)
 option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
 option(PARTICLE_VIS_HEADLESS_ONLY "Build particle_vis without GLFW/window support for EGL remote rendering" OFF)
+option(PARTICLE_VIS_BUILD_BATCH "Build GUI-less batch executable" OFF)
 
 if(PARTICLE_VIS_HEADLESS_ONLY)
   set(NONATIVEFILEDIALOG ON CACHE BOOL "Disable native file dialog in headless builds" FORCE)
@@ -121,23 +122,24 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
   ${SRC_DIR}/app/app_frame.cpp
-  ${SRC_DIR}/app/app_input_execution.cpp
-  ${SRC_DIR}/app/app_analysis_dispatch.cpp
-  ${SRC_DIR}/app/app_analysis_execution.cpp
-  ${SRC_DIR}/app/app_clump_window_execution.cpp
+  ${SRC_DIR}/app/execution/input_execution.cpp
+  ${SRC_DIR}/app/execution/analysis_dispatch.cpp
+  ${SRC_DIR}/app/execution/analysis_execution.cpp
+  ${SRC_DIR}/app/execution/clump_window_execution.cpp
+  ${SRC_DIR}/app/execution/clump_batch_execution.cpp
   ${SRC_DIR}/app/app_derived_rebuild.cpp
   ${SRC_DIR}/app/app_render_sync.cpp
-  ${SRC_DIR}/app/app_projection_execution.cpp
+  ${SRC_DIR}/app/execution/projection_execution.cpp
   ${SRC_DIR}/app/settings_analysis_requests.cpp
   ${SRC_DIR}/app/app_snapshot_load.cpp
-  ${SRC_DIR}/app/app_tool_window_dispatch.cpp
-  ${SRC_DIR}/app/app_tool_particle_execution.cpp
-  ${SRC_DIR}/app/app_tool_analysis_execution.cpp
-  ${SRC_DIR}/app/app_tool_projection_execution.cpp
-  ${SRC_DIR}/app/app_tool_filter_execution.cpp
-  ${SRC_DIR}/app/app_tool_halo_execution.cpp
-  ${SRC_DIR}/app/app_tool_clump_execution.cpp
-  ${SRC_DIR}/app/app_tool_window_execution.cpp
+  ${SRC_DIR}/app/execution/tool_particle_execution.cpp
+  ${SRC_DIR}/app/execution/tool_analysis_execution.cpp
+  ${SRC_DIR}/app/execution/tool_projection_execution.cpp
+  ${SRC_DIR}/app/execution/tool_filter_execution.cpp
+  ${SRC_DIR}/app/execution/tool_halo_execution.cpp
+  ${SRC_DIR}/app/execution/tool_clump_execution.cpp
+  ${SRC_DIR}/app/execution/tool_window_execution.cpp
+  ${SRC_DIR}/app/execution/profile_histogram_execution.cpp
   ${SRC_DIR}/app/app_data_actions.cpp
   ${SRC_DIR}/app/app_visibility_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
@@ -174,6 +176,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/FindClumps/find_clumps_loaded_window.cpp
   ${SRC_DIR}/FindClumps/find_clumps_chain_window.cpp
   ${SRC_DIR}/projection/make_2D_projection_map.cpp
+  ${SRC_DIR}/projection/projection_frame_execution.cpp
   ${SRC_DIR}/projection/projection_geometry.cpp
   ${SRC_DIR}/projection/projection_map_context.cpp
   ${SRC_DIR}/image/image_canvas.cpp
@@ -207,7 +210,7 @@ if(VOLUME_RENDERING)
 endif()
 
 if(PYTHON_BRIDGE)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/app/app_python_bridge_execution.cpp)  
+  list(APPEND SOURCES_CPP ${SRC_DIR}/app/execution/python_bridge_execution.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridge.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/BridgeAdapter.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/ShmCommon.cpp)
@@ -998,6 +1001,217 @@ else()
     COMMAND ${CMAKE_COMMAND} -E create_symlink "$<TARGET_FILE:${PROJECT_NAME}>" "${_ROOT_LINK_NAME}"
     COMMENT "Creating symlink to ${PROJECT_NAME} in repo root"
     VERBATIM)
+endif()
+
+function(link_glm_headers_to tgt)
+  if(TARGET glm::glm)
+    target_link_libraries(${tgt} PRIVATE glm::glm)
+  elseif(GLM_PC_FOUND)
+    target_include_directories(${tgt} PRIVATE ${GLM_PC_INCLUDE_DIRS})
+  elseif(GLM_INCLUDE_DIR)
+    target_include_directories(${tgt} PRIVATE ${GLM_INCLUDE_DIR})
+  else()
+    message(FATAL_ERROR "GLM headers not found for target ${tgt}.")
+  endif()
+endfunction()
+
+function(link_hdf5_to tgt)
+  if(NOT HAVE_HDF5)
+    return()
+  endif()
+
+  target_compile_definitions(${tgt} PRIVATE HAVE_HDF5)
+  if(TARGET HDF5::HDF5)
+    target_link_libraries(${tgt} PRIVATE HDF5::HDF5)
+  elseif(HDF5_FOUND)
+    target_include_directories(${tgt} PRIVATE ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(${tgt} PRIVATE ${HDF5_LIBRARIES})
+  elseif(HDF5_PC_FOUND)
+    target_include_directories(${tgt} PRIVATE ${HDF5_PC_INCLUDE_DIRS})
+    target_link_directories(${tgt} PRIVATE ${HDF5_PC_LIBRARY_DIRS})
+    target_link_libraries(${tgt} PRIVATE ${HDF5_PC_LIBRARIES})
+  elseif(HDF5_MANUAL_INCLUDE_DIR AND HDF5_MANUAL_CXX_LIBRARY AND HDF5_MANUAL_C_LIBRARY)
+    target_include_directories(${tgt} PRIVATE ${HDF5_MANUAL_INCLUDE_DIR})
+    target_link_libraries(${tgt} PRIVATE
+      ${HDF5_MANUAL_CXX_LIBRARY}
+      ${HDF5_MANUAL_C_LIBRARY})
+  else()
+    message(FATAL_ERROR "HDF5 was enabled but no link information is available for target ${tgt}.")
+  endif()
+endfunction()
+
+function(link_lua_to tgt)
+  if(NOT USE_LUA)
+    return()
+  endif()
+
+  if(TARGET Lua::Lua)
+    target_compile_definitions(${tgt} PRIVATE USE_LUA)
+    target_link_libraries(${tgt} PRIVATE Lua::Lua)
+  elseif(LUA_FOUND AND LUA_LIBRARIES)
+    target_compile_definitions(${tgt} PRIVATE USE_LUA)
+    if(LUA_INCLUDE_DIR)
+      target_include_directories(${tgt} PRIVATE ${LUA_INCLUDE_DIR})
+    endif()
+    if(LUA_INCLUDE_DIRS)
+      target_include_directories(${tgt} PRIVATE ${LUA_INCLUDE_DIRS})
+    endif()
+    if(LUA_LIBRARY_DIRS)
+      target_link_directories(${tgt} PRIVATE ${LUA_LIBRARY_DIRS})
+    endif()
+    target_link_libraries(${tgt} PRIVATE ${LUA_LIBRARIES})
+  endif()
+endfunction()
+
+function(link_nlohmann_json_to tgt)
+  find_package(nlohmann_json QUIET CONFIG)
+  if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(${tgt} PRIVATE nlohmann_json::nlohmann_json)
+    return()
+  endif()
+
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(NLOHMANN_JSON_PC QUIET nlohmann_json nlohmann-json)
+    if(NLOHMANN_JSON_PC_FOUND)
+      target_include_directories(${tgt} PRIVATE ${NLOHMANN_JSON_PC_INCLUDE_DIRS})
+      return()
+    endif()
+  endif()
+
+  find_path(NLOHMANN_JSON_INCLUDE_DIR
+    NAMES nlohmann/json.hpp
+    HINTS
+      $ENV{NLOHMANN_JSON_INCLUDE_DIR}
+      $ENV{NLOHMANN_JSON_ROOT}
+      $ENV{NLOHMANN_JSON_DIR}
+      $ENV{NLOHMANN_JSON_HOME}
+      ${EXTERNAL_DIR}/include
+      ${EXTERNAL_DIR}
+    PATH_SUFFIXES include)
+  if(NLOHMANN_JSON_INCLUDE_DIR)
+    target_include_directories(${tgt} PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    return()
+  endif()
+
+  message(FATAL_ERROR
+    "nlohmann_json not found for target ${tgt}. Install/load nlohmann_json, "
+    "set CMAKE_PREFIX_PATH, or set NLOHMANN_JSON_INCLUDE_DIR.")
+endfunction()
+
+function(link_eigen_to tgt)
+  if(TARGET Eigen3::Eigen)
+    target_link_libraries(${tgt} PRIVATE Eigen3::Eigen)
+  elseif(EIGEN3_INCLUDE_DIR)
+    target_include_directories(${tgt} PRIVATE ${EIGEN3_INCLUDE_DIR})
+  elseif(EIGEN3_PC_FOUND)
+    target_include_directories(${tgt} PRIVATE ${EIGEN3_PC_INCLUDE_DIRS})
+  else()
+    message(FATAL_ERROR "Eigen3 headers not found for target ${tgt}.")
+  endif()
+endfunction()
+
+if(PARTICLE_VIS_BUILD_BATCH)
+  set(PARTICLE_VIS_BATCH_SOURCES
+    ${CMAKE_SOURCE_DIR}/tools/particle_vis_batch/main.cpp
+    ${SRC_DIR}/app/app_services.cpp
+    ${SRC_DIR}/app/app_snapshot_load.cpp
+    ${SRC_DIR}/app/execution/profile_histogram_execution.cpp
+    ${SRC_DIR}/app/execution/projection_execution.cpp
+    ${SRC_DIR}/compute_2D_histogram.cpp
+    ${SRC_DIR}/compute_radial_profile.cpp
+    ${SRC_DIR}/config/config_apply.cpp
+    ${SRC_DIR}/config/config_io.cpp
+    ${SRC_DIR}/config/config_validation.cpp
+    ${SRC_DIR}/data/particle_array.cpp
+    ${SRC_DIR}/data/particle_block.cpp
+    ${SRC_DIR}/data/particle_block_validation.cpp
+    ${SRC_DIR}/data/quantity_catalog_builder.cpp
+    ${SRC_DIR}/FileIO/hdf5_reader.cpp
+    ${SRC_DIR}/FileIO/snapshot_io_service.cpp
+    ${SRC_DIR}/FileIO/snapshot_loader.cpp
+    ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp
+    ${SRC_DIR}/image/bitmap_font_renderer.cpp
+    ${SRC_DIR}/image/image_canvas.cpp
+    ${SRC_DIR}/image/image_io.cpp
+    ${SRC_DIR}/interaction/interaction_utils.cpp
+    ${SRC_DIR}/platform/shell_utils.cpp
+    ${SRC_DIR}/projection/make_2D_projection_map.cpp
+    ${SRC_DIR}/projection/projection_frame_execution.cpp
+    ${SRC_DIR}/projection/projection_geometry.cpp
+    ${SRC_DIR}/projection/projection_map_context.cpp
+    ${SRC_DIR}/render/colormap_defs.cpp
+  )
+
+  if(GEOMETRICAL_ANALYSIS)
+    list(APPEND PARTICLE_VIS_BATCH_SOURCES
+      ${SRC_DIR}/app/execution/analysis_execution.cpp
+      ${SRC_DIR}/app/app_data_actions.cpp
+      ${SRC_DIR}/app/app_visibility_actions.cpp
+      ${SRC_DIR}/data/clump_loader.cpp
+      ${SRC_DIR}/data/halo_store.cpp
+      ${SRC_DIR}/GeometricAnalysis/ellipse_fitter.cpp
+    )
+  endif()
+
+  if(CLUMP_DATA_READ)
+    list(APPEND PARTICLE_VIS_BATCH_SOURCES
+      ${SRC_DIR}/app/execution/clump_batch_execution.cpp
+      ${SRC_DIR}/FindClumps/find_clumps.cpp
+      ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
+      ${SRC_DIR}/FindClumps/clump_chain.cpp
+      ${SRC_DIR}/data/clump_loader.cpp
+    )
+  endif()
+
+  list(REMOVE_DUPLICATES PARTICLE_VIS_BATCH_SOURCES)
+
+  add_executable(particle_vis_batch ${PARTICLE_VIS_BATCH_SOURCES})
+
+  target_include_directories(particle_vis_batch PRIVATE
+    ${SRC_DIR}
+  )
+
+  target_include_directories(particle_vis_batch SYSTEM PRIVATE
+    ${EXTERNAL_DIR}/imgui
+    ${EXTERNAL_DIR}/implot
+    ${EXTERNAL_DIR}/glad/include
+    ${EXTERNAL_DIR}/include
+    ${EXTERNAL_DIR}
+  )
+
+  link_glm_headers_to(particle_vis_batch)
+  link_hdf5_to(particle_vis_batch)
+  link_lua_to(particle_vis_batch)
+  link_nlohmann_json_to(particle_vis_batch)
+  if(GEOMETRICAL_ANALYSIS)
+    link_eigen_to(particle_vis_batch)
+  endif()
+
+  if(USE_MMAP)
+    target_compile_definitions(particle_vis_batch PRIVATE USE_MMAP)
+  endif()
+  if(ROTATE_QUATERNION)
+    target_compile_definitions(particle_vis_batch PRIVATE ROTATE_QUATERNION)
+  endif()
+  if(ROTATE_ARCBALL)
+    target_compile_definitions(particle_vis_batch PRIVATE ROTATE_ARCBALL)
+  endif()
+  if(GEOMETRICAL_ANALYSIS)
+    target_compile_definitions(particle_vis_batch PRIVATE GEOMETRICAL_ANALYSIS)
+  endif()
+  if(CLUMP_DATA_READ)
+    target_compile_definitions(particle_vis_batch PRIVATE CLUMP_DATA_READ)
+  endif()
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(particle_vis_batch PRIVATE OpenMP::OpenMP_CXX)
+  elseif(NOT MSVC AND NOT APPLE)
+    target_compile_options(particle_vis_batch PRIVATE -fopenmp)
+    target_link_libraries(particle_vis_batch PRIVATE gomp)
+  endif()
+
+  if(NOT MSVC)
+    target_compile_options(particle_vis_batch PRIVATE -Wall -Wextra)
+  endif()
 endif()
 
 if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/tool_window_state.h"
-#include "app/window_commands.h"
+#include "app/state/tool_window_state.h"
+#include "app/state/window_commands.h"
 
 inline void SetToolWindowOpen(ToolWindowUIState& windows,
                               WindowId id,

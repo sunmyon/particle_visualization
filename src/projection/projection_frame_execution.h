@@ -1,0 +1,40 @@
+#pragma once
+
+#include "core/units.h"
+#include "image/rgb_image.h"
+#include "projection/projection_map_params.h"
+
+#include <string>
+
+class ParticleArray;
+class ProjectionMapGenerator;
+
+struct ProjectionFrameExecutionContext {
+  ParticleArray& particles;
+  ProjectionMapGenerator& generator;
+  const UnitSystem& units;
+  double scaleToPhysical = 1.0;
+};
+
+struct ProjectionFrameOutputOptions {
+  std::string path;
+  bool writeFile = true;
+  bool keepImage = true;
+};
+
+struct ProjectionFrameResult {
+  bool ok = false;
+  std::string error;
+  std::string warning;
+  std::string outputPath;
+  RgbImage image;
+};
+
+std::string ResolveProjectionMapOutputPath(const ProjectionMapParams& params,
+                                           int currentFileIndex,
+                                           std::string* warning = nullptr);
+
+ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& projection,
+                                             ProjectionMapParams params,
+                                             double time,
+                                             ProjectionFrameOutputOptions output);
