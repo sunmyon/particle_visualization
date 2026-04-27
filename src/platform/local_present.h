@@ -1,6 +1,7 @@
 #pragma once
 
 class WindowContext;
+class OpenGLContext;
 
 #include "render/rendered_frame.h"
 
@@ -21,13 +22,15 @@ public:
 
 class LocalFramePresenter final : public IFramePresenter {
 public:
-  explicit LocalFramePresenter(WindowContext& window);
+  LocalFramePresenter(WindowContext& window, OpenGLContext& graphics);
 
   PresentResult present(const PresentOptions& options = {}) override;
 
 private:
   WindowContext* window_ = nullptr;
+  OpenGLContext* graphics_ = nullptr;
 };
 
 PresentResult PresentLocalFrame(WindowContext& window,
+                                OpenGLContext& graphics,
                                 const PresentOptions& options = {});

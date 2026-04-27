@@ -17,8 +17,10 @@ struct RemoteFramePresenter::Impl {};
 #endif
 
 RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
+                                           OpenGLContext& graphics,
                                            const std::string& endpoint)
   : window_(&window)
+  , graphics_(&graphics)
   , endpoint_(endpoint)
   , impl_(std::make_unique<Impl>())
 {
@@ -47,7 +49,9 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   localOptions.readbackFrame = true;
 
   PresentResult result =
-    window_ ? PresentLocalFrame(*window_, localOptions) : PresentResult{};
+    (window_ && graphics_)
+      ? PresentLocalFrame(*window_, *graphics_, localOptions)
+      : PresentResult{};
 
   if (!active_ || !result.frame.valid()) {
     return result;

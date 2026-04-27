@@ -9,21 +9,21 @@ struct ProjectionPreviewDerivedState;
 struct RenderRuntimeState;
 struct RenderSystem;
 
-struct ParticleRenderUploadResult {
-  bool particlesUploaded = false;
-  bool velocityUploaded = false;
+struct ParticleRenderBuildResult {
+  bool particlesBuilt = false;
+  bool velocityBuilt = false;
 };
 
 ParticleRenderInput MakeParticleRenderInput(const ParticleArray& particles);
 
-ParticleRenderUploadResult UpdateRenderResources(const ParticleRenderInput& particleInput,
-                                                 const ParticleVisualConfig& particleVisual,
-                                                 RenderRuntimeState& render,
-                                                 const AppDerivedState& derived,
-                                                 RenderSystem& rs);
+ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& particleInput,
+                                                const ParticleVisualConfig& particleVisual,
+                                                RenderRuntimeState& render,
+                                                const AppDerivedState& derived,
+                                                RenderSystem& rs);
 
-void AcknowledgeParticleRenderUploads(ParticleArray& particles,
-                                      const ParticleRenderUploadResult& result);
+void AcknowledgeParticleRenderBuild(ParticleArray& particles,
+                                    const ParticleRenderBuildResult& result);
 
 void UpdateProjectionPreviewTexture(ProjectionPreviewDerivedState& source,
                                     RenderSystem& render);

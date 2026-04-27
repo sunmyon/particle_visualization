@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include "implot.h"
+#include "window_context.h"
 
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include <imgui_impl_glfw.h>
@@ -13,12 +14,19 @@ namespace {
 bool g_useGlfwBackend = false;
 }
 
-void InitImGuiContext(GLFWwindow* window)
+void InitImGuiContext(WindowContext& window)
 {
 #ifdef PARTICLE_VIS_HEADLESS_ONLY
   (void)window;
   InitHeadlessImGuiContext(1280, 720);
 #else
+  auto* nativeWindow = static_cast<GLFWwindow*>(window.nativeWindowHandle());
+  if (!nativeWindow) {
+    InitHeadlessImGuiContext(window.framebufferWidth(),
+                             window.framebufferHeight());
+    return;
+  }
+
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
 
@@ -30,7 +38,7 @@ void InitImGuiContext(GLFWwindow* window)
 
   io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
-  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplGlfw_InitForOpenGL(nativeWindow, true);
   ImGui_ImplOpenGL3_Init("#version 330");
   g_useGlfwBackend = true;
 #endif

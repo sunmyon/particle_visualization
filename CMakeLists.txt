@@ -117,6 +117,9 @@ set(SOURCES_CPP
   ${SRC_DIR}/particle_label_overlay.cpp
   ${SRC_DIR}/projection_preview_gl.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
+  ${SRC_DIR}/platform/glfw_window.cpp
+  ${SRC_DIR}/platform/viewport_context.cpp
+  ${SRC_DIR}/platform/opengl_context.cpp
   ${SRC_DIR}/platform/local_present.cpp
   ${SRC_DIR}/app/app_services.cpp  
   ${SRC_DIR}/app/app_callbacks.cpp
@@ -144,8 +147,10 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_visibility_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
+  ${SRC_DIR}/render/render_system.cpp
   ${SRC_DIR}/render/render_programs.cpp
   ${SRC_DIR}/render/render_frame.cpp
+  ${SRC_DIR}/render/opengl_render_backend.cpp
   ${SRC_DIR}/render/shader_utils.cpp
   ${SRC_DIR}/render/shader_sources.cpp
   ${SRC_DIR}/render/field_renderer.cpp

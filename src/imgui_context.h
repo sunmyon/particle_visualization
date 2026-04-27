@@ -1,8 +1,8 @@
 #pragma once
 
-struct GLFWwindow;
+class WindowContext;
 
-void InitImGuiContext(GLFWwindow* window);
+void InitImGuiContext(WindowContext& window);
 void InitHeadlessImGuiContext(int width, int height);
 void BeginImGuiFrame(int width, int height);
 void EndImGuiFrame();

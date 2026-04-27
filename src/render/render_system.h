@@ -1,14 +1,11 @@
 #pragma once
 
-#include "render/render_programs.h"
+#include <memory>
+
+#include "render/render_backend.h"
 #include "render/render_resources.h"
 #include "render/frame_matrices.h"
 #include "render/render_viewport.h"
-#include "render/particle_renderer.h"
-#include "render/object_renderer.h"
-#include "render/gizmo_renderer.h"
-#include "render/field_renderer.h"
-#include "projection_preview_gl.h"
 
 #include "app/state/overlay_state.h"
 #include "app/state/render_runtime_state.h"
@@ -26,27 +23,11 @@ struct RenderFrameState {
 };
 
 struct RenderSystem {
-  RenderPrograms programs;
-  RenderResources resources;
+  RenderSceneData scene;
+  RenderSceneBuildState build;
   RenderFrameState frame;
-
-  ParticleRenderer particle;
-  VelocityFieldRenderer velocity;
-
-  EllipsoidRenderer ellipsoid;
-  DiskRenderer disk;
-  CubeRenderer cube;
-  CuboidRenderer cuboid;
-  LineRenderer line;
-  PolyhedronRenderer polyhedron;
-#ifdef ISO_CONTOUR
-  IsoContourRenderer isocontour;
-#endif
-
-  CrossGizmoRenderer crossGizmo;
-  CoordAxesRenderer coordAxes;
-  ColorbarRenderer colorbar;
-  ColorbarLabelRenderer colorbarLabels;
-
-  ProjectionPreviewGL preview;
+  std::unique_ptr<RenderBackend> backend;
 };
+
+void InitRenderSystem(RenderSystem& rs);
+void DestroyRenderSystem(RenderSystem& rs);

@@ -5,63 +5,7 @@
 #include "particle_visual_config.h"
 #include "app/state/runtime_state.h"
 #include "render_resources.h"
-#include "particle_renderer.h"
-#include "object_renderer.h"
-#include "field_renderer.h"
-#include "colormap_defs.h"
 #include "object.h"
-#include "render_system.h"
-
-void InitRenderSystem(RenderSystem& rs)
-{
-  rs.particle.init();
-  rs.velocity.init();
-
-  rs.ellipsoid.init();
-  rs.disk.init();
-  rs.line.init();
-  rs.cube.init();
-  rs.cuboid.init();
-  rs.polyhedron.clearGpuCache(); // init不要なら不要
-
-#ifdef ISO_CONTOUR
-  // rs.isocontour.init(); // 必要なら
-#endif
-
-  rs.crossGizmo.init();
-  rs.coordAxes.init();
-
-  std::vector<ColormapDefView> cmapViews;
-  cmapViews.reserve(gNumColormaps);
-  for (int i = 0; i < gNumColormaps; ++i) {
-    cmapViews.push_back({gColormapDefs[i].data, gColormapDefs[i].count});
-  }
-
-  rs.colorbar.init();
-  rs.colorbar.initColorMaps(cmapViews.data(),
-                            static_cast<int>(cmapViews.size()));
-}
-
-void DestroyRenderSystem(RenderSystem& rs)
-{
-  rs.crossGizmo.destroy();
-  rs.coordAxes.destroy();
-  rs.velocity.destroy();
-  rs.particle.destroy();
-
-  rs.ellipsoid.destroy();
-  rs.disk.destroy();
-  rs.line.destroy();
-  rs.cube.destroy();
-  rs.cuboid.destroy();
-  rs.colorbar.destroy();
-  rs.polyhedron.clearGpuCache();
-
-#ifdef ISO_CONTOUR
-  rs.isocontour.destroy();
-#endif
-}
-
 
 void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,

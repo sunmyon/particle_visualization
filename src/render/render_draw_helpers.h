@@ -1,43 +1,30 @@
 #pragma once
 
+#include <cstdint>
+
 #include "render/object_renderer.h"
 #include "render/render_resources.h"
 #include "app/state/runtime_state.h"
 
-template<typename BuildFunc, typename ManagerT, typename RenderDataT>
-inline void RebuildIfNeeded(bool& cpuUpdated,
-                            bool& gpuDirty,
-                            BuildFunc buildFunc,
-                            const ManagerT& manager,
-                            const RenderLayerState& runtime,
-                            RenderDataT& out)
-{
-  if (!cpuUpdated) return;
-  buildFunc(manager, runtime, out);
-  cpuUpdated = false;
-  gpuDirty = true;
-}
-
 template<typename RendererT, typename RenderDataT>
-inline void SyncIfNeeded(RendererT& renderer,
-                         RenderDataT& data,
-                         bool& gpuDirty)
+inline void SyncIfVersionChanged(RendererT& renderer,
+                                 const RenderDataT& data,
+                                 std::uint64_t dataVersion,
+                                 std::uint64_t& uploadedVersion)
 {
-  if (!gpuDirty) return;
+  if (uploadedVersion == dataVersion) return;
   renderer.sync(data);
-  gpuDirty = false;
+  uploadedVersion = dataVersion;
 }
 
 template<typename RendererT, typename RenderDataT>
 inline void SyncAndDraw(RendererT& renderer,
-                        RenderDataT& data,
-                        bool& gpuDirty,
+                        const RenderDataT& data,
+                        std::uint64_t dataVersion,
+                        std::uint64_t& uploadedVersion,
                         const RenderDrawContext& ctx,
                         const RenderLayerState& runtime)
 {
-  if (gpuDirty) {
-    renderer.sync(data);
-    gpuDirty = false;
-  }
+  SyncIfVersionChanged(renderer, data, dataVersion, uploadedVersion);
   renderer.draw(ctx, runtime);
 }

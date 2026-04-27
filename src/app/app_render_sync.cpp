@@ -21,107 +21,107 @@ static void PropagateDirtyFlags(const ParticleRenderInput& input,
                                 RenderSystem& rs)
 {
   if (input.particlesDirty) {
-    rs.resources.particleRenderDataDirty = true;
+    rs.build.particlesDirty = true;
   }
 
   if (input.velocityDirty) {
-    rs.resources.velocityInstanceDataDirty = true;
+    rs.build.velocityInstancesDirty = true;
   }
 }
 
-static ParticleRenderUploadResult UpdateParticleRenderResources(const ParticleRenderInput& input,
-                                                                const ParticleVisualConfig& particleVisual,
-                                                                const VelocityRenderState& velocityState,
-                                                                RenderSystem& rs)
+static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRenderInput& input,
+                                                               const ParticleVisualConfig& particleVisual,
+                                                               const VelocityRenderState& velocityState,
+                                                               RenderSystem& rs)
 {
-  ParticleRenderUploadResult result;
+  ParticleRenderBuildResult result;
 
-  if (rs.resources.particleRenderDataDirty) {
+  if (rs.build.particlesDirty) {
     BuildRenderParticles(input,
                          particleVisual,
-                         rs.resources.renderParticles);
-    rs.resources.particleRenderDataDirty = false;
-    rs.resources.particlesGpuDirty = true;
-    result.particlesUploaded = true;
+                         rs.scene.particles);
+    rs.build.particlesDirty = false;
+    ++rs.scene.particlesVersion;
+    result.particlesBuilt = true;
   }
 
-  if (rs.resources.velocityInstanceDataDirty) {
+  if (rs.build.velocityInstancesDirty) {
     UpdateVelocityRenderData(input,
                              velocityState.subtraction,
-                             rs.resources.velocityInstanceData);
-    rs.resources.velocityInstanceDataDirty = false;
-    rs.resources.velocityGpuDirty = true;
-    result.velocityUploaded = true;
+                             rs.scene.velocityInstances);
+    rs.build.velocityInstancesDirty = false;
+    ++rs.scene.velocityVersion;
+    result.velocityBuilt = true;
   }
 
   return result;
 }
 
-void AcknowledgeParticleRenderUploads(ParticleArray& particles,
-                                      const ParticleRenderUploadResult& result)
+void AcknowledgeParticleRenderBuild(ParticleArray& particles,
+                                    const ParticleRenderBuildResult& result)
 {
-  if (result.particlesUploaded) {
+  if (result.particlesBuilt) {
     particles.particlesDirty = false;
   }
 
-  if (result.velocityUploaded) {
+  if (result.velocityBuilt) {
     particles.velocityDirty = false;
   }
 }
 
-static void UpdateSceneRenderResources(const SceneManagers& scene,
-				       RenderRuntimeState& render,
-				       RenderSystem& rs)
+static void UpdateObjectRenderSceneData(const SceneManagers& scene,
+					RenderRuntimeState& render,
+					RenderSystem& rs)
 {
-  if (render.cubes.cpuUpdated || rs.resources.cubeRenderDataDirty) {
-    BuildCubeRenderData(scene.cube, rs.resources.cubeRenderData);
+  if (render.cubes.cpuUpdated || rs.build.cubesDirty) {
+    BuildCubeRenderData(scene.cube, rs.scene.cubes);
     render.cubes.cpuUpdated = false;
-    rs.resources.cubeRenderDataDirty = false;
-    rs.resources.cubesGpuDirty = true;
+    rs.build.cubesDirty = false;
+    ++rs.scene.cubesVersion;
   }
 
-  if (render.ellipsoids.cpuUpdated || rs.resources.ellipsoidRenderDataDirty) {
+  if (render.ellipsoids.cpuUpdated || rs.build.ellipsoidsDirty) {
     BuildEllipsoidRenderData(scene.ellipsoid,
-                             rs.resources.ellipsoidRenderData);
+                             rs.scene.ellipsoids);
     render.ellipsoids.cpuUpdated = false;
-    rs.resources.ellipsoidRenderDataDirty = false;
-    rs.resources.ellipsoidsGpuDirty = true;
+    rs.build.ellipsoidsDirty = false;
+    ++rs.scene.ellipsoidsVersion;
   }
 
-  if (render.disks.cpuUpdated || rs.resources.diskRenderDataDirty) {
+  if (render.disks.cpuUpdated || rs.build.disksDirty) {
     BuildDiskRenderData(scene.disk,
-                        rs.resources.diskRenderData);
+                        rs.scene.disks);
     render.disks.cpuUpdated = false;
-    rs.resources.diskRenderDataDirty = false;
-    rs.resources.disksGpuDirty = true;
+    rs.build.disksDirty = false;
+    ++rs.scene.disksVersion;
   }
 }
 
-static void UpdateLineRenderResources(const SceneManagers& scene,
+static void UpdateLineRenderSceneData(const SceneManagers& scene,
                                       RenderRuntimeState& render,
                                       RenderSystem& rs)
 {
   if (!render.lines.cpuUpdated &&
       !render.cuboidAnnotations.gpuUpdated &&
-      !rs.resources.lineRenderDataDirty) {
+      !rs.build.linesDirty) {
     return;
   }
 
   BuildLineRenderData(scene.line,
-                      rs.resources.lineRenderData);
+                      rs.scene.lines);
 
   if (render.cuboidAnnotations.show) {
     AppendCuboidArrowRenderData(scene.cuboidAnnotation,
-                                rs.resources.lineRenderData);
+                                rs.scene.lines);
   }
 
   render.lines.cpuUpdated = false;
-  rs.resources.lineRenderDataDirty = false;
-  rs.resources.linesGpuDirty = true;
+  rs.build.linesDirty = false;
+  ++rs.scene.linesVersion;
 }
 
 #ifdef ISO_CONTOUR
-static void UpdateIsoContourRenderResources(const IsoContourGeometryState& isoContour,
+static void UpdateIsoContourRenderSceneData(const IsoContourGeometryState& isoContour,
                                             RenderRuntimeState& render,
                                             RenderSystem& rs)
 {
@@ -131,9 +131,9 @@ static void UpdateIsoContourRenderResources(const IsoContourGeometryState& isoCo
 
   BuildIsoContourRenderData(isoContour.verts,
                             isoContour.inds,
-                            rs.resources.isoContourRenderData);
+                            rs.scene.isoContour);
   render.isocontour.cpuUpdated = false;
-  rs.resources.isoContourGpuDirty = true;
+  ++rs.scene.isoContourVersion;
 }
 #endif
 
@@ -147,56 +147,55 @@ static void UpdateConvexHullRenderState(RenderLayerState& polyhedraState,
   }
 
   BuildPolyhedronRenderData(polyhedra,
-                            rs.resources.polyhedronRenderData);
+                            rs.scene.polyhedra);
 
   polyhedraState.gpuUpdated = false;
-  rs.resources.polyhedraGpuDirty = true;
-  rs.polyhedron.requestResetGroup("convex_hull");
+  ++rs.scene.polyhedraVersion;
 }
 #endif
 
-static void UpdateCuboidAnnotationRenderResources(RenderLayerState& annotationState,
+static void UpdateCuboidAnnotationRenderSceneData(RenderLayerState& annotationState,
 						  const CuboidAnnotationManager& annotations,
 						  RenderSystem& rs)
 {
-  if (!annotationState.gpuUpdated && !rs.resources.cuboidRenderDataDirty) {
+  if (!annotationState.gpuUpdated && !rs.build.cuboidsDirty) {
     return;
   }
 
-  rs.resources.cuboidRenderData.clear();
+  rs.scene.cuboids.clear();
 
   AppendCuboidAnnotationRenderData(annotations,
-				   rs.resources.cuboidRenderData);
-  rs.resources.cuboidsGpuDirty = true;
+				   rs.scene.cuboids);
 
   annotationState.gpuUpdated = false;
-  rs.resources.cuboidRenderDataDirty = false;
+  rs.build.cuboidsDirty = false;
+  ++rs.scene.cuboidsVersion;
 }
 
-ParticleRenderUploadResult UpdateRenderResources(const ParticleRenderInput& particleInput,
-                                                 const ParticleVisualConfig& particleVisual,
-                                                 RenderRuntimeState& render,
-                                                 const AppDerivedState& derived,
-                                                 RenderSystem& rs)
+ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& particleInput,
+                                                const ParticleVisualConfig& particleVisual,
+                                                RenderRuntimeState& render,
+                                                const AppDerivedState& derived,
+                                                RenderSystem& rs)
 {
   PropagateDirtyFlags(particleInput, rs);
 
-  ParticleRenderUploadResult uploadResult =
-    UpdateParticleRenderResources(particleInput,
+  ParticleRenderBuildResult buildResult =
+    UpdateParticleRenderSceneData(particleInput,
                                   particleVisual,
                                   render.velocity,
                                   rs);
 
-  UpdateSceneRenderResources(derived.scene,
-                             render,
-                             rs);
+  UpdateObjectRenderSceneData(derived.scene,
+                              render,
+                              rs);
 
-  UpdateLineRenderResources(derived.scene,
+  UpdateLineRenderSceneData(derived.scene,
                             render,
                             rs);
 
 #ifdef ISO_CONTOUR
-  UpdateIsoContourRenderResources(derived.analysis.isoContour,
+  UpdateIsoContourRenderSceneData(derived.analysis.isoContour,
                                   render,
                                   rs);
 #endif
@@ -207,11 +206,11 @@ ParticleRenderUploadResult UpdateRenderResources(const ParticleRenderInput& part
                               rs);
 #endif
 
-  UpdateCuboidAnnotationRenderResources(render.cuboidAnnotations,
+  UpdateCuboidAnnotationRenderSceneData(render.cuboidAnnotations,
                                         derived.scene.cuboidAnnotation,
                                         rs);
 
-  return uploadResult;
+  return buildResult;
 }
 
 void UpdateProjectionPreviewTexture(ProjectionPreviewDerivedState& source,
@@ -225,6 +224,8 @@ void UpdateProjectionPreviewTexture(ProjectionPreviewDerivedState& source,
     return;
   }
 
-  render.preview.update(source.image);
+  if (render.backend) {
+    render.backend->updateProjectionPreview(source.image);
+  }
   source.computed = false;
 }

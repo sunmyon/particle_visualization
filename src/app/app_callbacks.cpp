@@ -1,15 +1,18 @@
 #include "app_callbacks.h"
+
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include "app/state/app_state.h"
 #include "window_context.h"
-
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 #include <imgui.h>
+
+namespace {
 
 CallbackContext* GetCallbackContext(GLFWwindow* window)
 {
   return static_cast<CallbackContext*>(glfwGetWindowUserPointer(window));
 }
-
-namespace {
 
 InputModifiers ReadModifiers(GLFWwindow* window)
 {
@@ -64,7 +67,7 @@ InputAction MapAction(int action)
 
 } // namespace
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+static void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
   CallbackContext* ctx = GetCallbackContext(window);
   if (!ctx || !ctx->window)
@@ -82,7 +85,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
   }
 }
 
-void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+static void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
   CallbackContext* ctx = GetCallbackContext(window);
   if (!ctx || !ctx->app || !ctx->window)
@@ -103,7 +106,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
   app.runtime.inputEvents.push(event);
 }
 
-void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffset)
+static void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffset)
 {
   CallbackContext* ctx = GetCallbackContext(window);
   if (!ctx || !ctx->app || !ctx->window)
@@ -120,11 +123,11 @@ void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffset)
   app.runtime.inputEvents.push(event);
 }
 
-void key_callback(GLFWwindow* window,
-                  int key,
-                  int /*scancode*/,
-                  int action,
-                  int /*mods*/)
+static void key_callback(GLFWwindow* window,
+                         int key,
+                         int /*scancode*/,
+                         int action,
+                         int /*mods*/)
 {
   CallbackContext* ctx = GetCallbackContext(window);
   if (!ctx || !ctx->app || !ctx->window)
@@ -139,3 +142,24 @@ void key_callback(GLFWwindow* window,
   event.viewport = MakeViewport(*ctx->window);
   ctx->app->runtime.inputEvents.push(event);
 }
+
+void AttachAppCallbacks(WindowContext& window, CallbackContext& callbackCtx)
+{
+  auto* handle = static_cast<GLFWwindow*>(window.nativeWindowHandle());
+  if (!handle) {
+    return;
+  }
+
+  glfwSetWindowUserPointer(handle, &callbackCtx);
+  glfwSetCursorPosCallback(handle, mouse_callback);
+  glfwSetScrollCallback(handle, scroll_callback);
+  glfwSetKeyCallback(handle, key_callback);
+  glfwSetFramebufferSizeCallback(handle, framebuffer_size_callback);
+}
+#else
+void AttachAppCallbacks(WindowContext& window, CallbackContext& callbackCtx)
+{
+  (void)window;
+  (void)callbackCtx;
+}
+#endif

@@ -11,6 +11,7 @@
 #include "config/config_validation.h"
 
 #include "render/render_system.h"
+#include "platform/opengl_context.h"
 #include "window_context.h"
 
 #include <iostream>
@@ -49,6 +50,7 @@
 #endif
 
 bool InitPlatform(WindowContext& window,
+		  OpenGLContext& graphics,
 		  CallbackContext& callbackCtx,
 		  AppState& app)
 {
@@ -62,11 +64,29 @@ bool InitPlatform(WindowContext& window,
   const bool allowHeadless = !headlessEnv || std::string(headlessEnv) != "0";
   if (remoteMode && allowHeadless) {
     initialized = window.initHeadless(1280, 720);
+    if (initialized) {
+      initialized = graphics.initHeadless(window.framebufferWidth(),
+                                          window.framebufferHeight());
+    }
   }
 #endif
 
   if (!initialized) {
-    initialized = window.init(1280, 720, "3D Particle Visualization");
+    initialized =
+      window.init(1280,
+                  720,
+                  "3D Particle Visualization",
+                  [&graphics]() {
+                    graphics.configureGlfwWindowHints();
+                  });
+    if (initialized) {
+      if (window.hasWindow()) {
+        initialized = graphics.initFromGlfwWindow(window.nativeWindowHandle());
+      } else {
+        initialized = graphics.initHeadless(window.framebufferWidth(),
+                                            window.framebufferHeight());
+      }
+    }
   }
 
   if (!initialized) {
@@ -77,15 +97,9 @@ bool InitPlatform(WindowContext& window,
   callbackCtx.window = &window;
 
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
-  if (window.handle()) {
-    glfwSetWindowUserPointer(window.handle(), &callbackCtx);
-
-    window.attachCallbacks(mouse_callback,
-                           scroll_callback,
-                           key_callback,
-                           framebuffer_size_callback);
-
-    InitImGuiContext(window.handle());
+  if (window.hasWindow()) {
+    AttachAppCallbacks(window, callbackCtx);
+    InitImGuiContext(window);
   } else {
 #endif
     InitHeadlessImGuiContext(window.framebufferWidth(),
@@ -124,7 +138,6 @@ static void InitAppServices(AppServices& services)
 
 void InitApplication(AppState& app, RenderSystem& render)
 {
-  InitRenderPrograms(render.programs);
   InitAppServices(app.services);
 
   app.data.particles = new ParticleArray();
@@ -165,7 +178,10 @@ void LoadInitialData(AppState& app)
   ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
 }
 
-void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
+void Cleanup(AppState& app,
+             RenderSystem& rs,
+             OpenGLContext& graphics,
+             WindowContext& window)
 {
 #ifdef PYTHON_BRIDGE
   if (app.services.py.ptr) {
@@ -175,7 +191,6 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
 #endif
 
   DestroyRenderSystem(rs);
-  DestroyRenderPrograms(rs.programs);
 
   const ConfigData config =
     ExtractConfigData(app.runtime.settings.fileNavigation,
@@ -190,8 +205,8 @@ void Cleanup(AppState& app, RenderSystem& rs, WindowContext& window)
   NFD_Quit();
 #endif
 
-  rs.preview.destroy();
   ShutdownImGuiContext();
+  graphics.destroy();
   window.destroy();
 
   delete app.data.particles;

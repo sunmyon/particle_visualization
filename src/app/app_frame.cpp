@@ -2,7 +2,6 @@
 
 #include <vector>
 
-#include <glad/glad.h>
 #include <imgui.h>
 
 #include "app/state/app_state.h"
@@ -33,6 +32,7 @@
 #include "window_context.h"
 
 #include "FindClumps/find_clumps_ui.h"
+#include "projection/projection_map_ui_state.h"
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/BridgeAdapter.h"
@@ -416,7 +416,8 @@ void RunFrame(AppState& app,
 
   UpdateProjectionPreviewTexture(app.derived.analysis.projectionPreview, render);
   const ProjectionPreviewUIState projectionPreviewUI =
-    render.preview.makeUIState();
+    render.backend ? render.backend->makeProjectionPreviewUIState()
+                   : ProjectionPreviewUIState{};
 
   DrawToolWindows(app.runtime,
                   app.ui.toolWindows,
@@ -457,13 +458,13 @@ void RunFrame(AppState& app,
   
   const ParticleRenderInput particleRenderInput =
     MakeParticleRenderInput(*app.data.particles);
-  const ParticleRenderUploadResult uploadResult =
-    UpdateRenderResources(particleRenderInput,
+  const ParticleRenderBuildResult buildResult =
+    UpdateRenderSceneData(particleRenderInput,
                           app.runtime.particleVisual,
                           app.runtime.render,
                           app.derived,
                           render);
-  AcknowledgeParticleRenderUploads(*app.data.particles, uploadResult);
+  AcknowledgeParticleRenderBuild(*app.data.particles, buildResult);
 
   const RenderViewport renderViewport = MakeRenderViewport(window);
   UpdateRenderFrameInput(app.renderFrameInput,

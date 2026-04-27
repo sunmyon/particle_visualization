@@ -5,11 +5,13 @@
 #include <glad/glad.h>
 
 #include "imgui_context.h"
+#include "platform/opengl_context.h"
 #include "window_context.h"
 
 namespace {
 
-RenderedFrame ReadBackDefaultFramebuffer(const WindowContext& window)
+RenderedFrame ReadBackDefaultFramebuffer(const WindowContext& window,
+                                         const OpenGLContext& graphics)
 {
   RenderedFrame frame;
   frame.width = window.framebufferWidth();
@@ -25,7 +27,7 @@ RenderedFrame ReadBackDefaultFramebuffer(const WindowContext& window)
   GLint prevPackAlignment = 4;
   glGetIntegerv(GL_PACK_ALIGNMENT, &prevPackAlignment);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadBuffer(window.readBufferMode());
+  glReadBuffer(graphics.isHeadless() ? GL_FRONT : GL_BACK);
   glReadPixels(0,
                0,
                frame.width,
@@ -52,29 +54,32 @@ RenderedFrame ReadBackDefaultFramebuffer(const WindowContext& window)
 } // namespace
 
 PresentResult PresentLocalFrame(WindowContext& window,
+                                OpenGLContext& graphics,
                                 const PresentOptions& options)
 {
   EndImGuiFrame();
 
   PresentResult result;
   if (options.readbackFrame) {
-    result.frame = ReadBackDefaultFramebuffer(window);
+    result.frame = ReadBackDefaultFramebuffer(window, graphics);
   }
 
-  window.present();
+  graphics.present(window.nativeWindowHandle());
   result.presented = true;
   return result;
 }
 
-LocalFramePresenter::LocalFramePresenter(WindowContext& window)
+LocalFramePresenter::LocalFramePresenter(WindowContext& window,
+                                         OpenGLContext& graphics)
   : window_(&window)
+  , graphics_(&graphics)
 {
 }
 
 PresentResult LocalFramePresenter::present(const PresentOptions& options)
 {
-  if (!window_) {
+  if (!window_ || !graphics_) {
     return PresentResult{};
   }
-  return PresentLocalFrame(*window_, options);
+  return PresentLocalFrame(*window_, *graphics_, options);
 }

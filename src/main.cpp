@@ -6,34 +6,35 @@
 #include "window_context.h"
 #include "render/render_system.h"
 #include "platform/local_present.h"
+#include "platform/opengl_context.h"
 #include "platform/remote_input_receiver.h"
 #include "platform/remote_frame_presenter.h"
 
 #include "app/state/app_state.h"
-#ifndef PARTICLE_VIS_HEADLESS_ONLY
-#include "app/app_callbacks.h"
-#endif
 #include "app/app_lifecycle.h"
 #include "app/app_frame.h"
 
 int main()
 {
   WindowContext window;
+  OpenGLContext graphics;
   AppState app;
   RenderSystem render;
-  LocalFramePresenter localPresenter(window);
+  LocalFramePresenter localPresenter(window, graphics);
   std::unique_ptr<RemoteFramePresenter> remotePresenter;
   RemoteInputReceiver remoteInput;
   CallbackContext callbackCtx;
 
-  if (!InitPlatform(window, callbackCtx, app)) {
+  if (!InitPlatform(window, graphics, callbackCtx, app)) {
     return EXIT_FAILURE;
   }
 
   if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT")) {
     if (endpoint[0] != '\0') {
       remotePresenter =
-        std::make_unique<RemoteFramePresenter>(window, std::string(endpoint));
+        std::make_unique<RemoteFramePresenter>(window,
+                                               graphics,
+                                               std::string(endpoint));
     }
   }
 
@@ -55,6 +56,6 @@ int main()
   }
 
   remoteInput.stop();
-  Cleanup(app, render, window);
+  Cleanup(app, render, graphics, window);
   return 0;
 }

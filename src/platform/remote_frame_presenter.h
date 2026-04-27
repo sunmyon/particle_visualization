@@ -7,7 +7,9 @@
 
 class RemoteFramePresenter final : public IFramePresenter {
 public:
-  RemoteFramePresenter(WindowContext& window, const std::string& endpoint);
+  RemoteFramePresenter(WindowContext& window,
+                       OpenGLContext& graphics,
+                       const std::string& endpoint);
   ~RemoteFramePresenter() override;
 
   PresentResult present(const PresentOptions& options = {}) override;
@@ -19,6 +21,7 @@ private:
   struct Impl;
 
   WindowContext* window_ = nullptr;
+  OpenGLContext* graphics_ = nullptr;
   std::string endpoint_;
   std::unique_ptr<Impl> impl_;
   bool active_ = false;

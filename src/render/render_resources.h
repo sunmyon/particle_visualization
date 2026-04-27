@@ -1,6 +1,6 @@
 #pragma once
 
-#include <glad/glad.h>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
@@ -60,48 +60,53 @@ struct IsoContourRenderData {
 };
 #endif
 
-struct RenderResources {
-#ifdef VOLUME_RENDERING
-  GLuint fullscreenVAO = 0;
-#endif
-  
-  std::vector<RenderParticle> renderParticles;
-  bool particleRenderDataDirty = true;
-  bool particlesGpuDirty = true;
+using RenderSceneVersion = std::uint64_t;
 
-  std::vector<float> velocityInstanceData;
-  bool velocityInstanceDataDirty = true;
-  bool velocityGpuDirty = true;
+struct RenderSceneData {
+  std::vector<RenderParticle> particles;
+  RenderSceneVersion particlesVersion = 1;
+
+  std::vector<float> velocityInstances;
+  RenderSceneVersion velocityVersion = 1;
   
 #ifdef ISO_CONTOUR
-  IsoContourRenderData isoContourRenderData;
-  bool isoContourRenderDataDirty = true;
-  bool isoContourGpuDirty = true;
+  IsoContourRenderData isoContour;
+  RenderSceneVersion isoContourVersion = 1;
 #endif
 
-  std::vector<InstancedSolidItem> cubeRenderData;
-  bool cubeRenderDataDirty = true;
-  bool cubesGpuDirty = true;
+  std::vector<CubeRenderItem> cubes;
+  RenderSceneVersion cubesVersion = 1;
   
-  std::vector<InstancedSolidItem> ellipsoidRenderData;
-  bool ellipsoidRenderDataDirty = true;
-  bool ellipsoidsGpuDirty = true;
+  std::vector<EllipsoidRenderItem> ellipsoids;
+  RenderSceneVersion ellipsoidsVersion = 1;
 
-  std::vector<InstancedSolidItem> diskRenderData;
-  bool diskRenderDataDirty = true;
-  bool disksGpuDirty = true;
+  std::vector<DiskRenderItem> disks;
+  RenderSceneVersion disksVersion = 1;
 
-  std::vector<CuboidRenderItem> cuboidRenderData;
-  bool cuboidRenderDataDirty = true;
-  bool cuboidsGpuDirty = true;
+  std::vector<CuboidRenderItem> cuboids;
+  RenderSceneVersion cuboidsVersion = 1;
   
-  std::vector<LineRenderItem> lineRenderData;
-  bool lineRenderDataDirty = true;
-  bool linesGpuDirty = true;
+  std::vector<LineRenderItem> lines;
+  RenderSceneVersion linesVersion = 1;
 
-  std::vector<PolyhedronRenderItem> polyhedronRenderData;
-  bool polyhedraRenderDataDirty = true;
-  bool polyhedraGpuDirty = true;
+  std::vector<PolyhedronRenderItem> polyhedra;
+  RenderSceneVersion polyhedraVersion = 1;
+};
+
+struct RenderSceneBuildState {
+  bool particlesDirty = true;
+  bool velocityInstancesDirty = true;
+
+#ifdef ISO_CONTOUR
+  bool isoContourDirty = true;
+#endif
+
+  bool cubesDirty = true;
+  bool ellipsoidsDirty = true;
+  bool disksDirty = true;
+  bool cuboidsDirty = true;
+  bool linesDirty = true;
+  bool polyhedraDirty = true;
 };
 
 class ParticleData;
@@ -154,7 +159,3 @@ void AppendCuboidArrowRenderData(const CuboidAnnotationManager& manager,
                                      std::vector<LineRenderItem>& out);
 
 ArrowObject BuildArrowFromCuboidAnnotation(const CuboidAnnotationObject& obj);
-
-struct RenderSystem;
-void InitRenderSystem(RenderSystem& rs);
-void DestroyRenderSystem(RenderSystem& rs);
