@@ -230,6 +230,7 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
 
   if (ui.requestReload) {
     clumpStore.setFilePath(ui.clumpListPath);
+#ifdef CLUMP_DATA_READ
     auto clumps = loadClumpData(clumpStore.filePath().c_str(),
                                 currentFileIndex,
                                 normalization.toNormalizedScale());
@@ -239,6 +240,13 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
       ui.showEvolve.resize(clumpStore.size(), false);
       syncRowsFromStore();
     }
+#else
+    (void)currentFileIndex;
+    (void)normalization;
+    clumpStore.clear();
+    ui.rows.clear();
+    ui.showEvolve.clear();
+#endif
 
     clumpTool.clearEvolutionCache();
     ui.evolutionCache.clear();

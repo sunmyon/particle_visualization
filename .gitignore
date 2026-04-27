@@ -2,6 +2,7 @@
 
 bulid/
 build/
+build*/
 
 ffmpeg_frames/
 output/

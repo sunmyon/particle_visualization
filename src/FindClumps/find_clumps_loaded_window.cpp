@@ -8,7 +8,9 @@
 
 #include "FindClumps/clump_window_state.h"
 #include "FindClumps/loaded_clump_tool.h"
+#ifdef CLUMP_DATA_READ
 #include "FindClumps/find_clumps_IO.h"
+#endif
 #include "data/clump_store.h"
 #include "app/tracking_view_state.h"
 #include "interaction/camera.h"
@@ -41,6 +43,13 @@ void LoadedClumpTool::rebuildEvolutionCache(const LoadedClumpWindowState& ui,
   outValMin =  std::numeric_limits<float>::infinity();
   outValMax = -std::numeric_limits<float>::infinity();
 
+#ifndef CLUMP_DATA_READ
+  (void)ui;
+  (void)clumpStore;
+  (void)currentFileIndex;
+  needCacheUpdate_ = false;
+  return;
+#else
   if (!clumpStore.loaded()) {
     needCacheUpdate_ = false;
     return;
@@ -113,6 +122,7 @@ void LoadedClumpTool::rebuildEvolutionCache(const LoadedClumpWindowState& ui,
   }
 
   needCacheUpdate_ = false;
+#endif
 }
 
 static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui);

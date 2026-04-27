@@ -12,8 +12,10 @@ void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
 {
   Histogram2DContext histCtx;
   histCtx.cameraCenter = &input.camera.cameraTarget;
+#ifdef USE_CONVEX_HULL
   auto visibleHulls = input.analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
+#endif
 
   ExecuteRadialProfileWindowRequests(tools.radialProfile,
                                      tools.radialProfileRequest,

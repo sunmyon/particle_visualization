@@ -4,6 +4,8 @@
 #include "core/quantity.h"
 #include "core/units.h"
 
+#ifdef CLUMP_DATA_READ
+
 void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname){
   TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumps_all(nsnapshots);
   
@@ -322,3 +324,21 @@ void ClumpChain::build(int initstep,
     clump.mass_maximum *= unit_mass_in_msun;
   }
 }
+
+#else
+
+void give_stellar_id_to_clumps(int, int, int, std::string)
+{
+}
+
+void ClumpChain::build(int,
+                       int,
+                       int,
+                       const std::string&,
+                       const UnitSystem&,
+                       double)
+{
+  clear();
+}
+
+#endif

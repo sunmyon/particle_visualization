@@ -58,6 +58,11 @@ if(PARTICLE_VIS_HEADLESS_ONLY)
   set(NONATIVEFILEDIALOG ON CACHE BOOL "Disable native file dialog in headless builds" FORCE)
 endif()
 
+if(NOT HAVE_HDF5 AND CLUMP_DATA_READ)
+  message(STATUS "CLUMP_DATA_READ requires HDF5; disabling CLUMP_DATA_READ")
+  set(CLUMP_DATA_READ OFF CACHE BOOL "Enable Clump data read" FORCE)
+endif()
+
 function(add_egl_probe_target)
   find_package(OpenGL COMPONENTS EGL QUIET)
   if(TARGET OpenGL::EGL)
@@ -183,6 +188,13 @@ if(GEOMETRICAL_ANALYSIS)
 endif()
 
 if(USE_CONVEX_HULL)
+  find_package(CGAL QUIET)
+  if(NOT TARGET CGAL::CGAL AND NOT CGAL_FOUND)
+    message(FATAL_ERROR
+      "USE_CONVEX_HULL requires CGAL. Install/load CGAL or configure with "
+      "-DUSE_CONVEX_HULL=OFF.")
+  endif()
+
   list(APPEND SOURCES_CPP ${SRC_DIR}/geometry/convex_hull_generator.cpp)
 endif()
 
@@ -203,10 +215,8 @@ if(PYTHON_BRIDGE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/JupyterLauncher.cpp)
 endif()
 
-if(PYTHON_BRIDGE OR PARTICLE_VIS_HEADLESS_ONLY)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_frame_presenter.cpp)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_receiver.cpp)
-endif()
+list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_frame_presenter.cpp)
+list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_receiver.cpp)
 
 if(PARTICLE_VIS_HEADLESS_ONLY)
   list(REMOVE_ITEM SOURCES_CPP ${SRC_DIR}/app/app_callbacks.cpp)
@@ -301,6 +311,10 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
 	${EXTERNAL_DIR}/include
 	${EXTERNAL_DIR}
 )
+
+if(USE_CONVEX_HULL AND TARGET CGAL::CGAL)
+  target_link_libraries(${PROJECT_NAME} PRIVATE CGAL::CGAL)
+endif()
 
 
 #debug macro
