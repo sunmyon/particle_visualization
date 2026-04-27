@@ -653,9 +653,11 @@ if(PYTHON_BRIDGE)
     CMAKE_TARGET nlohmann_json::nlohmann_json HEADER_ONLY)  
 endif()
 
+
 # =========================
 # Eigen (header-only)
 # =========================
+if(GEOMETRICAL_ANALYSIS)
 find_package(Eigen3 3.3 QUIET CONFIG)
 
 if(TARGET Eigen3::Eigen)
@@ -688,6 +690,7 @@ else()
       INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}")
     target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
   endif()
+endif()
 endif()
 
 # =========================
@@ -772,16 +775,71 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${EXTERNAL_DIR}/glad/include)
 
 # ===== HDF5 =====
 if(HAVE_HDF5)
+  set(HDF5_PREFER_PARALLEL TRUE)
   find_package(HDF5 COMPONENTS CXX QUIET)
   if(HDF5_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE HDF5::HDF5)
+    if(TARGET HDF5::HDF5)
+      target_link_libraries(${PROJECT_NAME} PRIVATE HDF5::HDF5)
+    else()
+      target_include_directories(${PROJECT_NAME} PRIVATE ${HDF5_INCLUDE_DIRS})
+      target_link_libraries(${PROJECT_NAME} PRIVATE ${HDF5_LIBRARIES})
+    endif()
+    message(STATUS "HDF5: found via CMake")
   elseif(PKG_CONFIG_FOUND)
-    pkg_check_modules(HDF5_PC QUIET hdf5)
+    pkg_check_modules(HDF5_PC QUIET hdf5 hdf5-openmpi hdf5-mpi hdf5-serial)
     if(HDF5_PC_FOUND)
       target_include_directories(${PROJECT_NAME} PRIVATE ${HDF5_PC_INCLUDE_DIRS})
+      target_link_directories(${PROJECT_NAME} PRIVATE ${HDF5_PC_LIBRARY_DIRS})
       target_link_libraries(${PROJECT_NAME} PRIVATE ${HDF5_PC_LIBRARIES})
+      message(STATUS "HDF5: found via pkg-config (${HDF5_PC_MODULE_NAME})")
     else()
-      message(FATAL_ERROR "HDF5 not found. Please install it (e.g. brew install hdf5).")
+      find_path(HDF5_MANUAL_INCLUDE_DIR
+        NAMES H5Cpp.h
+        HINTS
+          $ENV{HDF5_ROOT}
+          $ENV{HDF5_DIR}
+          $ENV{HDF5_HOME}
+          $ENV{EBROOTHDF5}
+          $ENV{HDF5_ROOT}/include
+          $ENV{HDF5_DIR}/include
+          $ENV{HDF5_HOME}/include
+          $ENV{EBROOTHDF5}/include
+        PATH_SUFFIXES include)
+      find_library(HDF5_MANUAL_CXX_LIBRARY
+        NAMES hdf5_cpp
+        HINTS
+          $ENV{HDF5_ROOT}
+          $ENV{HDF5_DIR}
+          $ENV{HDF5_HOME}
+          $ENV{EBROOTHDF5}
+          $ENV{HDF5_ROOT}/lib
+          $ENV{HDF5_DIR}/lib
+          $ENV{HDF5_HOME}/lib
+          $ENV{EBROOTHDF5}/lib
+        PATH_SUFFIXES lib lib64)
+      find_library(HDF5_MANUAL_C_LIBRARY
+        NAMES hdf5
+        HINTS
+          $ENV{HDF5_ROOT}
+          $ENV{HDF5_DIR}
+          $ENV{HDF5_HOME}
+          $ENV{EBROOTHDF5}
+          $ENV{HDF5_ROOT}/lib
+          $ENV{HDF5_DIR}/lib
+          $ENV{HDF5_HOME}/lib
+          $ENV{EBROOTHDF5}/lib
+        PATH_SUFFIXES lib lib64)
+      if(HDF5_MANUAL_INCLUDE_DIR AND HDF5_MANUAL_CXX_LIBRARY AND HDF5_MANUAL_C_LIBRARY)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${HDF5_MANUAL_INCLUDE_DIR})
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+          ${HDF5_MANUAL_CXX_LIBRARY}
+          ${HDF5_MANUAL_C_LIBRARY})
+        message(STATUS "HDF5: found manually include=${HDF5_MANUAL_INCLUDE_DIR}")
+      else()
+        message(FATAL_ERROR
+          "HDF5 not found. Load an HDF5 module, set HDF5_ROOT/HDF5_DIR, "
+          "or configure with -DHAVE_HDF5=OFF for a non-HDF5 test build.")
+      endif()
     endif()
   endif()
 endif()
