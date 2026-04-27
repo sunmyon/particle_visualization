@@ -57,7 +57,7 @@ void PrintEglError(const char* label)
             << std::hex << eglGetError() << std::dec << std::endl;
 }
 
-EGLDisplay GetPreferredEglDisplay()
+EGLDisplay GetPreferredEglDisplay(const char* platformOverride = nullptr)
 {
   const char* clientExtensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
   std::cerr << "EGL client extensions: "
@@ -74,7 +74,10 @@ EGLDisplay GetPreferredEglDisplay()
   const bool canSurfaceless =
     HasExtension(clientExtensions, "EGL_MESA_platform_surfaceless");
 
-  const char* requested = std::getenv("PARTICLE_VIS_EGL_PLATFORM");
+  const char* requested =
+    (platformOverride && platformOverride[0] != '\0')
+      ? platformOverride
+      : std::getenv("PARTICLE_VIS_EGL_PLATFORM");
   const bool forceDefault = requested && std::string(requested) == "default";
   const bool forceSurfaceless =
     requested && std::string(requested) == "surfaceless";
@@ -139,6 +142,16 @@ EGLDisplay GetPreferredEglDisplay()
 
   std::cerr << "EGL: eglGetDisplay(EGL_DEFAULT_DISPLAY)" << std::endl;
   return eglGetDisplay(EGL_DEFAULT_DISPLAY);
+}
+
+bool InitializeEglDisplay(EGLDisplay display, EGLint& major, EGLint& minor)
+{
+  std::cerr << "EGL: eglInitialize" << std::endl;
+  if (eglInitialize(display, &major, &minor)) {
+    return true;
+  }
+  PrintEglError("Failed to initialize EGL.");
+  return false;
 }
 #endif
 }
@@ -238,10 +251,34 @@ bool WindowContext::initHeadless(int width, int height)
 
   EGLint major = 0;
   EGLint minor = 0;
-  std::cerr << "EGL: eglInitialize" << std::endl;
-  if (!eglInitialize(display, &major, &minor)) {
-    PrintEglError("Failed to initialize EGL.");
-    return false;
+  if (!InitializeEglDisplay(display, major, minor)) {
+    const char* requestedPlatform = std::getenv("PARTICLE_VIS_EGL_PLATFORM");
+    const bool platformForced =
+      requestedPlatform && requestedPlatform[0] != '\0';
+
+    if (platformForced) {
+      return false;
+    }
+
+    const char* fallbacks[] = { "surfaceless", "default" };
+    bool initialized = false;
+    for (const char* fallback : fallbacks) {
+      std::cerr << "EGL: retrying with PARTICLE_VIS_EGL_PLATFORM="
+                << fallback << std::endl;
+      display = GetPreferredEglDisplay(fallback);
+      if (display == EGL_NO_DISPLAY) {
+        PrintEglError("Failed to get fallback EGL display.");
+        continue;
+      }
+      if (InitializeEglDisplay(display, major, minor)) {
+        initialized = true;
+        break;
+      }
+    }
+
+    if (!initialized) {
+      return false;
+    }
   }
 
   std::cerr << "EGL initialized: " << major << "." << minor << std::endl;
