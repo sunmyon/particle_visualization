@@ -685,6 +685,7 @@ if(NOT _GLM_FOUND)
       ${GLM_ROOT}
       ${GLM_DIR}
       ${GLM_HOME}
+      ${EXTERNAL_DIR}
     PATH_SUFFIXES include)
 
   if(GLM_INCLUDE_DIR)
