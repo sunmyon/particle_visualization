@@ -653,6 +653,52 @@ if(PYTHON_BRIDGE)
     CMAKE_TARGET nlohmann_json::nlohmann_json HEADER_ONLY)  
 endif()
 
+# =========================
+# GLM (header-only)
+# =========================
+set(_GLM_FOUND FALSE)
+find_package(glm QUIET CONFIG)
+
+if(TARGET glm::glm)
+  target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
+  set(_GLM_FOUND TRUE)
+  message(STATUS "GLM: found via CMake target glm::glm")
+endif()
+
+if(NOT _GLM_FOUND AND PKG_CONFIG_FOUND)
+  pkg_check_modules(GLM_PC QUIET glm)
+  if(GLM_PC_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${GLM_PC_INCLUDE_DIRS})
+    set(_GLM_FOUND TRUE)
+    message(STATUS "GLM: found via pkg-config include=${GLM_PC_INCLUDE_DIRS}")
+  endif()
+endif()
+
+if(NOT _GLM_FOUND)
+  find_path(GLM_INCLUDE_DIR
+    NAMES glm/glm.hpp
+    HINTS
+      $ENV{GLM_INCLUDE_DIR}
+      $ENV{GLM_ROOT}
+      $ENV{GLM_DIR}
+      $ENV{GLM_HOME}
+      ${GLM_ROOT}
+      ${GLM_DIR}
+      ${GLM_HOME}
+    PATH_SUFFIXES include)
+
+  if(GLM_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${GLM_INCLUDE_DIR})
+    set(_GLM_FOUND TRUE)
+    message(STATUS "GLM: include=${GLM_INCLUDE_DIR}")
+  endif()
+endif()
+
+if(NOT _GLM_FOUND)
+  message(FATAL_ERROR
+    "GLM headers not found. Load/install GLM, set CMAKE_PREFIX_PATH, "
+    "or pass -DGLM_INCLUDE_DIR=/path/to/glm/include.")
+endif()
 
 # =========================
 # Eigen (header-only)
