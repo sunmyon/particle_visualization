@@ -97,12 +97,12 @@ void GlfwWindow::destroy()
 #endif
 }
 
-void* GlfwWindow::nativeHandle() const
+NativeWindowHandle GlfwWindow::nativeHandle() const
 {
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
-  return handle_;
+  return { NativeWindowBackend::GLFW, handle_ };
 #else
-  return nullptr;
+  return {};
 #endif
 }
 

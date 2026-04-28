@@ -2,6 +2,18 @@
 
 #include <memory>
 
+enum class NativeWindowBackend {
+  None,
+  GLFW
+};
+
+struct NativeWindowHandle {
+  NativeWindowBackend backend = NativeWindowBackend::None;
+  void* handle = nullptr;
+
+  bool valid() const { return handle != nullptr; }
+};
+
 class WindowBackend {
 public:
   virtual ~WindowBackend() = default;
@@ -10,7 +22,7 @@ public:
   virtual bool createWindow(int width, int height, const char* title) = 0;
   virtual void destroy() = 0;
 
-  virtual void* nativeHandle() const = 0;
+  virtual NativeWindowHandle nativeHandle() const = 0;
   virtual void pollEvents() = 0;
   virtual void requestClose() = 0;
   virtual bool shouldClose(bool closeRequested) const = 0;

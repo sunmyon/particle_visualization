@@ -1,4 +1,4 @@
-#include "window_context.h"
+#include "platform/window_context.h"
 
 #include <memory>
 
@@ -82,10 +82,10 @@ double WindowContext::timeSeconds() const
 
 bool WindowContext::hasWindow() const
 {
-  return nativeWindowHandle() != nullptr;
+  return nativeWindowHandle().valid();
 }
 
-void* WindowContext::nativeWindowHandle() const
+NativeWindowHandle WindowContext::nativeWindowHandle() const
 {
   return windowBackend_->nativeHandle();
 }

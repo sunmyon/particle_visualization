@@ -112,15 +112,16 @@ set(SOURCES_CPP
   ${SRC_DIR}/render_actions.cpp
   ${SRC_DIR}/compute_2D_histogram.cpp
   ${SRC_DIR}/compute_radial_profile.cpp
-  ${SRC_DIR}/imgui_context.cpp
-  ${SRC_DIR}/window_context.cpp
   ${SRC_DIR}/particle_label_overlay.cpp
   ${SRC_DIR}/projection_preview_gl.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
+  ${SRC_DIR}/platform/imgui_context.cpp
+  ${SRC_DIR}/platform/window_context.cpp
   ${SRC_DIR}/platform/glfw_window.cpp
   ${SRC_DIR}/platform/viewport_context.cpp
   ${SRC_DIR}/platform/opengl_context.cpp
   ${SRC_DIR}/platform/local_present.cpp
+  ${SRC_DIR}/platform/platform_session.cpp
   ${SRC_DIR}/app/app_services.cpp  
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp

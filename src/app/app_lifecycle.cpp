@@ -1,8 +1,5 @@
 #include "app/state/app_state.h"
 #include "app/app_lifecycle.h"
-#ifndef PARTICLE_VIS_HEADLESS_ONLY
-#include "app/app_callbacks.h"
-#endif
 #include "app/app_snapshot_load.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
@@ -11,19 +8,8 @@
 #include "config/config_validation.h"
 
 #include "render/render_system.h"
-#include "platform/opengl_context.h"
-#include "window_context.h"
 
-#include <iostream>
 #include <memory>
-#include <cstdlib>
-#include <string>
-
-#ifndef NONATIVEFILEDIALOG
-#include <nfd.h>
-#endif
-
-#include "imgui_context.h"
 
 #include "FileIO/snapshot_io_service.h"
 #include "FindClumps/find_clumps.h"
@@ -48,74 +34,6 @@
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/PythonBridge.h"
 #endif
-
-bool InitPlatform(WindowContext& window,
-		  OpenGLContext& graphics,
-		  CallbackContext& callbackCtx,
-		  AppState& app)
-{
-  bool initialized = false;
-#ifdef PYTHON_BRIDGE
-  const char* remoteFrameEndpoint =
-    std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT");
-  const bool remoteMode =
-    remoteFrameEndpoint && remoteFrameEndpoint[0] != '\0';
-  const char* headlessEnv = std::getenv("PARTICLE_VIS_HEADLESS");
-  const bool allowHeadless = !headlessEnv || std::string(headlessEnv) != "0";
-  if (remoteMode && allowHeadless) {
-    initialized = window.initHeadless(1280, 720);
-    if (initialized) {
-      initialized = graphics.initHeadless(window.framebufferWidth(),
-                                          window.framebufferHeight());
-    }
-  }
-#endif
-
-  if (!initialized) {
-    initialized =
-      window.init(1280,
-                  720,
-                  "3D Particle Visualization",
-                  [&graphics]() {
-                    graphics.configureGlfwWindowHints();
-                  });
-    if (initialized) {
-      if (window.hasWindow()) {
-        initialized = graphics.initFromGlfwWindow(window.nativeWindowHandle());
-      } else {
-        initialized = graphics.initHeadless(window.framebufferWidth(),
-                                            window.framebufferHeight());
-      }
-    }
-  }
-
-  if (!initialized) {
-    return false;
-  }
-
-  callbackCtx.app = &app;
-  callbackCtx.window = &window;
-
-#ifndef PARTICLE_VIS_HEADLESS_ONLY
-  if (window.hasWindow()) {
-    AttachAppCallbacks(window, callbackCtx);
-    InitImGuiContext(window);
-  } else {
-#endif
-    InitHeadlessImGuiContext(window.framebufferWidth(),
-                             window.framebufferHeight());
-#ifndef PARTICLE_VIS_HEADLESS_ONLY
-  }
-#endif
-
-#ifndef NONATIVEFILEDIALOG
-  if (NFD_Init() != NFD_OKAY) {
-    std::cerr << "NFD_Init failed: " << NFD_GetError() << std::endl;
-  }
-#endif
-
-  return true;
-}
 
 static void InitAppServices(AppServices& services)
 {
@@ -178,10 +96,7 @@ void LoadInitialData(AppState& app)
   ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
 }
 
-void Cleanup(AppState& app,
-             RenderSystem& rs,
-             OpenGLContext& graphics,
-             WindowContext& window)
+void Cleanup(AppState& app, RenderSystem& rs)
 {
 #ifdef PYTHON_BRIDGE
   if (app.services.py.ptr) {
@@ -200,14 +115,6 @@ void Cleanup(AppState& app,
                       app.runtime.particleVisual,
                       app.runtime.settings.inputFilter.mask);
   SaveConfigFile("config.txt", config);
-
-#ifndef NONATIVEFILEDIALOG
-  NFD_Quit();
-#endif
-
-  ShutdownImGuiContext();
-  graphics.destroy();
-  window.destroy();
 
   delete app.data.particles;
   app.data.particles = nullptr;

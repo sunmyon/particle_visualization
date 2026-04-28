@@ -17,7 +17,7 @@ struct RemoteFramePresenter::Impl {};
 #endif
 
 RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
-                                           OpenGLContext& graphics,
+                                           GraphicsContext& graphics,
                                            const std::string& endpoint)
   : window_(&window)
   , graphics_(&graphics)

@@ -1,14 +1,18 @@
 #include "platform/opengl_context.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <glad/glad.h>
 
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include <GLFW/glfw3.h>
 #endif
+#include "platform/window_backend.h"
 
 #ifdef PARTICLE_VIS_HAVE_EGL
 #include <EGL/egl.h>
@@ -166,7 +170,7 @@ bool InitializeEglDisplay(EGLDisplay display, EGLint& major, EGLint& minor)
 
 } // namespace
 
-void OpenGLContext::configureGlfwWindowHints() const
+void OpenGLContext::configureWindowHints() const
 {
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -178,16 +182,16 @@ void OpenGLContext::configureGlfwWindowHints() const
 #endif
 }
 
-bool OpenGLContext::initFromGlfwWindow(void* glfwWindow)
+bool OpenGLContext::initFromWindow(NativeWindowHandle window)
 {
 #ifdef PARTICLE_VIS_HEADLESS_ONLY
-  (void)glfwWindow;
+  (void)window;
   return false;
 #else
-  auto* handle = static_cast<GLFWwindow*>(glfwWindow);
-  if (!handle) {
+  if (window.backend != NativeWindowBackend::GLFW || !window.handle) {
     return false;
   }
+  auto* handle = static_cast<GLFWwindow*>(window.handle);
 
   headless_ = false;
   glfwMakeContextCurrent(handle);
@@ -384,15 +388,15 @@ void OpenGLContext::destroy()
   headless_ = false;
 }
 
-void OpenGLContext::present(void* glfwWindow)
+void OpenGLContext::present(NativeWindowHandle window)
 {
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
-  if (glfwWindow) {
-    glfwSwapBuffers(static_cast<GLFWwindow*>(glfwWindow));
+  if (window.backend == NativeWindowBackend::GLFW && window.handle) {
+    glfwSwapBuffers(static_cast<GLFWwindow*>(window.handle));
     return;
   }
 #else
-  (void)glfwWindow;
+  (void)window;
 #endif
 
 #ifdef PARTICLE_VIS_HAVE_EGL
@@ -401,4 +405,49 @@ void OpenGLContext::present(void* glfwWindow)
                    static_cast<EGLSurface>(eglSurface_));
   }
 #endif
+}
+
+RenderedFrame OpenGLContext::readDefaultFramebuffer(int width, int height)
+{
+  RenderedFrame frame;
+  frame.width = width;
+  frame.height = height;
+  if (frame.width <= 0 || frame.height <= 0) {
+    return frame;
+  }
+
+  frame.format = RenderedFrameFormat::RGBA8;
+  frame.pixels.resize(static_cast<size_t>(frame.width) *
+                      static_cast<size_t>(frame.height) * 4);
+
+  GLint prevPackAlignment = 4;
+  glGetIntegerv(GL_PACK_ALIGNMENT, &prevPackAlignment);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(headless_ ? GL_FRONT : GL_BACK);
+  glReadPixels(0,
+               0,
+               frame.width,
+               frame.height,
+               GL_RGBA,
+               GL_UNSIGNED_BYTE,
+               frame.pixels.data());
+  glPixelStorei(GL_PACK_ALIGNMENT, prevPackAlignment);
+
+  const size_t stride = static_cast<size_t>(frame.width) * 4;
+  std::vector<uint8_t> row(stride);
+  for (int y = 0; y < frame.height / 2; ++y) {
+    uint8_t* top = frame.pixels.data() + static_cast<size_t>(y) * stride;
+    uint8_t* bottom =
+      frame.pixels.data() + static_cast<size_t>(frame.height - 1 - y) * stride;
+    std::copy(top, top + stride, row.data());
+    std::copy(bottom, bottom + stride, top);
+    std::copy(row.data(), row.data() + stride, bottom);
+  }
+
+  return frame;
+}
+
+std::unique_ptr<GraphicsContext> CreateDefaultGraphicsContext()
+{
+  return std::make_unique<OpenGLContext>();
 }

@@ -1,14 +1,7 @@
-#include <cstddef>
 #include <cstdlib>
-#include <memory>
-#include <mutex>
 
-#include "window_context.h"
 #include "render/render_system.h"
-#include "platform/local_present.h"
-#include "platform/opengl_context.h"
-#include "platform/remote_input_receiver.h"
-#include "platform/remote_frame_presenter.h"
+#include "platform/platform_session.h"
 
 #include "app/state/app_state.h"
 #include "app/app_lifecycle.h"
@@ -16,46 +9,24 @@
 
 int main()
 {
-  WindowContext window;
-  OpenGLContext graphics;
+  PlatformSession platform;
   AppState app;
   RenderSystem render;
-  LocalFramePresenter localPresenter(window, graphics);
-  std::unique_ptr<RemoteFramePresenter> remotePresenter;
-  RemoteInputReceiver remoteInput;
   CallbackContext callbackCtx;
 
-  if (!InitPlatform(window, graphics, callbackCtx, app)) {
+  if (!platform.init(app, callbackCtx)) {
     return EXIT_FAILURE;
-  }
-
-  if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT")) {
-    if (endpoint[0] != '\0') {
-      remotePresenter =
-        std::make_unique<RemoteFramePresenter>(window,
-                                               graphics,
-                                               std::string(endpoint));
-    }
   }
 
   InitApplication(app, render);
   LoadInitialData(app);
+  platform.startRemoteInput(app);
 
-  if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_INPUT_ENDPOINT")) {
-    if (endpoint[0] != '\0') {
-      remoteInput.start(endpoint, app.runtime.inputEvents);
-    }
+  while (!platform.window().shouldClose()) {
+    RunFrame(app, render, platform.window(), platform.presenter());
   }
 
-  while (!window.shouldClose()) {
-    IFramePresenter& presenter =
-      (remotePresenter && remotePresenter->active())
-        ? static_cast<IFramePresenter&>(*remotePresenter)
-        : static_cast<IFramePresenter&>(localPresenter);
-    RunFrame(app, render, window, presenter);
-  }
-
-  remoteInput.stop();
-  Cleanup(app, render, graphics, window);
+  Cleanup(app, render);
+  platform.shutdown();
   return 0;
 }

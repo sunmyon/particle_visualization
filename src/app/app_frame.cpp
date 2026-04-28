@@ -28,8 +28,8 @@
 #include "render/render_viewport.h"
 #include "platform/local_present.h"
 
-#include "imgui_context.h"
-#include "window_context.h"
+#include "platform/imgui_context.h"
+#include "platform/window_context.h"
 
 #include "FindClumps/find_clumps_ui.h"
 #include "projection/projection_map_ui_state.h"

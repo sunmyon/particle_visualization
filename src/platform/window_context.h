@@ -25,7 +25,7 @@ public:
   double timeSeconds() const;
 
   bool hasWindow() const;
-  void* nativeWindowHandle() const;
+  NativeWindowHandle nativeWindowHandle() const;
   bool isHeadless() const { return headless_; }
   const ViewportContext& viewport() const { return viewport_; }
 

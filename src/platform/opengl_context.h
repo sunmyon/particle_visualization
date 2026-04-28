@@ -1,14 +1,19 @@
 #pragma once
 
-class OpenGLContext {
-public:
-  void configureGlfwWindowHints() const;
-  bool initFromGlfwWindow(void* glfwWindow);
-  bool initHeadless(int width, int height);
-  void destroy();
-  void present(void* glfwWindow);
+#include "platform/graphics_context.h"
 
-  bool isHeadless() const { return headless_; }
+struct NativeWindowHandle;
+
+class OpenGLContext final : public GraphicsContext {
+public:
+  void configureWindowHints() const override;
+  bool initFromWindow(NativeWindowHandle window) override;
+  bool initHeadless(int width, int height) override;
+  void destroy() override;
+  void present(NativeWindowHandle window) override;
+  RenderedFrame readDefaultFramebuffer(int width, int height) override;
+
+  bool isHeadless() const override { return headless_; }
 
 private:
   bool headless_ = false;

@@ -2,7 +2,7 @@
 
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include "app/state/app_state.h"
-#include "window_context.h"
+#include "platform/window_context.h"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -145,10 +145,11 @@ static void key_callback(GLFWwindow* window,
 
 void AttachAppCallbacks(WindowContext& window, CallbackContext& callbackCtx)
 {
-  auto* handle = static_cast<GLFWwindow*>(window.nativeWindowHandle());
-  if (!handle) {
+  NativeWindowHandle native = window.nativeWindowHandle();
+  if (native.backend != NativeWindowBackend::GLFW || !native.handle) {
     return;
   }
+  auto* handle = static_cast<GLFWwindow*>(native.handle);
 
   glfwSetWindowUserPointer(handle, &callbackCtx);
   glfwSetCursorPosCallback(handle, mouse_callback);

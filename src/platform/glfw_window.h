@@ -13,7 +13,7 @@ public:
   bool createWindow(int width, int height, const char* title) override;
   void destroy() override;
 
-  void* nativeHandle() const override;
+  NativeWindowHandle nativeHandle() const override;
 
   void pollEvents() override;
   void requestClose() override;
