@@ -37,11 +37,11 @@ using KDTree3D = nanoflann::KDTreeSingleIndexAdaptor<
 struct SPHInterpolator : public IDensityEstimator {
     SPHInterpolator(TrackingVector<ParticleDataForKdTree>&& pts);
 
-    // IDensityEstimator の純粋仮想関数をオーバーライド
+    // Override the pure virtual function from IDensityEstimator.
     float sample(const glm::vec3& pos) const override;
 
 private:
-    // 実処理本体（KNN＋カーネル補間）
+    // Implementation body: KNN plus kernel interpolation.
     float sampleValue(const glm::vec3& pos, size_t K, float alpha) const;
 
     PointCloud cloud_;

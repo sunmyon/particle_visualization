@@ -21,7 +21,7 @@
 #include "UI/common_ui.h"
 #include "UI/tool_window_ui.h"
 #include "UI/settings_ui.h"
-#include "FileIO/file_format_dialog.h"
+#include "UI/file_format_dialog.h"
 #include "FileIO/snapshot_io_service.h"
 
 #include "render/render_frame.h"

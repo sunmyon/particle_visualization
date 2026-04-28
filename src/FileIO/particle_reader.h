@@ -22,7 +22,7 @@ public:
 
   virtual bool is_binary() { return false; };
   
-  // 便利関数：全読み
+  // Convenience function for reading the whole file.
   bool readAll(ParticleBlock& out,
                const std::vector<FieldSpec>& fields)
   {

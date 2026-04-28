@@ -54,7 +54,7 @@ struct ParticleBlock {
     id2index.clear();
     id2index.reserve(particles.size() * 13 / 10);
     for (size_t i=0;i<particles.size();++i) {
-      // ParticleData::ID は int なので uint64 化
+      // ParticleData::ID is int, so normalize it to uint64_t.
       id2index[(uint64_t)(int64_t)particles[i].ID] = i;
     }
     id2indexDirty = false;
@@ -262,7 +262,7 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
   case QuantityId::Density:     return p.density;
   case QuantityId::Temperature: return p.temperature;
   case QuantityId::Mass:
-    return p.mass;  // ←あなたの ParticleData に合わせて修正
+    return p.mass;  // Adjust to match ParticleData if needed.
 
   case QuantityId::Hsml:
     return p.Hsml;
@@ -276,7 +276,7 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
     const float cy = center ? center[1] : 0.0f;
     const float cz = center ? center[2] : 0.0f;
 
-    const float dx = p.original_pos[0] - cx;   // 必要なら original_pos に
+    const float dx = p.original_pos[0] - cx;   // Use original_pos when needed.
     const float dy = p.original_pos[1] - cy;
     const float dz = p.original_pos[2] - cz;
     return std::sqrt(dx*dx + dy*dy + dz*dz);
@@ -386,7 +386,7 @@ inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, Qu
       blk.writeSoAAs(soa_views::Val2, ipart, x);
       return;
     default:
-      // Radius/VRad/B など “派生量” は set 不可でOK（Bridgeでdirty対象にしない）
+      // Derived quantities such as Radius, VRad, and B do not need setters.
       return;
   }
 }

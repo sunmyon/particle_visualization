@@ -23,7 +23,7 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
   computer.setUnits(quantity.units);
 
   result.result = computer.compute(partblock,
-                                   normalization,
+                                   normalization.toPhysicalScale(),
                                    request.params,
                                    camCenter);
   result.computed = result.result.valid;

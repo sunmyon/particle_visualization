@@ -81,7 +81,7 @@ static const char* quantityToString(QuantityId q) {
   return QuantityLabel(q);
 }
 
-// 必要なら後で map 化
+// Convert to a map later if needed.
 static QuantityId quantityFromString(const std::string& s) {
   for (int i = 0; i < 1024; ++i) {
     QuantityId q = static_cast<QuantityId>(i);
@@ -313,4 +313,3 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
 
   return true;
 }
-

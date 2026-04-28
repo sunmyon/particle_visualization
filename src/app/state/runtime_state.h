@@ -198,6 +198,12 @@ struct StreamlinePreviewRequestState {
 
 struct StreamlineBuildRequestState {
   int nSeeds = 1;
+  float thetaMaxDegrees = 10.0f;
+  bool useManualSeed = false;
+  float manualSeed[3] = {0.f, 0.f, 0.f};
+
+  float seedCenter[3] = {0.f, 0.f, 0.f};
+  float seedSize[3]   = {100.f, 100.f, 100.f};
 
   bool limitRegion = false;
   float regionCenter[3] = {0.f, 0.f, 0.f};

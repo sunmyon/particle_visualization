@@ -4,12 +4,12 @@ struct HeaderInfo
   int npart = 0;
   double time = 0.0;            // time or scale factor (legacy)
   double redshift = 0.0;
-  double boxSize = 0.0;         // "BoxSize" 属性 (例)
-  int    NumPart_ThisFile[6] = {0, 0, 0, 0, 0, 0}; // "NumPart_Total" 属性 (6要素配列想定)
+  double boxSize = 0.0;         // "BoxSize" attribute.
+  int    NumPart_ThisFile[6] = {0, 0, 0, 0, 0, 0}; // "NumPart_Total" attribute, expected as a 6-element array.
   double Omega0 = 0.0;
   double OmegaLambda = 0.0;
   double HubbleParam = 1.0;     // "HubbleParam"
-  double massTable[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // "MassTable" (6要素配列想定)
+  double massTable[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // "MassTable", expected as a 6-element array.
 
   double UnitLength_in_cm = 1.0;
   double UnitVelocity_in_cm_per_s = 1.0;

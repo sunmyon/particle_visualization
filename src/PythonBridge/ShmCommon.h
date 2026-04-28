@@ -4,18 +4,19 @@
 #include <cstdint>
 #include <string>
 
-// 共有メモリ1領域の情報（POSIX/Win どちらでも使える形）
+// Information for one shared-memory region, shaped for both POSIX and Windows.
 struct ShmRegion {
   void*      base = nullptr;
   size_t     bytes = 0;
   ShmHeader* hdr = nullptr;
   FieldEntry* ents = nullptr;
   std::string name;
-  int        fd = -1;        // POSIX での保持（Windows なら未使用）
+  int        fd = -1;        // POSIX handle, unused on Windows.
+  bool       unlinkOnDestroy = false;
 };
 
-// withB に応じてエントリ（POS,VEL,B, ...）を作り、領域を作成・初期化する
+// Create entries such as POS, VEL, and B according to withB, then create and initialize the region.
 bool shm_create_region(const char* name, uint64_t N, bool withB, ShmRegion& out);
 
-// 領域の破棄（unmap + unlink）
+// Destroy the region with unmap plus unlink.
 void shm_destroy_region(ShmRegion& r);

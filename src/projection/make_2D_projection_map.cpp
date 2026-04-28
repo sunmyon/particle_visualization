@@ -15,6 +15,11 @@
 #include "projection/projection_map_params.h"
 #include "projection/projection_geometry.h"
 #include "projection/projection_map_context.h"
+#include "projection/stellar_luminosity.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <iostream>
 
 #ifdef USE_LUA
 #include <lua.hpp>
@@ -26,24 +31,24 @@
 #endif
 
 namespace{
-  // nanoflann用のデータコンテナ
+  // Data container used by nanoflann.
   struct VoronoiParticleCloud {
     TrackingVector<pos_val> particles;
   
-    // kd-tree インターフェース
+    // kd-tree interface.
     inline size_t kdtree_get_point_count() const { return particles.size(); }
   
-    // 指定インデックスの次元 dim の値を返す
+    // Return coordinate dim for the requested particle index.
     inline float kdtree_get_pt(const size_t idx, const size_t dim) const {
       return particles[idx].pos[dim];
     }
   
-    // バウンディングボックスは省略（falseを返す）
+    // Bounding boxes are omitted.
     template <class BBOX>
     bool kdtree_get_bbox(BBOX & /*bb*/) const { return false; }
   };
 
-  // kd-treeの型定義（3次元用）
+  // kd-tree type for 3D searches.
   typedef nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<float, VoronoiParticleCloud>,
     VoronoiParticleCloud,
@@ -55,11 +60,22 @@ namespace fs = std::filesystem;
 
 ProjectionMapGenerator::ProjectionMapGenerator() = default;
 
-
 RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
 						     const UnitSystem& units,
 						     ProjectionMapParams& params,
-						     ProjectionMapContext& ctx){
+						     ProjectionMapContext& ctx)
+{
+  if (params.multiPanelEnabled && params.dataSource == DataSource::Gas) {
+    return makeMultiPanelDensityMapImage(particles, units, params, ctx);
+  }
+  return makeSingleDensityMapImage(particles, units, params, ctx);
+}
+
+RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& particles,
+							   const UnitSystem& units,
+							   ProjectionMapParams& params,
+							   ProjectionMapContext& ctx)
+{
 #ifdef USE_LUA
   ensureLuaInitialized();
 #endif
@@ -181,132 +197,207 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
       return {};
     }
     
-  ProjectionMap map;
-  for(int k=0;k<3;k++){
-    map.xlen[k] = params.xlen[k];
-    map.xmin[k] = xmin[k];
+  ProjectionMap map = buildProjectionMap(params, ctx);
+  for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
+
+  using namespace std::chrono;
+  auto start = high_resolution_clock::now();
+
+  if (params.dataSource == DataSource::Gas) {
+    if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
+    else             createProjectionMap(map, insideParticles);
+  }
+  else if (params.dataSource == DataSource::Stars) {
+    bool normalize = (params.starQuantity != StarQuantity::Flux);
+    createStarMap(map, insideParticles, params.psf_sigma_pix, normalize);
   }
 
-  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n", params.xlen[0], params.xlen[1], params.xlen[2], xmin[0], xmin[1], xmin[2], ctx.center.x, ctx.center.y, ctx.center.z);
-  
+  auto end = high_resolution_clock::now();
+  std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
+
+  return composeProjectionMapImage(map, params, ctx, originalParticles);
+}
+
+RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(ParticleArray& particles,
+							       const UnitSystem& units,
+							       ProjectionMapParams& params,
+							       ProjectionMapContext& ctx)
+{
+  const int rows = std::clamp(params.multiPanelRows, 1, 3);
+  const int cols = std::clamp(params.multiPanelCols, 1, 6);
+  const int maxPanels = std::min(rows * cols, 6);
+  const int panelCount = std::clamp(params.multiPanelCount, 1, maxPanels);
+
+  TrackingVector<RgbImage> panelImages;
+  panelImages.reserve(static_cast<size_t>(panelCount));
+
+  int panelWidth = 0;
+  int panelHeight = 0;
+  for (int i = 0; i < panelCount; ++i) {
+    ProjectionMapParams panelParams = params;
+    panelParams.multiPanelEnabled = false;
+    panelParams.selectedVarGas = params.multiPanelVars[i];
+    panelParams.var = QuantityLabel(panelParams.selectedVarGas);
+    panelParams.flagTimeLabel =
+      params.flagTimeLabel && params.multiPanelShowTimeLabel[i];
+    panelParams.flagPlaceScale =
+      params.flagPlaceScale && params.multiPanelShowScale[i];
+
+    RgbImage panel = makeSingleDensityMapImage(particles, units, panelParams, ctx);
+    if (!panel.valid()) {
+      return {};
+    }
+
+    panelWidth = std::max(panelWidth, panel.width);
+    panelHeight = std::max(panelHeight, panel.height);
+    panelImages.push_back(std::move(panel));
+  }
+
+  TrackingVector<unsigned char> tiledRgb;
+  tiledRgb.resize(static_cast<size_t>(panelWidth) * panelHeight * rows * cols * 3,
+                  0);
+  ImageCanvas canvas{tiledRgb, panelWidth * cols, panelHeight * rows};
+
+  for (int i = 0; i < panelCount; ++i) {
+    const int col = i % cols;
+    const int row = i / cols;
+    canvas.copyRgbImage(panelImages[i].rgb,
+                        panelImages[i].width,
+                        panelImages[i].height,
+                        col * panelWidth,
+                        row * panelHeight);
+  }
+
+  return ToRgbImage(canvas);
+}
+
+ProjectionMapGenerator::ProjectionMap
+ProjectionMapGenerator::buildProjectionMap(const ProjectionMapParams& params,
+                                           const ProjectionMapContext& ctx) const
+{
+  ProjectionMap map;
+  for (int k = 0; k < 3; ++k) {
+    map.xlen[k] = params.xlen[k];
+    map.xmin[k] = ctx.center[k] - 0.5f * params.xlen[k];
+  }
+
+  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n",
+         params.xlen[0], params.xlen[1], params.xlen[2],
+         map.xmin[0], map.xmin[1], map.xmin[2],
+         ctx.center.x, ctx.center.y, ctx.center.z);
+
   map.npixel = params.npixel;
-  map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);  
+  map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);
   map.dx = map.cell_size;
-  map.dy = map.cell_size;   
-    
+  map.dy = map.cell_size;
+
   map.npixel_x = static_cast<int>(params.xlen[0] / map.cell_size);
-  map.npixel_y = static_cast<int>(params.xlen[1] / map.cell_size);   
+  map.npixel_y = static_cast<int>(params.xlen[1] / map.cell_size);
   map.values.resize(map.npixel_x * map.npixel_y, 0.0f);
   map.weights.resize(map.npixel_x * map.npixel_y, 0.0f);
-        
-  if(params.flagVoronoi){
+
+  if (params.flagVoronoi) {
     map.npixel_z = params.step_z;
-    if(params.step_z % 2 == 0)
-      map.npixel_z = params.step_z - 1;
-      
-    map.dz = 0.;
-    if(params.step_z > 1)
-      map.dz = (map.xlen[2]) / static_cast<float>(map.npixel_z);
+    if (params.step_z % 2 == 0) map.npixel_z = params.step_z - 1;
+
+    map.dz = 0.0f;
+    if (params.step_z > 1) {
+      map.dz = map.xlen[2] / static_cast<float>(map.npixel_z);
+    }
   }
 
   map.flagDensityWeight = params.flagDensityWeight;
   map.flagLogScale = params.flagLogScale;
-    
-  // 平面の基底を計算
-  glm::vec3 axisX = glm::normalize(ctx.cuboidTransform * glm::vec3(1,0,0));
-  glm::vec3 axisY = glm::normalize(ctx.cuboidTransform * glm::vec3(0,1,0));
-  glm::vec3 axisZ = glm::normalize(ctx.cuboidTransform * glm::vec3(0,0,1));
 
-  // selectedAxis: 0=X, 1=Y, 2=Z から見ている
+  glm::vec3 axisX = glm::normalize(ctx.cuboidTransform * glm::vec3(1, 0, 0));
+  glm::vec3 axisY = glm::normalize(ctx.cuboidTransform * glm::vec3(0, 1, 0));
+  glm::vec3 axisZ = glm::normalize(ctx.cuboidTransform * glm::vec3(0, 0, 1));
+
   if (params.selectedAxis == 0) {
-    // X 軸方向から見る: 画面奥(w)が axisX、画面 x が axisY、画面 y が axisZ
     map.wAxis = axisX;
     map.uAxis = axisY;
     map.vAxis = axisZ;
-  }
-  else if (params.selectedAxis == 1) {
-    // Y 軸方向から見る
+  } else if (params.selectedAxis == 1) {
     map.wAxis = axisY;
     map.uAxis = axisZ;
     map.vAxis = axisX;
-  }
-  else { // selectedAxis == 2
-    // Z 軸方向から見る（face-on）
+  } else {
     map.wAxis = axisZ;
     map.uAxis = axisX;
     map.vAxis = axisY;
   }
 
   map.center = ctx.center;
-  
-  using namespace std::chrono;
-  auto start = high_resolution_clock::now();
-  
-  if (params.dataSource == DataSource::Gas) {
-    if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
-    else             createProjectionMap(map, insideParticles);
+  return map;
+}
+
+RgbImage ProjectionMapGenerator::composeProjectionMapImage(
+  ProjectionMap& map,
+  const ProjectionMapParams& params,
+  const ProjectionMapContext& ctx,
+  const TrackingVector<ParticleData>& originalParticles)
+{
+  float minVal = FLT_MAX;
+  for (auto val : map.values) {
+    if (val < minVal && val > 0.0f) minVal = val;
   }
-  else if (params.dataSource == DataSource::Stars) {
-    bool normalize = (params.starQuantity != StarQuantity::Flux); 
-    createStarMap(map, insideParticles, params.psf_sigma_pix, normalize);
-  }
-   
-  auto end = high_resolution_clock::now();    
-  std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
-  
-  float minVal = FLT_MAX;    
-  for (auto val : map.values){
-    if(val < minVal && val > 0.)
-      minVal = val;
-  }
-  
-  if(map.flagLogScale){
-    if(minVal >0.){    
-      for (size_t i=0;i< map.values.size();i++){
-	if(map.values[i] > 0.)
-	  map.values[i] = log10(map.values[i]);
-	else
-	  map.values[i] = log10(minVal) - 1.;	
-      }	
-    }else
+
+  if (map.flagLogScale) {
+    if (minVal > 0.0f) {
+      for (size_t i = 0; i < map.values.size(); i++) {
+        if (map.values[i] > 0.0f)
+          map.values[i] = log10(map.values[i]);
+        else
+          map.values[i] = log10(minVal) - 1.0f;
+      }
+    } else {
       printf("minus quantity appears. we will use linear scale.\n");
+    }
   }
-  
+
   map.minVal = *std::min_element(map.values.begin(), map.values.end());
   map.maxVal = *std::max_element(map.values.begin(), map.values.end());
 
-  if(params.autoRange){
-    params.range_min = map.minVal;
-    params.range_max = map.maxVal;
-  }
-    
+  float rangeMin = params.autoRange ? map.minVal : params.range_min;
+  float rangeMax = params.autoRange ? map.maxVal : params.range_max;
+
   for (int i = 0; i < map.npixel_x * map.npixel_y; i++) {
-    float norm = (map.values[i] - params.range_min) / (params.range_max - params.range_min  + 1.e-6);
-    float rF,gF,bF;
+    float norm = (map.values[i] - rangeMin) / (rangeMax - rangeMin + 1.e-6f);
+    float rF, gF, bF;
     colormapLookup(norm, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
-    unsigned char rC=(unsigned char)(rF*255);
-    unsigned char gC=(unsigned char)(gF*255);
-    unsigned char bC=(unsigned char)(bF*255);
+    unsigned char rC = (unsigned char)(rF * 255);
+    unsigned char gC = (unsigned char)(gF * 255);
+    unsigned char bC = (unsigned char)(bF * 255);
 
     map.image.push_back(rC);
     map.image.push_back(gC);
     map.image.push_back(bC);
   }
 
-  int colorBarWidth = static_cast<int>(0.07 * map.npixel_x);
-  ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};  
-  if(params.flagShowStarParticles)
-    overlayStarParticles(canvas, map, params, ctx, originalParticles);  
+  int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
+  ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
+  if (params.flagShowStarParticles) {
+    overlayStarParticles(canvas, map, params, ctx, originalParticles);
+  }
 
-  addColorBarToMap(canvas, map.cell_size, params.range_min, params.range_max, colorBarWidth, ctx.colorMap, ctx.colorMapSize, params.var.c_str(), params, ctx);  
+  addColorBarToMap(canvas,
+                   map.cell_size,
+                   rangeMin,
+                   rangeMax,
+                   colorBarWidth,
+                   ctx.colorMap,
+                   ctx.colorMapSize,
+                   params.var.c_str(),
+                   params,
+                   ctx);
 
   return ToRgbImage(canvas);
 }
 
-  // 直方体の8頂点（ローカル座標）を計算し、cuboidTransformを適用してワールド座標に変換する関数
+  // Compute the eight cuboid vertices in local coordinates and transform them to world coordinates.
 TrackingVector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform)
 {
-  // ローカルAABBの中心と半幅を計算
+  // Compute the local AABB center and half extents.
   float hx = (xmax[0] - xmin[0]) * 0.5f;
   float hy = (xmax[1] - xmin[1]) * 0.5f;
   float hz = (xmax[2] - xmin[2]) * 0.5f;
@@ -357,7 +448,7 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const Track
     float cx = glm::dot(diff, map.uAxis);
     float cy = glm::dot(diff, map.vAxis);
       
-    // y方向の候補範囲：行インデックス
+    // Candidate y range as row indices.
     int j_min = std::max(0, static_cast<int>(std::floor((cy - hsml - xmin_local[1]) / map.dy)));
     int j_max = std::min(map.npixel_y - 1, static_cast<int>(std::ceil((cy + hsml - xmin_local[1]) / map.dy)) - 1);
       
@@ -434,11 +525,11 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const Tra
   xmin_local[1] = map.xmin[1] - map.center.y;
   xmin_local[2] = map.xmin[2] - map.center.z;
 
-  // データコンテナにコピー（必要に応じて参照やポインタを使ってもよい）
+  // Copy into the data container. References or pointers could be used later if needed.
   VoronoiParticleCloud cloud;
   cloud.particles = filtered;
   
-  // kd-treeの構築
+  // Build the kd-tree.
   KDTreeVoronoi kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
   kdTree.buildIndex();
 
@@ -446,7 +537,7 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const Tra
 
 #ifdef _OPENMP
   int numProcs = omp_get_num_procs();
-  // その数をスレッド数として設定
+  // Use that number as the OpenMP thread count.
   omp_set_num_threads(numProcs);
   std::cout << "Using " << numProcs << " threads." << std::endl;
 #endif
@@ -601,7 +692,7 @@ void ProjectionMapGenerator::ensureLuaInitialized(){
 }
 
   // ---------------------------
-  // Lua の式を評価して数値を返す関数
+  // Evaluate a Lua expression and return a numeric value.
 bool ProjectionMapGenerator::EvaluateLuaExpressionNumber(const char* expr, double& outValue) {
   lua_settop(gLua_, 0);
   if (luaL_dostring(gLua_, expr) == LUA_OK) {
@@ -620,7 +711,7 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionNumber(const char* expr, doubl
 
 
   // ---------------------------
-  // Lua の式を評価してテーブル（色）を取得する関数
+  // Evaluate a Lua expression and read a color table.
 bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a) {
   lua_settop(gLua_, 0);
   if (luaL_dostring(gLua_, expr) == LUA_OK) {
@@ -637,7 +728,7 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float&
       lua_getfield(gLua_, -1, "a");
       a = static_cast<float>(lua_tonumber(gLua_, -1));
       lua_pop(gLua_, 1);
-      lua_pop(gLua_, 1); // テーブルをポップ
+      lua_pop(gLua_, 1); // Pop the table.
       return true;
     }
     lua_pop(gLua_, 1);
@@ -651,7 +742,7 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float&
 
 
   // ---------------------------
-  // Lua の式を評価して論理値を取得する関数（フィルタ用）
+  // Evaluate a Lua expression and return a boolean value for filtering.
 bool ProjectionMapGenerator::EvaluateLuaExpressionBool(const char* expr, bool& outValue) {
   lua_settop(gLua_, 0);
   if (luaL_dostring(gLua_, expr) == LUA_OK) {
@@ -714,7 +805,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       lua_pushnumber(gLua_, p.type);
       lua_setglobal(gLua_, "ptype");
 
-      // 1. フィルタ条件の評価
+      // 1. Evaluate the filter condition.
       bool pass = false;
       if (!EvaluateLuaExpressionBool(params.filterExpr, pass)) {
 	std::cerr << "Error evaluating filter expression\n";
@@ -722,16 +813,16 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       }
 
       if (!pass) {
-	continue;  // 条件に合致しなければ描画しない
+	continue;  // Skip particles that do not pass the condition.
       }
 
-      // 2. 点サイズの評価
+      // 2. Evaluate the point size.
       if (!EvaluateLuaExpressionNumber(params.pointSizeExpr, pointSize)) {
 	std::cerr << "Error evaluating point size expression\n";
 	pointSize = 1.0;
       }
 
-      // 3. 点の色の評価
+      // 3. Evaluate the point color.
       if (!EvaluateLuaExpressionColor(params.pointColorExpr, r, g, b, a)) {
 	std::cerr << "Error evaluating point color expression\n";
 	r = g = b = 1.0f; a = 1.0f;
@@ -743,10 +834,10 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     unsigned char ug = static_cast<unsigned char>(g * 255);
     unsigned char ub = static_cast<unsigned char>(b * 255);
       
-    // 3D位置から2D画像上の座標 (px, py) を計算（createProjectionMap() と同じ手法で）
+    // Project the 3D position to image coordinates using the same method as createProjectionMap().
     glm::vec3 rad = glm::vec3(p.pos[0],p.pos[1],p.pos[2]) - map.center;
-    float u = glm::dot(rad, map.uAxis);  // 画像上のX軸方向の成分
-    float v = glm::dot(rad, map.vAxis);  // 画像上のY軸方向の成分
+    float u = glm::dot(rad, map.uAxis);  // Component along the image X axis.
+    float v = glm::dot(rad, map.vAxis);  // Component along the image Y axis.
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
     int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
       
@@ -758,8 +849,8 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
 }
 
   // --------------------------------------------------------
-  // 関数：colormapLookup
-  //   [0,1] の値tに基づき、jetMap配列からRGBを補間して返す
+  // colormapLookup:
+  //   Interpolate RGB from the colormap for t in [0, 1].
   // --------------------------------------------------------
 void ProjectionMapGenerator::colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap)
 {
@@ -828,7 +919,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 {
   (void)colormap;
   (void)countcolormap;
-  // (3) カラーバーに ticks (5分割) とラベルを描画 (簡易ドット)
+  // Draw ticks and labels on the colorbar.
   int nTicks = 5;
   std::vector<double> ticks = generate_ticks(minVal, maxVal, nTicks);
   nTicks = ticks.size();
@@ -851,21 +942,21 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     maxTicksWidth = std::max(maxTicksWidth, w);
   }
   
-  // 余白（padding）を加える
+  // Add padding.
   int padding = 4;
   int ticksWidth = static_cast<int>(ceil(maxTicksWidth)) + 2 * padding;
   int rotateLabelWidth = charPixelSizeLabel + 2 * padding;
 
-  // 出力画像の総幅は、メイン画像＋色バー＋ラベル領域
+  // The output width includes the image, colorbar, tick labels, and rotated label.
   int outW = outW_init + colorBarWidth + ticksWidth + rotateLabelWidth;
   int outH = outH_init;
   canvas.resizeKeepContent(outW, outH, 0);
 
-  // (2) カラーバーを右側 colorBarWidth 幅に描画
-  //     y=0 が最上部, y=outH が最下部
-  //     0～1の値を [0..outH-1] に対応させる
+  // Draw the colorbar on the right side.
+  // y=0 is the top and y=outH is the bottom.
+  // Map values in [0, 1] to [0, outH - 1].
   for (int py = 0; py < outH; py++) {
-    float t = 1.0f - float(py) / float(outH - 1); // 上->下が 1->0
+    float t = 1.0f - float(py) / float(outH - 1); // Top to bottom maps 1 to 0.
     float rF, gF, bF;
     colormapLookup(t, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
     unsigned char rC = (unsigned char)(rF * 255);
@@ -935,23 +1026,21 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     int textH = bbox.height;
     float min_y = bbox.minY;
     
-    // 2) 表示したい左上位置を決める（例: (10,10) に置く）
+    // Choose the desired top-left text position.
     int baseX = 10;
     int baseY = 10;
 
-    // 3) パディングを足した領域を半透明黒で塗る
+    // Fill the padded text background with translucent black.
     int padding = 4;
-    int x0 = baseX - padding;           // 左上X
-    int y0 = baseY - padding;           // 左上Y
-    int x1 = baseX + textW + padding;   // 右下X
-    int y1 = baseY + textH + padding;   // 右下Y
+    int x0 = baseX - padding;           // Top-left X.
+    int y0 = baseY - padding;           // Top-left Y.
+    int x1 = baseX + textW + padding;   // Bottom-right X.
+    int y1 = baseY + textH + padding;   // Bottom-right Y.
 
     canvas.blendRect(x0, y0, x1, y1, 0, 0, 0, 0.5f);
 
-    // 4) 実際に文字を描画する
-    //    draw_value_on_image() は「(pos_x, pos_y) を中心」として扱うので
-    //    テキスト全体の左上が (baseX, baseY) になるようにするには
-    //    中心を (baseX + textW/2, baseY + textH/2) で呼び出す
+    // Draw the text. The renderer treats (pos_x, pos_y) as a centered position,
+    // so place the center so the text's top-left corner lands at (baseX, baseY).
     fontRenderer_.drawValueCenteredBaseline(canvas,
 					    baseX + textW / 2,
 					    static_cast<int>(baseY - min_y),
@@ -965,8 +1054,8 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   if(params.flagPlaceScale)
     {
       double arrowLenX_scaled = params.arrowLenX;
-      if(params.flagScaleOriginalCoordinate)
-	arrowLenX_scaled *= ctx.scaleToPhysical;
+      if(params.flagScaleOriginalCoordinate && ctx.scaleToPhysical > 0.0)
+	arrowLenX_scaled /= ctx.scaleToPhysical;
 
       int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / cell_size);
 	
@@ -998,14 +1087,4 @@ const std::string& ProjectionMapGenerator::getFontPath(int index) const
 bool ProjectionMapGenerator::selectFontFileByIndex(int index)
 {
   return fontRenderer_.loadFontByIndex(index);
-}
-
-static inline double compute_band_luminosity_Lsun(double M_Msun, const FluxSettings& fs)
-{
-  const double Lbol = Lbol_single_massive_Lsun(M_Msun); if (!(Lbol > 0.0) || !std::isfinite(Lbol)) return 0.0;
-  const double Teff = Teff_massive_K(M_Msun); if (!(Teff > 0.0) || !std::isfinite(Teff)) return 0.0;
-  const double lambda0_m = std::max(1.0, (double)fs.band_center_nm) * 1e-9;
-  const double dlambda_m = std::max(1.0, (double)fs.band_width_nm ) * 1e-9;
-  const double frac = band_fraction_rect_lambda(Teff, lambda0_m, dlambda_m);
-  return Lbol * frac;
 }

@@ -12,7 +12,7 @@ public:
     RhoSigmaLUT(std::vector<float> lut, float rhoMin, float rhoMax, bool logSample)
         : lut_(std::move(lut)), rhoMin_(rhoMin), rhoMax_(rhoMax), logSample_(logSample) {}
 
-    // rho→sigma 補間評価
+    // Interpolated rho-to-sigma evaluation.
     float operator()(float rho) const {
         if (lut_.empty()) return 0.0f;
         if (rho <= rhoMin_) return lut_.front();
@@ -51,8 +51,8 @@ enum class TFShape { Gaussian, Box, Triangle };
 
 struct TFComponent {
   TFShape type = TFShape::Gaussian;
-  float center = 1.0f;  // ρ
-  float width  = 1.0f;  // Gaussian: σ, 他: 半幅
+  float center = 1.0f;  // rho.
+  float width  = 1.0f;  // Gaussian: sigma; otherwise half width.
   float amp    = 0.5f;  // 0..1
   bool  logDomain = true;
 };
@@ -62,7 +62,7 @@ public:
   TransferFunctionEditor()
     : rhoMin_(1.0f), rhoMax_(1e16f), yMax_(1.0f), logScale_(true), showAxes_(true)  {}
 
-  // UIを描画し、評価関数（ρ→σ）を outEval に返す（必要なら）
+  // Draw the UI and optionally return the rho-to-sigma evaluator in outEval.
   bool showUI(std::function<float(float)>* outEval = nullptr) {
     bool changed = false;
     if (showWindow_ == false)
@@ -70,12 +70,12 @@ public:
     
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);	
     if (!ImGui::Begin("Transfer Function", &showWindow_, ImGuiWindowFlags_None)) {
-      // 折りたたみ（最小化）時はここで早期終了
+      // Return early when the window is collapsed or minimized.
       ImGui::End();
       return changed;
     }
 
-    // 範囲とスケール
+    // Range and scale.
     ImGui::SeparatorText("Range / Scale");
     float rMin = rhoMin_, rMax = rhoMax_;
     ImGui::SetNextItemWidth(220);
@@ -86,7 +86,7 @@ public:
     ImGui::SameLine();
     changed |= ImGui::Checkbox("log", &logScale_);
 
-    // ★ y表示上限（amplitude を 1 超に対応）
+    // Display upper bound for y, allowing amplitudes above 1.
     ImGui::SetNextItemWidth(180);
     if (ImGui::InputFloat("y max (display)", &yMax_, 0, 0, "%.3f")) {
       yMax_ = std::max(1e-6f, yMax_);
@@ -95,14 +95,14 @@ public:
     ImGui::SameLine();
     ImGui::Checkbox("show axes", &showAxes_);
     
-    // 追加ボタン
+    // Add buttons.
     if (ImGui::Button("Add Gaussian")) { addComponent(TFShape::Gaussian); changed = true; }
     ImGui::SameLine();
     if (ImGui::Button("Add Box")) { addComponent(TFShape::Box); changed = true; }
     ImGui::SameLine();
     if (ImGui::Button("Add Triangle")) { addComponent(TFShape::Triangle); changed = true; }
 
-    // キャンバス
+    // Canvas.
     ImGui::SeparatorText("Curve (drag to edit)");
     ImVec2 avail = ImGui::GetContentRegionAvail();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -117,17 +117,17 @@ public:
     dl->AddRectFilled(plot0_, plot1_, IM_COL32(40, 40, 45, 255), 4.0f);
     dl->AddRect(plot0_, plot1_, IM_COL32(90, 90, 95, 255), 4.0f);
 
-    // グリッド少し
+    // Light grid.
     drawGrid(dl);
     drawAxes(dl); 
 
-    // 曲線
+    // Curve.
     drawCurve(dl);
 
-    // ハンドル（描画＆ヒットテスト＆ドラッグ反映）
+    // Handles: drawing, hit testing, and drag updates.
     changed |= drawAndEditHandles(dl);
     
-    // コンポーネントの詳細（数値編集）
+    // Component details and numeric editing.
     ImGui::SeparatorText("Components");
     for (int i = 0; i < (int)comps_.size(); ++i) {
       ImGui::PushID(i);
@@ -147,7 +147,7 @@ public:
       ImGui::PopID();
     }
 
-    // Deleteキーで選択コンポーネント削除
+    // Delete the selected component with Delete or Backspace.
     if (selected_ >= 0 && selected_ < (int)comps_.size()) {
       if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
 	comps_.erase(comps_.begin() + selected_);
@@ -205,7 +205,7 @@ public:
   }
   
 private:
-  // 状態
+  // State.
   float rhoMin_, rhoMax_, yMax_;
   bool logScale_;
   bool showWindow_ = false;
@@ -216,16 +216,16 @@ private:
 
   std::vector<TFComponent> comps_;
 
-  // キャンバス領域
+  // Canvas region.
   ImVec2 plot0_{0,0}, plot1_{0,0};
 
-  // インタラクティブ編集用
+  // Interactive editing state.
   enum class DragMode { None, Center, Left, Right };
   int selected_ = -1;
   int hot_ = -1;
   DragMode drag_ = DragMode::None;
 
-  // 追加
+  // Add a component.
   void addComponent(TFShape type) {
     float c = std::sqrt(rhoMin_ * rhoMax_);
     float w = std::max( (rhoMax_ - rhoMin_) * 0.05f, 1e-6f );
@@ -236,14 +236,14 @@ private:
     selected_ = (int)comps_.size() - 1;
   }
 
-  // 評価
+  // Evaluate one component.
   float evalOne(const TFComponent& c, float rho) const {
     if (c.type == TFShape::Gaussian) {
       float x;
       if (c.logDomain) {
 	float lrho   = std::log10(std::max(rho, 1e-30f));
 	float lcenter= std::log10(std::max(c.center, 1e-30f));
-	float s      = std::max(c.width, 1e-12f); // ★ 幅を「log10 の σ」と解釈
+	float s      = std::max(c.width, 1e-12f); // Interpret width as sigma in log10 space.
 	x = (lrho - lcenter) / s;
       } else {
 	x = (rho - c.center) / std::max(c.width, 1e-30f);
@@ -290,7 +290,7 @@ private:
     return std::max(0.f, y01 * yMax_);
   }
   
-  // スクリーン座標変換（01→スクリーン）
+  // Convert normalized 0..1 coordinates to screen coordinates.
   inline ImVec2 toScreen01(float x01, float y01) const {
     return ImVec2(
 		  plot0_.x + x01 * (plot1_.x - plot0_.x),
@@ -302,22 +302,22 @@ private:
     y01 = (plot1_.y - P.y)  / (plot1_.y - plot0_.y);
   }
 
-  // 右ハンドルなら right=true。Gaussian+logDomain のときだけ対数幅、他は線形幅。
+  // If right is true, use the right handle. Gaussian+logDomain uses log width; others use linear width.
   float handleRho(const TFComponent& c, bool right) const {
     const float dir = right ? +1.f : -1.f;
     const float eps = 1e-30f;
 
     float rhoH;
     if (c.type == TFShape::Gaussian && c.logDomain) {
-      // ρh = 10^( log10(center) ± width )
+      // rhoH = 10^(log10(center) +/- width).
       float lc  = std::log10(std::max(c.center, eps));
       float lch = lc + dir * c.width;
       rhoH = std::pow(10.0f, lch);
     } else {
-      // 線形幅
+      // Linear width.
       rhoH = c.center + dir * c.width;
     }
-    // 全体レンジにクランプ
+    // Clamp to the full range.
     rhoH = std::clamp(rhoH, rhoMin_, rhoMax_);
     return rhoH;
   }
@@ -328,7 +328,7 @@ private:
 
   ImVec2 handlePosScreen(const TFComponent& c, bool right) const {
     float x01 = handleX01(c, right);
-    // ハンドルの目安の高さ（描画・ヒットテストとも統一して正規化）
+    // Approximate handle height, normalized consistently for drawing and hit testing.
     float yh  = (c.type==TFShape::Gaussian ? c.amp*std::exp(-0.5f)
 		 : (c.type==TFShape::Triangle ? c.amp*0.5f : c.amp));
     float y01 = std::clamp(yh / yMax_, 0.0f, 1.0f);
@@ -341,7 +341,7 @@ private:
     return toScreen01(x01, y01);
   }
   
-  // 曲線描画
+  // Draw the curve.
   void drawCurve(ImDrawList* dl) const {
     const int S = 512;
     static ImVec2 poly[512];
@@ -355,7 +355,7 @@ private:
     dl->AddPolyline(poly, S, IM_COL32(0, 180, 255, 255), false, 2.0f);
   }
 
-  // グリッド & 軸目盛（軽め）
+  // Light grid and axis ticks.
   void drawGrid(ImDrawList* dl) const {
     const ImU32 col = IM_COL32(70,70,75,255);
     // y: 0, 0.5, 1
@@ -365,7 +365,7 @@ private:
       ImVec2 b = toScreen01(1.0f, y01);
       dl->AddLine(a,b,col, (i==2)?1.6f:1.0f);
     }
-    // x: ρMin, 中央, ρMax
+    // x: rhoMin, midpoint, rhoMax.
     for (int i=0;i<3;i++){
       float x01 = (float)i*0.5f;
       ImVec2 a = toScreen01(x01, 0.0f);
@@ -376,10 +376,10 @@ private:
 
   void drawAxes(ImDrawList* dl) const {
     if(!showAxes_) return;
-    // 枠
+    // Frame.
     dl->AddRect(plot0_, plot1_, IM_COL32(160,160,160,255), 4.0f);
 
-    // X 目盛（ログ or 線形）
+    // X ticks, logarithmic or linear.
     const ImU32 col = IM_COL32(140,140,150,255);
     auto drawXTick = [&](float rho, const char* label){
       float x01 = x01FromRho(rho);
@@ -398,7 +398,7 @@ private:
 	drawXTick(rho, buf);
       }
     } else {
-      // 5分割
+      // Five subdivisions.
       for (int i=0;i<=5;i++){
 	float rho = rhoMin_ + (rhoMax_-rhoMin_)*(i/5.0f);
 	char buf[64]; snprintf(buf, sizeof(buf), "%.2g", rho);
@@ -406,7 +406,7 @@ private:
       }
     }
 
-    // Y 目盛（0..yMax_）
+    // Y ticks from 0 to yMax_.
     auto drawYTick = [&](float y, const char* label){
       float y01 = std::clamp(y / yMax_, 0.0f, 1.0f);
       ImVec2 a = toScreen01(0.0f, y01);
@@ -421,20 +421,20 @@ private:
   }
 
   // TransferEditor::drawAndEditHandles
-  // 返り値: 何か値が変わったら true
+  // Return true if any value changed.
   bool drawAndEditHandles(ImDrawList* dl)
   {
     bool changed = false;
 
-    // --------------- 基本状態 ---------------
+    // --------------- Basic state ---------------
     const ImGuiIO& io = ImGui::GetIO();
-    const ImVec2 mp   = io.MousePos;                 // 画面絶対座標のマウス
-    const float hitR  = 7.0f;                        // ヒット判定半径(px)
+    const ImVec2 mp   = io.MousePos;                 // Mouse position in absolute screen coordinates.
+    const float hitR  = 7.0f;                        // Hit-test radius in pixels.
     const bool  inside =
       (mp.x >= plot0_.x && mp.x <= plot1_.x &&
        mp.y >= plot0_.y && mp.y <= plot1_.y);
 
-    // --------------- ホバー判定（ドラッグ中以外） ---------------
+    // --------------- Hover hit test when not dragging ---------------
     int      hot = -1;
     DragMode hotMode = DragMode::None;
 
@@ -455,45 +455,45 @@ private:
       }
     }
 
-    // --------------- クリックでドラッグ開始 ---------------
+    // --------------- Start dragging on click ---------------
     if (drag_ == DragMode::None && ImGui::IsMouseClicked(0) && inside) {
       if (hot >= 0) {
 	selected_ = hot;
 	drag_     = hotMode;
       } else {
-	// 何もヒットしない → 近い成分を選択だけする（任意）
-	// ここは必要なら実装
+	// If nothing is hit, optionally select the nearest component.
+	// Implement this here if needed.
       }
     }
 
-    // --------------- ドラッグ更新 ---------------
+    // --------------- Drag update ---------------
     if (drag_ != DragMode::None && selected_ >= 0 && selected_ < (int)comps_.size()) {
       auto& c = comps_[selected_];
 
-      // スクリーン→正規化座標(0..1)→物理量へ変換
+      // Convert screen coordinates to normalized 0..1 coordinates, then to physical values.
       float x01, y01;
       fromScreen(mp, x01, y01);
       x01 = std::clamp(x01, 0.0f, 1.0f);
       y01 = std::clamp(y01, 0.0f, 1.0f);
 
       if (drag_ == DragMode::Center) {
-	// 中心点: Xはcenter、Yはamp
+	// Center point: X controls center, Y controls amplitude.
 	c.center = std::clamp(rhoFromX01(x01), rhoMin_, rhoMax_);
 	c.amp    = std::max(0.0f, y01 * yMax_);
 	changed  = true;
       } else {
-	// 左右ハンドル: Xから ρh を求め、width を更新
+	// Left and right handles: derive rhoH from X and update width.
 	float rhoH = rhoFromX01(x01);
 	setWidthFromHandleRho(c, rhoH);
 	changed = true;
       }
 
-      // ボタンを離したらドラッグ終了
+      // Stop dragging when the mouse button is released.
       if (ImGui::IsMouseReleased(0))
 	drag_ = DragMode::None;
     }
 
-    // --------------- 描画（補助線とハンドル） ---------------
+    // --------------- Draw guides and handles ---------------
     for (int i = 0; i < (int)comps_.size(); ++i) {
       const auto& c = comps_[i];
       const bool  sel = (i == selected_);
@@ -502,12 +502,12 @@ private:
       ImVec2 Pl = handlePosScreen(c, false);
       ImVec2 Pr = handlePosScreen(c, true);
 
-      // 補助線
+      // Guide lines.
       dl->AddLine(Pl, Pr, IM_COL32(130,130,130,160), 1.0f);
       dl->AddLine(ImVec2(Pc.x, plot0_.y), ImVec2(Pc.x, plot1_.y),
 		  IM_COL32(100,100,100,120), 1.0f);
 
-      // ハンドル点
+      // Handle points.
       ImU32 colC = sel ? IM_COL32(255,200,0,255) : IM_COL32(200,200,200,255);
       dl->AddCircleFilled(Pc, 5.5f, colC);
       dl->AddCircleFilled(Pl, 4.5f, IM_COL32(160,220,255,255));
@@ -532,5 +532,4 @@ private:
     }
   }
 };
-
 

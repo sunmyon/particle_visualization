@@ -7,7 +7,7 @@
 #include <cctype>
 
 enum class FileFormat {
-  Auto,       // 拡張子から自動判別 (従来の動作)
+  Auto,       // Infer from extension, preserving legacy behavior.
   HDF5,
   Binary,
   Gadget,

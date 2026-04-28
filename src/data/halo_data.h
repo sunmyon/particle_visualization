@@ -37,5 +37,5 @@ public:
 
 struct HaloCatalog {
   TrackingVector<HaloData> haloes;
-  std::vector<std::vector<uint64_t>> haloIDs;   // haloes.size() と同じ
+  std::vector<std::vector<uint64_t>> haloIDs;   // Same length as haloes.
 };

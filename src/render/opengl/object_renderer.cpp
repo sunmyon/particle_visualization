@@ -433,7 +433,7 @@ void SphereMeshGL::init(int stacks, int slices)
                         (void*)offsetof(Vtx, pos));
 
   // location = 7 : normal
-  // 今の instancedSolid shader では未使用だが、将来用に張っておいてよい
+  // Not used by the current instancedSolid shader, but safe to bind for future use.
   glEnableVertexAttribArray(7);
   glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE,
                         sizeof(Vtx),

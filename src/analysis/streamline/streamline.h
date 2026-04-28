@@ -12,7 +12,6 @@
 
 #include "core/tracking_vector.h"
 #include "data/particle_block.h"
-#include "render/scene_objects.h"
 
 struct Vec3 {
   float x, y, z;
@@ -46,28 +45,38 @@ inline Vec3 normalized(const Vec3& a) {
   return a / l;
 }
 
-struct StreamlineMeshData {
-  std::vector<float>  vertices;
-  std::vector<size_t> firsts;
-  std::vector<size_t> counts;
+struct StreamlineBoxSpec {
+  bool enabled = false;
+  float center[3] = {0.0f, 0.0f, 0.0f};
+  float size[3] = {0.0f, 0.0f, 0.0f};
+};
+
+struct StreamlineBuildSpec {
+  int nSeeds = 1;
+  bool useManualSeed = false;
+  float manualSeed[3] = {0.0f, 0.0f, 0.0f};
+  StreamlineBoxSpec seedRegion;
+  StreamlineBoxSpec fieldRegion;
+  float thetaMaxDegrees = 10.0f;
 };
 
 class StreamlineComputer {
  public:
-  void setRegionFromParticleData(TrackingVector<ParticleData>& particles);
-  void setRegionByHand(float* center, float* len);
-  void setSeeds(TrackingVector<ParticleData>& particles, int n_seeds);
-
-  std::vector<LineObject> build(ParticleBlock& particles, double theta_max_in_degree);
-  const StreamlineMeshData& meshData() const { return m_mesh; }
-
-  void disableRegion() { flagSetRegionByHand = false; }
-
-  void setStreamRegionFromParticleData(TrackingVector<ParticleData>& particles);
-  void setStreamRegionByHand(float* center, float* len);
-  void disableStreamRegion() { flagSetStreamRegionByHand = false; }
+  std::vector<std::vector<Vec3>> build(const ParticleBlock& particles,
+                                       const StreamlineBuildSpec& spec);
 
  private:
+  struct Bounds {
+    float min[3] = {0.0f, 0.0f, 0.0f};
+    float max[3] = {0.0f, 0.0f, 0.0f};
+    bool valid = false;
+  };
+
+  struct SeedPoint {
+    Vec3 pos;
+    float hsml = 0.0f;
+  };
+
   struct particle_stream {
     float pos[3];
     float vect[3];
@@ -95,7 +104,15 @@ class StreamlineComputer {
 
   std::unique_ptr<KDTreeType> m_kdTree;
 
-  void estimate_gradB(ParticleBlock& particleBlock);
+  Bounds makeGasBounds(const TrackingVector<ParticleData>& particles) const;
+  Bounds makeBoxBounds(const StreamlineBoxSpec& box) const;
+  std::vector<SeedPoint> selectSeeds(const TrackingVector<ParticleData>& particles,
+                                     const Bounds& bounds,
+                                     int nSeeds) const;
+  SeedPoint makeManualSeed(const TrackingVector<ParticleData>& particles,
+                           const float seed[3]) const;
+  void estimate_gradB(const ParticleBlock& particleBlock,
+                      const Bounds& fieldBounds);
   bool evalFieldAt(const float x[3], float outB[3], float& hsml) const;
   bool evalDirectionAt(const Vec3& x, Vec3& dir, float& hsml) const;
 
@@ -103,7 +120,6 @@ class StreamlineComputer {
   std::vector<Vec3> integrateStreamline(const Vec3& seed, float h_init, int maxstep, float sign) const;
   std::vector<Vec3> sampleByCurvature(const std::vector<Vec3>& fullLine, float theta_max_rad) const;
 
-  void flattenLines_();
   bool RK4stepArcLength(const Vec3& x, float& h, float sign, Vec3& x_next) const;
   bool is_inside_(const Vec3& pos) const;
 
@@ -115,18 +131,9 @@ class StreamlineComputer {
   static constexpr float GradRegFraction = 1.0e-4f;
   static constexpr float LimiterEps = 1.0e-12f;
 
-  std::vector<Vec3> m_seeds;
-  std::vector<float> m_hsmls;
-  std::vector<std::vector<Vec3>> m_lines;
-
   TrackingVector<std::array<Eigen::Vector3f, 3>> gradB;
   TrackingVector<Eigen::Vector3f> gradLimiter;
   TrackingVector<float> r_neighbours;
 
-  float xmin_seed[3], xmax_seed[3];
-  float xmin_[3], xmax_[3];
-  StreamlineMeshData m_mesh;
-
-  bool flagSetRegionByHand = false;
-  bool flagSetStreamRegionByHand = false;
+  Bounds fieldBounds_;
 };

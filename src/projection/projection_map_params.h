@@ -60,10 +60,24 @@ struct ProjectionMapParams {
   float psf_sigma_pix = 1.5f;
   QuantityId selectedVarGas = QuantityId::Density;
 
+  bool multiPanelEnabled = false;
+  int multiPanelRows = 2;
+  int multiPanelCols = 2;
+  int multiPanelCount = 4;
+  bool multiPanelShowTimeLabel[6] = {true, true, true, true, true, true};
+  bool multiPanelShowScale[6] = {true, true, true, true, true, true};
+  QuantityId multiPanelVars[6] = {
+    QuantityId::Density,
+    QuantityId::Temperature,
+    QuantityId::Mass,
+    QuantityId::Hsml,
+    QuantityId::Density,
+    QuantityId::Temperature
+  };
+
   char filterExpr[256] = "return m > 10.0";
   char pointSizeExpr[256] = "return m / 10.0";
   char pointColorExpr[256] = "return { r = m/100.0, g = 0.5, b = 0.2, a = 1.0 }";
   char minValueExpr[32] = "return 0.0";
   char maxValueExpr[32] = "return 1.0";
 };
-

@@ -3,7 +3,7 @@
 
 namespace sphlut {
 
-// カーネル種別
+// Kernel type.
 enum class Kernel { CubicSpline /*, WendlandC2, ... */ };
 
 struct TauLUT {
@@ -12,7 +12,7 @@ struct TauLUT {
     float alpha3;            // 3D normalize (e.g., 1/pi)
 };
 
-// samples: 1Dテクスチャ解像度
+// samples: 1D texture resolution.
 TauLUT buildTauLUT(Kernel k, int samples = 512);
 
 } // namespace sphlut

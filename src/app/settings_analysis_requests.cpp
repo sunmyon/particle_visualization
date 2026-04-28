@@ -91,6 +91,14 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
 
   if (!edit.streamlineBuildDirty) {
     edit.streamlineBuild.nSeeds = requests.streamlineBuild.nSeeds;
+    edit.streamlineBuild.thetaMaxDegrees =
+      requests.streamlineBuild.thetaMaxDegrees;
+    edit.streamlineBuild.useManualSeed =
+      requests.streamlineBuild.useManualSeed;
+    for (int i = 0; i < 3; ++i) {
+      edit.streamlineBuild.manualSeed[i] =
+        requests.streamlineBuild.manualSeed[i];
+    }
     edit.streamlineBuild.limitRegion = requests.streamlineBuild.limitRegion;
     for (int i = 0; i < 3; ++i) {
       edit.streamlineBuild.regionCenter[i] =
@@ -299,13 +307,23 @@ void SubmitStreamlinePreviewRequest(SettingsStreamlinePreviewEdit& edit,
   dirty = false;
 }
 
-void SubmitStreamlineBuildRequest(SettingsStreamlineBuildEdit& edit,
+void SubmitStreamlineBuildRequest(const SettingsStreamlinePreviewEdit& preview,
+                                  SettingsStreamlineBuildEdit& edit,
                                   bool& dirty,
                                   StreamlineBuildRequestState& request)
 {
   if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
 
   request.nSeeds = edit.nSeeds;
+  request.thetaMaxDegrees = edit.thetaMaxDegrees;
+  request.useManualSeed = edit.useManualSeed;
+  for (int i = 0; i < 3; ++i) {
+    request.manualSeed[i] = edit.manualSeed[i];
+  }
+  for (int i = 0; i < 3; ++i) {
+    request.seedCenter[i] = preview.seedCenter[i];
+    request.seedSize[i] = preview.seedSize[i];
+  }
   request.limitRegion = edit.limitRegion;
   for (int i = 0; i < 3; ++i) {
     request.regionCenter[i] = edit.regionCenter[i];
@@ -424,7 +442,8 @@ void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
   SubmitStreamlinePreviewRequest(edit.streamlinePreview,
                                  edit.streamlinePreviewDirty,
                                  requests.streamlinePreview);
-  SubmitStreamlineBuildRequest(edit.streamlineBuild,
+  SubmitStreamlineBuildRequest(edit.streamlinePreview,
+                               edit.streamlineBuild,
                                edit.streamlineBuildDirty,
                                requests.streamlineBuild);
 #endif

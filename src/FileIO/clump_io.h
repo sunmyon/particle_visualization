@@ -49,7 +49,7 @@ struct ClumpInfoIO {
   float   time = 0.0f;
   float   density_threshold = 0.0f;
   
-  // クラスタ情報（vector の長さ＝クラスタ数）
+  // Cluster information. Vector length equals the number of clusters.
   TrackingVector<float>         clump_position;    // 3×nClumps
   TrackingVector<float>         clump_velocity;    // 3×nClumps
   TrackingVector<float>         clump_density;
@@ -72,7 +72,7 @@ struct ClumpInfoIO {
 };
 
 //------------------------------------------------------------------------------
-// ClumpIO: HDF5ファイルの読み書きを行う名前空間
+// ClumpIO: namespace for reading and writing HDF5 files.
 namespace ClumpIO {
   bool readSnapshot(const std::string& fname,
                     int snapshotID,

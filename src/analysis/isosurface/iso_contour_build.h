@@ -1,16 +1,21 @@
 #pragma once
 
-class ParticleArray;
+#include <cstddef>
+
+struct Mesh;
+struct ParticleBlock;
 enum class QuantityId : int;
 
 #ifdef ISO_CONTOUR
-struct IsoContourGeometryState;
-#endif
+struct IsoContourBuildParams {
+  QuantityId selectedQuantity;
+  float isoLevel = 0.0f;
+  int maxTreeLevel = 15;
+  std::size_t minParticles = 8;
+  bool useVTK = true;
+  bool verbose = false;
+};
 
-#ifdef ISO_CONTOUR
-void BuildIsoContourGeometry(ParticleArray& part,
-                             QuantityId selectedVar,
-                             float isoLevel,
-                             int max_treelevel,
-                             IsoContourGeometryState& iso);
+Mesh BuildIsoContourMesh(const ParticleBlock& particles,
+                         const IsoContourBuildParams& params);
 #endif

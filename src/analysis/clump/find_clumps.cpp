@@ -1,6 +1,6 @@
 #include "implot.h"
 #include "analysis/clump/find_clumps.h"
-#include "analysis/clump/find_clumps_io.h"
+#include "FileIO/clump_io.h"
 #include "interaction/camera.h"
 
 #include "FileIO/snapshot_source.h"
@@ -65,7 +65,7 @@ void FindClump::union_sets(TrackingVector<int>& parent, int a, int b) {
         parent[pb] = pa;
 }
 
-// クランプ検出ルーチン
+// Clump detection routine.
 void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 			   const std::string &var
 			   )
@@ -78,38 +78,38 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
   cloud.pts = filteredParticles; 
   
   size_t numParticles = cloud.pts.size();
-  // union–find の初期化：各粒子は初めは自分自身の代表
+  // Initialize union-find: each particle starts as its own representative.
   TrackingVector<int> parent(numParticles);
   for (size_t i = 0; i < numParticles; i++) {
     parent[i] = i;
   }
 
-  // KD-Tree の構築
+  // Build the KD-tree.
   KDTree_t kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   kdTree.buildIndex();
 
-  // radiusSearch には、リンク長の二乗値を指定（L2 距離の場合）
+  // radiusSearch expects the squared linking length for L2 distance.
   double searchRadius = params_.linkingLength * params_.linkingLength;
   nanoflann::SearchParameters params(10);
 
 #ifdef _OPENMP
   int numProcs = omp_get_num_procs();
-  // その数をスレッド数として設定                                                                                                                                                                                                                                                                      
+  // Use that count as the thread count.
   omp_set_num_threads(numProcs);
   std::cout << "Using " << numProcs << " threads." << std::endl;
 #endif
   
 #pragma omp parallel for
-  // 各粒子について近傍探索し、対象同士を union する
+  // Search neighbors for each particle and union matching pairs.
   for (int i = 0; i < static_cast<int>(numParticles); i++) {
     double query_pt[3] = { cloud.pts[i].pos[0], cloud.pts[i].pos[1], cloud.pts[i].pos[2] };
 
-    // KDTree_t に依存する型エイリアスの取得
+    // Get type aliases that depend on KDTree_t.
     typedef typename KDTree_t::IndexType  IndexType;
     typedef typename KDTree_t::DistanceType DistanceType;
     typedef nanoflann::ResultItem<IndexType, DistanceType> MyResultItem;
 
-    // ret_matches を正しい型で宣言する
+    // Declare ret_matches with the correct result type.
     std::vector<MyResultItem> ret_matches;
 
     if(params_.useHsml)
@@ -133,8 +133,8 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     }
   }
   
-  // クランプ毎の統計量を集計するためのマップ
-  // key: 代表番号, value: ClumpInfo を一時的に集計
+  // Map for accumulating statistics per clump.
+  // key: representative ID, value: temporary ClumpInfo accumulator.
   std::unordered_map<int, ClumpInfo> clumpMap;
   for (size_t i = 0; i < numParticles; i++) {
     int root = find_parent(parent, i);
@@ -154,7 +154,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     }
   }
 
-  // 最終的な重心は各クランプの (重心和 / 総質量) とする
+  // Final center of mass is weighted-position sum divided by total mass.
   for (auto &kv : clumpMap) {
     ClumpInfo &info = kv.second;
     if (info.totalMass > 0) {
@@ -164,7 +164,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     }
   }
 
-  // クランプサイズ（radius）を計算するため、各粒子の距離をチェック
+  // Check each particle distance to compute clump radius.
   for (size_t i = 0; i < numParticles; i++) {
     int root = find_parent(parent, i);
     ClumpInfo &info = clumpMap[root];
@@ -176,7 +176,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
       info.radius = dist;
   }
 
-  // 最小粒子数未満のクランプを除外してリストにする
+  // Exclude clumps below the minimum particle count.
   TrackingVector<ClumpInfo> clumpList;
   for (auto &kv : clumpMap) {
     if (kv.second.count >= params_.minParticles)
@@ -190,21 +190,21 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
   std::unordered_map<int, ClumpInfo> newClumpMap;
   int cumulativeOffset = 0;
   for (size_t i = 0; i < clumpList.size(); i++) {
-    // ここで、clumpList[i].clumpID は元の代表番号（old group id）
+    // At this point, clumpList[i].clumpID is the old representative group ID.
     int oldGroup = clumpList[i].clumpID;
-    clumpList[i].clumpID = static_cast<int>(i); // 新 clumpID：0から順に
-    clumpList[i].startIndex = cumulativeOffset; // offset = これまでの粒子数の合計
+    clumpList[i].clumpID = static_cast<int>(i); // New clumpID, assigned from 0.
+    clumpList[i].startIndex = cumulativeOffset; // Offset is the cumulative particle count.
     cumulativeOffset += clumpList[i].count;
-    newClumpMap[oldGroup] = clumpList[i]; // マッピングを保存
+    newClumpMap[oldGroup] = clumpList[i]; // Save the mapping.
   }
 
   TrackingVector<std::pair<int, size_t>> groupIndex;
   for (size_t i = 0; i < numParticles; i++) {
     int oldGroup = find_parent(parent, i);
-    // 対象となるクランプのみ
+    // Only target clumps.
     if (clumpMap[oldGroup].count < params_.minParticles)
       continue;
-    // 新 clumpID は newClumpMap[oldGroup].clumpID
+    // The new clumpID is newClumpMap[oldGroup].clumpID.
     groupIndex.push_back({ newClumpMap[oldGroup].clumpID, i });
   }
 
@@ -212,13 +212,13 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     return a.first < b.first;
   });
  
-  // ⑤ ソート結果に基づいて、sortedParticles を作成
+  // Create sortedParticles from the sort result.
   TrackingVector<ParticleDataFiltered> sortedParticles;
   sortedParticles.resize(groupIndex.size());
   for (size_t i = 0; i < groupIndex.size(); i++)
     sortedParticles[i] = cloud.pts[groupIndex[i].second];  
   
-  // (4) ParticleCloud::pts を sortedParticles に置き換える
+  // Replace ParticleCloud::pts with sortedParticles.
   cloud.pts = sortedParticles;
   printf("clumpListsize=%lu\n", clumpList.size());
 
@@ -268,10 +268,10 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 }
 
 //──────────────────────────────
-// pruning モジュール相当の関数群
+// Functions corresponding to the pruning module.
 //────────────────────────────────────────────────────────────
 namespace pruning {
-  // all_true: 複数の is_independent 関数をまとめ、すべて true なら true を返す
+  // all_true: combine multiple is_independent predicates and return true only if all pass.
   std::function<bool(StructureNode*)> all_true(const TrackingVector<std::function<bool(StructureNode*)>>& funcs) {
     return [=](StructureNode* s) -> bool {
       for (const auto& f : funcs)
@@ -281,7 +281,7 @@ namespace pruning {
     };
   }
 
-  // min_delta: delta 条件を返す関数
+  // min_delta: return a predicate for the delta condition.
   std::function<bool(StructureNode*)> min_delta(double delta) {
     return [=](StructureNode* s) -> bool {
       if (s->parent)
@@ -290,21 +290,21 @@ namespace pruning {
     };
   }
 
-  // min_peak: 最低ピーク値条件
+  // min_peak: minimum peak-value condition.
   std::function<bool(StructureNode*)> min_peak(double peak) {
     return [=](StructureNode* s) -> bool {
       return s->vmax >= peak;
     };
   }
 
-  // min_npix: 最低ピクセル数条件
+  // min_npix: minimum pixel-count condition.
   std::function<bool(StructureNode*)> min_npix(int npix) {
     return [=](StructureNode* s) -> bool {
       return s->indices.size() >= static_cast<size_t>(npix);
     };
   }
 
-  // _to_prune: プルーニング対象の leaf を探す
+  // _to_prune: find leaves that should be pruned.
   TrackingVector<StructureNode*> _to_prune(TrackingVector<StructureNode*>& keep_structures, double min_delta, int npix) {
     TrackingVector<StructureNode*> toPrune;
 
@@ -333,9 +333,9 @@ namespace pruning {
     return toPrune;
   }
 
-  // _make_trunk: trunk を作成し、独立性を満たさない孤立リーフを削除する
+  // _make_trunk: build the trunk and remove orphan leaves that fail independence.
   TrackingVector<StructureNode*> _make_trunk(TrackingVector<StructureNode*>& keep_structures, double min_delta, int npix) {
-    // 親を持たない構造を trunk として抽出
+    // Extract structures without parents as the trunk.
     TrackingVector<StructureNode*> trunk;
     for (auto& s : keep_structures) {
       s->flag_trunk = false;
@@ -343,7 +343,7 @@ namespace pruning {
         trunk.push_back(s);
     }
     
-    // trunk 内のリーフのうち、独立性を満たさない orphan を削除
+    // Remove orphan leaves in the trunk that do not satisfy independence.
     TrackingVector<StructureNode*> leavesInTrunk;
     for (StructureNode* s : trunk) {
       if (s->isLeaf())
@@ -366,7 +366,7 @@ namespace pruning {
       trunk.erase(std::remove(trunk.begin(), trunk.end(), leaf), trunk.end());      
     }
     
-    // trunk 内の各構造のレベルを 0 にキャッシュ（高速化のため）
+    // Cache level 0 for each trunk structure for faster access.
     //for (StructureNode* s : trunk)
     //s->_level = 0;
 
@@ -383,9 +383,9 @@ namespace pruning {
 			   parent->children.end());
 
     if (!m->isLeaf()) {
-        // m の children を親の children に追加
+        // Add m's children to the parent's children.
         parent->children.insert(parent->children.end(), m->children.begin(), m->children.end());
-        // 各子の親ポインタを親に変更
+        // Redirect each child's parent pointer to the parent.
         for (auto child : m->children) 
             child->parent = parent;        
     }
@@ -418,7 +418,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   
   size_t numParticles = cloud.pts.size();
 
-  // 粒子を密度の降順（高密度から）にソートする
+  // Sort particles by descending density.
   TrackingVector<int> sortedIndices(numParticles);
   for (size_t i = 0; i < numParticles; ++i)
     sortedIndices[i] = i;
@@ -431,7 +431,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   for (size_t i = 0; i < sortedIndices.size(); ++i) 
     rank[sortedIndices[i]] = i;  
   
-  // KD-Tree の構築
+  // Build the KD-tree.
   KDTree_t kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   kdTree.buildIndex();
 
@@ -446,12 +446,12 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     const ParticleDataFiltered& p = cloud.pts[idx];
     double query_pt[3] = { p.pos[0], p.pos[1], p.pos[2] };
 
-    // KDTree_t に依存する型エイリアスの取得
+    // Get type aliases that depend on KDTree_t.
     typedef typename KDTree_t::IndexType  IndexType;
     typedef typename KDTree_t::DistanceType DistanceType;
     typedef nanoflann::ResultItem<IndexType, DistanceType> MyResultItem;
 
-    // ret_matches を正しい型で宣言する
+    // Declare ret_matches with the correct result type.
     std::vector<MyResultItem> ret_matches;
     
     double searchRadius = p.Hsml * p.Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
@@ -484,12 +484,12 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     }
 
     std::sort(neighborNodes.begin(), neighborNodes.end());
-    // 重複要素を末尾に移動し、新しい末尾のイテレータを返す
+    // Move duplicate entries to the end and return the new logical end.
     auto last = std::unique(neighborNodes.begin(), neighborNodes.end());
-    // 重複部分を削除
+    // Erase duplicates.
     neighborNodes.erase(last, neighborNodes.end());
     
-    // この粒子 p と連結しているクラスタ代表のID集合を探索
+    // Find representative cluster IDs connected to this particle.
     if (neighborNodes.empty()) {
       StructureNode* newLeaf = new StructureNode(TrackingVector<int>{idx}, p.density);
       nodes.push_back(newLeaf);
@@ -569,7 +569,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
 	
 	pLeaf_rep->merge_node(leaf_merged);
 	
-	// 親の children コンテナからも leaf_merged を削除
+	// Also remove leaf_merged from the parent's children container.
 	if (leaf_merged->parent) {
 	  auto& siblings = leaf_merged->parent->children;
 	  siblings.erase(std::remove(siblings.begin(), siblings.end(), leaf_merged), siblings.end());
@@ -581,7 +581,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     }    
   }
 
-  // プルーニング対象を順次削除する
+  // Remove pruning targets iteratively.
   while (true) {
     auto toPrune = pruning::_to_prune(nodes, params_.minDepth, params_.minParticles);
     if (toPrune.empty())
@@ -605,7 +605,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     }
   }
 
-  // 親を持たない構造から trunk を再構築
+  // Rebuild the trunk from structures without parents.
   TrackingVector<StructureNode*>trunk = pruning::_make_trunk(nodes, params_.minDepth, params_.minParticles);
   
   for (size_t i = 0; i < nodes.size(); i++) {    
@@ -694,7 +694,7 @@ void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<Part
 
 
 //------------------------------------------------------------
-// 1) 質量順にソートする関数（降順: 質量が大きいものが前に来る）
+// 1) Sort by mass in descending order.
 void FindClump::sortNodesByMass() {
   std::sort(nodeList.begin(), nodeList.end(), [](const StructureNode* a, const StructureNode* b) {
     return a->totalMass > b->totalMass;
@@ -704,24 +704,24 @@ void FindClump::sortNodesByMass() {
 }
 
 //------------------------------------------------------------
-// 2) 階層順にソートするための補助関数（pre-order で巡回）
+// 2) Helper for hierarchy sorting using pre-order traversal.
 void FindClump::traverseHierarchy(StructureNode* node, TrackingVector<StructureNode*>& sortedNodes) {
   if (!node) return;
   sortedNodes.push_back(node);
-  // 子ノードがあれば順次巡回（ここでは順番は children の順序に依存）
+  // Visit child nodes in order. The order depends on children.
   for (StructureNode* child : node->children) {
     traverseHierarchy(child, sortedNodes);
   }
 }
 
-// 階層順にソートする関数
-// trunk (parent == nullptr) から始め、pre-order で巡回して順序を作成
+// Sort by hierarchy.
+// Start from trunk nodes with parent == nullptr and build pre-order order.
 void FindClump::sortNodesByHierarchy() {
   if(!flagDendrogramComputed)
     return;
     
   TrackingVector<StructureNode*> sortedNodes;
-  // nodes 内の各ノードから、親が nullptr であるもの（trunk）を対象に巡回
+  // Traverse trunk nodes, which are nodes whose parent is nullptr.
   for (StructureNode* node : nodeList) {
     if (node->parent == nullptr) {
       traverseHierarchy(node, sortedNodes);
@@ -733,7 +733,7 @@ void FindClump::sortNodesByHierarchy() {
 }
 
 
-// フィルタリング処理の例
+// Example filtering operation.
 TrackingVector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const{
   TrackingVector<ParticleDataFiltered> filtered;  
   for (size_t i = 0; i < particles.size(); ++i) {
@@ -758,12 +758,12 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
   if (!node)
     return pts;
 
-  // 現在のノードの indices を追加
+  // Add indices from the current node.
   for (int idx : node->indices) {
     pts.push_back(original_p[idx]);
   }
 
-  // 子ノードに対して再帰的に処理し、得られた indices を結合
+  // Recursively process child nodes and merge their indices.
   for (StructureNode* child : node->children) {
     TrackingVector<ParticleData> childIndices = getAllChildren(child, original_p);
     pts.insert(pts.end(), childIndices.begin(), childIndices.end());

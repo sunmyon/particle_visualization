@@ -308,6 +308,6 @@ RgbImage ToRgbImage(const ImageCanvas& canvas, uint64_t version)
   out.width = canvas.width();
   out.height = canvas.height();
   out.version = version;
-  out.rgb = canvas.pixels(); // const ref を返すAPIならコピー
+  out.rgb = canvas.pixels(); // Copies if the API returns a const reference.
   return out;
 }

@@ -17,7 +17,7 @@ static std::vector<LayoutSpec> make_specs(bool withB){
     {F_VAL, DT_FLOAT32, 1},  {F_VAL2, DT_FLOAT32, 1},
     {F_ID,  DT_UINT32,  1},  {F_TYPE, DT_UINT8,   1},
     {F_ORIGPOS, DT_FLOAT32, 3},
-    {F_MASK, DT_UINT8, 1},   // 追記
+    {F_MASK, DT_UINT8, 1},
     {F_FLAG, DT_UINT8, 1} 
   };
   if(withB) s.insert(s.begin()+2, {F_B, DT_FLOAT32, 3});
@@ -76,7 +76,11 @@ static bool mmap_file_fallback(const char* path, size_t bytes, ShmRegion& out){
     return false;
   }
   ::close(fd);
-  out.base = p; out.bytes = bytes; out.name = path; out.fd = -1;
+  out.base = p;
+  out.bytes = bytes;
+  out.name = path;
+  out.fd = -1;
+  out.unlinkOnDestroy = false;
   return true;
 }
 
@@ -87,14 +91,14 @@ static bool shm_create_posix(const char* name, uint64_t N, bool withB, ShmRegion
   size_t pagesz = (size_t)sysconf(_SC_PAGESIZE); if (!pagesz) pagesz = 4096;
   size_t total_aligned = align_up(bl.total_bytes, pagesz);
 
-  // 1) まず POSIX shm を試す
+  // 1) Try POSIX shared memory first.
   int fd = shm_open(nm.c_str(), O_CREAT|O_RDWR, 0600);
   if (fd >= 0) {
     if (ftruncate(fd, (off_t)total_aligned) == 0) {
       void* p = mmap(nullptr, total_aligned, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
       if (p != MAP_FAILED) {
         ::close(fd);
-        // ヘッダ初期化
+        // Initialize the header.
         auto* hdr = reinterpret_cast<ShmHeader*>(p);
         hdr->magic=0xC0FFEE01; hdr->version=1; hdr->countN=N;
         hdr->n_fields=(uint32_t)bl.entries.size();
@@ -102,7 +106,13 @@ static bool shm_create_posix(const char* name, uint64_t N, bool withB, ShmRegion
         hdr->flags=2; hdr->reserved=0;
         auto* ents = reinterpret_cast<FieldEntry*>((uint8_t*)p + align64(sizeof(ShmHeader)));
         std::memcpy(ents, bl.entries.data(), bl.entries.size()*sizeof(FieldEntry));
-        out.base=p; out.bytes=total_aligned; out.hdr=hdr; out.ents=ents; out.name=nm; out.fd=-1;
+        out.base=p;
+        out.bytes=total_aligned;
+        out.hdr=hdr;
+        out.ents=ents;
+        out.name=nm;
+        out.fd=-1;
+        out.unlinkOnDestroy=true;
         std::fprintf(stderr, "[shm] created POSIX shm '%s' (%zuB)\n", nm.c_str(), total_aligned);
         return true;
       }
@@ -112,17 +122,17 @@ static bool shm_create_posix(const char* name, uint64_t N, bool withB, ShmRegion
                    nm.c_str(), total_aligned, std::strerror(errno), errno);
     }
     ::close(fd);
-    // 後始末（名前が残るのを避ける）
+    // Clean up to avoid leaving the name behind.
     shm_unlink(nm.c_str());
   } else {
     std::fprintf(stderr, "[shm] shm_open('%s') failed: %s\n", nm.c_str(), std::strerror(errno));
   }
 
-  // 2) 失敗時はファイル mmap にフォールバック
+  // 2) Fall back to file-backed mmap if POSIX shm fails.
   char fbpath[512];
-  std::snprintf(fbpath, sizeof(fbpath), "/tmp%s.mm", nm.c_str()); // 例: /tmp/cppvis_pos.mm
+  std::snprintf(fbpath, sizeof(fbpath), "/tmp%s.mm", nm.c_str()); // Example: /tmp/cppvis_pos.mm
   if (mmap_file_fallback(fbpath, total_aligned, out)) {
-    // ヘッダ初期化（内容は同じ）
+    // Initialize the header with the same contents.
     auto* hdr = reinterpret_cast<ShmHeader*>(out.base);
     hdr->magic=0xC0FFEE01; hdr->version=1; hdr->countN=N;
     hdr->n_fields=(uint32_t)bl.entries.size();
@@ -141,8 +151,8 @@ static bool shm_create_posix(const char* name, uint64_t N, bool withB, ShmRegion
 static void shm_destroy_posix(ShmRegion& r){
   if (!r.base) return;
   munmap(r.base, r.bytes);
-  // POSIX shm の場合のみ unlink を試みる（file fallback では unlink しない or optional）
-  if (!r.name.empty() && r.name[0]=='/')
+  // Only unlink POSIX shm. File fallback cleanup is intentionally optional.
+  if (r.unlinkOnDestroy && !r.name.empty())
     shm_unlink(r.name.c_str());
   r = {};
 }
@@ -154,7 +164,7 @@ bool shm_create_region(const char* name, uint64_t N, bool withB, ShmRegion& out)
 #if !defined(_WIN32)
   return shm_create_posix(name, N, withB, out);
 #else
-  // TODO: CreateFileMapping/MapViewOfFile の実装
+  // TODO: Implement CreateFileMapping/MapViewOfFile.
   (void)name; (void)N; (void)withB; (void)out;
   return false;
 #endif

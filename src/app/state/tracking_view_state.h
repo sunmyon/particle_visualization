@@ -18,12 +18,12 @@ struct TrackingTargetState {
   int targetSinkParticleID = -1;
 
   bool useMassCenter = false;
-  float massCenterRadius = 0.0f;       // <=0 なら無制限
-  float massCenterMinDensity = 0.0f;   // gas(type=0) の閾値
+  float massCenterRadius = 0.0f;       // <= 0 means unlimited.
+  float massCenterMinDensity = 0.0f;   // Threshold for gas particles, type 0.
 
   bool alignToAngularMomentum = false;
   AngularMomentumViewMode amViewMode = AngularMomentumViewMode::FaceOn;
-  float amRadius = 0.0f;               // <=0 なら無制限
+  float amRadius = 0.0f;               // <= 0 means unlimited.
   bool amSubtractBulkVelocity = true;
   std::array<bool,6> amUseType = {true, true, true, true, true, true};
 

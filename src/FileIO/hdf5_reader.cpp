@@ -271,10 +271,10 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
 
   dapl_ = H5Pcreate(H5P_DATASET_ACCESS);
     
-  // rdcc_nslots: ハッシュ表サイズ（chunk数の目安）
-  // rdcc_nbytes: キャッシュ総バイト数
-  // rdcc_w0: preemption policy（0..1）
-  H5Pset_chunk_cache(dapl_, 200003,              // nslots（素数が推奨）
+  // rdcc_nslots: hash table size, roughly the expected chunk count.
+  // rdcc_nbytes: total cache bytes.
+  // rdcc_w0: preemption policy in [0,1].
+  H5Pset_chunk_cache(dapl_, 200003,              // Prime nslots value is recommended.
 		     512ULL*1024*1024,    // 512MB chunk cache
 		     0.75);
     
@@ -520,7 +520,7 @@ bool HDF5Reader::build_opened_fields_for_ptype_(int ptype,
 
       opened.push_back(std::move(of));
     } catch (...) {
-      // この ptype にはその field が無い
+      // This particle type does not have that field.
     }
   }
 
@@ -826,7 +826,7 @@ bool HDF5Reader::read_ids_chunk_u64_(int ptype, size_t localStart, size_t n,
     ds.read(ids.data(), H5::PredType::NATIVE_ULLONG, msp, fsp);
     return true;
   }catch(...){
-    // fallback（最悪時）
+    // Worst-case fallback.
     for(size_t j=0;j<n;++j){
       ids[j] = (uint64_t)(IndexStart_[ptype] + localStart + j + 1);
     }

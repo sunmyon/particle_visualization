@@ -1,7 +1,6 @@
-// test_descriptor_isosurface.cpp
 #include "analysis/isosurface/isosurface_generator.h"
 #include "analysis/isosurface/mesh_data.h"
-#include "OctTree/ParticleOctree.h"
+#include "data/spatial/particle_octree.h"
 
 #include <vtkHyperTreeGridNonOrientedCursor.h>  
 #include <vtkHyperTreeGridContour.h> 
@@ -21,17 +20,18 @@
 #include <string>
 
 #include <vtkCleanPolyData.h>
-#include <vtkPolyDataNormals.h>      // ← これを追加
-#include <vtkSmoothPolyDataFilter.h>              // 基本的なラプラシアン平滑
+#include <vtkPolyDataNormals.h>
+#include <vtkSmoothPolyDataFilter.h>              // Basic Laplacian smoothing.
 #include <vtkWindowedSincPolyDataFilter.h> 
 #include <vtkCellDataToPointData.h>
+#include <vtkTriangleFilter.h>
 
 #include <vtkFillHolesFilter.h>
 #include <vtkMergePoints.h>
 #include <vtkDecimatePro.h>
 
 namespace {
-  // レベルごとの Descriptor を貯める配列
+  // Store the descriptor string for each level.
   void buildDescriptorLevel(const ParticleOctree::Node* node,
                             int depth,
                             int maxDepth,
@@ -39,15 +39,15 @@ namespace {
   {
     if (depth >= maxDepth) return;
 
-    // 初めてこの depth に来たら、空文字列を作る
+    // Create an empty string the first time this depth is encountered.
     if ((int)levels.size() <= depth) {
       levels.emplace_back();
     }
 
-    // このノードが subdivide される（非 leaf）なら 'R', そうでなければ '.'
+    // Use 'R' for subdivided non-leaf nodes and '.' otherwise.
     levels[depth].push_back(node->isLeaf ? '.' : 'R');
 
-    // subdivide されていれば子を再帰
+    // Recurse into children when subdivided.
     if (!node->isLeaf) {
       for (int ci = 0; ci < 8; ++ci) {
         buildDescriptorLevel(node->children[ci].get(),
@@ -56,7 +56,7 @@ namespace {
     }
   }
 
-  // levels に詰まった文字列を "|" で連結し、Descriptor 完成
+  // Join the level strings with "|" to complete the descriptor.
   std::string makeDescriptor(const ParticleOctree& octree, int maxDepth)
   {
     std::vector<std::string> levels;
@@ -68,10 +68,9 @@ namespace {
       if (i) desc.push_back('|');
       desc += levels[i];
     }
-    // もし maxDepth が levels.size() より深ければ、
-    // 末尾に追加の "|...." を入れてもよいですが、
-    // VTK はレベルごとに文字数チェックを行うので
-    // octree 構造と levels.size()==maxDepth が合うようにしてください。
+    // If maxDepth is deeper than levels.size(), appending extra "|...." segments
+    // is possible. VTK validates string lengths per level, so keep the octree
+    // structure consistent with levels.size() == maxDepth.
     return desc;
   }
 }
@@ -87,13 +86,15 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
 			);
 
   octree.balanceTree(true);
-  octree.computeValueRangeRoot();
+  IsoSurfaceTreeField field = BuildIsoSurfaceTreeField(octree);
   
-  octree.dumpNodeRoot();
+  if (params.verbose) {
+    octree.dumpNodeRoot();
+  }
   
   std::string descriptor = makeDescriptor(octree, params.maxDepth);
   
-  // 1) HTG ソースの設定（Descriptor 方式）
+  // 1) Configure the HTG source using descriptor mode.
   auto source = vtkSmartPointer<vtkHyperTreeGridSource>::New();
   {
     double sx = params.worldBox.max.x - params.worldBox.min.x;
@@ -109,23 +110,27 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
   source->SetUseMask(false);
   source->SetDescriptor(descriptor.c_str());
   
-  // 2) HTG を一括構築
+  // 2) Build the HTG in one pass.
   source->Update();
   vtkHyperTreeGrid* htg = source->GetHyperTreeGridOutput();
-  std::cout << "[After HTG source]\n"
-            << "  BranchFactor  = " << htg->GetBranchFactor() << "\n"
-            << "  NumberOfCells = " << htg->GetNumberOfCells() << "\n\n";
+  if (params.verbose) {
+    std::cout << "[After HTG source]\n"
+              << "  BranchFactor  = " << htg->GetBranchFactor() << "\n"
+              << "  NumberOfCells = " << htg->GetNumberOfCells() << "\n\n";
+  }
 
-  // 3) UnstructuredGrid に変換
+  // 3) Convert to UnstructuredGrid.
   auto toUG = vtkSmartPointer<vtkHyperTreeGridToUnstructuredGrid>::New();
   toUG->SetInputConnection(source->GetOutputPort());
   toUG->Update();
   vtkUnstructuredGrid* ug =
     vtkUnstructuredGrid::SafeDownCast(toUG->GetOutputDataObject(0));
-  std::cout << "[After conversion to UnstructuredGrid]\n"
-            << "  Cells = " << ug->GetNumberOfCells() << "\n\n";
+  if (params.verbose) {
+    std::cout << "[After conversion to UnstructuredGrid]\n"
+              << "  Cells = " << ug->GetNumberOfCells() << "\n\n";
+  }
 
-  // 4) 点ごとに X 座標をスカラーとしてセット
+  // 4) Set the X coordinate as the scalar value for each point.
   vtkIdType numPts = ug->GetNumberOfPoints();
   auto scalars = vtkSmartPointer<vtkDoubleArray>::New();
   scalars->SetName("density");
@@ -143,45 +148,29 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
     glm::vec3 pArr{p[0], p[1], p[2]};
     
     const auto* leaf = octree.findLeafContainingRoot(pArr);
-
-    const auto& B = leaf->box;
-    double bestVal = leaf->edgeValues[0];
-    double minDist2 = std::numeric_limits<double>::infinity();
-    for (int i = 0; i < 8; ++i){
-      // i ビットマスクで corner の座標を選択
-      glm::vec3 corner{
-	(i & 1) ? B.max.x : B.min.x,
-	(i & 2) ? B.max.y : B.min.y,
-	(i & 4) ? B.max.z : B.min.z
-      };
-      double dx = pArr.x - corner.x;
-      double dy = pArr.y - corner.y;
-      double dz = pArr.z - corner.z;
-      double d2 = dx*dx + dy*dy + dz*dz;
-      if (d2 < minDist2){
-	minDist2 = d2;
-	bestVal = leaf->edgeValues[i];
-      }
-    }
+    const float bestVal = field.nearestCornerValue(leaf, pArr);
 
     scalars->SetValue(pid, bestVal);
-    printf("p=%g %g %g val=%g\n", p[0], p[1], p[2], bestVal);
+    if (params.verbose) {
+      std::cout << "p=" << p[0] << " " << p[1] << " " << p[2]
+                << " val=" << bestVal << "\n";
+    }
   }
   ug->GetPointData()->SetScalars(scalars);
 
-  // (A) CellData を PointData に変換
+  // (A) Convert CellData to PointData.
   auto c2p = vtkSmartPointer<vtkCellDataToPointData>::New();
   c2p->SetInputData(ug);
-  c2p->PassCellDataOn();    // cellData を pointData にコピー
+  c2p->PassCellDataOn();    // Copy CellData to PointData.
   c2p->Update();
 
-  // (B) 変換後を ContourFilter に入力
+  // (B) Feed the converted data into ContourFilter.
   auto contour = vtkSmartPointer<vtkContourFilter>::New();
   contour->SetInputConnection(c2p->GetOutputPort());
   contour->SetInputArrayToProcess(
 				  0, 0, 0,
 				  vtkDataObject::FIELD_ASSOCIATION_POINTS,  // ← POINTS
-				  "density"                                // あなたのスカラー名
+				  "density"
 				  );
   contour->SetValue(0, params.isoLevel);
   contour->Update();
@@ -205,28 +194,32 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
   normals->SplittingOff();
   normals->ConsistencyOn();
 
-  // (F) Laplacian 平滑化
+  // (F) Laplacian smoothing.
   auto laplacian = vtkSmartPointer<vtkSmoothPolyDataFilter>::New();
   laplacian->SetInputConnection(normals->GetOutputPort());
   laplacian->SetNumberOfIterations(300);
   laplacian->SetRelaxationFactor(0.3);
   laplacian->BoundarySmoothingOn();
-  laplacian->FeatureEdgeSmoothingOff();  // (もしくは On→Off を消す)
+  laplacian->FeatureEdgeSmoothingOff();
   */
   
-  // --- 実行は最後に一回だけで OK ---
-  contour->Update();
-  vtkPolyData* smoothPoly = contour->GetOutput();
+  // Ensure the renderer receives triangle indices.
+  auto triangles = vtkSmartPointer<vtkTriangleFilter>::New();
+  triangles->SetInputConnection(contour->GetOutputPort());
+  triangles->Update();
+  vtkPolyData* poly = triangles->GetOutput();
  
-  //vtkPolyData* poly =  vtkPolyData::SafeDownCast(contour->GetOutputDataObject(0));
-  std::cout << "[After ContourFilter]\n"
-	    << "  Polys = " << smoothPoly->GetNumberOfPolys() << "\n";
+  if (params.verbose) {
+    std::cout << "[After ContourFilter]\n"
+	      << "  Polys = " << poly->GetNumberOfPolys() << "\n";
+  }
 
-  // 6) Mesh 構造体に変換
+  // 6) Convert to Mesh.
   Mesh mesh;
-  // 頂点
+  // Vertices.
   {
-    auto pts = smoothPoly->GetPoints();
+    auto pts = poly->GetPoints();
+    if (!pts) return mesh;
     vtkIdType N = pts->GetNumberOfPoints();
     mesh.vertices.reserve(N*3);
     for (vtkIdType i = 0; i < N; ++i) {
@@ -242,16 +235,17 @@ Mesh IsoSurfaceGenerator::generateVTK(IsoSurfaceParams params)
       mesh.vertices.push_back((float)xyz[2]);
     }
   }
-  // インデックス
+  // Indices.
   {
-    auto cells = smoothPoly->GetPolys();
+    auto cells = poly->GetPolys();
     cells->InitTraversal();
     vtkIdType npts;
     const vtkIdType *ids;
     while (cells->GetNextCell(npts, ids)) {
-      // ids[0] にセル内ポイント数、ids[1..npts] がインデックス
-      for (int k = 0; k < npts; k++)
-	mesh.indices.push_back((unsigned)ids[k]);
+      if (npts != 3) continue;
+      mesh.indices.push_back(static_cast<unsigned>(ids[0]));
+      mesh.indices.push_back(static_cast<unsigned>(ids[1]));
+      mesh.indices.push_back(static_cast<unsigned>(ids[2]));
     }
   }
   

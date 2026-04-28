@@ -1,4 +1,4 @@
-#include "analysis/clump/find_clumps_io.h"
+#include "FileIO/clump_io.h"
 #include "analysis/clump/clump_chain.h"
 #include "data/clump_loader.h"
 #include "core/quantity.h"

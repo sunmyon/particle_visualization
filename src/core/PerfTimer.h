@@ -15,7 +15,7 @@ public:
     const auto us =
         std::chrono::duration_cast<std::chrono::microseconds>(end - start_).count();
 
-    // 1ms未満/以上で表示を変える（好み）
+    // Use different display units below and above 1 ms.
     if (us >= 1000) {
       std::fprintf(stderr, "[TIMER] %s: %.3f ms\n", name_, us / 1000.0);
     } else {
@@ -28,7 +28,7 @@ private:
   clock::time_point start_;
 };
 
-// 行番号付きで名前を一意にするマクロ（コピペ耐性）
+// Macros that include line numbers so names stay unique after copy-paste.
 #define CONCAT_IMPL(a, b) a##b
 #define CONCAT(a, b) CONCAT_IMPL(a, b)
 #define TIME_FUNCTION() ScopeTimer CONCAT(_scope_timer_, __LINE__)(__func__)

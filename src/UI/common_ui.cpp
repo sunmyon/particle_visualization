@@ -5,11 +5,11 @@
 #include "app/state/runtime_state.h"
 
 void ShowTime(const SnapshotCurrentState& current){
-    // 画面の左上（ピクセル座標 (10,10)）にウィンドウを固定する
+    // Pin the window to the top-left corner at pixel coordinate (10,10).
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-    // 背景を透明にしたい場合
+    // Use a transparent background when desired.
     ImGui::SetNextWindowBgAlpha(0.3f);
-    // ウィンドウフラグでタイトルバーや枠、スクロールバーを非表示にする
+    // Hide the title bar, border, and scrollbars through window flags.
     ImGui::Begin("Time Overlay", nullptr,
                  ImGuiWindowFlags_NoTitleBar |
                  ImGuiWindowFlags_NoResize |

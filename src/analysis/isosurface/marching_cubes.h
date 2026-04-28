@@ -3,8 +3,10 @@
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include <cstring>
-#include "OctTree/ParticleOctree.h"
+#include "data/spatial/particle_octree.h"
 #include "analysis/isosurface/mesh_data.h"
+
+class IsoSurfaceTreeField;
 
 class MarchingCubes {
 public:
@@ -44,7 +46,7 @@ public:
   
   struct GridKeyHash {
     size_t operator()(GridKey const& k) const noexcept {
-      // 3D ハッシュの素朴な組み合わせ
+      // Simple 3D hash combination.
       return k.x*73856093ull
 	^ k.y*19349663ull
 	^ k.z*83492791ull;
@@ -52,11 +54,11 @@ public:
   };
   
   
-  // 量子化ステップ（小さな誤差を吸収）
+  // Quantization step used to absorb small numerical errors.
   static constexpr float EPS_POS = 1e-6f;
 
   static GridKey quantizePosition(const glm::vec3 &p) {
-    // GLSL の llroundf はないので <cmath> の llround を使う
+    // GLSL has no llroundf, so use llround from <cmath>.
     return GridKey {
       llround(p.x / EPS_POS),
       llround(p.y / EPS_POS),
@@ -64,14 +66,15 @@ public:
     };
   }
   
-  // leaves: 空間分割済み Octree の葉ノードリスト
-  // particles: 元データへのポインタ＆範囲(start/count)
-  // voxelSize, isoLevel: パラメータ
+  // leaves: leaf nodes from the spatially subdivided octree.
+  // particles: pointers and ranges into the source data.
+  // voxelSize and isoLevel: generation parameters.
   static Mesh buildIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-			      const ParticleOctree& tree,
+                              const IsoSurfaceTreeField& field,
 			      float isoLevel);
 
   static Mesh buildAndStitchIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
+                                       const IsoSurfaceTreeField& field,
                                        const ParticleOctree& tree,
                                        float isoLevel);
 
@@ -85,8 +88,6 @@ public:
   static const std::array<glm::vec3,8> cubeOffsets;
   
 private:
-  static float sampleValue(const ParticleOctree& tree, const glm::vec3& pos, float radius);
-  
   static glm::vec3 vertexInterp(float iso, const glm::vec3& p1, const glm::vec3& p2,
 				float v1, float v2);
   
@@ -103,6 +104,6 @@ private:
   
   static std::unordered_map<Edge, unsigned, EdgeHash> globalEdgeMap;
 
-  // 「座標 → 頂点インデックス」を保持するマップ
+  // Map from coordinate key to vertex index.
   static std::unordered_map<GridKey, unsigned, GridKeyHash> vertexMap;
 };

@@ -75,13 +75,17 @@ void ExecutePythonBridgeRequests(ParticleArray& particles,
           static_cast<uint64_t>(particles.particleBlock.particles.size());
 
         if (!service.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
-          view.lastError = "Bridge init failed";
+          view.lastError = service.ptr->lastError().empty()
+                             ? "Bridge init failed"
+                             : service.ptr->lastError();
           service.ptr.reset();
         } else {
-          bridge::loadInitialFromAoS(*service.ptr, particles, sizeof(ParticleData));
+          bridge::loadInitialFromAoS(*service.ptr, particles);
           service.launched = service.ptr->launchNotebook("./jupyter_work");
           if (!service.launched) {
-            view.lastError = "Notebook launch failed";
+            view.lastError = service.ptr->lastError().empty()
+                               ? "Notebook launch failed"
+                               : service.ptr->lastError();
           }
         }
       }

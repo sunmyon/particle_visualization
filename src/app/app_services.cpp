@@ -3,7 +3,7 @@
 #include "projection/make_2D_projection_map.h"
 #include "FileIO/snapshot_io_service.h"
 #include "analysis/clump/find_clumps.h"
-#include "analysis/clump/loaded_clump_tool.h"
+#include "app/state/loaded_clump_tool.h"
 #include "analysis/clump/clump_chain.h"
 
 #ifdef GEOMETRICAL_ANALYSIS

@@ -11,7 +11,7 @@
 #include "analysis/clump/clump_chain.h"
 #include "app/state/clump_window_state.h"
 #include "analysis/clump/find_clumps.h"
-#include "analysis/clump/loaded_clump_tool.h"
+#include "app/state/loaded_clump_tool.h"
 #include "app/app_snapshot_load.h"
 #include "app/state/normalization_config.h"
 #include "app/state/runtime_state.h"
@@ -216,8 +216,8 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
   };
 
   if (ui.requestUseInputPath) {
-    std::strncpy(ui.clumpListPath, input.folderPath, IM_ARRAYSIZE(ui.clumpListPath));
-    ui.clumpListPath[IM_ARRAYSIZE(ui.clumpListPath) - 1] = '\0';
+    std::strncpy(ui.clumpListPath, input.folderPath, sizeof(ui.clumpListPath));
+    ui.clumpListPath[sizeof(ui.clumpListPath) - 1] = '\0';
     ui.requestUseInputPath = false;
   }
 

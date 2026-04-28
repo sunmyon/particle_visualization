@@ -2,26 +2,27 @@
 
 #ifdef ISO_CONTOUR
 #include <cfloat>
+#include <algorithm>
 #include <glm/glm.hpp>
 
-#include "data/particle_array.h"
-#include "core/quantity.h"
 #include "analysis/isosurface/isosurface_generator.h"
-#include "app/state/app_state.h"
+#include "core/quantity.h"
+#include "data/particle_block.h"
 
-void BuildIsoContourGeometry(ParticleArray& part,
-                             QuantityId selectedVar,
-                             float isoLevel,
-                             int max_treelevel,
-                             IsoContourGeometryState& iso)
+Mesh BuildIsoContourMesh(const ParticleBlock& block,
+                         const IsoContourBuildParams& build)
 {
   TrackingVector<ParticleDataForTree> particles;
-  particles.reserve(part.particleBlock.particles.size());
+  particles.reserve(block.particles.size());
 
-  for (size_t ipart = 0; ipart < part.particleBlock.particles.size(); ++ipart) {
-    const auto& pd = part.particleBlock.particles[ipart];
-    float val = getScalarValue(part.particleBlock, pd, ipart, selectedVar);
+  for (size_t ipart = 0; ipart < block.particles.size(); ++ipart) {
+    const auto& pd = block.particles[ipart];
+    float val = getScalarValue(block, pd, ipart, build.selectedQuantity);
     particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
+  }
+
+  if (particles.empty()) {
+    return {};
   }
 
   BoundingBox worldBox;
@@ -35,14 +36,15 @@ void BuildIsoContourGeometry(ParticleArray& part,
   IsoSurfaceParams params;
   params.particles = std::move(particles);
   params.worldBox = worldBox;
-  params.isoLevel = isoLevel;
-  params.minParticles = 8;
-  params.maxDepth = max_treelevel;
+  params.isoLevel = build.isoLevel;
+  params.minParticles = build.minParticles;
+  params.maxDepth = static_cast<size_t>(std::max(1, build.maxTreeLevel));
+  params.verbose = build.verbose;
 
-  auto mesh = IsoSurfaceGenerator::generateVTK(std::move(params));
-
-  iso.verts = std::move(mesh.vertices);
-  iso.inds  = std::move(mesh.indices);
+  if (build.useVTK) {
+    return IsoSurfaceGenerator::generateVTK(std::move(params));
+  }
+  return IsoSurfaceGenerator::generateMC(std::move(params));
 }
 
 #endif

@@ -72,7 +72,7 @@ void ApplyCameraArcballRotation(CameraContext& camCtx,
   const float xoffset = newX - oldX;
   const float yoffset = oldY - newY;
 
-  // 旧コードの規約をそのまま再現
+  // Preserve the legacy coordinate convention exactly.
   const float startX = newX - xoffset; // = oldX
   const float startY = newY - yoffset; // = 2*newY - oldY
 
@@ -142,4 +142,3 @@ void UpdateCuboidTransformArcball(CuboidObject& cuboid,
   cuboid.center = glm::vec3(newMat[3].x, newMat[3].y, newMat[3].z);
   cuboid.orientation = glm::normalize(glm::quat_cast(glm::mat3(newMat)));
 }
-

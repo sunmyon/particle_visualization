@@ -3,20 +3,11 @@
 #include <vector>
 #include <memory>
 #include <array>
-#include <sstream>
 #include <glm/glm.hpp>
 #include <algorithm>
 
+#include "analysis/isosurface/iso_surface_field.h"
 #include "analysis/isosurface/marching_cubes.h"
-
-static std::string boxToString(const BoundingBox& b) {
-    std::ostringstream ss;
-    ss << "min(" 
-       << b.min.x << "," << b.min.y << "," << b.min.z << ") "
-       << "max(" 
-       << b.max.x << "," << b.max.y << "," << b.max.z << ")";
-    return ss.str();
-}
 
 std::unordered_map<MarchingCubes::Edge, unsigned, MarchingCubes::EdgeHash> MarchingCubes::globalEdgeMap;
 std::unordered_map<MarchingCubes::GridKey, unsigned, MarchingCubes::GridKeyHash> MarchingCubes::vertexMap;
@@ -313,35 +304,14 @@ const int MarchingCubes::triTable[256][16] =
 {0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
 
-// 立方体の8点オフセット
+// Offsets for the 8 cube corners.
 const std::array<glm::vec3, 8> MarchingCubes::cubeOffsets = {
     glm::vec3(0, 0, 0), glm::vec3(1, 0, 0), glm::vec3(1, 1, 0), glm::vec3(0, 1, 0),
     glm::vec3(0, 0, 1), glm::vec3(1, 0, 1), glm::vec3(1, 1, 1), glm::vec3(0, 1, 1)
 };
 
 
-float MarchingCubes::sampleValue(const ParticleOctree& tree,
-                                 const glm::vec3&           pos,
-                                 float                      radius)
-{
-  float value = 0.0f;
-  TrackingVector<const ParticleDataForTree*> neigh;
-
-  //radius = 0.5;
-  //radius = 0.1;
-  
-  tree.querySphere(pos, radius, neigh);
-  for (auto p : neigh) {
-    float r = glm::length(pos - p->pos);
-    float w = 1.0f - r / radius;
-    value += p->val * w;
-  }
- 
-  return value;
-}
-
-
-// 補間
+// Interpolation.
 glm::vec3 MarchingCubes::vertexInterp(float isoLevel, const glm::vec3& p1, const glm::vec3& p2, float valp1, float valp2) {
     if (std::abs(isoLevel - valp1) < 1e-5) return p1;
     if (std::abs(isoLevel - valp2) < 1e-5) return p2;
@@ -358,10 +328,9 @@ const int MarchingCubes::edgeToVertex[12][2] = {
 
 
 Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-                               const ParticleOctree& tree,
+                               const IsoSurfaceTreeField& field,
                                float isoLevel)
 {
-  (void)tree;
   Mesh out;
   out.vertices.clear();
   out.indices.clear();
@@ -369,42 +338,22 @@ Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::N
   globalEdgeMap.clear();
   vertexMap.clear();
   
-  // 補間位置ごとに一度だけ sampleValue を呼び出す
-  std::unordered_map<GridKey, float, GridKeyHash> valueCache;
-    
   for (auto leaf : leaves) {
     const glm::vec3 minB = leaf->box.min;
     float size   = leaf->box.max.x - minB.x;
-    //float radius = size;
 
-    // 1) ８コーナーの密度をキャッシュ
-    float cubeVal[8];
-    /*for (int i = 0; i < 8; ++i) {
-      glm::vec3 pos = minB + size*cubeOffsets[i];
-      auto vk = MarchingCubes::quantizePosition(pos);
-      
-      auto it = valueCache.find(vk);
-      if (it == valueCache.end()) {
-	float v = sampleValue(tree, pos, radius);
-	valueCache.emplace(vk, v);
-	cubeVal[i] = v;
-      } else {
-	cubeVal[i] = it->second;
-      }
-      }
-    */
-    for(int i=0;i<8;i++)
-      cubeVal[i] = leaf->edgeValues[i];
-    
-    // 2) マーチング・キューブ判定
+    // 1) Read cached scalar values at the 8 corners.
+    const auto& cubeVal = field.edgeValues(leaf);
+
+    // 2) Marching-cubes classification.
     int cubeIndex = 0;
     for (int i = 0; i < 8; ++i)
       if (cubeVal[i] < isoLevel) cubeIndex |= (1<<i);
     int edgeMask = edgeTable[cubeIndex];
-    if (edgeMask == 0) continue;  // 交差なし
+    if (edgeMask == 0) continue;  // No intersection.
     
     
-    // 3) 交差エッジだけ頂点生成＆共有
+    // 3) Generate and share vertices only on intersecting edges.
     std::array<unsigned,12> eIdx;
     for (int e = 0; e < 12; ++e) {
       if (!(edgeMask & (1<<e))) continue;
@@ -413,7 +362,7 @@ Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::N
       glm::vec3 pa = minB + size*cubeOffsets[va];
       glm::vec3 pb = minB + size*cubeOffsets[vb];
 
-      // 補間交点
+      // Interpolated intersection point.
       glm::vec3 pv = vertexInterp(isoLevel, pa, pb, cubeVal[va], cubeVal[vb]);
       auto vk = MarchingCubes::quantizePosition(pv);
       
@@ -431,7 +380,7 @@ Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::N
       eIdx[e] = vidx;
     }
 
-    // 4) 三角形生成
+    // 4) Generate triangles.
     for (int i = 0; triTable[cubeIndex][i]!=-1; i+=3) {
       out.indices.push_back(eIdx[ triTable[cubeIndex][i+0] ]);
       out.indices.push_back(eIdx[ triTable[cubeIndex][i+1] ]);
@@ -443,24 +392,19 @@ Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::N
 }
 
 Mesh MarchingCubes::buildAndStitchIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
+					     const IsoSurfaceTreeField& field,
 					     const ParticleOctree& tree,
 					     float isoLevel)
 {
-    // 1) 等値面だけ生成
-    Mesh mesh = buildIsoSurface(leaves, tree, isoLevel);
-    printf("[0]mesh size=%zu leaves size=%zu\n", mesh.indices.size(), leaves.size());
+    // 1) Generate only the isosurface.
+    Mesh mesh = buildIsoSurface(leaves, field, isoLevel);
     
-    // 3) 全葉×全方向で深さ差1の隣家にステッチ
+    // 3) Stitch neighbors with depth difference 1 for all leaves and directions.
     for (auto* leaf : leaves) {
       for (int dir = 0; dir < 6; ++dir) {
         auto nbrs = tree.findAllNeighbors(leaf, dir);
-	printf("=== Leaf %p depth=%d %s  dir=%d ===\n",
-	       leaf, int(leaf->depth), boxToString(leaf->box).c_str(), dir);
 
         for (auto* nb : nbrs) {
-	  printf("  -> Neighbor %p depth=%d %s\n",
-		 nb, int(nb->depth), boxToString(nb->box).c_str());
-	  
           if (std::abs(int(leaf->depth) - int(nb->depth)) == 1) {
             stitchFace(tree, leaf, nb, dir, mesh);
           }
@@ -468,29 +412,6 @@ Mesh MarchingCubes::buildAndStitchIsoSurface(const TrackingVector<const Particle
       }
     }
 
-    printf("[1]mesh size=%zu leaves size=%zu\n", mesh.indices.size(), leaves.size());
-    
-    size_t numTris = mesh.indices.size() / 3;
-    for (size_t t = 0; t < numTris; ++t) {
-        unsigned i0 = mesh.indices[3*t + 0];
-        unsigned i1 = mesh.indices[3*t + 1];
-        unsigned i2 = mesh.indices[3*t + 2];
-
-        float x0 = mesh.vertices[3*i0 + 0], y0 = mesh.vertices[3*i0 + 1], z0 = mesh.vertices[3*i0 + 2];
-        float x1 = mesh.vertices[3*i1 + 0], y1 = mesh.vertices[3*i1 + 1], z1 = mesh.vertices[3*i1 + 2];
-        float x2 = mesh.vertices[3*i2 + 0], y2 = mesh.vertices[3*i2 + 1], z2 = mesh.vertices[3*i2 + 2];
-
-        printf("Triangle %4zu:  "
-               "v0=(%.6f, %.6f, %.6f),  "
-               "v1=(%.6f, %.6f, %.6f),  "
-               "v2=(%.6f, %.6f, %.6f)\n",
-               t,
-               x0,y0,z0,
-               x1,y1,z1,
-               x2,y2,z2
-        );
-    }
-    
     return mesh;
 }
 
@@ -499,37 +420,37 @@ std::vector<MarchingCubes::Edge> MarchingCubes::getFaceEdges(const BoundingBox& 
     const glm::vec3& mx = box.max;
     std::vector<Edge> edges;
     switch (dir) {
-    case 0: // +X 面 (x=mx.x), YZ ループ
+    case 0: // +X face, x=mx.x, YZ loop.
         edges.emplace_back(glm::vec3(mx.x,mn.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mn.z));
         break;
-    case 1: // -X 面 (x=mn.x)
+    case 1: // -X face, x=mn.x.
         edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mx.z));
         edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mn.z));
         edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mn.x,mn.y,mn.z));
         break;
-    case 2: // +Y 面 (y=mx.y), XZ ループ
+    case 2: // +Y face, y=mx.y, XZ loop.
         edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mn.z));
         break;
-    case 3: // -Y 面 (y=mn.y)
+    case 3: // -Y face, y=mn.y.
         edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mx.z));
         edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mn.z));
         edges.emplace_back(glm::vec3(mx.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mn.z));
         break;
-    case 4: // +Z 面 (z=mx.z), XY ループ
+    case 4: // +Z face, z=mx.z, XY loop.
         edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
         edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mn.y,mx.z));
         break;
-    case 5: // -Z 面 (z=mn.z)
+    case 5: // -Z face, z=mn.z.
         edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mx.y,mn.z));
         edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
         edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mn.y,mn.z));
@@ -552,18 +473,18 @@ MarchingCubes::findAllFineEdges(const ParticleOctree& tree,
     std::vector<const ParticleOctree::Node*> roots;
     roots.reserve(8);
 
-    // 1) coarse と面を共有する全葉ノードを取得
+    // 1) Get all leaf nodes sharing the face with the coarse node.
     auto allNbrLeaves = tree.findAllNeighbors(coarse, dir);
 
-    // 2) 各葉ノードについて「深さ差１のレベル」にする
+    // 2) Move each leaf to the level with depth difference 1.
     for (auto* leafNb : allNbrLeaves) {
-        // 自分より浅いか同深度は無視
+        // Ignore nodes that are shallower than or at the same depth.
         if (leafNb->depth <= coarse->depth) continue;
 
-        // depth == coarse.depth + 1 の場合はそのままルート候補
+        // If depth == coarse.depth + 1, the node is already a root candidate.
         const ParticleOctree::Node* root = leafNb;
         if (leafNb->depth > coarse->depth + 1) {
-            // それ以上細かいなら、depth+1 の祖先まで昇る
+            // If finer than that, climb to the ancestor at depth + 1.
             while (root->depth > coarse->depth + 1) {
                 root = root->parent;
             }
@@ -572,7 +493,7 @@ MarchingCubes::findAllFineEdges(const ParticleOctree& tree,
         roots.push_back(root);
     }
     
-    // 重複を除去（同じノードが何度も入るのを防ぐ）
+    // Remove duplicates so the same node is not processed repeatedly.
     std::sort(roots.begin(), roots.end());
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
 
@@ -582,7 +503,7 @@ MarchingCubes::findAllFineEdges(const ParticleOctree& tree,
     for (auto* r : roots) {
         auto egs = getFaceEdges(r->box, dir);
         for (auto& e : egs) {
-            // e の端点が cedge 上の区間 [0,1] に含まれるかチェック
+            // Check whether an endpoint of e lies in the interval [0,1] on cedge.
             float t0 = glm::dot(e.p0 - cedge.p0, dirVec) / len2;
             float t1 = glm::dot(e.p1 - cedge.p0, dirVec) / len2;
             if ((t0 >= 0.0f && t0 <= 1.0f) ||
@@ -619,33 +540,31 @@ MarchingCubes::findAllFineEdges(const ParticleOctree& tree,
 
 
 
-// --- stitchFace (頂点マップ版) ---
+// --- stitchFace using the vertex map ---
 void MarchingCubes::stitchFace(const ParticleOctree&       tree,
                                const ParticleOctree::Node* a,
                                const ParticleOctree::Node* b,
                                int                         dir,
                                Mesh&                       out)
 {
-  // buildIsoSurface と同じキー＆マップを使う
-  // 深度順に coarse < fine
+  // Use the same keys and map as buildIsoSurface.
+  // Depth order is coarse < fine.
   const auto *coarse=a, *fine=b;
   if (coarse->depth > fine->depth) std::swap(coarse,fine);
 
-  // 粗セルの面エッジ
+  // Face edges of the coarse cell.
   auto cEdges = getFaceEdges(coarse->box, dir);
 
   for (auto const& c : cEdges) {
-    // 細胞側で face を共有する全leaf => depth+1 まで昇り root取得 => getFaceEdges
+    // On the fine side, find all leaves sharing the face, climb to depth+1, then getFaceEdges.
     auto fLeaves = findAllFineEdges(tree, coarse, dir, c);
     if (fLeaves.empty()) continue;
 
-    // c の端点キー
+    // Endpoint keys for c.
     glm::vec3 c0 = c.p0, c1 = c.p1;
     float eLen = glm::length(c1-c0);
-
-    printf("c0=%g %g %g c1=%g %g %g elen=%g\n", c0.x, c0.y, c0.z, c1.x, c1.y, c1.z, eLen);
     
-    // 1) 全ての細エッジを t ソート
+    // 1) Sort all fine edges by t.
     struct KV{ float t; Edge e; };
     std::vector<KV> arr;
     for (auto& fe : fLeaves) {
@@ -656,25 +575,25 @@ void MarchingCubes::stitchFace(const ParticleOctree&       tree,
     }
     std::sort(arr.begin(), arr.end(), [](auto const&A, auto const&B){ return A.t < B.t; });
 
-    // 2) ユニークな t 列
+    // 2) Unique t values.
     std::vector<float> ts;
     for (auto const&kv:arr)
       if (ts.empty() || std::abs(ts.back()-kv.t)>1e-6f)
 	ts.push_back(kv.t);
 
-    // 3) 隣接区間ごとに三角形扇を追加
-    //    ここでも頂点マップを使い、新規なら push, 既存なら idx を返す
+    // 3) Add a triangle fan for each adjacent interval.
+    //    Use the vertex map here too: push new vertices, otherwise return existing indices.
     for (size_t i = 0; i+1 < ts.size(); ++i) {
       float ta = ts[i], tb = ts[i+1];
       glm::vec3 pa = c0 + ta*(c1-c0);
       glm::vec3 pb = c0 + tb*(c1-c0);
 
-      // 量子化キー
+      // Quantized keys.
       auto k0 = MarchingCubes::quantizePosition(pa);
       auto k1 = MarchingCubes::quantizePosition(pb);
       auto kc = MarchingCubes::quantizePosition(c0);
       
-      // 既存 or 新規挿入
+      // Existing vertex or new insertion.
       auto ensure = [&](GridKey const& k, glm::vec3 const& pos){
 	auto it = vertexMap.find(k);
 	if (it != vertexMap.end()) return it->second;

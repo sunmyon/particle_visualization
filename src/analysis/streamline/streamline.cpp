@@ -1,7 +1,7 @@
-#include <cstdio>
-
 #include <Eigen/Core>
 #include <nanoflann.hpp>
+
+#include <limits>
 
 #include "analysis/streamline/streamline.h"
 
@@ -23,133 +23,156 @@ inline float limiter_ratio(float dq_allowed, float dq_trial) {
 
 }  // namespace
 
-void StreamlineComputer::setRegionFromParticleData(TrackingVector<ParticleData>& particles) {
-  if (flagSetRegionByHand) return;
-
+StreamlineComputer::Bounds
+StreamlineComputer::makeGasBounds(const TrackingVector<ParticleData>& particles) const
+{
+  Bounds bounds;
   for (int k = 0; k < 3; ++k) {
-    xmin_seed[k] = 1.e30f;
-    xmax_seed[k] = -1.e30f;
+    bounds.min[k] = 1.0e30f;
+    bounds.max[k] = -1.0e30f;
   }
 
-  for (auto& p : particles) {
+  for (const auto& p : particles) {
     if (p.type != 0) continue;
     for (int k = 0; k < 3; ++k) {
-      xmin_seed[k] = std::min(xmin_seed[k], p.pos[k]);
-      xmax_seed[k] = std::max(xmax_seed[k], p.pos[k]);
+      bounds.min[k] = std::min(bounds.min[k], p.pos[k]);
+      bounds.max[k] = std::max(bounds.max[k], p.pos[k]);
     }
+    bounds.valid = true;
   }
+  return bounds;
 }
 
-void StreamlineComputer::setRegionByHand(float* center, float* len) {
+StreamlineComputer::Bounds
+StreamlineComputer::makeBoxBounds(const StreamlineBoxSpec& box) const
+{
+  Bounds bounds;
+  if (!box.enabled ||
+      box.size[0] <= 0.0f ||
+      box.size[1] <= 0.0f ||
+      box.size[2] <= 0.0f) {
+    return bounds;
+  }
+
   for (int k = 0; k < 3; ++k) {
-    xmin_seed[k] = center[k] - 0.5f * len[k];
-    xmax_seed[k] = center[k] + 0.5f * len[k];
+    bounds.min[k] = box.center[k] - 0.5f * box.size[k];
+    bounds.max[k] = box.center[k] + 0.5f * box.size[k];
   }
-  flagSetRegionByHand = true;
+  bounds.valid = true;
+  return bounds;
 }
 
-void StreamlineComputer::setStreamRegionFromParticleData(TrackingVector<ParticleData>& particles) {
-  if (flagSetStreamRegionByHand) return;
-
-  for (int k = 0; k < 3; ++k) {
-    xmin_[k] = 1.e30f;
-    xmax_[k] = -1.e30f;
-  }
-
-  for (auto& p : particles) {
-    if (p.type != 0) continue;
-    for (int k = 0; k < 3; ++k) {
-      xmin_[k] = std::min(xmin_[k], p.pos[k]);
-      xmax_[k] = std::max(xmax_[k], p.pos[k]);
-    }
-  }
-}
-
-void StreamlineComputer::setStreamRegionByHand(float* center, float* len) {
-  for (int k = 0; k < 3; ++k) {
-    xmin_[k] = center[k] - 0.5f * len[k];
-    xmax_[k] = center[k] + 0.5f * len[k];
-  }
-  flagSetStreamRegionByHand = true;
-}
-
-void StreamlineComputer::setSeeds(TrackingVector<ParticleData>& particles, int n_seeds) {
-  if (n_seeds <= 0) n_seeds = 1;
+std::vector<StreamlineComputer::SeedPoint>
+StreamlineComputer::selectSeeds(const TrackingVector<ParticleData>& particles,
+                                const Bounds& bounds,
+                                int nSeeds) const
+{
+  if (!bounds.valid) return {};
+  if (nSeeds <= 0) nSeeds = 1;
 
   std::vector<size_t> selected_indices;
   selected_indices.reserve(particles.size());
 
   for (size_t i = 0; i < particles.size(); ++i) {
-    auto& p = particles[i];
+    const auto& p = particles[i];
     if (p.type != 0) continue;
-    if (p.pos[0] < xmin_seed[0] || p.pos[0] > xmax_seed[0]) continue;
-    if (p.pos[1] < xmin_seed[1] || p.pos[1] > xmax_seed[1]) continue;
-    if (p.pos[2] < xmin_seed[2] || p.pos[2] > xmax_seed[2]) continue;
+    if (p.pos[0] < bounds.min[0] || p.pos[0] > bounds.max[0]) continue;
+    if (p.pos[1] < bounds.min[1] || p.pos[1] > bounds.max[1]) continue;
+    if (p.pos[2] < bounds.min[2] || p.pos[2] > bounds.max[2]) continue;
     selected_indices.push_back(i);
   }
 
-  m_seeds.clear();
-  m_hsmls.clear();
+  if (selected_indices.empty()) return {};
 
-  if (selected_indices.empty()) return;
-
-  const int n_actual = std::min<int>(n_seeds, selected_indices.size());
-  m_seeds.reserve(n_actual);
-  m_hsmls.reserve(n_actual);
+  const int n_actual = std::min<int>(nSeeds, selected_indices.size());
+  std::vector<SeedPoint> seeds;
+  seeds.reserve(n_actual);
 
   for (int i = 0; i < n_actual; ++i) {
     const size_t idx = static_cast<size_t>((double)i * selected_indices.size() / n_actual);
     const auto& p = particles[selected_indices[idx]];
 
-    m_seeds.push_back({p.pos[0], p.pos[1], p.pos[2]});
-    m_hsmls.push_back(std::max(1.0e-6f, p.Hsml));
+    seeds.push_back({{p.pos[0], p.pos[1], p.pos[2]},
+                     std::max(1.0e-6f, p.Hsml)});
   }
+  return seeds;
 }
 
-std::vector<LineObject> StreamlineComputer::build(ParticleBlock& particles, double theta_max_in_degree) {
-  estimate_gradB(particles);
+StreamlineComputer::SeedPoint
+StreamlineComputer::makeManualSeed(const TrackingVector<ParticleData>& particles,
+                                   const float seed[3]) const
+{
+  float nearestDist2 = std::numeric_limits<float>::max();
+  float hsml = 1.0e-6f;
 
-  const float theta_max = static_cast<float>(theta_max_in_degree * 3.14159265358979323846 / 180.0);
-
-  m_lines.clear();
-  m_lines.reserve(m_seeds.size());
-
-  for (size_t i = 0; i < m_seeds.size(); ++i) {
-    const float h_init = std::max(1.0e-6f, 0.1f * m_hsmls[i]);
-    auto line = integrateBiStreamline(m_seeds[i], h_init, MaxStep);
-    m_lines.push_back(sampleByCurvature(line, theta_max));
+  for (const auto& p : particles) {
+    if (p.type != 0) continue;
+    const float dx = p.pos[0] - seed[0];
+    const float dy = p.pos[1] - seed[1];
+    const float dz = p.pos[2] - seed[2];
+    const float dist2 = dx * dx + dy * dy + dz * dz;
+    if (dist2 < nearestDist2) {
+      nearestDist2 = dist2;
+      hsml = std::max(1.0e-6f, p.Hsml);
+    }
   }
 
-  std::vector<LineObject> out;
-  out.reserve(m_lines.size());
-
-  for (const auto& linePts : m_lines) {
-    if (linePts.empty()) continue;
-
-    LineObject obj;
-    obj.points.reserve(linePts.size());
-
-    for (const auto& p : linePts) 
-      obj.points.emplace_back(p.x, p.y, p.z);    
-
-    out.push_back(std::move(obj));
-  }
-
-  return out;
+  return {{seed[0], seed[1], seed[2]}, hsml};
 }
 
-void StreamlineComputer::estimate_gradB(ParticleBlock& particleBlock) {
+std::vector<std::vector<Vec3>>
+StreamlineComputer::build(const ParticleBlock& particles,
+                          const StreamlineBuildSpec& spec)
+{
+  const Bounds gasBounds = makeGasBounds(particles.particles);
+  if (!gasBounds.valid) return {};
+
+  Bounds seedBounds = makeBoxBounds(spec.seedRegion);
+  if (!seedBounds.valid) seedBounds = gasBounds;
+
+  Bounds fieldBounds = makeBoxBounds(spec.fieldRegion);
+  if (!fieldBounds.valid) fieldBounds = gasBounds;
+
+  std::vector<SeedPoint> seeds;
+  if (spec.useManualSeed) {
+    seeds.push_back(makeManualSeed(particles.particles, spec.manualSeed));
+  } else {
+    seeds = selectSeeds(particles.particles, seedBounds, spec.nSeeds);
+  }
+  if (seeds.empty()) return {};
+
+  estimate_gradB(particles, fieldBounds);
+
+  const float theta_max =
+    static_cast<float>(spec.thetaMaxDegrees * 3.14159265358979323846 / 180.0);
+
+  std::vector<std::vector<Vec3>> lines;
+  lines.reserve(seeds.size());
+
+  for (const auto& seed : seeds) {
+    const float h_init = std::max(1.0e-6f, 0.1f * seed.hsml);
+    auto line = integrateBiStreamline(seed.pos, h_init, MaxStep);
+    lines.push_back(sampleByCurvature(line, theta_max));
+  }
+
+  return lines;
+}
+
+void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
+                                        const Bounds& fieldBounds) {
+  fieldBounds_ = fieldBounds;
+
   TrackingVector<particle_stream> p_stream;
   p_stream.reserve(particleBlock.particles.size());
 
   const bool flag_Bfield = particleBlock.hasSoAAs(soa_views::Bfield);
 
   for (size_t i = 0; i < particleBlock.particles.size(); ++i) {
-    ParticleData& p = particleBlock.particles[i];
+    const ParticleData& p = particleBlock.particles[i];
     if (p.type != 0) continue;
-    if (p.pos[0] < xmin_[0] || p.pos[0] > xmax_[0]) continue;
-    if (p.pos[1] < xmin_[1] || p.pos[1] > xmax_[1]) continue;
-    if (p.pos[2] < xmin_[2] || p.pos[2] > xmax_[2]) continue;
+    if (p.pos[0] < fieldBounds.min[0] || p.pos[0] > fieldBounds.max[0]) continue;
+    if (p.pos[1] < fieldBounds.min[1] || p.pos[1] > fieldBounds.max[1]) continue;
+    if (p.pos[2] < fieldBounds.min[2] || p.pos[2] > fieldBounds.max[2]) continue;
 
     particle_stream ps{};
     ps.pos[0] = p.pos[0];
@@ -310,7 +333,7 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
   Eigen::Vector3f Bsum = Eigen::Vector3f::Zero();
   float sumw = 0.0f;
 
-  for (size_t n = 0; n < 1; ++n) {
+  for (size_t n = 0; n < n_found; ++n) {
     const size_t id = idx_buf[n];
     const auto& p = cloud.particles[id];
 
@@ -318,16 +341,17 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
     const Eigen::Vector3f d = xe - pi;
 
     Eigen::Vector3f Bi(p.vect[0], p.vect[1], p.vect[2]);
-    //Bi[0] += g[0].dot(d);
-    //Bi[1] += g[1].dot(d);
-    //Bi[2] += g[2].dot(d);
+    if (id < gradB.size()) {
+      const auto& g = gradB[id];
+      Bi[0] += g[0].dot(d);
+      Bi[1] += g[1].dot(d);
+      Bi[2] += g[2].dot(d);
+    }
 
     const float sigma = std::max(0.5f * p.cell_size, hsml);
     const float sigma2 = sigma * sigma;
     const float r2 = d.squaredNorm();
     const float w = std::exp(-r2 / std::max(1.0e-20f, sigma2));
-
-    printf("id=%zu vec=%g %g %g\n", id, Bi[0], Bi[1], Bi[2]);
     
     Bsum += w * Bi;
     sumw += w;
@@ -386,30 +410,19 @@ bool StreamlineComputer::RK4stepArcLength(const Vec3& x, float& h, float sign, V
 }
 
 std::vector<Vec3> StreamlineComputer::integrateStreamline(const Vec3& seed, float h_init, int maxSteps, float sign) const {
-  (void)h_init;
   std::vector<Vec3> line;
   line.reserve(std::min(maxSteps, 4096));
 
   Vec3 x = seed;
+  float h = h_init;
 
   if (!is_inside_(x)) return line;
 
   for (int i = 0; i < maxSteps; ++i) {
     line.push_back(x);
-
-    if(i%1 == 0)
-      printf("[%d] x=%g %g %g\n", i, x.x, x.y, x.z);
     
     Vec3 x_next;
-    //if (!RK4stepArcLength(x, h, sign, x_next)) break;
-
-    Vec3 k1;
-    float hsml1 = 0.;
-    evalDirectionAt(x, k1, hsml1);
-    const float ds = sign * 0.01f * hsml1;
-    x_next.x = x.x + ds * k1.x;
-    x_next.y = x.y + ds * k1.y;
-    x_next.z = x.z + ds * k1.z;
+    if (!RK4stepArcLength(x, h, sign, x_next)) break;
     
     if (!is_inside_(x_next)) break;
 
@@ -437,9 +450,10 @@ std::vector<Vec3> StreamlineComputer::integrateBiStreamline(const Vec3& seed, fl
 }
 
 bool StreamlineComputer::is_inside_(const Vec3& x) const {
-  if (x.x < xmin_[0] || x.x > xmax_[0]) return false;
-  if (x.y < xmin_[1] || x.y > xmax_[1]) return false;
-  if (x.z < xmin_[2] || x.z > xmax_[2]) return false;
+  if (!fieldBounds_.valid) return false;
+  if (x.x < fieldBounds_.min[0] || x.x > fieldBounds_.max[0]) return false;
+  if (x.y < fieldBounds_.min[1] || x.y > fieldBounds_.max[1]) return false;
+  if (x.z < fieldBounds_.min[2] || x.z > fieldBounds_.max[2]) return false;
   return true;
 }
 

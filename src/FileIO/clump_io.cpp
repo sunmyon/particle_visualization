@@ -1,7 +1,7 @@
 #include "core/tracking_vector.h"
 #include "data/clump_data.h"
 
-#include "analysis/clump/find_clumps_io.h"
+#include "FileIO/clump_io.h"
 #include "analysis/clump/structure_nodes.h"
 
 #ifdef CLUMP_DATA_READ
@@ -115,14 +115,14 @@ namespace ClumpIO {
       std::string snapName = "/snapshot_" + std::to_string(snapshotID);
       H5::Group snapGroup;
 
-      // 2) "/snapshot_<snapshotID>" グループを開く or 作成
+      // 2) Open or create the "/snapshot_<snapshotID>" group.
       if (H5Lexists(file.getId(), snapName.c_str(), H5P_DEFAULT) > 0) {
 	snapGroup = file.openGroup(snapName);
       } else {
 	snapGroup = file.createGroup(snapName);
       }
       
-      // 3) time 属性を書き込む (存在するなら上書き、なければ新規)
+      // 3) Write the time attribute, replacing it if it already exists.
       if (mask & L_TIME) {
 	if (snapGroup.attrExists("time")) {
 	  snapGroup.removeAttr("time");
@@ -135,7 +135,7 @@ namespace ClumpIO {
 	timeAttr.close();
       }
 
-      // 3) time 属性を書き込む (存在するなら上書き、なければ新規)
+      // 3) Write the density threshold attribute, replacing it if it already exists.
       if (mask & L_DENSITY_THRESHOLD) {
 	if (snapGroup.attrExists("density_threshold")) {
 	  snapGroup.removeAttr("density_threshold");

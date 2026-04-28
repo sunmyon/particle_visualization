@@ -10,7 +10,7 @@
 #include "data/particle_data.h"
 
 namespace lbvh {
-  // ----------------- 基本ユーティリティ -----------------
+  // ----------------- Basic utilities -----------------
   struct Vec3 { float x=0,y=0,z=0; Vec3()=default; Vec3(float X,float Y,float Z):x(X),y(Y),z(Z){} };
   inline Vec3 operator-(const Vec3&a,const Vec3&b){return {a.x-b.x,a.y-b.y,a.z-b.z};}
   inline Vec3 minV(const Vec3&a,const Vec3&b){return {std::min(a.x,b.x),std::min(a.y,b.y),std::min(a.z,b.z)};}
@@ -27,36 +27,36 @@ namespace lbvh {
     void expand(const AABB&o){ bmin=minV(bmin,o.bmin); bmax=maxV(bmax,o.bmax); }
   };
 
-  // 出力：GPU転送用（SSBOにそのまま置ける）
+  // Output layout for GPU transfer; can be copied directly into an SSBO.
   struct GpuParticle {
     float pos[4];
     float rho;
-    float sigma0;    // 強度    
-    uint32_t id;     // 元ID（任意だが便利）
+    float sigma0;    // Intensity.
+    uint32_t id;     // Original ID, optional but useful.
   };
 
-  // BVHノード（AoS最小）
+  // Minimal AoS BVH node.
   struct BVHNodeCPU {
     float bmin[4];   // xyz + pad
     float bmax[4];
     float sigma_max;
     float sigma_avg;
     float volume;
-    int   left;      // 内部: 子 index
+    int   left;      // Internal node: child index.
     int   right;
-    int   first;     // 葉: 粒子範囲の開始（本設計は1粒子=1leafだが将来拡張用）
-    int   count;     // 葉: 個数（現状 1）
+    int   first;     // Leaf: start of the particle range. Currently one particle per leaf.
+    int   count;     // Leaf: particle count. Currently 1.
   };
 
   struct BuildResult {
     std::vector<BVHNodeCPU> nodes;   // 2*N-1
     std::vector<GpuParticle> gpu;    // N
-    int root = -1;                   // ふつう 0
-    int leafBase = 0;                // N-1 （シェーダに渡す用）
+    int root = -1;                   // Usually 0.
+    int leafBase = 0;                // N - 1, passed to shaders.
     int nodeCount = 0;               // 2*N-1
   };
   
-  // ----------------- Builder IF（拡張ポイント） -----------------
+  // ----------------- Builder interface and extension point -----------------
   struct IBVHBuilder {
     virtual ~IBVHBuilder() = default;
     virtual BuildResult build(const TrackingVector<ParticleData>& in) = 0;
@@ -96,12 +96,12 @@ namespace lbvh {
       codes_.resize(N);
       computeMortonCodes(in);
 
-      // 3) ソート（コード昇順）→ 並べ替え index
+      // 3) Sort by ascending Morton code and build the permutation index.
       std::vector<int> idx(N);
       std::iota(idx.begin(), idx.end(), 0);
       std::sort(idx.begin(), idx.end(), [&](int a, int b){
 	if (codes_[a] != codes_[b]) return codes_[a] < codes_[b];
-	return a < b; // 同値は元インデックスでタイブレーク
+	return a < b; // Break ties by the original index.
       });
 
       codesSorted_.resize(N);
@@ -126,7 +126,7 @@ namespace lbvh {
       N = count;
       codesSorted_.resize(N);
       
-      // 4) 並べ替え済み GPU 粒子を作成（AoS）
+      // 4) Create sorted GPU particles in AoS layout.
       outGpu.resize(N);
       for (int i=0;i<N;i++){
 	const auto& p = in[idx[i]];
@@ -143,11 +143,11 @@ namespace lbvh {
 	outGpu[i] = gp;
       }
 
-      // 5) ノード配列（内部 N-1、葉 N → 合計 2N-1）
+      // 5) Node array: N - 1 internal nodes plus N leaves, total 2N - 1.
       outNodes.assign(2*N-1, BVHNodeCPU{});
       auto leafIndex = [&](int i){ return (N-1 + i); };
 
-      // 葉：1粒子=1leaf
+      // Leaves: one particle per leaf.
       for (int i=0;i<N;i++){
 	float r = outGpu[i].pos[3];
 	BVHNodeCPU& L = outNodes[leafIndex(i)];
@@ -164,7 +164,7 @@ namespace lbvh {
 
       std::vector<int> parent(N-1, -1);
       
-      // 6) 内部ノードリンク（Karras 2012）
+      // 6) Internal node links using Karras 2012.
       for (int i=0;i<N-1;i++){
 	int dL = lcp(i, i-1);
 	int dR = lcp(i, i+1);
@@ -172,16 +172,16 @@ namespace lbvh {
 	int dMin = std::min(dL, dR);
 	int j = findRangeEnd(i, dir, dMin);
 
-	// split も [first,last] の中で求める
+	// Compute the split inside [first, last] as well.
 	int split = findSplit(i, j);
 	
 	int leftId, rightId;
 	if (dir > 0) {
-	  // 範囲 [i..j] を split で分割 → 左は [i..split], 右は [split+1..j]
+	  // Split [i..j] at split: left is [i..split], right is [split+1..j].
 	  leftId  = (split == i)     ? (N - 1 + i)     : split;
 	  rightId = (split + 1 == j) ? (N - 1 + j)     : (split + 1);
 	} else {
-	  // 範囲 [j..i] を split で分割 → 左は [j..split], 右は [split+1..i]
+	  // Split [j..i] at split: left is [j..split], right is [split+1..i].
 	  leftId  = (split == j)     ? (N - 1 + j)     : split;
 	  rightId = (split + 1 == i) ? (N - 1 + i)     : (split + 1);
 	}
@@ -270,7 +270,7 @@ namespace lbvh {
       printf("root=%d count=%d\n", root, count1);
       root_ = root;
       
-      // 7) AABB refit（下から）— ルート=0
+      // 7) Refit AABBs bottom-up from the root.
       refit(outNodes, root, N);
 
       BuildResult r;
@@ -314,8 +314,8 @@ namespace lbvh {
 #if defined(_MSC_VER)
   	if (!x) return 32;
         unsigned long idx;
-        _BitScanReverse(&idx, x);                 // 最上位1bitの位置
-        return 31 - static_cast<int>(idx);        // 先頭の0ビット数
+        _BitScanReverse(&idx, x);                 // Position of the highest set bit.
+        return 31 - static_cast<int>(idx);        // Number of leading zero bits.
 #else
         return x ? __builtin_clz(x) : 32;
 #endif
@@ -329,7 +329,7 @@ namespace lbvh {
         _BitScanReverse64(&idx, x);
         return 63 - static_cast<int>(idx);
 #else
-        // 32bit ターゲットのフォールバック
+        // Fallback for 32-bit targets.
         if (x >> 32) {
             _BitScanReverse(&idx, static_cast<unsigned long>(x >> 32));
             return 31 - static_cast<int>(idx);
@@ -369,12 +369,12 @@ namespace lbvh {
       uint64_t b = codesSorted_[j];
 
       if (a != b) {
-        // Morton が異なる → 通常の共通接頭ビット長（0..63）
+        // Different Morton codes: use the normal common-prefix bit length.
         return clz64(a ^ b);
       } else {
-        // Morton が等しい → 「Morton の後ろにソート順位を連結した」とみなす
-        // つまり 64bit ぶん一致 + index の共通上位ビット数（0..31）
-        // これで δ(i,j) は 64..95 の範囲になり、等号連内でちゃんと序列がつく
+        // Equal Morton codes: treat the sort index as appended after the Morton code.
+        // This gives 64 matching bits plus the common upper bits of the index.
+        // As a result, delta(i,j) is in [64,95] and ties remain ordered.
         return 64 + clz32((uint32_t)i ^ (uint32_t)j);
       }
     }
@@ -382,7 +382,7 @@ namespace lbvh {
     int findRangeEnd(int i, int dir, int dMin) const {
       const int N = (int)codesSorted_.size();
 
-      // --- 指数探索: 最後に条件を満たした j と NG 側の bound を取る ---
+      // --- Exponential search: keep the last valid j and the first invalid bound. ---
       int j = i;        // last good
       int step = 1;
       int bound;        // first bad (or array end in that direction)
@@ -397,28 +397,28 @@ namespace lbvh {
 
       //printf("[End] dMin=%d\n", dMin);
       
-      // --- 二分探索 ---
+      // --- Binary search ---
       if (dir > 0) {
-        // 右方向: 「最大の OK」を返す（上側二分探索）
-        int lo = j;           // OK 側
-        int hi = bound;       // NG 側 or 端（閉区間）
+        // Rightward search: return the largest valid index.
+        int lo = j;           // Valid side.
+        int hi = bound;       // Invalid side or endpoint, closed interval.
         while (lo < hi) {
-	  int mid = lo + (hi - lo + 1) / 2;     // 上より
-	  if (lcp(i, mid) > dMin) lo = mid;     // まだ OK を広げる
-	  else hi = mid - 1;                    // NG を縮める
+	  int mid = lo + (hi - lo + 1) / 2;     // Upper midpoint.
+	  if (lcp(i, mid) > dMin) lo = mid;     // Expand the valid range.
+	  else hi = mid - 1;                    // Shrink the invalid range.
 	}
 	
-        return lo; // 最大の OK
+        return lo; // Largest valid index.
       } else {
-        // 左方向: 「最小の OK」を返す（下側二分探索）
-        int lo = bound;       // NG 側 or 端
-        int hi = j;           // OK 側（閉区間）
+        // Leftward search: return the smallest valid index.
+        int lo = bound;       // Invalid side or endpoint.
+        int hi = j;           // Valid side, closed interval.
         while (lo < hi) {
-	  int mid = lo + (hi - lo) / 2;         // 下より
-	  if (lcp(i, mid) > dMin) hi = mid;     // OK を左へ寄せる
-	  else lo = mid + 1;                    // NG を右へ寄せる
+	  int mid = lo + (hi - lo) / 2;         // Lower midpoint.
+	  if (lcp(i, mid) > dMin) hi = mid;     // Move the valid bound left.
+	  else lo = mid + 1;                    // Move the invalid bound right.
         }
-        return hi; // 最小の OK
+        return hi; // Smallest valid index.
       }
     }
 
@@ -426,7 +426,7 @@ namespace lbvh {
       if (i == j)
 	return i;
       
-      int common = lcp(i, j);     // ★ i を基準に last との共通接頭長
+      int common = lcp(i, j);     // Common prefix length with the last index relative to i.
       //printf("[split] common=%d i=%d j=%d\n", common, i, j);
       
       if(j > i){
@@ -450,7 +450,7 @@ namespace lbvh {
 	return lo;	
       }
       
-      // 二分探索：lcp(i, mid) > common を満たす最大の mid を探す
+      // Binary search: find the largest mid satisfying lcp(i, mid) > common.
     }
     
     static void refit(std::vector<BVHNodeCPU>& nodes,int id, int N){
@@ -482,7 +482,7 @@ namespace lbvh {
   };
 
   // ======================================================
-  //                     BVH ラッパ
+  //                     BVH wrapper
   // ======================================================
   class BVH {
   public:

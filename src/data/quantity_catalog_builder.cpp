@@ -13,7 +13,7 @@ void BuildQuantityCatalog(const ParticleBlock& block, QuantityCatalogState& out)
     pushUI(q);
   }
 
-  // --- 内部用（UIに出さないが all には入れる）---
+  // --- Internal entries, hidden from UI but included in all. ---
   for (auto q : {QuantityId::PosX, QuantityId::PosY, QuantityId::PosZ, QuantityId::Radius, QuantityId::VRad}) {
     pushAll(q);
   }

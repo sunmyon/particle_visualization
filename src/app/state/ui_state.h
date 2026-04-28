@@ -70,6 +70,9 @@ struct SettingsStreamlinePreviewEdit {
 
 struct SettingsStreamlineBuildEdit {
   int nSeeds = 1;
+  float thetaMaxDegrees = 10.0f;
+  bool useManualSeed = false;
+  float manualSeed[3] = {0.f, 0.f, 0.f};
   bool limitRegion = false;
   float regionCenter[3] = {0.f, 0.f, 0.f};
   float regionSize[3] = {0.f, 0.f, 0.f};

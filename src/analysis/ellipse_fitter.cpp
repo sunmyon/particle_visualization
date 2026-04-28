@@ -21,7 +21,7 @@ std::vector<int> EllipseFitter::extractComponent(double thr, int seedIndex) cons
         int i = Q.front(); Q.pop();
         comp.push_back(i);
 
-	// KDTree_t に依存する型エイリアスの取得
+	// Get type aliases that depend on KDTree_t.
 	typedef typename KDTree::IndexType  IndexType;
 	typedef typename KDTree::DistanceType DistanceType;
 	typedef nanoflann::ResultItem<IndexType, DistanceType> MyResultItem;
@@ -45,14 +45,14 @@ int EllipseFitter::find_nearest_gas_particle(const float pos[3]) const {
   size_t N = 4;
   
   while(1){
-    // kNN で全点ソート
+    // Sort all points by kNN distance.
     std::vector<size_t>   indices(N);
     std::vector<double>   dists2(N);
     nanoflann::KNNResultSet<double> resultSet(N);
     resultSet.init(indices.data(), dists2.data());
     kdtree_->findNeighbors(resultSet, pos, nanoflann::SearchParameters());
 
-    // 距離順に巡って type==0 のものを返す
+    // Scan by distance and return the first type 0 particle.
     for (size_t i = 0; i < N; ++i) {
       int idx = static_cast<int>(indices[i]);
       if ((*dataPtr_)[idx].type == 0) {
@@ -93,7 +93,7 @@ bool EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
     return false;
   }
 
-  // 2) KD-tree を動的に構築
+  // 2) Build the KD-tree dynamically.
   PointCloud<ParticleData> cloud{ &data };
   kdtree_.reset(new KDTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams()));
   kdtree_->buildIndex();
@@ -148,7 +148,7 @@ bool EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
   auto comp = extractComponent(thr, indexA);
   density_threshold_ = thr;
   
-  // ------ (d) コンポーネント抽出 & PCA ------
+  // ------ (d) Component extraction and PCA ------
   Eigen::Matrix3d axes;
   Eigen::Vector3d centroid, evals;
   computePCA3D(comp, axes, centroid, evals);
@@ -209,20 +209,20 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
 
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(C);
 
-    // 昇順 → 降順へ並べ替え
+    // Reorder from ascending to descending.
     Eigen::Matrix3d evecs = es.eigenvectors();
     Eigen::Vector3d evalsAsc = es.eigenvalues();
 
     Eigen::Matrix3d axesDesc;
-    axesDesc.col(0) = evecs.col(2);    // λ2 (最大)
+    axesDesc.col(0) = evecs.col(2);    // lambda2, largest.
     axesDesc.col(1) = evecs.col(1);    // λ1
-    axesDesc.col(2) = evecs.col(0);    // λ0 (最小)
+    axesDesc.col(2) = evecs.col(0);    // lambda0, smallest.
 
-    // 右手系維持（det<0 なら 1 列反転）
+    // Preserve right-handedness by flipping one column if det < 0.
     if (axesDesc.determinant() < 0)
         axesDesc.col(2) = -axesDesc.col(2);
 
     axes  = axesDesc;
-    evals << evalsAsc(2), evalsAsc(1), evalsAsc(0);  // 同じ順
+    evals << evalsAsc(2), evalsAsc(1), evalsAsc(0);  // Same order.
 }
 #endif

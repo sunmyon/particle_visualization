@@ -53,19 +53,19 @@ struct ProjectionConfig {
 };
 
 struct MaskConfig {
-  // 粒子 type 単位の mask
+  // Mask by particle type.
   bool typeEnabled[6] = {true, true, true, true, true, true};
 
-  // camera 半径 filter のような UI 由来条件
+  // UI-derived filters, such as the camera-radius filter.
   bool useCameraCenterFilter = false;
   float cameraRadius = 10.0f;
 
-  // halo stress / clump / 明示選択など、後で足せるように
+  // Extension points for halo stress, clumps, explicit selections, and similar filters.
   std::vector<int> stressedHaloIndices;
   std::vector<int> selectedParticleIDs;
 
-  // 粒子ごとの flag_mask を直接保存したい場合の最小版
-  // 大きくなりやすいので optional 扱い
+  // Minimal form for saving per-particle flag_mask directly.
+  // This can become large, so keep it optional.
   bool saveExplicitMask = false;
   std::vector<int> explicitMaskedParticleIDs;
 };

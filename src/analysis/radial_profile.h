@@ -50,7 +50,6 @@ struct RadialProfileResult {
   bool valid = false;
 };
 
-struct NormalizationContext;
 class RadialProfileComputer {
 public:
   RadialProfileComputer() = default;
@@ -59,7 +58,7 @@ public:
   }
 
   RadialProfileResult compute(const ParticleBlock& partblock,
-			      const NormalizationContext& normalization,
+			      double scaleToPhysical,
                               const RadialProfileParams& params,
 			      const glm::vec3& cam_center);
 
@@ -67,4 +66,3 @@ private:
   glm::vec3 v_center = glm::vec3(0);
   UnitSystem units_;
 };
-

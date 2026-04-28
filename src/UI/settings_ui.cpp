@@ -7,8 +7,8 @@
 #include "app/state/window_commands.h"
 
 #include "interaction/camera.h"
-#include "render/particle_visual_config.h"   // ParticleVisualConfig の実定義
-#include "FileIO/file_format_dialog.h"
+#include "render/particle_visual_config.h"   // Concrete ParticleVisualConfig definition.
+#include "UI/file_format_dialog.h"
 #include "render/colormap_defs.h"  
 
 #include <cstring>
@@ -17,7 +17,7 @@
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
 #else
-#include "ImGuiFileDialog.h" // インクルードパスを合わせる
+#include "ImGuiFileDialog.h" // Match the include path.
 #endif
 
 
@@ -254,12 +254,12 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     }
 #else
     IGFD::FileDialogConfig config;
-    // 初期ディレクトリの設定（"path" メンバー）
+    // Set the initial directory via the "path" member.
     //config.path = src.filePath;
     config.path = input.folderPath;
-    // 必要なら初期のファイル名を設定（空の場合はユーザー入力待ち）
+    // Set an initial filename if needed; empty waits for user input.
     config.fileName = "output"; 
-    // その他、選択可能なファイル数などの設定はデフォルトのままでOK
+    // Leave other options such as selectable file count at their defaults.
     ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", "**", config);
 #endif
   }
@@ -539,7 +539,7 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
 #endif
   };
 		
-  // 現在選択中のラベルを探す
+  // Find the currently selected label.
   const char* currentLabel = "unknown";
   for (const auto& item : analysisItems) {
     if (item.mode == ui.analysisMode) {
@@ -855,7 +855,7 @@ static void DrawRenderingSection(const QuantityCatalogState& catalog,
     { "velocity field", RENDER_VELOCITY_FIELD},
   };
 		
-  // 現在選択中のラベルを探す
+  // Find the currently selected label.
   const char* currentLabel = "unknown";
   for (const auto& item : renderingItems) {
     if (item.mode == ui.renderingMode) {
@@ -980,6 +980,20 @@ static void DrawRenderingSection(const QuantityCatalogState& catalog,
 
     ImGui::Text("Seed setup");
     buildDirty |= ImGui::InputInt("number of seed points", &buildReq.nSeeds);
+    buildDirty |= ImGui::InputFloat("curvature angle threshold [deg]",
+                                    &buildReq.thetaMaxDegrees);
+    if (ImGui::Checkbox("use manual seed", &buildReq.useManualSeed)) {
+      buildDirty = true;
+      buildReq.buildClicked = true;
+    }
+
+    if (buildReq.useManualSeed) {
+      if (ImGui::InputFloat3("manual seed position",
+                             buildReq.manualSeed, "%.3f")) {
+        buildDirty = true;
+        buildReq.buildClicked = true;
+      }
+    }
 
     bool previewDirty = false;
 
@@ -1045,7 +1059,7 @@ static void DrawRenderingSection(const QuantityCatalogState& catalog,
       settingsReq.renderDraftDirty = true;
       settingsReq.applyRenderRequested = true;
     }
-    isoContourDirty |= ImGui::SliderInt("Maximum level of OctTree",
+    isoContourDirty |= ImGui::SliderInt("Maximum level of spatial tree",
                                         &req.maxTreeLevel,
                                         5,
                                         20);
@@ -1064,7 +1078,7 @@ static void DrawRenderingSection(const QuantityCatalogState& catalog,
       ImGui::EndCombo();
     }
 
-    if (ImGui::Button("Build OctTree & Mesh")) {
+    if (ImGui::Button("Build spatial tree & mesh")) {
       req.buildClicked = true;
     }
 

@@ -1,15 +1,13 @@
 #pragma once
 #include <vector>
-#include <cstddef>
-#include <algorithm>
 #include "PythonBridge/PythonBridge.h"  // PythonBridge::Shared, FieldId
 #include "data/particle_array.h"
 
 namespace bridge {
-  // AoS → SHM（初期一括コピー）
-  bool loadInitialFromAoS(PythonBridge& bridge, const ParticleArray& P, size_t stride_bytes);
+  // Initial bulk copy from AoS to SHM.
+  bool loadInitialFromAoS(PythonBridge& bridge, const ParticleArray& P);
   
-  // SHM → AoS（Python編集の反映。dirtyが空ならフル）
+  // Apply Python edits from SHM to AoS. An empty dirty list means full sync.
   void applyFromSharedToAoS(const PythonBridge::Shared& S, ParticleArray& P,
 			    const std::vector<FieldId>& dirty = {});
 

@@ -167,7 +167,7 @@ public:
     file_.rdbuf()->pubsetbuf(ioBuf_.data(),
                              static_cast<std::streamsize>(ioBuf_.size()));
     
-    // ---- header 読み ----
+    // ---- Read header ----
     float t;
     int   n;
     file_.read(reinterpret_cast<char*>(&t), sizeof t);
@@ -180,8 +180,8 @@ public:
 
     npart_ = static_cast<size_t>(n);
 
-    // ---- ここが重要 ----
-    // この位置が「粒子 record の先頭」
+    // ---- Important offset ----
+    // This position is the start of particle records.
     data_offset_ = file_.tellg();
 
     return true;
@@ -216,7 +216,7 @@ public:
     const bool masked = (mask != nullptr) && mask->active();
     binary_reader_detail::initOutputBlock(out, count, layout);
     
-    // ---- begin 番目の粒子まで seek ----
+    // ---- Seek to particle begin ----
     const std::streamoff offset =
       data_offset_ + static_cast<std::streamoff>(begin * layout.recordSize);
 
@@ -333,7 +333,7 @@ public:
       return false;
     }
 
-    // ---- header 読み（先頭に time(float), npart(int)）----
+    // ---- Read header: time(float), then npart(int) ----
     if (size_ < sizeof(float) + sizeof(int)) {
       close();
       return false;
@@ -348,13 +348,13 @@ public:
     header.npart = n;
     header.flag_hdf5 = false;
 
-    if (n < 0) { // 念のため
+    if (n < 0) { // Defensive check.
       close();
       return false;
     }
     npart_ = static_cast<size_t>(n);
 
-    // ---- ここが重要：粒子データはこの位置から始まる ----
+    // ---- Important offset: particle data starts here ----
     data_offset_ = sizeof(float) + sizeof(int);
 
     return true;
@@ -386,10 +386,10 @@ public:
     if (layout.recordSize == 0) return false;
     if (begin + count > npart_) return false;
 
-    // ファイルサイズ整合性チェック（重要）
+    // Validate file size consistency.
     const size_t needBytes = data_offset_ + npart_ * layout.recordSize;
     if (needBytes > size_) {
-      // header の npart と実ファイルサイズが矛盾している
+      // Header npart is inconsistent with the actual file size.
       return false;
     }
     

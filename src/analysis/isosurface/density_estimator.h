@@ -1,11 +1,11 @@
 #pragma once
 #include <glm/glm.hpp>
-struct ParticleDataForKdTree;  // 含めるか前方宣言
+struct ParticleDataForKdTree;  // Include the definition or forward-declare it.
 
-/// 任意の密度推定クラスはこのインターフェイスを実装する
+/// Density-estimator implementations should implement this interface.
 struct IDensityEstimator {
   virtual ~IDensityEstimator() = default;
-  /// pos: サンプリング位置
-  /// return: その位置でのスカラー値（密度など）
+  /// pos: sampling position.
+  /// return: scalar value at that position, such as density.
   virtual float sample(const glm::vec3& pos) const = 0;
 };

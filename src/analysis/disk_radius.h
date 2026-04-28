@@ -38,8 +38,8 @@ public:
     float v_center[3] = {0,0,0};
     float scale_fac   = 1.0f;
     double mass       = 0.0;
-    size_t max_shell  = 100;   // 殻数上限
-    double f_cut      = 0.7;   // Kepler 比閾値
+    size_t max_shell  = 100;   // Maximum number of shells.
+    double f_cut      = 0.7;   // Kepler-ratio threshold.
     double G          = 1.0;   // Gravitation constant for the specified unit
   };
 
@@ -81,7 +81,7 @@ private:
   }
 };
 
-/*=================== 実装 =======================================*/
+/*=================== Implementation =============================*/
 template<class VecT>
 inline bool DiskRadiusFinder::compute(const VecT& particles,
                                       const Params& par,

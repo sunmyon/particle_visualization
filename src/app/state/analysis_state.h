@@ -46,15 +46,7 @@ struct StreamlineBuildResultState {
 };
 
 #ifdef ISO_CONTOUR
-struct IsoContourGeometryState {
-  TrackingVector<float> verts;
-  TrackingVector<unsigned> inds;
-
-  void clear() {
-    verts.clear();
-    inds.clear();
-  }
-};
+#include "analysis/isosurface/iso_contour_geometry.h"
 #endif
 
 #ifdef CLUMP_DATA_READ

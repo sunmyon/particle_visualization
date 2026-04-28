@@ -15,7 +15,7 @@ void ParticleArray::rescalePositions(NormalizationContext& ctx){
     p.Hsml = p.originalHsml * scale;
   }
       
-  particlesDirty = true;  // グローバルなフラグをtrueに設定
+  particlesDirty = true;  // Mark the global dirty flag.
 };
 
 bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity) {
@@ -62,7 +62,7 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
 
   flag_mask.resize(particleBlock.particles.size(), 0);
   
-  particleBlock_index = 0; // あるいは廃止
+  particleBlock_index = 0; // Or remove this later.
   particlesDirty = true;
   flagParticleIndexDirty = true;
 
@@ -72,34 +72,34 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
 #include <nanoflann.hpp>
 
 namespace{
-  // 星粒子の構造体
+  // Star particle record.
   struct starParticle {
     float pos[3];
     double mass;
     int type;
     int index;
-    double density; // 密度を格納するフィールド
-    // 他のメンバ...
+    double density; // Density field.
+    // Other members can be added here.
   };
 
-  // nanoflann用のデータコンテナ
+  // Data container for nanoflann.
   struct StarParticleCloud {
     TrackingVector<starParticle> particles;
 
-    // kd-tree インターフェース
+    // kd-tree interface.
     inline size_t kdtree_get_point_count() const { return particles.size(); }
     
-    // 指定インデックスの次元 dim の値を返す
+    // Return the coordinate value for dimension dim at the specified index.
     inline float kdtree_get_pt(const size_t idx, const size_t dim) const {
       return particles[idx].pos[dim];
     }
     
-    // バウンディングボックスは省略（falseを返す）
+    // Omit the bounding box by returning false.
     template <class BBOX>
     bool kdtree_get_bbox(BBOX & /*bb*/) const { return false; }
   };
 
-  // kd-treeの型定義（3次元用）
+  // kd-tree type definition for 3D points.
   typedef nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<float, StarParticleCloud>,
     StarParticleCloud,
@@ -120,8 +120,8 @@ static inline double cubic_spline_W(double r, double h) {
   }
 }
 
-  // 各星粒子について、探索半径 searchRadius 内の全粒子の質量を合計し、
-  // 面積 (π * searchRadius²) で割ることで密度 (Msun/pc²) を計算する関数
+// For each star particle, sum all particle masses within the search radius
+// and divide by area, pi * searchRadius^2, to compute density in Msun/pc^2.
 void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
 					  bool flag_overwrite_hsml,
 					  const NormalizationContext& ctx,
@@ -136,7 +136,7 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
 
   TrackingVector<ParticleData> & particles = particleBlock.particles;
   
-  // type >= 3 の粒子のみを抽出
+  // Extract only the selected particle types.
   TrackingVector<starParticle> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
@@ -159,15 +159,15 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
   
   TrackingVector<double> densities(filtered.size(), 0.0);
 
-  // データコンテナにコピー（必要に応じて参照やポインタを使ってもよい）
+  // Copy into the data container. References or pointers can be used later if needed.
   StarParticleCloud cloud;
   cloud.particles = filtered;
     
-  // kd-treeの構築
+  // Build the kd-tree.
   KDTreeType kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
   kdTree.buildIndex();
 
-  // knnSearch の結果を格納するためのコンテナ
+  // Containers for knnSearch results.
   TrackingVector<KDTreeType::IndexType> ret_indexes(N_neighbours);
   TrackingVector<float> out_dists_sqr(N_neighbours);
 
@@ -183,7 +183,7 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
     hubble = 1.;
   
   nanoflann::SearchParameters params;
-  // 各粒子について近傍を探索
+  // Search neighbors for each particle.
   for (size_t i = 0; i < cloud.particles.size(); i++) {
     const auto& pi = cloud.particles[i];
     float query_pt[3] = {
@@ -217,7 +217,7 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
 	density += m * cubic_spline_W(r, h);	    	  
       }
         
-    // 面積 = π * r^2
+    // Area = pi * r^2.
     double area = M_PI * h * h;
     double scale = ctx.toPhysicalScale();
     

@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(particle_vis LANGUAGES C CXX)
 
-# ===== 基本設定 =====
+# ===== Basic settings =====
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -15,16 +15,16 @@ if(NOT MSVC)
   string(APPEND CMAKE_C_FLAGS_RELEASE " -O3 -march=native -flto")
   string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O3 -march=native -flto")
 
-  # RelWithDebInfo も同じ最適化にしたいなら（任意）
+  # Use the same optimization for RelWithDebInfo if desired.
   string(APPEND CMAKE_C_FLAGS_RELWITHDEBINFO " -O3 -march=native -flto")
   string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " -O3 -march=native -flto")
 
-  # MinSizeRel までO3にしたいなら（任意）
+  # Enable similar native/LTO options for MinSizeRel if desired.
   # string(APPEND CMAKE_C_FLAGS_MINSIZEREL " -march=native -flto")
   # string(APPEND CMAKE_CXX_FLAGS_MINSIZEREL " -march=native -flto")
 endif()
 
-# ===== オプション（MakefileのOPTION相当） =====
+# ===== Options, corresponding to the old Makefile options =====
 option(DEBUG_MODE          "Enable debug mode"                   ON)
 option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
@@ -48,7 +48,7 @@ if(WIN32)
 endif()
 option(USE_MMAP "Use POSIX mmap for file IO" ${USE_MMAP_DEFAULT})
 
-# グラフィックス選択：デスクトップGL(既定) / OpenGL ES + EGL（WSL向け）
+# Graphics selection: desktop GL by default, or OpenGL ES + EGL for WSL-like environments.
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
 option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote rendering" ON)
 option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
@@ -92,18 +92,18 @@ if(BUILD_EGL_PROBE_ONLY)
   return()
 endif()
 
-# ===== コンパイル定義付与 =====
+# ===== Compile definition helper =====
 function(add_def cond defname)
   if(${cond})
     target_compile_definitions(${PROJECT_NAME} PRIVATE ${defname})
   endif()
 endfunction()
 
-# ===== 依存（パス） =====
+# ===== Dependency paths =====
 set(SRC_DIR      ${CMAKE_SOURCE_DIR}/src)
 set(EXTERNAL_DIR ${CMAKE_SOURCE_DIR}/external)
 
-# ===== ソース一覧 =====
+# ===== Source list =====
 set(SOURCES_CPP
   ${SRC_DIR}/main.cpp
   ${SRC_DIR}/UI/common_ui.cpp
@@ -126,7 +126,10 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_frame.cpp
   ${SRC_DIR}/app/execution/input_execution.cpp
   ${SRC_DIR}/app/execution/analysis_dispatch.cpp
-  ${SRC_DIR}/app/execution/analysis_execution.cpp
+  ${SRC_DIR}/app/execution/geometric_analysis_execution.cpp
+  ${SRC_DIR}/app/execution/field_geometry_execution.cpp
+  ${SRC_DIR}/app/execution/convex_hull_execution.cpp
+  ${SRC_DIR}/app/execution/settings_navigation_execution.cpp
   ${SRC_DIR}/app/execution/clump_window_execution.cpp
   ${SRC_DIR}/app/execution/clump_batch_execution.cpp
   ${SRC_DIR}/app/app_derived_rebuild.cpp
@@ -171,12 +174,13 @@ set(SOURCES_CPP
   ${SRC_DIR}/data/quantity_catalog_builder.cpp
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
   ${SRC_DIR}/FileIO/snapshot_io_service.cpp
-  ${SRC_DIR}/FileIO/file_format_dialog.cpp
+  ${SRC_DIR}/UI/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp
   ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp
+  ${SRC_DIR}/FileIO/clump_io.cpp
   ${SRC_DIR}/analysis/clump/clump_chain.cpp
   ${SRC_DIR}/analysis/clump/find_clumps.cpp
-  ${SRC_DIR}/analysis/clump/find_clumps_io.cpp
+  ${SRC_DIR}/app/execution/loaded_clump_tool.cpp
   ${SRC_DIR}/UI/clump_finder_window.cpp
   ${SRC_DIR}/UI/clump_loaded_window.cpp
   ${SRC_DIR}/UI/clump_chain_window.cpp
@@ -187,7 +191,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/image/image_canvas.cpp
   ${SRC_DIR}/image/image_io.cpp
   ${SRC_DIR}/image/bitmap_font_renderer.cpp
-  ${SRC_DIR}/OctTree/ParticleOctree.cpp
+  ${SRC_DIR}/data/spatial/particle_octree.cpp
   ${SRC_DIR}/analysis/isosurface/density_evaluate.cpp
 )
 
@@ -217,9 +221,10 @@ endif()
 if(PYTHON_BRIDGE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/app/execution/python_bridge_execution.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridge.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridgeRpcServer.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/PythonBridgeSharedMemory.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/BridgeAdapter.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/ShmCommon.cpp)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/ZmqServer.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/PythonBridge/JupyterLauncher.cpp)
 endif()
 
@@ -230,7 +235,7 @@ if(PARTICLE_VIS_HEADLESS_ONLY)
   list(REMOVE_ITEM SOURCES_CPP ${SRC_DIR}/app/app_callbacks.cpp)
 endif()
 
-# ImGui / ImPlot / NFD（必要に応じて）
+# ImGui / ImPlot / NFD as needed.
 set(IMGUI_SRC
   ${EXTERNAL_DIR}/imgui/imgui.cpp
   ${EXTERNAL_DIR}/imgui/imgui_draw.cpp
@@ -249,8 +254,8 @@ set(IMPLOT_SRC
 	${EXTERNAL_DIR}/implot/implot_items.cpp
 )
 
-# デスクトップGL用 glad（Windows/macOS/Linux のデスクトップGLで使用）
-# ※ USE_GLES=ON の場合は glad を使わず <GLES3/gl3.h> を使う方針
+# glad for desktop GL on Windows/macOS/Linux.
+# When USE_GLES=ON, prefer <GLES3/gl3.h> instead of glad.
 set(GLAD_SRC ${EXTERNAL_DIR}/glad/src/glad.c)
 
 
@@ -300,14 +305,14 @@ if(CLOUDY)
   message(STATUS "Cloudy: inc='${CLOUDY_INCLUDE_DIR}', lib='${CLOUDY_LIBRARY}'")
 endif()
 
-# 目標ターゲット
+# Main target.
 add_executable(${PROJECT_NAME}
   ${SOURCES_CPP}
   ${IMGUI_SRC}
   ${IMPLOT_SRC}
 )
 
-# ===== インクルードパス =====
+# ===== Include paths =====
 target_include_directories(${PROJECT_NAME} PRIVATE
   ${SRC_DIR}
 )
@@ -327,10 +332,10 @@ endif()
 
 #debug macro
 macro(target_link_libraries_report tgt scope)
-  # 可変長引数で渡されたものを target_link_libraries に流す
+  # Forward variadic arguments to target_link_libraries.
   target_link_libraries(${tgt} ${scope} ${ARGN})
 
-  # 現在積まれているリンクアイテムを出力
+  # Print the currently accumulated link items.
   get_target_property(_libs ${tgt} LINK_LIBRARIES)
   message(STATUS "[link-report] ${tgt}: ${_libs}")
 endmacro()
@@ -338,7 +343,7 @@ endmacro()
 function(_print_links tag)
   get_property(_libs TARGET ${PROJECT_NAME} PROPERTY LINK_LIBRARIES)
   message(STATUS "[trace:${tag}] LINK_LIBRARIES = ${_libs}")
-  # カウント
+  # Count selected link items.
   set(_targets glfw gmp mpfr Cocoa OpenGL)
   foreach(tok IN LISTS _targets)
     set(cnt 0)
@@ -361,7 +366,7 @@ find_package(PkgConfig QUIET)
 if(APPLE)
   find_program(_BREW brew)
   if(_BREW)
-    # 必要な brew パッケージを列挙
+    # List the required Homebrew packages.
     set(_brew_packages libomp vtk hdf5 lua gmp mpfr eigen)
     if(PYTHON_BRIDGE)
       list(APPEND _brew_packages zeromq cppzmq nlohmann-json)
@@ -382,7 +387,7 @@ if(APPLE)
     endforeach()
   endif()
 
-  # Intel ライブラリ混入防止
+  # Avoid accidentally mixing in Intel libraries.
   if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND EXISTS "/opt/homebrew")
     option(IGNORE_USR_LOCAL_ON_SILICON "Ignore /usr/local on Apple Silicon" ON)
     if(IGNORE_USR_LOCAL_ON_SILICON)
@@ -403,7 +408,7 @@ endif()
 
 # --- Linux ---
 if(UNIX AND NOT APPLE)
-  # pkg-config が最優先
+  # Prefer pkg-config on Linux.
   if(PKG_CONFIG_FOUND)
     message(STATUS "pkg-config found: ${PKG_CONFIG_EXECUTABLE}")
   else()
@@ -483,10 +488,10 @@ endfunction()
 
 
 function(detect_and_link_glfw target lib_name pkg_name)
-  # lib_name: CMake のパッケージ名 (例: GLFW, GMP, VTK)
-  # pkg_name: pkg-config 名 (例: glfw3, gmp, vtk)
+  # lib_name: CMake package name, e.g. GLFW, GMP, VTK.
+  # pkg_name: pkg-config package name, e.g. glfw3, gmp, vtk.
 
-  # 1. CMake の find_package
+  # 1. CMake find_package.
   find_package(glfw QUIET CONFIG)
   if(NOT glfw_FOUND)
     find_package(glfw3 QUIET CONFIG)
@@ -543,7 +548,7 @@ endfunction()
 
 
 if(NONATIVEFILEDIALOG)
-  # === ImGuiFileDialog を使う（ネイティブNFDは使わない） ===
+  # Use ImGuiFileDialog instead of the native NFD backend.
   target_sources(${PROJECT_NAME} PRIVATE
     ${EXTERNAL_DIR}/ImGuiFileDialog/ImGuiFileDialog.cpp
   )
@@ -586,7 +591,7 @@ else()
 endif()
 
 
-# ===== ISO_CONTOUR (VTK 連携) =====
+# ===== ISO_CONTOUR (VTK integration) =====
 if(ISO_CONTOUR)
   if(DEFINED ENV{VTK_DIR} AND EXISTS "$ENV{VTK_DIR}")
     set(VTK_DIR "$ENV{VTK_DIR}" CACHE PATH "VTK package directory (from environment)" FORCE)
@@ -599,7 +604,7 @@ if(ISO_CONTOUR)
     list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_INSTALLED}")
   endif()
   
-  # 使いたい VTK モジュール（Makefile の列挙を踏襲）
+  # VTK modules to use, matching the old Makefile list.
   set(VTK_COMPONENTS
     CommonCore
     CommonDataModel
@@ -615,7 +620,7 @@ if(ISO_CONTOUR)
     CommonMisc
   )
   
-  # VTK を検出（9.x系想定。必要ならバージョン縛りを調整）
+  # Detect VTK. This expects VTK 9.x; adjust the version constraint if needed.
   find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} REQUIRED)
 # find_package(VTK CONFIG REQUIRED BYPASS_PROVIDER COMPONENTS ${VTK_COMPONENTS})
 #  find_package(VTK)
@@ -625,23 +630,23 @@ if(ISO_CONTOUR)
   endif()
 
 
-  # 追加ソース（Makefile 相当）
+  # Additional sources corresponding to the old Makefile.
   target_sources(${PROJECT_NAME} PRIVATE
     ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
+    ${SRC_DIR}/analysis/isosurface/iso_surface_field.cpp
     ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
     ${SRC_DIR}/analysis/isosurface/connectivity_test.cpp
     ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
   )
 
-  # インクルードパス
+  # Include paths.
   target_include_directories(${PROJECT_NAME} PRIVATE
     ${SRC_DIR}/analysis/isosurface
-    ${SRC_DIR}/OctTree
-    ${VTK_INCLUDE_DIRS}      # VTK のヘッダ
+    ${VTK_INCLUDE_DIRS}      # VTK headers
   )
 
-  # リンク（インポートターゲットを使うのがCMake流）
-  # 例: VTK::CommonCore, VTK::FiltersCore, ...
+  # Link imported targets, which is the preferred CMake style.
+  # Example: VTK::CommonCore, VTK::FiltersCore, ...
   if(VTK_FOUND)
     foreach(c IN LISTS VTK_COMPONENTS)
       target_link_libraries(${PROJECT_NAME} PRIVATE VTK::${c})
@@ -650,15 +655,15 @@ if(ISO_CONTOUR)
     detect_and_link(${PROJECT_NAME} VTK vtk)
   endif()
   
-  # macOS で実行時に VTK の .dylib を見つけやすくする（Makefile の -Wl,-rpath,/Users/j/usr/local/lib 相当）
+  # Help macOS find VTK dylibs at runtime, like the old Makefile rpath flags.
   if(APPLE)
-    # VTK_ROOT/lib を rpath に加える（必要ならパスを調整）
+    # Add VTK_ROOT/lib to rpath; adjust the path if needed.
     set_target_properties(${PROJECT_NAME} PROPERTIES
       BUILD_RPATH "${VTK_ROOT}/lib"
       INSTALL_RPATH "${VTK_ROOT}/lib")
   endif()
   
-  # C++ 側に ISO_CONTOUR 定義を渡す（必要なら）
+  # Pass ISO_CONTOUR to C++.
   target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
 endif()
 
@@ -732,7 +737,7 @@ find_package(Eigen3 3.3 QUIET CONFIG)
 if(TARGET Eigen3::Eigen)
   target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
 else()
-  # 2) pkg-config があるなら それ経由も試せる（任意）
+  # 2. Try pkg-config if it is available.
   if(PKG_CONFIG_FOUND)
     pkg_check_modules(EIGEN3_PC QUIET eigen3)
     if(EIGEN3_PC_FOUND)
@@ -743,12 +748,12 @@ else()
     endif()
   endif()
 
-  # 3) それでも無ければ find_path（標準パス + CMAKE_PREFIX_PATH を自動検索）
+  # 3. Fall back to find_path, using standard paths and CMAKE_PREFIX_PATH.
   if(NOT TARGET Eigen3::Eigen)
     find_path(EIGEN3_INCLUDE_DIR
       NAMES Eigen/Core
       PATH_SUFFIXES eigen3
-      HINTS $ENV{EIGEN3_INCLUDE_DIR}  # 手動上書きしたい人向け
+      HINTS $ENV{EIGEN3_INCLUDE_DIR}  # Manual override.
     )
     if(NOT EIGEN3_INCLUDE_DIR)
       message(FATAL_ERROR "Eigen3 headers not found. Set EIGEN3_INCLUDE_DIR or install Eigen3.")
@@ -765,18 +770,18 @@ endif()
 # =========================
 # OpenMP (optional)
 # =========================
-# 1) まずは標準の FindOpenMP に任せる（MSVC/GCC/Clang で最優先）
+# 1. Prefer standard FindOpenMP for MSVC/GCC/Clang.
 find_package(OpenMP QUIET)
 
 if(OpenMP_CXX_FOUND)
   target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
 else()
-  # 2) 見つからない場合のフォールバック
+  # 2. Fallback if OpenMP was not found.
   if(MSVC)
-    # 古いツールチェーンなどで FindOpenMP が外れるケース用
+    # Fallback for older toolchains where FindOpenMP can miss MSVC support.
     target_compile_options(${PROJECT_NAME} PRIVATE /openmp)
   elseif(APPLE)
-    # AppleClang は OpenMP ランタイムを同梱しないので Homebrew の libomp を探す
+    # AppleClang does not ship an OpenMP runtime, so look for Homebrew libomp.
     find_path(OMP_INCLUDE_DIR NAMES omp.h)
     find_library(OMP_LIBRARY NAMES omp)
     
@@ -788,14 +793,14 @@ else()
       message(WARNING "OpenMP not found. Install libomp (brew install libomp) or disable OpenMP features.")
     endif()
   else()
-    # Linux/他OS での手動フォールバック（ほぼ不要だが保険）
-    # 例: 特殊ディストリで FindOpenMP が使えない時
+    # Manual Linux/other-OS fallback, mostly a safety net.
+    # Example: unusual distributions where FindOpenMP is unavailable.
     target_compile_options(${PROJECT_NAME} PRIVATE -fopenmp)
-    target_link_libraries(${PROJECT_NAME}    PRIVATE gomp)  # 典型: GCC の libgomp
+    target_link_libraries(${PROJECT_NAME}    PRIVATE gomp)  # Typical GCC libgomp.
   endif()
 endif()
 
-# ---- デスクトップ OpenGL ----
+# ---- Desktop OpenGL ----
 if(WIN32)
   target_link_libraries(${PROJECT_NAME} PRIVATE opengl32)
 elseif(APPLE)
@@ -838,7 +843,7 @@ if(PARTICLE_VIS_HEADLESS_ONLY)
   endif()
 endif()
 
-# デスクトップGLでは glad を使う
+# Use glad for desktop GL.
 target_sources(${PROJECT_NAME} PRIVATE ${GLAD_SRC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${EXTERNAL_DIR}/glad/include)
 
@@ -944,7 +949,7 @@ if(USE_LUA)
   endif()
 endif()
 
-# ===== コンパイル定義（各種ON/OFFを C++ 側に渡す） =====
+# ===== Compile definitions passed to C++ =====
 add_def(DEBUG_MODE          DEBUG_MODE)
 add_def(USE_LUA             USE_LUA)
 add_def(USE_CONVEX_HULL     USE_CONVEX_HULL)
@@ -962,12 +967,12 @@ add_def(ROTATE_ARCBALL      ROTATE_ARCBALL)
 add_def(NONATIVEFILEDIALOG  NONATIVEFILEDIALOG)
 add_def(PYTHON_BRIDGE       PYTHON_BRIDGE)
 
-# ===== 最適化やASanなど（Debug/Releaseで自動） =====
+# ===== Optimization, ASan, and related build-type settings =====
 if(MSVC)
-  # /MP: 並列ビルド
+  # /MP: parallel build.
   target_compile_options(${PROJECT_NAME} PRIVATE /MP)
 else()
-  # GCC/Clang共通
+  # Common GCC/Clang warnings.
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
 endif()
 
@@ -979,7 +984,7 @@ set(_ROOT_LINK_NAME
   $<IF:$<PLATFORM_ID:Windows>,${CMAKE_SOURCE_DIR}/${PROJECT_NAME}.exe,${CMAKE_SOURCE_DIR}/${PROJECT_NAME}>
 )
 
-# オプション: Windows で権限がない場合に "コピー" に切り替える
+# Option: on Windows, fall back to copying if symlink privileges are unavailable.
 if(WIN32)
   option(WINDOWS_LINK_AS_COPY "On Windows, copy the exe to repo root instead of making a symlink" ON)
 else()
@@ -1149,7 +1154,8 @@ if(PARTICLE_VIS_BUILD_BATCH)
 
   if(GEOMETRICAL_ANALYSIS)
     list(APPEND PARTICLE_VIS_BATCH_SOURCES
-      ${SRC_DIR}/app/execution/analysis_execution.cpp
+      ${SRC_DIR}/app/execution/geometric_analysis_execution.cpp
+      ${SRC_DIR}/app/execution/settings_navigation_execution.cpp
       ${SRC_DIR}/app/app_data_actions.cpp
       ${SRC_DIR}/app/app_visibility_actions.cpp
       ${SRC_DIR}/data/clump_loader.cpp
@@ -1162,7 +1168,7 @@ if(PARTICLE_VIS_BUILD_BATCH)
     list(APPEND PARTICLE_VIS_BATCH_SOURCES
       ${SRC_DIR}/app/execution/clump_batch_execution.cpp
       ${SRC_DIR}/analysis/clump/find_clumps.cpp
-      ${SRC_DIR}/analysis/clump/find_clumps_io.cpp
+      ${SRC_DIR}/FileIO/clump_io.cpp
       ${SRC_DIR}/analysis/clump/clump_chain.cpp
       ${SRC_DIR}/data/clump_loader.cpp
     )
@@ -1255,4 +1261,11 @@ endif()
 
 if(UNIX AND NOT APPLE)
   add_egl_probe_target()
+endif()
+
+if(UNIX)
+  add_custom_target(check_include_boundaries
+    COMMAND ${CMAKE_SOURCE_DIR}/scripts/check_include_boundaries.sh
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Checking source include layer boundaries")
 endif()

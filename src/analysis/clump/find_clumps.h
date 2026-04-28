@@ -16,9 +16,9 @@ public:
     float pos[3];
     float Hsml;
     float density;
-    float val;             // 物理量（0～1）
+    float val;             // Physical quantity in [0,1].
     float mass;            // mass
-    uint8_t type;          // 粒子タイプ (0～5)
+    uint8_t type;          // Particle type, 0 through 5.
     int ID;
     int original_index;
   };
@@ -55,10 +55,10 @@ private:
   TrackingVector<StructureNode *> nodeList;
 
 #ifdef USE_CONVEX_HULL
-  TrackingVector<bool> showHull_;          // 各クランプごとに凸包描画をするかどうかのチェック状態
+  TrackingVector<bool> showHull_;          // Per-clump convex-hull visibility checkbox state.
 #endif
   
-  bool findClumpComputed = false;              // FOFの結果が得られたかどうか
+  bool findClumpComputed = false;              // Whether FOF results are available.
   bool flagFOFComputed = false;
   bool flagDendrogramComputed = false;
   bool flagDirty = false;
@@ -84,7 +84,7 @@ private:
   }
   
   struct ClumpInfo {
-    int clumpID;      // union–find での代表番号
+    int clumpID;      // Representative ID in union-find.
     int count;
     int count_star;
     double totalMass; 
@@ -109,11 +109,11 @@ private:
     bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
   };
 
-  // nanoflann 用 KD-Treeの型定義
+  // KD-tree type definition for nanoflann.
   typedef nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<double, ParticleCloud>,
     ParticleCloud,
-    3  // 次元数
+    3  // Dimension count.
     > KDTree_t;
   
   void findClumps(TrackingVector<ParticleData>& cloud, const std::string &var);
@@ -135,17 +135,17 @@ private:
 			 TrackingVector<int> &clump_offset,
 			 TrackingVector<int> &clump_size);
 
-  // 再帰的にノードとその子孫の各 indices を処理する関数
+  // Recursively process indices for this node and its descendants.
   void setFlagsRecursively(StructureNode* node, TrackingVector<ParticleData>& particles) {
     if (!node)
       return;
     
-    // 現在のノードの indices を処理
+    // Process indices on the current node.
     for (auto idx : node->indices) {
       particles[idx].flag_stress = 1;
     }
     
-    // 子ノードに対して同じ処理を再帰的に実行
+    // Recursively apply the same processing to child nodes.
     for (auto child : node->children) {
       setFlagsRecursively(child, particles);
     }

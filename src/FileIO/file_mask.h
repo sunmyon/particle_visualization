@@ -4,7 +4,7 @@
 struct CoreSample {
   double   pos[3];
   uint64_t id;
-  int      type; // 0..5 (HDF5なら ptype)
+  int      type; // 0..5, ptype for HDF5.
 };
 
 class ParticleMask {
@@ -21,7 +21,7 @@ public:
     return cfg_.typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK;
   }
 
-  // thin 候補数（= ThinOK の粒子数）から stride を決める
+  // Determine the stride from the number of thinning candidates.
   void prepare(size_t thinCandidates){
     id_stride_ = 1;
     if(cfg_.enableMaxParticles && cfg_.maxParticles>0 && thinCandidates>static_cast<size_t>(cfg_.maxParticles)){
@@ -33,7 +33,7 @@ public:
     const int t = c.type;
     if(t<0 || t>5) return false;
 
-    // 完全 on/off
+    // Full on/off.
     if(!typeEnabled(t)) return false;
 
     // sphere
@@ -52,7 +52,7 @@ public:
       }
     }
 
-    // maxParticles thin（ThinOK の type だけ対象）
+    // maxParticles thinning, only for types that pass ThinOK.
     if(cfg_.enableMaxParticles && id_stride_>1 && typeThinOK(t)){
       if(!keep_by_stride_(c.id, id_stride_)) return false;
     }
@@ -63,11 +63,11 @@ public:
   bool active() const {
     if (cfg_.enableSphere) return true;
     if (cfg_.enableMaxParticles && cfg_.maxParticles > 0) return true;
-    // type off が一つでもあれば active
+    // Active when at least one type is disabled.
     for (int t=0; t<6; ++t) {
       if (cfg_.typeMode[t] == ParticleMaskConfig::TypeMode::Off) return true;
     }
-    // sphereがONのときのみoutsideModeが意味を持つのでここでは見ない
+    // outsideMode only matters when sphere filtering is enabled.
     return false;
   }
   

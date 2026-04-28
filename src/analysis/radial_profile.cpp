@@ -8,11 +8,10 @@
 #include <vector>
 
 #include "core/physics_constants.h"
-#include "app/state/normalization_config.h"
 
 RadialProfileResult
 RadialProfileComputer::compute(const ParticleBlock& partblock,
-			       const NormalizationContext& normalization,
+			       double scaleToPhysical,
                                const RadialProfileParams& params,
 			       const glm::vec3& cam_center)
 {
@@ -34,7 +33,10 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
   float rmax = params.rmax;
 
   // --- center ---
-  float normalizationFactor = normalization.toPhysicalScale();
+  float normalizationFactor = static_cast<float>(scaleToPhysical);
+  if (!std::isfinite(normalizationFactor) || normalizationFactor <= 0.0f) {
+    normalizationFactor = 1.0f;
+  }
   glm::vec3 center = params.useOriginal ? (cam_center / normalizationFactor) : cam_center;
 
   auto getPos = [&](const ParticleData& p) -> glm::vec3 {

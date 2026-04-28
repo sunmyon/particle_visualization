@@ -1,4 +1,4 @@
-#include "FileIO/file_format_dialog.h"
+#include "UI/file_format_dialog.h"
 #include <imgui.h>
 
 void DrawBinaryFormatDialog(FileFormatDialogState& state,

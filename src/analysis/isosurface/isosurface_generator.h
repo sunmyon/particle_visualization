@@ -1,19 +1,21 @@
 #include <vector>
-#include "OctTree/ParticleOctree.h"
+#include "data/spatial/particle_octree.h"
 #include "analysis/isosurface/marching_cubes.h"
 #include "analysis/isosurface/connectivity_test.h"
+#include "analysis/isosurface/iso_surface_field.h"
 #include "analysis/isosurface/mesh_data.h"
 
 struct IsoSurfaceParams {
-  TrackingVector<ParticleDataForTree> particles;   ///< 入力粒子データ（ムーブして渡す）
-  BoundingBox           worldBox;    ///< 空間全体の境界
-  float                 isoLevel;    ///< 等値面レベル
-  size_t                minParticles = 8;   ///< Octree 分割の最小粒子数閾値
-  size_t                maxDepth     = 20;  ///< Octree の最大深さ
+  TrackingVector<ParticleDataForTree> particles;   ///< Input particle data, moved into the generator.
+  BoundingBox           worldBox;    ///< Bounds of the full spatial domain.
+  float                 isoLevel;    ///< Isosurface level.
+  size_t                minParticles = 8;   ///< Minimum particle count threshold for octree subdivision.
+  size_t                maxDepth     = 20;  ///< Maximum octree depth.
+  bool                  verbose      = false;
 };
 
 class IsoSurfaceGenerator {
-  /// marching-cubes 版
+  /// Marching-cubes implementation.
 public:
   static Mesh generateMC(IsoSurfaceParams params) {
     ParticleOctree octree(
@@ -23,14 +25,19 @@ public:
       params.maxDepth,
       params.isoLevel
     );
+    octree.balanceTree(true);
 
-    auto rawLeaves = octree.getAllLeafNodes();
-    TrackingVector<const ParticleOctree::Node*> leaves;
-    leaves.reserve(rawLeaves.size());
-    for (auto* n : rawLeaves) leaves.push_back(n);
+    IsoSurfaceTreeField field = BuildIsoSurfaceTreeField(octree);
+    TrackingVector<const ParticleOctree::Node*> leaves =
+      field.leavesCrossing(params.isoLevel);
 
-    auto mesh = MarchingCubes::buildAndStitchIsoSurface(leaves, octree, params.isoLevel);
-    runConnectivityQuickCheck(octree, mesh, params.isoLevel);
+    auto mesh = MarchingCubes::buildAndStitchIsoSurface(leaves,
+                                                        field,
+                                                        octree,
+                                                        params.isoLevel);
+    if (params.verbose) {
+      runConnectivityQuickCheck(octree, leaves, mesh);
+    }
 
     return mesh;
   }

@@ -1,18 +1,18 @@
 #pragma once
-#include "OctTree/ParticleOctree.h"
+#include "data/spatial/particle_octree.h"
 #include "analysis/isosurface/marching_cubes.h"
 #include "analysis/isosurface/mesh_data.h"
 
-/// 連結性まわりのデバッグテストを走らせる
-/// epsCorner … 頂点値比較の許容誤差
-/// epsQuant  … 頂点量子化幅（重複判定に使用）
+/// Run debug tests around connectivity.
+/// epsCorner: tolerance for comparing vertex values.
+/// epsQuant: vertex quantization width used for duplicate detection.
 void runConnectivityTests(const ParticleOctree&   tree,
                           const Mesh&             mesh,
                           float                   epsCorner = 1e-5f,
                           float                   epsQuant  = 1e-5f);
 
 void runConnectivityQuickCheck(const ParticleOctree&   tree,
+                               const TrackingVector<const ParticleOctree::Node*>& leaves,
 			       const Mesh&             mesh,
-			       float isoLevel,
 			       float                   epsCorner = 1e-5f,
 			       float                   epsQuant  = 1e-5f);

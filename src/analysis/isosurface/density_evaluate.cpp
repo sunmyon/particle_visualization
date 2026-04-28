@@ -3,7 +3,7 @@
 #include <glm/gtc/constants.hpp>
 #include <nanoflann.hpp>
 
-// SPH 用カーネル（Cubic Spline 例）
+// Cubic-spline kernel for SPH.
 static float cubicSplineKernel(float r, float h) {
     const float q = r / h;
     const float sigma = 1.0f / (glm::pi<float>() * h*h*h);
@@ -27,17 +27,17 @@ SPHInterpolator::SPHInterpolator(TrackingVector<ParticleDataForKdTree>&& pts)
 
 
 float SPHInterpolator::sampleValue(const glm::vec3& pos, size_t K, float alpha) const {
-    // 1) KNN 検索
+    // 1) KNN search.
     std::vector<size_t>   retIdx(K);
     std::vector<float>    outDistSqr(K);
     nanoflann::KNNResultSet<float> resultSet(K);
     resultSet.init(&retIdx[0], &outDistSqr[0]);
     float query[3] = {pos.x, pos.y, pos.z};
 
-    nanoflann::SearchParameters params;      // テンプレート引数は不要
+    nanoflann::SearchParameters params;      // No template argument required.
     index_.findNeighbors(resultSet, query, params);
     
-    // 2) 平滑化長 h = alpha * sqrt(max distance)
+    // 2) Smoothing length h = alpha * sqrt(max distance).
     float rK = 0;
     for (size_t i = 0; i < K; ++i) {
       rK = std::max(rK, std::sqrt(outDistSqr[i]));
@@ -45,7 +45,7 @@ float SPHInterpolator::sampleValue(const glm::vec3& pos, size_t K, float alpha) 
     float h = alpha * rK;
     if (h < 1e-6f) h = 1e-6f;
 
-    // 3) SPH 補間（正規化）
+    // 3) Normalized SPH interpolation.
     float sumW  = 0;
     float sumWV = 0;
     for (size_t i = 0; i < K; ++i) {

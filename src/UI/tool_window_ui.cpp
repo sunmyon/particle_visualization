@@ -22,6 +22,8 @@
 #include "analysis/radial_profile.h"
 #include "analysis/histogram2d.h"
 
+#include <algorithm>
+
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,
                                          float newX, float newY,
@@ -516,7 +518,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
                               typeLabels,
                               IM_ARRAYSIZE(typeLabels));
 
-  // type から dataSource を自然に補助決定
+  // Infer dataSource naturally from type.
   if (prevSelectedType != params.selectedType) {
     if (params.selectedType == 0) {
       params.dataSource = DataSource::Gas;
@@ -562,6 +564,82 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
         if (is_selected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
+    }
+
+    if (ImGui::Checkbox("Multi quantity projection grid",
+                        &params.multiPanelEnabled)) {
+      if (params.multiPanelEnabled) {
+        params.dataSource = DataSource::Gas;
+        params.multiPanelCount = std::clamp(params.multiPanelCount, 1, 6);
+      }
+      paramsDirty = true;
+    }
+
+    if (params.multiPanelEnabled) {
+      ImGui::Indent();
+      int rows = std::clamp(params.multiPanelRows, 1, 3);
+      int cols = std::clamp(params.multiPanelCols, 1, 6);
+
+      ImGui::SetNextItemWidth(80.0f);
+      if (ImGui::InputInt("Rows", &rows, 1, 1)) {
+        rows = std::clamp(rows, 1, 3);
+        params.multiPanelRows = rows;
+        params.multiPanelCount = std::min(rows * params.multiPanelCols, 6);
+        paramsDirty = true;
+      }
+
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SameLine();
+      if (ImGui::InputInt("Columns", &cols, 1, 1)) {
+        cols = std::clamp(cols, 1, 6);
+        params.multiPanelCols = cols;
+        params.multiPanelCount = std::min(params.multiPanelRows * cols, 6);
+        paramsDirty = true;
+      }
+
+      params.multiPanelRows = std::clamp(params.multiPanelRows, 1, 3);
+      params.multiPanelCols = std::clamp(params.multiPanelCols, 1, 6);
+      params.multiPanelCount =
+        std::min(params.multiPanelRows * params.multiPanelCols, 6);
+
+      const int panelCount =
+        std::clamp(params.multiPanelCount,
+                   1,
+                   std::min(params.multiPanelRows * params.multiPanelCols, 6));
+      for (int panel = 0; panel < panelCount; ++panel) {
+        char label[32];
+        std::snprintf(label, sizeof(label), "Panel %d", panel + 1);
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo(label, QuantityLabel(params.multiPanelVars[panel]))) {
+          for (int q = 0; q < static_cast<int>(state.gasQuantityOptions.size()); ++q) {
+            QuantityId cand = state.gasQuantityOptions[q];
+            bool is_selected = (cand == params.multiPanelVars[panel]);
+            if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
+              params.multiPanelVars[panel] = cand;
+              paramsDirty = true;
+            }
+            if (is_selected) ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+
+        char timeId[32];
+        std::snprintf(timeId, sizeof(timeId), "Time##panel%d", panel);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!params.flagTimeLabel);
+        paramsDirty |= ImGui::Checkbox(timeId,
+                                       &params.multiPanelShowTimeLabel[panel]);
+        ImGui::EndDisabled();
+
+        char scaleId[32];
+        std::snprintf(scaleId, sizeof(scaleId), "Scale##panel%d", panel);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!params.flagPlaceScale);
+        paramsDirty |= ImGui::Checkbox(scaleId,
+                                       &params.multiPanelShowScale[panel]);
+        ImGui::EndDisabled();
+      }
+      ImGui::Unindent();
     }
 
     paramsDirty |= ImGui::Checkbox("Density Weighting", &params.flagDensityWeight);
@@ -658,6 +736,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     paramsDirty |= ImGui::Checkbox("Use redshift", &params.flagUseRedshift);
 
     paramsDirty |= ImGui::InputFloat("Time unit to display", &params.factorShownTimeInUnitTime);
+
     ImGui::Unindent();
   }
 
@@ -679,6 +758,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     ImGui::SameLine();
     paramsDirty |= ImGui::Checkbox("Use original coordinate",
                                    &params.flagScaleOriginalCoordinate);
+
     ImGui::Unindent();
   }
 
@@ -1114,7 +1194,7 @@ bool DrawMaskWindow(MaskUIState& state,
   bool changed = false;
   bool apply = false;
 
-  // ★第二引数に &ui.showWindow を渡すと × で閉じられる
+  // Passing &ui.showWindow as the second argument allows the close button to hide it.
   if (!ImGui::Begin("Mask Settings", &state.open)) {
     ImGui::End();
     return false;
@@ -1152,14 +1232,14 @@ bool DrawMaskWindow(MaskUIState& state,
   ImGui::Separator();
   changed |= ImGui::Checkbox("Auto Apply", &state.autoApply);
 
-  // Apply/Close ボタン
+  // Apply and Close buttons.
   if (ImGui::Button("Apply")) {
     request.applyRequested = true;
     apply = true;
   }
   ImGui::SameLine();
   if (ImGui::Button("Close")) {
-    state.open = false; // 明示的に閉じる
+    state.open = false; // Close explicitly.
   }
 
   ImGui::End();
@@ -1168,7 +1248,7 @@ bool DrawMaskWindow(MaskUIState& state,
     request.applyRequested = true;
     apply = true;
   }
-  return apply; // ★「設定が反映された」トリガとして true
+  return apply; // True when settings were applied.
 }
 
 void DrawProjectionPreviewUI(const ProjectionPreviewUIState& st)

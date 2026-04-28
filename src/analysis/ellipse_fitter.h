@@ -16,9 +16,9 @@ class EllipseFitter {
   EllipseFitter() = default;
   
   /**
-   * data から indexA, indexB 間の最小等密度面を抽出し楕円を返す
-   * - data 参照はコピー不要
-   * - 毎回内部で KD-tree を構築
+   * Extract the lowest isodensity surface between indexA and indexB and return an ellipsoid.
+   * - data is passed by reference and does not need copying.
+   * - A KD-tree is built internally on each call.
    */
   bool computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B, EllipsoidObject& out);
   double getDensityThreshold() {return density_threshold_;};
@@ -34,14 +34,14 @@ class EllipseFitter {
     template <class BBOX> bool kdtree_get_bbox(BBOX&) const { return false; }
   };
   
-  // ParticleData 用 KD-tree の型エイリアス
+  // KD-tree type alias for ParticleData.
   using KDTree = nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<float, PointCloud<ParticleData>>,
     PointCloud<ParticleData>,
     3
     >;
   
-  // 毎回 new/delete する
+  // Recreated for each run.
   std::unique_ptr<KDTree> kdtree_;
   const TrackingVector<ParticleData>* dataPtr_{nullptr};
   

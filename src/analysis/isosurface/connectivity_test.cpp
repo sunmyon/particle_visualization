@@ -7,7 +7,7 @@
 #include "analysis/isosurface/mesh_data.h"
 #include "analysis/isosurface/connectivity_test.h"
 
-// --- ローカル定義 (private 成員に依存しない) -----------------
+// --- Local definitions independent of private members -----------------
 static const glm::vec3 kOffsets[8] = {
     {0,0,0},{1,0,0},{1,1,0},{0,1,0},
     {0,0,1},{1,0,1},{1,1,1},{0,1,1}
@@ -18,7 +18,7 @@ static float cornerSample(const ParticleOctree& tree,
                           float                 h)
 {
     TrackingVector<const ParticleDataForTree*> neigh;
-    tree.querySphere(pos, h, neigh);           // querySphere は const
+    tree.querySphere(pos, h, neigh);           // querySphere is const.
 
     float sumV=0, sumW=0;
     for(auto p:neigh){
@@ -30,7 +30,7 @@ static float cornerSample(const ParticleOctree& tree,
     return (sumW>0)? sumV/sumW : 0.f;
 }
 
-// face を共有するか簡易判定
+// Simple check for whether two nodes share a face.
 inline bool touchesFace(const BoundingBox& a, const BoundingBox& b){
     const float eps=1e-6f;
     bool xAdj = std::abs(a.max.x - b.min.x) < eps || std::abs(b.max.x - a.min.x) < eps;
@@ -48,33 +48,32 @@ inline bool touchesFace(const BoundingBox& a, const BoundingBox& b){
 
 
 // =============================================================
-// 3 つのチェックをまとめて実行する関数
+// Run the three checks together.
 // =============================================================
 void runConnectivityQuickCheck(const ParticleOctree&      tree,
+                               const TrackingVector<const ParticleOctree::Node*>& leaves,
                                const Mesh& mesh,
-                               float isoLevel,
                                float epsCorner,
                                float epsQuant)
 {
     std::cout << "=== Connectivity quick-check ===\n";
 
     // --------- Leaf & neighbor list ----------
-    auto leaves = tree.getLeafNodes(isoLevel);
     size_t badCorner=0, badDepth=0;
 
     for(size_t i=0;i<leaves.size();++i){
         const auto* a = leaves[i];
 
-        // --- 隣接 leaf をペアリング ---
+        // --- Pair neighboring leaves ---
         for(size_t j=i+1;j<leaves.size();++j){
             const auto* b = leaves[j];
             if(!touchesFace(a->box,b->box)) continue;
 
-            // (B) depth 差
+            // (B) Depth difference.
             if(std::max(a->depth,b->depth) > std::min(a->depth,b->depth)+1)
                 ++badDepth;
 
-            // (A) 共有 corner の値差
+            // (A) Value difference at shared corners.
             glm::vec3 sizeA = a->box.max - a->box.min;
             //glm::vec3 sizeB = b->box.max - b->box.min;
             for(const auto& off:kOffsets){
@@ -106,7 +105,7 @@ void runConnectivityQuickCheck(const ParticleOctree&      tree,
         if(!uniq.insert(k).second) ++dupVert;
     }
 
-    // --------- レポート ----------
+    // --------- Report ----------
     std::cout << ((badCorner==0) ? "✓" : "✗")
               << " Corner diff   (<"<<epsCorner<<"): " << badCorner << "\n";
     std::cout << ((badDepth==0) ? "✓" : "✗")

@@ -10,8 +10,8 @@ class ParticleData {
 public:
   ParticleData() noexcept {}
   
-  float pos[3];          // 正規化後の座標（描画用）
-  float original_pos[3]; // ファイルから読み込んだ元の座標（normalize の基準）
+  float pos[3];          // Normalized coordinates for rendering.
+  float original_pos[3]; // Original coordinates read from the file, used as normalization input.
   float vel[3];
   float originalHsml;
   float Hsml;
@@ -19,7 +19,7 @@ public:
   float temperature;
   float val_show;
   float mass;            // mass
-  uint8_t   type;            // 粒子タイプ (0～5)
+  uint8_t   type;            // Particle type, 0 through 5.
   uint8_t   flag_stress;
   int   ID;
 
@@ -31,7 +31,7 @@ public:
     else if (var == "z")
       return pos[2];
     else if (var == "r") {
-      // r は粒子位置の原点からの距離として計算（必要に応じて別の中心からの距離に変更可能）
+      // Compute r as distance from the origin; this can use another center if needed.
       return glm::length(glm::vec3(pos[0], pos[1], pos[2]));
     }
     else if (var == "Density")
