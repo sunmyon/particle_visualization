@@ -3,7 +3,7 @@
 #include "config_data.h"
 #include "app/state/runtime_state.h"
 #include "core/units.h"
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 
 ConfigData ExtractConfigData(const FileNavigationRuntimeState& fileNav,
                              const SnapshotFormatState& format,

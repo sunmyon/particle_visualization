@@ -4,10 +4,10 @@
 #include <string>
 #include <vector>
 
-#include "FindClumps/clump_window_state.h"
+#include "app/state/clump_window_state.h"
 #include "app/state/file_format_dialog_state.h"
-#include "compute_2D_histogram.h"
-#include "compute_radial_profile.h"
+#include "analysis/histogram2d.h"
+#include "analysis/radial_profile.h"
 #include "core/quantity.h"
 #include "core/tracking_vector.h"
 #include "data/particle_data.h"

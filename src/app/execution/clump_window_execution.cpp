@@ -8,10 +8,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "FindClumps/clump_chain.h"
-#include "FindClumps/clump_window_state.h"
-#include "FindClumps/find_clumps.h"
-#include "FindClumps/loaded_clump_tool.h"
+#include "analysis/clump/clump_chain.h"
+#include "app/state/clump_window_state.h"
+#include "analysis/clump/find_clumps.h"
+#include "analysis/clump/loaded_clump_tool.h"
 #include "app/app_snapshot_load.h"
 #include "app/state/normalization_config.h"
 #include "app/state/runtime_state.h"

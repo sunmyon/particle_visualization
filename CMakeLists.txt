@@ -109,11 +109,9 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI/common_ui.cpp
   ${SRC_DIR}/UI/tool_window_ui.cpp
   ${SRC_DIR}/UI/settings_ui.cpp
-  ${SRC_DIR}/render_actions.cpp
-  ${SRC_DIR}/compute_2D_histogram.cpp
-  ${SRC_DIR}/compute_radial_profile.cpp
-  ${SRC_DIR}/particle_label_overlay.cpp
-  ${SRC_DIR}/projection_preview_gl.cpp
+  ${SRC_DIR}/analysis/histogram2d.cpp
+  ${SRC_DIR}/analysis/radial_profile.cpp
+  ${SRC_DIR}/render/particle_label_overlay.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
   ${SRC_DIR}/platform/imgui_context.cpp
   ${SRC_DIR}/platform/window_context.cpp
@@ -149,15 +147,16 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
   ${SRC_DIR}/render/render_system.cpp
-  ${SRC_DIR}/render/render_programs.cpp
   ${SRC_DIR}/render/render_frame.cpp
-  ${SRC_DIR}/render/opengl_render_backend.cpp
-  ${SRC_DIR}/render/shader_utils.cpp
-  ${SRC_DIR}/render/shader_sources.cpp
-  ${SRC_DIR}/render/field_renderer.cpp
-  ${SRC_DIR}/render/particle_renderer.cpp
-  ${SRC_DIR}/render/object_renderer.cpp
-  ${SRC_DIR}/render/gizmo_renderer.cpp
+  ${SRC_DIR}/render/opengl/opengl_render_backend.cpp
+  ${SRC_DIR}/render/opengl/render_programs.cpp
+  ${SRC_DIR}/render/opengl/shader_utils.cpp
+  ${SRC_DIR}/render/opengl/shader_sources.cpp
+  ${SRC_DIR}/render/opengl/field_renderer.cpp
+  ${SRC_DIR}/render/opengl/particle_renderer.cpp
+  ${SRC_DIR}/render/opengl/object_renderer.cpp
+  ${SRC_DIR}/render/opengl/gizmo_renderer.cpp
+  ${SRC_DIR}/render/opengl/projection_preview_gl.cpp
   ${SRC_DIR}/render/render_resources.cpp
   ${SRC_DIR}/interaction/interaction_utils.cpp
   ${SRC_DIR}/config/config_io.cpp
@@ -175,12 +174,12 @@ set(SOURCES_CPP
   ${SRC_DIR}/FileIO/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp
   ${SRC_DIR}/FileIO/snapshot_prefetch_controller.cpp
-  ${SRC_DIR}/FindClumps/clump_chain.cpp
-  ${SRC_DIR}/FindClumps/find_clumps.cpp
-  ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
-  ${SRC_DIR}/FindClumps/find_clumps_finder_window.cpp
-  ${SRC_DIR}/FindClumps/find_clumps_loaded_window.cpp
-  ${SRC_DIR}/FindClumps/find_clumps_chain_window.cpp
+  ${SRC_DIR}/analysis/clump/clump_chain.cpp
+  ${SRC_DIR}/analysis/clump/find_clumps.cpp
+  ${SRC_DIR}/analysis/clump/find_clumps_io.cpp
+  ${SRC_DIR}/UI/clump_finder_window.cpp
+  ${SRC_DIR}/UI/clump_loaded_window.cpp
+  ${SRC_DIR}/UI/clump_chain_window.cpp
   ${SRC_DIR}/projection/make_2D_projection_map.cpp
   ${SRC_DIR}/projection/projection_frame_execution.cpp
   ${SRC_DIR}/projection/projection_geometry.cpp
@@ -189,11 +188,11 @@ set(SOURCES_CPP
   ${SRC_DIR}/image/image_io.cpp
   ${SRC_DIR}/image/bitmap_font_renderer.cpp
   ${SRC_DIR}/OctTree/ParticleOctree.cpp
-  ${SRC_DIR}/IsoSurface/density_evaluate.cpp
+  ${SRC_DIR}/analysis/isosurface/density_evaluate.cpp
 )
 
 if(GEOMETRICAL_ANALYSIS)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/GeometricAnalysis/ellipse_fitter.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/ellipse_fitter.cpp)
 endif()
 
 if(USE_CONVEX_HULL)
@@ -204,11 +203,11 @@ if(USE_CONVEX_HULL)
       "-DUSE_CONVEX_HULL=OFF.")
   endif()
 
-  list(APPEND SOURCES_CPP ${SRC_DIR}/geometry/convex_hull_generator.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/convex_hull/convex_hull_generator.cpp)
 endif()
 
 if(STREAM_LINE)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/StreamLine/stream_line_new.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/streamline/streamline.cpp)
 endif()
 
 if(VOLUME_RENDERING)
@@ -628,15 +627,15 @@ if(ISO_CONTOUR)
 
   # 追加ソース（Makefile 相当）
   target_sources(${PROJECT_NAME} PRIVATE
-    ${SRC_DIR}/IsoSurface/iso_contour_build.cpp
-    ${SRC_DIR}/IsoSurface/marching_cubes.cpp
-    ${SRC_DIR}/IsoSurface/connectivity_test.cpp
-    ${SRC_DIR}/IsoSurface/IsoSurfaceGenerator.cpp
+    ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
+    ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
+    ${SRC_DIR}/analysis/isosurface/connectivity_test.cpp
+    ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
   )
 
   # インクルードパス
   target_include_directories(${PROJECT_NAME} PRIVATE
-    ${SRC_DIR}/IsoSurface
+    ${SRC_DIR}/analysis/isosurface
     ${SRC_DIR}/OctTree
     ${VTK_INCLUDE_DIRS}      # VTK のヘッダ
   )
@@ -1123,8 +1122,8 @@ if(PARTICLE_VIS_BUILD_BATCH)
     ${SRC_DIR}/app/app_snapshot_load.cpp
     ${SRC_DIR}/app/execution/profile_histogram_execution.cpp
     ${SRC_DIR}/app/execution/projection_execution.cpp
-    ${SRC_DIR}/compute_2D_histogram.cpp
-    ${SRC_DIR}/compute_radial_profile.cpp
+    ${SRC_DIR}/analysis/histogram2d.cpp
+    ${SRC_DIR}/analysis/radial_profile.cpp
     ${SRC_DIR}/config/config_apply.cpp
     ${SRC_DIR}/config/config_io.cpp
     ${SRC_DIR}/config/config_validation.cpp
@@ -1155,16 +1154,16 @@ if(PARTICLE_VIS_BUILD_BATCH)
       ${SRC_DIR}/app/app_visibility_actions.cpp
       ${SRC_DIR}/data/clump_loader.cpp
       ${SRC_DIR}/data/halo_store.cpp
-      ${SRC_DIR}/GeometricAnalysis/ellipse_fitter.cpp
+      ${SRC_DIR}/analysis/ellipse_fitter.cpp
     )
   endif()
 
   if(CLUMP_DATA_READ)
     list(APPEND PARTICLE_VIS_BATCH_SOURCES
       ${SRC_DIR}/app/execution/clump_batch_execution.cpp
-      ${SRC_DIR}/FindClumps/find_clumps.cpp
-      ${SRC_DIR}/FindClumps/find_clumps_IO.cpp
-      ${SRC_DIR}/FindClumps/clump_chain.cpp
+      ${SRC_DIR}/analysis/clump/find_clumps.cpp
+      ${SRC_DIR}/analysis/clump/find_clumps_io.cpp
+      ${SRC_DIR}/analysis/clump/clump_chain.cpp
       ${SRC_DIR}/data/clump_loader.cpp
     )
   endif()

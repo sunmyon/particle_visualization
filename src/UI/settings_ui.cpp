@@ -5,10 +5,9 @@
 #include "app/state/ui_state.h"
 #include "app/state/snapshot_state_sync.h"
 #include "app/state/window_commands.h"
-#include "render_actions.h"
 
 #include "interaction/camera.h"
-#include "particle_visual_config.h"   // ParticleVisualConfig の実定義
+#include "render/particle_visual_config.h"   // ParticleVisualConfig の実定義
 #include "FileIO/file_format_dialog.h"
 #include "render/colormap_defs.h"  
 

@@ -1,8 +1,8 @@
 // ParticleOctree.cpp
 #include "OctTree/ParticleOctree.h"
-#include "IsoSurface/density_evaluate.h"
+#include "analysis/isosurface/density_evaluate.h"
 #include <algorithm>
-#include "IsoSurface/marching_cubes.h"
+#include "analysis/isosurface/marching_cubes.h"
 
 // ——— ParticleOctree のコンストラクタ ———
 ParticleOctree::ParticleOctree(TrackingVector<ParticleDataForTree>&& all,

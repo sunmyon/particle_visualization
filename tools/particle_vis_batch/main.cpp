@@ -33,12 +33,12 @@
 #include "projection/projection_map_tool_state.h"
 
 #ifdef CLUMP_DATA_READ
-#include "FindClumps/find_clumps.h"
+#include "analysis/clump/find_clumps.h"
 #endif
 
 #ifdef GEOMETRICAL_ANALYSIS
-#include "GeometricAnalysis/DiskRadius.hpp"
-#include "GeometricAnalysis/ellipse_fitter.h"
+#include "analysis/disk_radius.h"
+#include "analysis/ellipse_fitter.h"
 #endif
 
 using json = nlohmann::json;

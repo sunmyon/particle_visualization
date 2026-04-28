@@ -2,21 +2,21 @@
 
 #include "projection/make_2D_projection_map.h"
 #include "FileIO/snapshot_io_service.h"
-#include "FindClumps/find_clumps.h"
-#include "FindClumps/loaded_clump_tool.h"
-#include "FindClumps/clump_chain.h"
+#include "analysis/clump/find_clumps.h"
+#include "analysis/clump/loaded_clump_tool.h"
+#include "analysis/clump/clump_chain.h"
 
 #ifdef GEOMETRICAL_ANALYSIS
-#include "GeometricAnalysis/DiskRadius.hpp"
-#include "GeometricAnalysis/ellipse_fitter.h"
+#include "analysis/disk_radius.h"
+#include "analysis/ellipse_fitter.h"
 #endif
 
 #ifdef STREAM_LINE
-#include "StreamLine/stream_line_new.h"
+#include "analysis/streamline/streamline.h"
 #endif
 
 #ifdef USE_CONVEX_HULL
-#include "geometry/convex_hull_generator.h"
+#include "analysis/convex_hull/convex_hull_generator.h"
 #endif
 
 #ifdef PYTHON_BRIDGE

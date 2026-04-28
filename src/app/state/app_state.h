@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/tracking_vector.h"
-#include "scene_manager.h"
+#include "app/state/scene_state.h"
 #include "app/state/runtime_state.h"
 #include "app/state/overlay_state.h"
 #include "app/state/analysis_state.h"

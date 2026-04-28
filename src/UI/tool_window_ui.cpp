@@ -11,17 +11,16 @@
 #include "app/state/window_commands.h"
 #include "core/tracking_vector.h"
 #include "interaction/camera.h"
-#include "object.h"
+#include "render/scene_objects.h"
 #include "render/colormap_defs.h"
-#include "render/gizmo_renderer.h"
 #include "data/particle_array.h"
 #include "data/halo_store.h"
 
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_params.h"
 #include "projection/projection_geometry.h"
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
+#include "analysis/radial_profile.h"
+#include "analysis/histogram2d.h"
 
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,

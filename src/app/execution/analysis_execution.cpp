@@ -28,17 +28,17 @@
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
 #include "data/halo_store.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 #ifdef USE_CONVEX_HULL
-#include "FindClumps/find_clumps.h"
-#include "geometry/convex_hull_generator.h"
+#include "analysis/clump/find_clumps.h"
+#include "analysis/convex_hull/convex_hull_generator.h"
 #include "app/state/convex_hull_state.h"
 #endif
 
 #ifdef GEOMETRICAL_ANALYSIS
-#include "GeometricAnalysis/DiskRadius.hpp"
-#include "GeometricAnalysis/ellipse_fitter.h"
+#include "analysis/disk_radius.h"
+#include "analysis/ellipse_fitter.h"
 
 void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 				      NormalizationContext& normalization,
@@ -692,7 +692,7 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
 
 
 #ifdef STREAM_LINE
-#include "StreamLine/stream_line_new.h"
+#include "analysis/streamline/streamline.h"
 
 void ExecuteStreamlinePreviewRequest(StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result)
@@ -779,7 +779,7 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
 #endif
 
 #ifdef ISO_CONTOUR
-#include "IsoSurface/iso_contour_build.h"
+#include "analysis/isosurface/iso_contour_build.h"
 void ExecuteIsoContourRequest(ParticleArray& particles,
                               IsoContourRequestState& request,
                               IsoContourGeometryState& geometry,

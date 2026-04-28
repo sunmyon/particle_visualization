@@ -11,7 +11,7 @@
 #include "app/state/view_filter_config.h"
 #include "app/state/tracking_view_state.h"
 #include "app/state/render_runtime_state.h"
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 #include "projection/projection_map_tool_state.h"
 #include "FileIO/file_format_types.h"
 

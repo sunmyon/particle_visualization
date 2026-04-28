@@ -2,7 +2,7 @@
 #include "image/image_io.h"
 
 #include "data/particle_array.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 #include <chrono>
 #include <fstream>

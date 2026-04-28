@@ -1,7 +1,7 @@
 #pragma once
 #include "convex_hull_state.h"
 #include "image/rgb_image.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 struct DiskAnalysisResultState {
   bool valid = false;
@@ -74,8 +74,8 @@ struct ProjectionMovieResultState {
   char errorMessage[512] = "";
 };
 
-#include "compute_radial_profile.h"
-#include "compute_2D_histogram.h"
+#include "analysis/radial_profile.h"
+#include "analysis/histogram2d.h"
 
 struct RadialProfileResultState {
   bool computed = false;

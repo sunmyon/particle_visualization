@@ -2,10 +2,10 @@
 
 #include "data/particle_block.h"
 
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 #include "app/state/runtime_state.h"
 #include "render_resources.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,

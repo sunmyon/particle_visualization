@@ -5,7 +5,7 @@
 #include <string>
 
 #include "core/tracking_vector.h"
-#include "geometry/convex_hull_interface.h"
+#include "analysis/convex_hull/convex_hull_interface.h"
 
 struct ConvexHullEntry {
   std::shared_ptr<IConvexHull> hull;

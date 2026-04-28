@@ -3,7 +3,7 @@
 #include "app/state/analysis_state.h"
 #include "app/execution/tool_window_execution.h"
 #include "app/state/tool_window_state.h"
-#include "compute_2D_histogram.h"
+#include "analysis/histogram2d.h"
 #include "data/particle_array.h"
 #include "interaction/camera.h"
 

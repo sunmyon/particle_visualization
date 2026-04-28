@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/tracking_vector.h"
-#include "object.h"
+#include "render/scene_objects.h"
 #include "render_types.h"
 
 struct ParticleVisualConfig;

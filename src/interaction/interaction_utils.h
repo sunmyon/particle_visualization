@@ -3,7 +3,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "camera.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 class InteractionState {
 public:

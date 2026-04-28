@@ -4,8 +4,8 @@
 #include "app/state/normalization_config.h"
 #include "app/state/runtime_state.h"
 #include "app/state/tool_window_state.h"
-#include "compute_2D_histogram.h"
-#include "compute_radial_profile.h"
+#include "analysis/histogram2d.h"
+#include "analysis/radial_profile.h"
 #include "data/particle_block.h"
 
 void ExecuteRadialProfileRequest(RadialProfileRequestState& request,

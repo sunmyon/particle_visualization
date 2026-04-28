@@ -2,8 +2,8 @@
 
 #ifdef CLUMP_DATA_READ
 
-#include "FindClumps/find_clumps.h"
-#include "FindClumps/find_clumps_helpers.h"
+#include "analysis/clump/find_clumps.h"
+#include "analysis/clump/find_clumps_helpers.h"
 #include "app/state/analysis_state.h"
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/state/runtime_state.h"

@@ -1,7 +1,7 @@
 #include "data/clump_loader.h"
 
 #ifdef CLUMP_DATA_READ
-#include "FindClumps/find_clumps_IO.h"
+#include "analysis/clump/find_clumps_io.h"
 #include "data/clump_data.h"
 #include <stdexcept>
 

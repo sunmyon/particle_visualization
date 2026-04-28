@@ -31,7 +31,7 @@
 #include "platform/imgui_context.h"
 #include "platform/window_context.h"
 
-#include "FindClumps/find_clumps_ui.h"
+#include "UI/clump_ui.h"
 #include "projection/projection_map_ui_state.h"
 
 #ifdef PYTHON_BRIDGE

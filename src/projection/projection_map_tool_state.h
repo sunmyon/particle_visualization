@@ -1,6 +1,6 @@
 #pragma once
 #include "projection/projection_map_params.h"
-#include "object.h"
+#include "render/scene_objects.h"
 
 struct ProjectionMapToolState {
   ProjectionMapParams params;

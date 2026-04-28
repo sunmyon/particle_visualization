@@ -6,7 +6,7 @@
 #include "FileIO/file_format_types.h"
 #include "core/units.h"
 #include "data/particle_mask_config.h"
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 
 struct PersistentSettings {
   std::string fileFormatPattern = "output_%04d.dat";

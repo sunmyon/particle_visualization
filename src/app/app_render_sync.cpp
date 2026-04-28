@@ -3,7 +3,7 @@
 #include "app/state/app_state.h"
 #include "app/state/render_runtime_state.h"
 #include "data/particle_array.h"
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 #include "render/render_resources.h"
 #include "render/render_system.h"
 

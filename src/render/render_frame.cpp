@@ -3,7 +3,7 @@
 #include "app/state/overlay_state.h"
 #include "app/state/render_runtime_state.h"
 #include "interaction/camera.h"
-#include "particle_visual_config.h"
+#include "render/particle_visual_config.h"
 #include "render/frame_matrices.h"
 #include "render/render_system.h"
 
