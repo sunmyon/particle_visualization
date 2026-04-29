@@ -1,8 +1,17 @@
 .DS_Store
 
-bulid/
 build/
 build*/
+build-headless-local/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+cmake-vtk-debug.log
 
 ffmpeg_frames/
 output/
@@ -16,9 +25,16 @@ particle_vis.exe
 
 *~
 *.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
 *.dSYM/
 *.exe
 *.dll
+*.log
+*.tmp
 
 jupyter_work/*
 !jupyter_work/shm_reader.py
