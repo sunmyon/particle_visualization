@@ -23,6 +23,66 @@ brew install hdf5
 sudo apt install -y libglfw3 libglfw3-dev libglm-dev libhdf5-dev freeglut3-dev mesa-common-dev libglu1-mesa-dev
 ```
 
+## Linux Headless Preset
+
+After loading your compiler and MPI modules, configure with the preset:
+
+```bash
+cmake --preset linux-headless-gcc
+cmake --build --preset linux-headless-gcc
+```
+
+If you are switching compiler modules, clear the old cache first:
+
+```bash
+rm -rf build-headless-local/CMakeCache.txt build-headless-local/CMakeFiles
+```
+
+## Optional Dependency Submodules
+
+The project can prefer optional dependencies from `external/submodules/` before system packages.
+Use the bootstrap script to add and optionally build local submodule-based dependencies:
+
+```bash
+./scripts/bootstrap_optional_submodules.sh
+```
+
+To also build heavier CMake dependencies such as HDF5 and VTK into `external/submodules/_install/`:
+
+```bash
+./scripts/bootstrap_optional_submodules.sh --with-heavy
+```
+
+Once those are installed, the `linux-headless-gcc` preset will pick them up automatically through CMake prefix paths.
+
+### Tested Bootstrap Workflow (Linux)
+
+The following command was validated in this repository to build and install local `gmp`, `mpfr`, `lua`, and `cgal` under `external/submodules/_install/`:
+
+```bash
+./scripts/bootstrap_optional_submodules.sh --with-heavy gmp mpfr lua cgal
+```
+
+Installed outputs are expected in:
+
+```text
+external/submodules/_install/gmp
+external/submodules/_install/mpfr
+external/submodules/_install/lua
+external/submodules/_install/cgal
+```
+
+Notes:
+- MPFR may print an `install-info` warning for `mpfr.info` on systems without texinfo docs generation. This is non-fatal in the current workflow.
+- Lua from the git submodule is installed from its upstream `makefile` build products (no upstream `make install` target).
+
+After bootstrapping, validate configure/build:
+
+```bash
+cmake --preset linux-headless-gcc
+cmake --build build-headless-local -j "$(nproc)"
+```
+
 ## Windows Build Notes
 
 Note: You can compile inside WSL2, but GPU acceleration in WSL2 may cause issues.

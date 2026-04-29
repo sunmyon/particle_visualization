@@ -1,7 +1,27 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 4, "minor": 1 },
+  "cmakeMinimumRequired": { "major": 3, "minor": 20 },
   "configurePresets": [
+    {
+      "name": "linux-headless-gcc",
+      "displayName": "Linux Headless GCC",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-headless-local",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARTICLE_VIS_HEADLESS_ONLY": "ON",
+        "USE_EGL_HEADLESS": "ON",
+        "NONATIVEFILEDIALOG": "ON",
+        "PARTICLE_VIS_PREFER_SUBMODULE_DEPS": "ON"
+      }
+    },
     {
       "name": "windows-msvc-base",
       "displayName": "Windows MSVC + vcpkg",
@@ -45,6 +65,11 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "linux-headless-gcc",
+      "configurePreset": "linux-headless-gcc",
+      "jobs": 8
+    },
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release"

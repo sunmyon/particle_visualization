@@ -87,7 +87,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.analysis.diskBatch = &analysis.diskBatch;
   ctx.analysis.ellipsoid = &analysis.ellipsoid;
   ctx.analysis.ellipsoidBatch = &analysis.ellipsoidBatch;
+#ifdef STREAM_LINE
   ctx.analysis.streamlineBuild = &analysis.streamlineBuild;
+#endif
 #ifdef VOLUME_RENDERING
   ctx.analysis.volume = &analysis.volume;
 #endif

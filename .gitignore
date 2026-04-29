@@ -3,6 +3,8 @@
 build/
 build*/
 build-headless-local/
+external/submodules/_build/
+external/submodules/_install/
 
 # CMake generated files
 CMakeFiles/

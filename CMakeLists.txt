@@ -41,6 +41,21 @@ option(ROTATE_ARCBALL      "Use arcball rotation"                ON)
 option(NONATIVEFILEDIALOG  "Disable native file dialog"          OFF)
 option(PYTHON_BRIDGE       "Bridge the main code to python"      ON)
 option(CLOUDY              "Bridge the main code to CLOUDY"      OFF)
+option(AUTO_DISABLE_PYTHON_BRIDGE_ON_MISSING_DEPS
+  "Automatically disable PYTHON_BRIDGE when ZeroMQ/cppzmq dependencies are unavailable"
+  ON)
+option(AUTO_DISABLE_GEOMETRICAL_ANALYSIS_ON_MISSING_EIGEN
+  "Automatically disable GEOMETRICAL_ANALYSIS when Eigen headers are unavailable"
+  ON)
+option(AUTO_DISABLE_STREAM_LINE_ON_MISSING_EIGEN
+  "Automatically disable STREAM_LINE when Eigen headers are unavailable"
+  ON)
+option(AUTO_DISABLE_HDF5_ON_MISSING_CXX
+  "Automatically disable HAVE_HDF5 when HDF5 C++ bindings are unavailable"
+  ON)
+option(AUTO_DISABLE_LUA_ON_MISSING_DEPS
+  "Automatically disable USE_LUA when Lua development files are unavailable"
+  ON)
 
 set(USE_MMAP_DEFAULT ON)
 if(WIN32)
@@ -54,9 +69,169 @@ option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote render
 option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
 option(PARTICLE_VIS_HEADLESS_ONLY "Build particle_vis without GLFW/window support for EGL remote rendering" OFF)
 option(PARTICLE_VIS_BUILD_BATCH "Build GUI-less batch executable" OFF)
+option(AUTO_HEADLESS_ON_MISSING_GLFW "Automatically switch to headless mode when GLFW is unavailable on Linux" ON)
+option(PARTICLE_VIS_PREFER_SUBMODULE_DEPS
+  "Prefer optional dependencies from external/submodules before system packages"
+  ON)
+option(PARTICLE_VIS_ALLOW_SUBMODULE_BUILDS
+  "Build supported dependency submodules from source when present"
+  ON)
+
+if(AUTO_HEADLESS_ON_MISSING_GLFW AND NOT PARTICLE_VIS_HEADLESS_ONLY AND UNIX AND NOT APPLE)
+  set(_AUTO_HAVE_GLFW FALSE)
+
+  find_package(glfw QUIET CONFIG)
+  if(NOT glfw_FOUND)
+    find_package(glfw3 QUIET CONFIG)
+  endif()
+
+  if(TARGET glfw OR TARGET glfw::glfw OR TARGET glfw3::glfw3 OR TARGET glfw3)
+    set(_AUTO_HAVE_GLFW TRUE)
+  else()
+    find_library(_AUTO_GLFW_LIBRARY NAMES glfw glfw3 PATH_SUFFIXES lib lib64)
+    find_path(_AUTO_GLFW_INCLUDE_DIR NAMES GLFW/glfw3.h PATH_SUFFIXES include)
+    if(_AUTO_GLFW_LIBRARY AND _AUTO_GLFW_INCLUDE_DIR)
+      set(_AUTO_HAVE_GLFW TRUE)
+    endif()
+  endif()
+
+  if(NOT _AUTO_HAVE_GLFW)
+    message(WARNING
+      "GLFW not found on this Linux environment; enabling PARTICLE_VIS_HEADLESS_ONLY=ON.")
+    set(PARTICLE_VIS_HEADLESS_ONLY ON CACHE BOOL
+      "Build particle_vis without GLFW/window support for EGL remote rendering" FORCE)
+  endif()
+endif()
 
 if(PARTICLE_VIS_HEADLESS_ONLY)
   set(NONATIVEFILEDIALOG ON CACHE BOOL "Disable native file dialog in headless builds" FORCE)
+endif()
+
+if(AUTO_DISABLE_PYTHON_BRIDGE_ON_MISSING_DEPS AND PYTHON_BRIDGE)
+  set(_AUTO_HAVE_ZMQ FALSE)
+
+  find_package(ZeroMQ QUIET CONFIG)
+  if(TARGET libzmq OR TARGET ZeroMQ::libzmq)
+    set(_AUTO_HAVE_ZMQ TRUE)
+  else()
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+      pkg_check_modules(_AUTO_ZMQ_PC QUIET libzmq)
+      if(_AUTO_ZMQ_PC_FOUND)
+        set(_AUTO_HAVE_ZMQ TRUE)
+      endif()
+    endif()
+
+    if(NOT _AUTO_HAVE_ZMQ)
+      find_library(_AUTO_ZMQ_LIBRARY NAMES zmq libzmq PATH_SUFFIXES lib lib64)
+      find_path(_AUTO_ZMQ_INCLUDE_DIR NAMES zmq.h PATH_SUFFIXES include)
+      if(_AUTO_ZMQ_LIBRARY AND _AUTO_ZMQ_INCLUDE_DIR)
+        set(_AUTO_HAVE_ZMQ TRUE)
+      endif()
+    endif()
+  endif()
+
+  if(NOT _AUTO_HAVE_ZMQ)
+    message(WARNING
+      "PYTHON_BRIDGE was enabled, but ZeroMQ dependencies were not found. "
+      "Disabling PYTHON_BRIDGE for this build.")
+    set(PYTHON_BRIDGE OFF CACHE BOOL "Bridge the main code to python" FORCE)
+  endif()
+endif()
+
+if(AUTO_DISABLE_GEOMETRICAL_ANALYSIS_ON_MISSING_EIGEN AND GEOMETRICAL_ANALYSIS)
+  set(_AUTO_HAVE_EIGEN FALSE)
+
+  find_package(Eigen3 3.3 QUIET CONFIG)
+  if(TARGET Eigen3::Eigen)
+    set(_AUTO_HAVE_EIGEN TRUE)
+  else()
+    find_path(_AUTO_EIGEN3_INCLUDE_DIR
+      NAMES Eigen/Core
+      HINTS
+        $ENV{EIGEN3_INCLUDE_DIR}
+      PATH_SUFFIXES eigen3 include/eigen3 include)
+    if(_AUTO_EIGEN3_INCLUDE_DIR)
+      set(_AUTO_HAVE_EIGEN TRUE)
+    endif()
+  endif()
+
+  if(NOT _AUTO_HAVE_EIGEN)
+    message(WARNING
+      "GEOMETRICAL_ANALYSIS was enabled, but Eigen3 headers were not found. "
+      "Disabling GEOMETRICAL_ANALYSIS for this build.")
+    set(GEOMETRICAL_ANALYSIS OFF CACHE BOOL "Enable geometrical analysis" FORCE)
+  endif()
+endif()
+
+if(AUTO_DISABLE_STREAM_LINE_ON_MISSING_EIGEN AND STREAM_LINE)
+  set(_AUTO_HAVE_EIGEN_FOR_STREAM FALSE)
+
+  find_package(Eigen3 3.3 QUIET CONFIG)
+  if(TARGET Eigen3::Eigen)
+    set(_AUTO_HAVE_EIGEN_FOR_STREAM TRUE)
+  else()
+    find_path(_AUTO_EIGEN3_INCLUDE_DIR_FOR_STREAM
+      NAMES Eigen/Core
+      HINTS
+        $ENV{EIGEN3_INCLUDE_DIR}
+      PATH_SUFFIXES eigen3 include/eigen3 include)
+    if(_AUTO_EIGEN3_INCLUDE_DIR_FOR_STREAM)
+      set(_AUTO_HAVE_EIGEN_FOR_STREAM TRUE)
+    endif()
+  endif()
+
+  if(NOT _AUTO_HAVE_EIGEN_FOR_STREAM)
+    message(WARNING
+      "STREAM_LINE was enabled, but Eigen3 headers were not found. "
+      "Disabling STREAM_LINE for this build.")
+    set(STREAM_LINE OFF CACHE BOOL "Enable streamline feature" FORCE)
+  endif()
+endif()
+
+if(AUTO_DISABLE_HDF5_ON_MISSING_CXX AND HAVE_HDF5)
+  find_library(_AUTO_HDF5_CXX_LIBRARY
+    NAMES hdf5_cpp
+    HINTS
+      $ENV{HDF5_ROOT}
+      $ENV{HDF5_DIR}
+      $ENV{HDF5_HOME}
+      $ENV{EBROOTHDF5}
+      $ENV{HDF5_ROOT}/lib
+      $ENV{HDF5_DIR}/lib
+      $ENV{HDF5_HOME}/lib
+      $ENV{EBROOTHDF5}/lib
+    PATH_SUFFIXES lib lib64)
+
+  if(NOT _AUTO_HDF5_CXX_LIBRARY)
+    message(WARNING
+      "HAVE_HDF5 was enabled, but libhdf5_cpp was not found. "
+      "Disabling HAVE_HDF5 for this build.")
+    set(HAVE_HDF5 OFF CACHE BOOL "Enable HDF5 IO" FORCE)
+  endif()
+endif()
+
+if(AUTO_DISABLE_LUA_ON_MISSING_DEPS AND USE_LUA)
+  set(_AUTO_HAVE_LUA FALSE)
+  find_package(Lua QUIET)
+  if(TARGET Lua::Lua OR LUA_FOUND)
+    set(_AUTO_HAVE_LUA TRUE)
+  else()
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+      pkg_check_modules(_AUTO_LUA_PC QUIET lua-5.4 lua5.4 lua5.3 lua)
+      if(_AUTO_LUA_PC_FOUND)
+        set(_AUTO_HAVE_LUA TRUE)
+      endif()
+    endif()
+  endif()
+
+  if(NOT _AUTO_HAVE_LUA)
+    message(WARNING
+      "USE_LUA was enabled, but Lua development files were not found. "
+      "Disabling USE_LUA for this build.")
+    set(USE_LUA OFF CACHE BOOL "Enable Lua" FORCE)
+  endif()
 endif()
 
 if(NOT HAVE_HDF5 AND CLUMP_DATA_READ)
@@ -102,6 +277,75 @@ endfunction()
 # ===== Dependency paths =====
 set(SRC_DIR      ${CMAKE_SOURCE_DIR}/src)
 set(EXTERNAL_DIR ${CMAKE_SOURCE_DIR}/external)
+set(PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR
+  "${EXTERNAL_DIR}/submodules"
+  CACHE PATH "Directory containing optional dependency git submodules")
+
+function(particle_vis_prepend_prefix_if_exists prefix)
+  if(EXISTS "${prefix}")
+    list(PREPEND CMAKE_PREFIX_PATH "${prefix}")
+    set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+function(particle_vis_prepend_pkgconfig_if_exists prefix)
+  if(EXISTS "${prefix}/lib/pkgconfig")
+    set(ENV{PKG_CONFIG_PATH} "${prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+  endif()
+  if(EXISTS "${prefix}/lib64/pkgconfig")
+    set(ENV{PKG_CONFIG_PATH} "${prefix}/lib64/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+  endif()
+  if(EXISTS "${prefix}/share/pkgconfig")
+    set(ENV{PKG_CONFIG_PATH} "${prefix}/share/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+  endif()
+endfunction()
+
+function(particle_vis_register_dependency_prefixes dep)
+  if(NOT PARTICLE_VIS_PREFER_SUBMODULE_DEPS)
+    return()
+  endif()
+
+  set(_prefix_candidates
+    "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/${dep}"
+    "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/${dep}/install"
+    "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/${dep}/build"
+    "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/${dep}/build/install"
+    "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/${dep}")
+
+  foreach(_prefix IN LISTS _prefix_candidates)
+    particle_vis_prepend_prefix_if_exists("${_prefix}")
+    particle_vis_prepend_pkgconfig_if_exists("${_prefix}")
+  endforeach()
+endfunction()
+
+function(particle_vis_get_submodule_source_dir dep out_var)
+  set(${out_var} "${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/${dep}" PARENT_SCOPE)
+endfunction()
+
+function(particle_vis_add_glfw_submodule_if_present)
+  if(NOT PARTICLE_VIS_ALLOW_SUBMODULE_BUILDS)
+    return()
+  endif()
+
+  if(TARGET glfw OR TARGET glfw::glfw OR TARGET glfw3 OR TARGET glfw3::glfw3)
+    return()
+  endif()
+
+  particle_vis_get_submodule_source_dir(glfw _glfw_root)
+  if(EXISTS "${_glfw_root}/CMakeLists.txt")
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${_glfw_root}" "${CMAKE_BINARY_DIR}/_deps/glfw" EXCLUDE_FROM_ALL)
+    message(STATUS "glfw: using source submodule at ${_glfw_root}")
+  endif()
+endfunction()
+
+foreach(_particle_vis_dep IN ITEMS
+    glfw glm eigen vtk hdf5 libzmq cppzmq nlohmann_json lua cgal gmp mpfr)
+  particle_vis_register_dependency_prefixes("${_particle_vis_dep}")
+endforeach()
 
 # ===== Source list =====
 set(SOURCES_CPP
@@ -202,12 +446,13 @@ endif()
 if(USE_CONVEX_HULL)
   find_package(CGAL QUIET)
   if(NOT TARGET CGAL::CGAL AND NOT CGAL_FOUND)
-    message(FATAL_ERROR
-      "USE_CONVEX_HULL requires CGAL. Install/load CGAL or configure with "
-      "-DUSE_CONVEX_HULL=OFF.")
+    message(WARNING
+      "USE_CONVEX_HULL was enabled, but CGAL is not available. "
+      "Disabling USE_CONVEX_HULL for this build.")
+    set(USE_CONVEX_HULL OFF CACHE BOOL "Enable Convex Hull" FORCE)
+  else()
+    list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/convex_hull/convex_hull_generator.cpp)
   endif()
-
-  list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/convex_hull/convex_hull_generator.cpp)
 endif()
 
 if(STREAM_LINE)
@@ -520,6 +765,21 @@ function(detect_and_link_glfw target lib_name pkg_name)
     return()
   endif()
 
+  particle_vis_add_glfw_submodule_if_present()
+  if(TARGET glfw)
+    target_link_libraries(${target} PRIVATE glfw)
+    return()
+  elseif(TARGET glfw::glfw)
+    target_link_libraries(${target} PRIVATE glfw::glfw)
+    return()
+  elseif(TARGET glfw3::glfw3)
+    target_link_libraries(${target} PRIVATE glfw3::glfw3)
+    return()
+  elseif(TARGET glfw3)
+    target_link_libraries(${target} PRIVATE glfw3)
+    return()
+  endif()
+
   # 2. pkg-config
   if(PKG_CONFIG_FOUND)
     pkg_check_modules(${lib_name}_PC QUIET ${pkg_name})
@@ -571,25 +831,31 @@ else()
   )
 
   if(NOT NFD_INCLUDE_DIR OR NOT NFD_LIBRARY)
-    message(FATAL_ERROR
-      "nativefiledialog-extended not found. "
-      "Please run: brew install nativefiledialog-extended")
-  endif()
-
-  target_include_directories(${PROJECT_NAME} PRIVATE ${NFD_INCLUDE_DIR})
-  target_link_libraries(${PROJECT_NAME} PRIVATE ${NFD_LIBRARY})
-
-  if(APPLE)
-    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
-    find_library(UTI_FRAMEWORK UniformTypeIdentifiers REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-      ${APPKIT_FRAMEWORK}
-      ${UTI_FRAMEWORK}
+    message(WARNING
+      "nativefiledialog-extended not found; falling back to ImGuiFileDialog backend.")
+    target_sources(${PROJECT_NAME} PRIVATE
+      ${EXTERNAL_DIR}/ImGuiFileDialog/ImGuiFileDialog.cpp
     )
-  elseif(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-      ole32 uuid shell32
+    target_include_directories(${PROJECT_NAME} PRIVATE
+      ${EXTERNAL_DIR}/ImGuiFileDialog
     )
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NONATIVEFILEDIALOG)
+  else()
+    target_include_directories(${PROJECT_NAME} PRIVATE ${NFD_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${NFD_LIBRARY})
+
+    if(APPLE)
+      find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+      find_library(UTI_FRAMEWORK UniformTypeIdentifiers REQUIRED)
+      target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${APPKIT_FRAMEWORK}
+        ${UTI_FRAMEWORK}
+      )
+    elseif(WIN32)
+      target_link_libraries(${PROJECT_NAME} PRIVATE
+        ole32 uuid shell32
+      )
+    endif()
   endif()
 endif()
 
@@ -624,38 +890,39 @@ if(ISO_CONTOUR)
   )
   
   # Detect VTK. This expects VTK 9.x; adjust the version constraint if needed.
-  find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} REQUIRED)
+  find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} QUIET)
 # find_package(VTK CONFIG REQUIRED BYPASS_PROVIDER COMPONENTS ${VTK_COMPONENTS})
 #  find_package(VTK)
 
-  if(VTK_VERSION VERSION_LESS "9.0" OR VTK_VERSION VERSION_GREATER_EQUAL "10.0")
-#    message(FATAL_ERROR "VTK 9.x is required, but found ${VTK_VERSION}")
-  endif()
-
-
-  # Additional sources corresponding to the old Makefile.
-  target_sources(${PROJECT_NAME} PRIVATE
-    ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
-    ${SRC_DIR}/analysis/isosurface/iso_surface_field.cpp
-    ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
-    ${SRC_DIR}/analysis/isosurface/connectivity_test.cpp
-    ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
-  )
-
-  # Include paths.
-  target_include_directories(${PROJECT_NAME} PRIVATE
-    ${SRC_DIR}/analysis/isosurface
-    ${VTK_INCLUDE_DIRS}      # VTK headers
-  )
-
-  # Link imported targets, which is the preferred CMake style.
-  # Example: VTK::CommonCore, VTK::FiltersCore, ...
   if(VTK_FOUND)
+    if(VTK_VERSION VERSION_LESS "9.0" OR VTK_VERSION VERSION_GREATER_EQUAL "10.0")
+#    message(FATAL_ERROR "VTK 9.x is required, but found ${VTK_VERSION}")
+    endif()
+
+    # Additional sources corresponding to the old Makefile.
+    target_sources(${PROJECT_NAME} PRIVATE
+      ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
+      ${SRC_DIR}/analysis/isosurface/iso_surface_field.cpp
+      ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
+      ${SRC_DIR}/analysis/isosurface/connectivity_test.cpp
+      ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
+    )
+
+    # Include paths.
+    target_include_directories(${PROJECT_NAME} PRIVATE
+      ${SRC_DIR}/analysis/isosurface
+      ${VTK_INCLUDE_DIRS}      # VTK headers
+    )
+
+    # Link imported targets, which is the preferred CMake style.
+    # Example: VTK::CommonCore, VTK::FiltersCore, ...
     foreach(c IN LISTS VTK_COMPONENTS)
       target_link_libraries(${PROJECT_NAME} PRIVATE VTK::${c})
     endforeach()
   else()
-    detect_and_link(${PROJECT_NAME} VTK vtk)
+    message(WARNING
+      "ISO_CONTOUR was enabled, but VTK was not found. Disabling ISO_CONTOUR for this build.")
+    set(ISO_CONTOUR OFF CACHE BOOL "Enable iso-contour/VTK" FORCE)
   endif()
   
   # Help macOS find VTK dylibs at runtime, like the old Makefile rpath flags.
@@ -666,8 +933,10 @@ if(ISO_CONTOUR)
       INSTALL_RPATH "${VTK_ROOT}/lib")
   endif()
   
-  # Pass ISO_CONTOUR to C++.
-  target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
+  if(ISO_CONTOUR)
+    # Pass ISO_CONTOUR to C++.
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
+  endif()
 endif()
 
 if(NOT PARTICLE_VIS_HEADLESS_ONLY)
@@ -708,6 +977,8 @@ if(NOT _GLM_FOUND)
   find_path(GLM_INCLUDE_DIR
     NAMES glm/glm.hpp
     HINTS
+      ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/glm
+      ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/glm/include
       $ENV{GLM_INCLUDE_DIR}
       $ENV{GLM_ROOT}
       $ENV{GLM_DIR}
@@ -756,7 +1027,10 @@ else()
     find_path(EIGEN3_INCLUDE_DIR
       NAMES Eigen/Core
       PATH_SUFFIXES eigen3
-      HINTS $ENV{EIGEN3_INCLUDE_DIR}  # Manual override.
+      HINTS
+        ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/eigen
+        ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/eigen/include
+        $ENV{EIGEN3_INCLUDE_DIR}  # Manual override.
     )
     if(NOT EIGEN3_INCLUDE_DIR)
       message(FATAL_ERROR "Eigen3 headers not found. Set EIGEN3_INCLUDE_DIR or install Eigen3.")
@@ -852,6 +1126,17 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${EXTERNAL_DIR}/glad/include)
 
 # ===== HDF5 =====
 if(HAVE_HDF5)
+  if(NOT DEFINED HDF5_ROOT AND NOT DEFINED ENV{HDF5_ROOT} AND NOT DEFINED HDF5_DIR AND NOT DEFINED ENV{HDF5_DIR})
+    find_program(_HDF5_WRAPPER_CXX NAMES h5c++ h5pcc h5cc)
+    if(_HDF5_WRAPPER_CXX)
+      get_filename_component(_HDF5_BIN_DIR "${_HDF5_WRAPPER_CXX}" DIRECTORY)
+      get_filename_component(_HDF5_PREFIX "${_HDF5_BIN_DIR}/.." ABSOLUTE)
+      set(HDF5_ROOT "${_HDF5_PREFIX}" CACHE PATH "HDF5 install prefix" FORCE)
+      list(PREPEND CMAKE_PREFIX_PATH "${_HDF5_PREFIX}")
+      message(STATUS "HDF5: inferred HDF5_ROOT=${HDF5_ROOT} from ${_HDF5_WRAPPER_CXX}")
+    endif()
+  endif()
+
   set(HDF5_PREFER_PARALLEL TRUE)
   find_package(HDF5 COMPONENTS CXX QUIET)
   if(HDF5_FOUND)
@@ -873,6 +1158,8 @@ if(HAVE_HDF5)
       find_path(HDF5_MANUAL_INCLUDE_DIR
         NAMES H5Cpp.h
         HINTS
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/hdf5
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/hdf5
           $ENV{HDF5_ROOT}
           $ENV{HDF5_DIR}
           $ENV{HDF5_HOME}
@@ -885,6 +1172,8 @@ if(HAVE_HDF5)
       find_library(HDF5_MANUAL_CXX_LIBRARY
         NAMES hdf5_cpp
         HINTS
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/hdf5
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/hdf5
           $ENV{HDF5_ROOT}
           $ENV{HDF5_DIR}
           $ENV{HDF5_HOME}
@@ -897,6 +1186,8 @@ if(HAVE_HDF5)
       find_library(HDF5_MANUAL_C_LIBRARY
         NAMES hdf5
         HINTS
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/hdf5
+          ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/hdf5
           $ENV{HDF5_ROOT}
           $ENV{HDF5_DIR}
           $ENV{HDF5_HOME}
@@ -1094,6 +1385,8 @@ function(link_nlohmann_json_to tgt)
   find_path(NLOHMANN_JSON_INCLUDE_DIR
     NAMES nlohmann/json.hpp
     HINTS
+      ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/nlohmann_json
+      ${PARTICLE_VIS_OPTIONAL_SUBMODULE_DIR}/_install/nlohmann_json/include
       $ENV{NLOHMANN_JSON_INCLUDE_DIR}
       $ENV{NLOHMANN_JSON_ROOT}
       $ENV{NLOHMANN_JSON_DIR}
