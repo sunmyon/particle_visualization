@@ -23,6 +23,76 @@
       }
     },
     {
+      "name": "linux-gui-gcc",
+      "displayName": "Linux GUI GCC",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-gui-local",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARTICLE_VIS_HEADLESS_ONLY": "OFF",
+        "USE_EGL_HEADLESS": "OFF",
+        "AUTO_HEADLESS_ON_MISSING_GLFW": "OFF",
+        "GLFW_BUILD_X11": "OFF",
+        "GLFW_BUILD_WAYLAND": "OFF",
+        "PARTICLE_VIS_PREFER_SUBMODULE_DEPS": "ON"
+      }
+    },
+    {
+      "name": "linux-gui-wayland",
+      "displayName": "Linux GUI GCC (Wayland backend)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-gui-wayland",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARTICLE_VIS_HEADLESS_ONLY": "OFF",
+        "USE_EGL_HEADLESS": "OFF",
+        "AUTO_HEADLESS_ON_MISSING_GLFW": "OFF",
+        "GLFW_BUILD_X11": "OFF",
+        "GLFW_BUILD_WAYLAND": "ON",
+        "PARTICLE_VIS_PREFER_SUBMODULE_DEPS": "ON",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/external/submodules/_install/wayland;${sourceDir}/external/submodules/_install/xkbcommon;${sourceDir}/external/submodules/_install/wayland-protocols"
+      }
+    },
+    {
+      "name": "linux-gui-x11",
+      "displayName": "Linux GUI GCC (X11 backend)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-gui-x11",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARTICLE_VIS_HEADLESS_ONLY": "OFF",
+        "USE_EGL_HEADLESS": "OFF",
+        "AUTO_HEADLESS_ON_MISSING_GLFW": "OFF",
+        "GLFW_BUILD_X11": "ON",
+        "GLFW_BUILD_WAYLAND": "OFF",
+        "PARTICLE_VIS_PREFER_SUBMODULE_DEPS": "ON",
+        "X11_Xkb_INCLUDE_PATH": "${sourceDir}/external/submodules/_x11_stubs",
+        "X11_Xinerama_INCLUDE_PATH": "${sourceDir}/external/submodules/_x11_stubs",
+        "X11_Xi_INCLUDE_PATH": "${sourceDir}/external/submodules/_x11_stubs"
+      }
+    },
+    {
       "name": "windows-msvc-base",
       "displayName": "Windows MSVC + vcpkg",
       "generator": "Ninja",
@@ -68,6 +138,21 @@
     {
       "name": "linux-headless-gcc",
       "configurePreset": "linux-headless-gcc",
+      "jobs": 8
+    },
+    {
+      "name": "linux-gui-gcc",
+      "configurePreset": "linux-gui-gcc",
+      "jobs": 8
+    },
+    {
+      "name": "linux-gui-wayland",
+      "configurePreset": "linux-gui-wayland",
+      "jobs": 8
+    },
+    {
+      "name": "linux-gui-x11",
+      "configurePreset": "linux-gui-x11",
       "jobs": 8
     },
     {

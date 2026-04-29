@@ -20,6 +20,7 @@ output/
 
 /.vcpkg-cache/
 example/data/
+example/output_0000.dat
 
 config.txt
 particle_vis

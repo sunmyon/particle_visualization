@@ -46,3 +46,12 @@
 [submodule "external/submodules/cgal"]
 	path = external/submodules/cgal
 	url = https://github.com/CGAL/cgal.git
+[submodule "external/submodules/wayland"]
+	path = external/submodules/wayland
+	url = https://gitlab.freedesktop.org/wayland/wayland.git
+[submodule "external/submodules/wayland-protocols"]
+	path = external/submodules/wayland-protocols
+	url = https://gitlab.freedesktop.org/wayland/wayland-protocols.git
+[submodule "external/submodules/xkbcommon"]
+	path = external/submodules/xkbcommon
+	url = https://github.com/xkbcommon/libxkbcommon.git
