@@ -87,6 +87,10 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.analysis.diskBatch = &analysis.diskBatch;
   ctx.analysis.ellipsoid = &analysis.ellipsoid;
   ctx.analysis.ellipsoidBatch = &analysis.ellipsoidBatch;
+  ctx.analysis.streamlineBuild = &analysis.streamlineBuild;
+#ifdef VOLUME_RENDERING
+  ctx.analysis.volume = &analysis.volume;
+#endif
   ctx.analysis.projectionMovie = &analysis.projectionMovie;
 #ifdef PYTHON_BRIDGE
   ctx.pythonBridge = &runtime.analysisView.py;

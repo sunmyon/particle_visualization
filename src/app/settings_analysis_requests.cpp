@@ -91,14 +91,15 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
 
   if (!edit.streamlineBuildDirty) {
     edit.streamlineBuild.nSeeds = requests.streamlineBuild.nSeeds;
+    edit.streamlineBuild.fieldSource = requests.streamlineBuild.fieldSource;
+    edit.streamlineBuild.maxSteps = requests.streamlineBuild.maxSteps;
+    edit.streamlineBuild.stepScale = requests.streamlineBuild.stepScale;
     edit.streamlineBuild.thetaMaxDegrees =
       requests.streamlineBuild.thetaMaxDegrees;
     edit.streamlineBuild.useManualSeed =
       requests.streamlineBuild.useManualSeed;
-    for (int i = 0; i < 3; ++i) {
-      edit.streamlineBuild.manualSeed[i] =
-        requests.streamlineBuild.manualSeed[i];
-    }
+    edit.streamlineBuild.manualSeeds =
+      requests.streamlineBuild.manualSeeds;
     edit.streamlineBuild.limitRegion = requests.streamlineBuild.limitRegion;
     for (int i = 0; i < 3; ++i) {
       edit.streamlineBuild.regionCenter[i] =
@@ -106,6 +107,24 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
       edit.streamlineBuild.regionSize[i] =
         requests.streamlineBuild.regionSize[i];
     }
+  }
+#endif
+
+#ifdef VOLUME_RENDERING
+  if (!edit.volumeDirty) {
+    edit.volume.selectedQuantity = requests.volume.selectedQuantity;
+    edit.volume.minParticlesPerLeaf = requests.volume.minParticlesPerLeaf;
+    edit.volume.maxTreeLevel = requests.volume.maxTreeLevel;
+    edit.volume.sigmaScale = requests.volume.sigmaScale;
+    edit.volume.sigmaLut = requests.volume.sigmaLut;
+    edit.volume.sigmaLutValueMin = requests.volume.sigmaLutValueMin;
+    edit.volume.sigmaLutValueMax = requests.volume.sigmaLutValueMax;
+    edit.volume.sigmaLutLogSample = requests.volume.sigmaLutLogSample;
+    edit.volume.logScale = requests.volume.logScale;
+    edit.volume.autoRange = requests.volume.autoRange;
+    edit.volume.valueMin = requests.volume.valueMin;
+    edit.volume.valueMax = requests.volume.valueMax;
+    edit.volume.balanceTree = requests.volume.balanceTree;
   }
 #endif
 
@@ -315,11 +334,12 @@ void SubmitStreamlineBuildRequest(const SettingsStreamlinePreviewEdit& preview,
   if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
 
   request.nSeeds = edit.nSeeds;
+  request.fieldSource = edit.fieldSource;
+  request.maxSteps = edit.maxSteps;
+  request.stepScale = edit.stepScale;
   request.thetaMaxDegrees = edit.thetaMaxDegrees;
   request.useManualSeed = edit.useManualSeed;
-  for (int i = 0; i < 3; ++i) {
-    request.manualSeed[i] = edit.manualSeed[i];
-  }
+  request.manualSeeds = edit.manualSeeds;
   for (int i = 0; i < 3; ++i) {
     request.seedCenter[i] = preview.seedCenter[i];
     request.seedSize[i] = preview.seedSize[i];
@@ -330,6 +350,35 @@ void SubmitStreamlineBuildRequest(const SettingsStreamlinePreviewEdit& preview,
     request.regionSize[i] = edit.regionSize[i];
   }
   request.runRequested = edit.buildClicked;
+  request.clearRequested = edit.clearClicked;
+
+  edit.buildClicked = false;
+  edit.clearClicked = false;
+  dirty = false;
+}
+#endif
+
+#ifdef VOLUME_RENDERING
+void SubmitVolumeRenderingRequest(SettingsVolumeRenderingEdit& edit,
+                                  bool& dirty,
+                                  VolumeRenderingRequestState& request)
+{
+  if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
+
+  request.selectedQuantity = edit.selectedQuantity;
+  request.minParticlesPerLeaf = edit.minParticlesPerLeaf;
+  request.maxTreeLevel = edit.maxTreeLevel;
+  request.sigmaScale = edit.sigmaScale;
+  request.sigmaLut = edit.sigmaLut;
+  request.sigmaLutValueMin = edit.sigmaLutValueMin;
+  request.sigmaLutValueMax = edit.sigmaLutValueMax;
+  request.sigmaLutLogSample = edit.sigmaLutLogSample;
+  request.logScale = edit.logScale;
+  request.autoRange = edit.autoRange;
+  request.valueMin = edit.valueMin;
+  request.valueMax = edit.valueMax;
+  request.balanceTree = edit.balanceTree;
+  request.buildRequested = edit.buildClicked;
   request.clearRequested = edit.clearClicked;
 
   edit.buildClicked = false;
@@ -446,6 +495,12 @@ void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
                                edit.streamlineBuild,
                                edit.streamlineBuildDirty,
                                requests.streamlineBuild);
+#endif
+
+#ifdef VOLUME_RENDERING
+  SubmitVolumeRenderingRequest(edit.volume,
+                               edit.volumeDirty,
+                               requests.volume);
 #endif
 
 #ifdef PYTHON_BRIDGE

@@ -69,6 +69,13 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
 			   runtime.render.isocontour);
 #endif
 
+#ifdef VOLUME_RENDERING
+  ExecuteVolumeRenderingRequest(*data.particles,
+                                runtime.analysisRequests.volume,
+                                analysis.volume,
+                                runtime.render.volume);
+#endif
+
 #ifdef CLUMP_DATA_READ
   if (services.clumpFind) {
     ExecuteClumpBatchRequest(*data.particles,

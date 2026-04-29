@@ -1,4 +1,5 @@
 #include <utility>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -31,6 +32,30 @@
 #include "render/scene_objects.h"
 #ifdef STREAM_LINE
 #include "analysis/streamline/streamline.h"
+
+namespace {
+std::array<LineObject, 3> MakeManualSeedMarker(const std::array<float, 3>& seed)
+{
+  const glm::vec3 c(seed[0], seed[1], seed[2]);
+  constexpr float r = 1.0f;
+
+  std::array<LineObject, 3> markers;
+  const glm::vec3 color(1.0f, 0.15f, 0.05f);
+  const glm::vec3 axes[3] = {
+    glm::vec3(r, 0.0f, 0.0f),
+    glm::vec3(0.0f, r, 0.0f),
+    glm::vec3(0.0f, 0.0f, r)
+  };
+
+  for (int i = 0; i < 3; ++i) {
+    markers[i].color = color;
+    markers[i].opacity = 1.0f;
+    markers[i].tag = "streamline";
+    markers[i].points = {c - axes[i], c + axes[i]};
+  }
+  return markers;
+}
+}
 
 void ExecuteStreamlinePreviewRequest(StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result)
@@ -74,6 +99,8 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
 {
   if (request.clearRequested) {
     result.lines.clear();
+    result.success = false;
+    result.message.clear();
     result.cpuUpdated = true;
     request.clearRequested = false;
     return;
@@ -87,11 +114,14 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
 
   StreamlineBuildSpec spec;
   spec.nSeeds = request.nSeeds;
+  spec.fieldSource = request.fieldSource == 1
+    ? StreamlineBuildSpec::FieldSource::BField
+    : StreamlineBuildSpec::FieldSource::Velocity;
+  spec.maxSteps = request.maxSteps;
+  spec.stepScale = request.stepScale;
   spec.thetaMaxDegrees = request.thetaMaxDegrees;
   spec.useManualSeed = request.useManualSeed;
-  for (int i = 0; i < 3; ++i) {
-    spec.manualSeed[i] = request.manualSeed[i];
-  }
+  spec.manualSeeds = request.manualSeeds;
 
   if (request.seedSize[0] > 0.f &&
       request.seedSize[1] > 0.f &&
@@ -114,10 +144,37 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
     }
   }
 
-  auto builtLines = streamLine.build(particles.particleBlock, spec);
+  auto built = streamLine.build(particles.particleBlock, spec);
 
   result.lines.clear();
-  for (const auto& linePoints : builtLines) {
+  result.success = built.ok;
+  result.message = built.message;
+  result.seedCount = built.seedCount;
+  result.lineCount = built.lineCount;
+  result.stopCounts = built.stopCounts;
+  result.seedReports.clear();
+  result.seedReports.reserve(built.seedReports.size());
+  for (const auto& src : built.seedReports) {
+    StreamlineBuildResultState::SeedReport dst;
+    dst.seedIndex = src.seedIndex;
+    dst.position[0] = src.position[0];
+    dst.position[1] = src.position[1];
+    dst.position[2] = src.position[2];
+    dst.stopReason = static_cast<int>(src.stopReason);
+    dst.pointCount = src.pointCount;
+    dst.length = src.length;
+    result.seedReports.push_back(dst);
+  }
+
+  if (request.useManualSeed) {
+    for (const auto& seed : request.manualSeeds) {
+      for (auto& marker : MakeManualSeedMarker(seed)) {
+        result.lines.push_back(std::move(marker));
+      }
+    }
+  }
+
+  for (const auto& linePoints : built.lines) {
     if (linePoints.empty()) continue;
 
     LineObject line;

@@ -97,6 +97,9 @@ void OpenGLRenderBackend::init()
 #ifdef ISO_CONTOUR
   // isocontour_.init(); // Needed only when the renderer owns GL objects.
 #endif
+#ifdef VOLUME_RENDERING
+  volume_.init();
+#endif
 
   crossGizmo_.init();
   coordAxes_.init();
@@ -132,6 +135,9 @@ void OpenGLRenderBackend::destroy()
 #ifdef ISO_CONTOUR
   isocontour_.destroy();
 #endif
+#ifdef VOLUME_RENDERING
+  volume_.destroy();
+#endif
 }
 
 void OpenGLRenderBackend::updateProjectionPreview(const RgbImage& image)
@@ -165,6 +171,69 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
   const ParticleVisualConfig& particleVisual = frame.particleVisual;
   const RenderRuntimeState& render = frame.runtime;
   const OverlayState& overlay = frame.overlay;
+
+#ifdef VOLUME_RENDERING
+  if (render.volume.show && scene.volume.valid()) {
+    SyncIfVersionChanged(volume_,
+                         scene.volume,
+                         scene.volumeVersion,
+                         uploaded_.volume);
+
+    AdaptiveVolumeDrawParams volumeParams;
+    volumeParams.invProjection  = fm.invProj;
+    volumeParams.invView        = fm.invView;
+    volumeParams.cameraForward  = fm.camForward;
+    volumeParams.resolution     = glm::ivec2(viewport.width, viewport.height);
+    volumeParams.focalPixels    = fm.focalPx;
+    volumeParams.pixelThreshold = render.volume.pixelThreshold;
+    volumeParams.tauMax         = render.volume.tauMax;
+    volumeParams.stepBias       = render.volume.stepBias;
+    volumeParams.skipEpsilon    = render.volume.skipEpsilon;
+    volumeParams.debugMode      = render.volume.debugMode;
+
+    const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+    GLboolean depthWriteWasEnabled = GL_TRUE;
+    GLint blendSrcRgb = GL_ONE;
+    GLint blendDstRgb = GL_ZERO;
+    GLint blendSrcAlpha = GL_ONE;
+    GLint blendDstAlpha = GL_ZERO;
+    GLint blendEquationRgb = GL_FUNC_ADD;
+    GLint blendEquationAlpha = GL_FUNC_ADD;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    volume_.draw(programs_.octray, volumeParams);
+
+    glDepthMask(depthWriteWasEnabled);
+    glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
+                            static_cast<GLenum>(blendEquationAlpha));
+    glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
+                        static_cast<GLenum>(blendDstRgb),
+                        static_cast<GLenum>(blendSrcAlpha),
+                        static_cast<GLenum>(blendDstAlpha));
+    if (depthTestWasEnabled) {
+      glEnable(GL_DEPTH_TEST);
+    } else {
+      glDisable(GL_DEPTH_TEST);
+    }
+    if (blendWasEnabled) {
+      glEnable(GL_BLEND);
+    } else {
+      glDisable(GL_BLEND);
+    }
+  }
+#endif
 
   SyncIfVersionChanged(particle_,
                        scene.particles,

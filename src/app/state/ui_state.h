@@ -1,6 +1,6 @@
 #pragma once
-
 #include <array>
+#include <vector>
 
 #include "app/state/tracking_view_state.h"
 #include "core/quantity.h"
@@ -70,12 +70,35 @@ struct SettingsStreamlinePreviewEdit {
 
 struct SettingsStreamlineBuildEdit {
   int nSeeds = 1;
+  int fieldSource = 0; // 0: velocity, 1: B field
+  int maxSteps = 1000000;
+  float stepScale = 0.15f;
   float thetaMaxDegrees = 10.0f;
   bool useManualSeed = false;
-  float manualSeed[3] = {0.f, 0.f, 0.f};
+  std::vector<std::array<float, 3>> manualSeeds{{0.f, 0.f, 0.f}};
   bool limitRegion = false;
   float regionCenter[3] = {0.f, 0.f, 0.f};
   float regionSize[3] = {0.f, 0.f, 0.f};
+  bool buildClicked = false;
+  bool clearClicked = false;
+};
+#endif
+
+#ifdef VOLUME_RENDERING
+struct SettingsVolumeRenderingEdit {
+  QuantityId selectedQuantity = QuantityId::Density;
+  int minParticlesPerLeaf = 64;
+  int maxTreeLevel = 16;
+  float sigmaScale = 1.0f;
+  std::vector<float> sigmaLut;
+  float sigmaLutValueMin = 1.0e-6f;
+  float sigmaLutValueMax = 1.0f;
+  bool sigmaLutLogSample = true;
+  bool logScale = true;
+  bool autoRange = true;
+  float valueMin = 1.0e-6f;
+  float valueMax = 1.0f;
+  bool balanceTree = false;
   bool buildClicked = false;
   bool clearClicked = false;
 };
@@ -144,6 +167,11 @@ struct SettingsAnalysisEditState {
   bool streamlinePreviewDirty = false;
   SettingsStreamlineBuildEdit streamlineBuild;
   bool streamlineBuildDirty = false;
+#endif
+
+#ifdef VOLUME_RENDERING
+  SettingsVolumeRenderingEdit volume;
+  bool volumeDirty = false;
 #endif
 
 #ifdef PYTHON_BRIDGE

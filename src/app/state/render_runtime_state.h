@@ -46,12 +46,28 @@ struct VelocityRenderState : RenderLayerState {
   bool useLogScale = false;
 };
 
+#ifdef VOLUME_RENDERING
+struct VolumeRenderState : RenderLayerState {
+  VolumeRenderState() { show = false; }
+
+  int debugMode = 0;
+  float pixelThreshold = 2.0f;
+  float tauMax = 1.0f;
+  float stepBias = 0.0f;
+  float skipEpsilon = 1.0e-4f;
+};
+#endif
+
 struct RenderRuntimeState {
   RenderLayerState lines;
   RenderLayerState disks;
   RenderLayerState cubes;
   RenderLayerState ellipsoids;
   RenderLayerState isocontour;
+
+#ifdef VOLUME_RENDERING
+  VolumeRenderState volume;
+#endif
   
   RenderLayerState polyhedra;
   RenderLayerState cuboids;

@@ -14,6 +14,8 @@ struct DiskAnalysisBatchResultState;
 struct EllipsoidAnalysisResultState;
 struct EllipsoidAnalysisBatchResultState;
 struct ProjectionMovieResultState;
+struct StreamlineBuildResultState;
+struct VolumeRenderingResultState;
 struct PythonBridgeViewState;
 
 struct SettingsCameraView {
@@ -29,6 +31,10 @@ struct SettingsAnalysisResultView {
   const DiskAnalysisBatchResultState* diskBatch = nullptr;
   const EllipsoidAnalysisResultState* ellipsoid = nullptr;
   const EllipsoidAnalysisBatchResultState* ellipsoidBatch = nullptr;
+  const StreamlineBuildResultState* streamlineBuild = nullptr;
+#ifdef VOLUME_RENDERING
+  const VolumeRenderingResultState* volume = nullptr;
+#endif
   const ProjectionMovieResultState* projectionMovie = nullptr;
 };
 

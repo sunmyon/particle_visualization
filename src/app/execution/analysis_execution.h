@@ -90,6 +90,13 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
                               RenderLayerState& isoContourRenderState);
 #endif
 
+#ifdef VOLUME_RENDERING
+void ExecuteVolumeRenderingRequest(ParticleArray& particles,
+                                   VolumeRenderingRequestState& request,
+                                   VolumeRenderingResultState& result,
+                                   VolumeRenderState& volumeRenderState);
+#endif
+
 #ifdef USE_CONVEX_HULL
 struct ConvexHullRuntimeState;
 void ExecuteConvexHullRequests(ParticleArray& particles,

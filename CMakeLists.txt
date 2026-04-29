@@ -215,7 +215,10 @@ if(STREAM_LINE)
 endif()
 
 if(VOLUME_RENDERING)
-  list(APPEND SOURCES_CPP ${SRC_DIR}/VolumeRendering/tau_sph.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/volume/tau_sph.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/volume/adaptive_volume_tree.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/render/opengl/adaptive_volume_renderer.cpp)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/app/execution/volume_rendering_execution.cpp)
 endif()
 
 if(PYTHON_BRIDGE)

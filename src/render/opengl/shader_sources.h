@@ -28,7 +28,6 @@ extern const char* isocontourFragmentShaderSource;
 
 #ifdef VOLUME_RENDERING
 extern const char* fullscreenShaderSource;
-extern const char* rtFragmentShaderSource;
 extern const char* upscaleVS;
 extern const char* upscaleFS;
 extern const char* octrayFragmentShaderSource;

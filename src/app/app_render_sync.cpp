@@ -137,6 +137,22 @@ static void UpdateIsoContourRenderSceneData(const IsoContourGeometryState& isoCo
 }
 #endif
 
+#ifdef VOLUME_RENDERING
+static void UpdateVolumeRenderSceneData(const VolumeRenderingResultState& volume,
+                                        RenderRuntimeState& render,
+                                        RenderSystem& rs)
+{
+  if (!render.volume.cpuUpdated && !rs.build.volumeDirty) {
+    return;
+  }
+
+  rs.scene.volume = volume.tree;
+  render.volume.cpuUpdated = false;
+  rs.build.volumeDirty = false;
+  ++rs.scene.volumeVersion;
+}
+#endif
+
 #ifdef USE_CONVEX_HULL
 static void UpdateConvexHullRenderState(RenderLayerState& polyhedraState,
 					const PolyhedronManager& polyhedra,
@@ -198,6 +214,12 @@ ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& parti
   UpdateIsoContourRenderSceneData(derived.analysis.isoContour,
                                   render,
                                   rs);
+#endif
+
+#ifdef VOLUME_RENDERING
+  UpdateVolumeRenderSceneData(derived.analysis.volume,
+                              render,
+                              rs);
 #endif
 
 #ifdef USE_CONVEX_HULL

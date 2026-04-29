@@ -122,6 +122,9 @@ void ExecuteSettingsActionRequests(ParticleArray& particles,
   if (req.applyRenderRequested) {
     render.particleLabels = req.renderDraft.particleLabels;
     render.velocity = req.renderDraft.velocity;
+#ifdef VOLUME_RENDERING
+    render.volume = req.renderDraft.volume;
+#endif
     render.disks.opacity = req.renderDraft.diskOpacity;
     render.ellipsoids.opacity = req.renderDraft.ellipsoidOpacity;
     render.isocontour.opacity = req.renderDraft.isoContourOpacity;

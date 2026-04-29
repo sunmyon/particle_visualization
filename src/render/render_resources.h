@@ -9,6 +9,10 @@
 #include "render/scene_objects.h"
 #include "render_types.h"
 
+#ifdef VOLUME_RENDERING
+#include "volume/adaptive_volume_tree.h"
+#endif
+
 struct ParticleVisualConfig;
 struct ParticleBlock;
 
@@ -74,6 +78,11 @@ struct RenderSceneData {
   RenderSceneVersion isoContourVersion = 1;
 #endif
 
+#ifdef VOLUME_RENDERING
+  AdaptiveVolumeTree volume;
+  RenderSceneVersion volumeVersion = 1;
+#endif
+
   std::vector<CubeRenderItem> cubes;
   RenderSceneVersion cubesVersion = 1;
   
@@ -99,6 +108,10 @@ struct RenderSceneBuildState {
 
 #ifdef ISO_CONTOUR
   bool isoContourDirty = true;
+#endif
+
+#ifdef VOLUME_RENDERING
+  bool volumeDirty = true;
 #endif
 
   bool cubesDirty = true;

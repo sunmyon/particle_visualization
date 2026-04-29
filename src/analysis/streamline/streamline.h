@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -52,18 +53,59 @@ struct StreamlineBoxSpec {
 };
 
 struct StreamlineBuildSpec {
+  enum class FieldSource {
+    Velocity,
+    BField
+  };
+
   int nSeeds = 1;
+  FieldSource fieldSource = FieldSource::Velocity;
+  int maxSteps = 1000000;
+  float stepScale = 0.15f;
   bool useManualSeed = false;
-  float manualSeed[3] = {0.0f, 0.0f, 0.0f};
+  std::vector<std::array<float, 3>> manualSeeds;
   StreamlineBoxSpec seedRegion;
   StreamlineBoxSpec fieldRegion;
   float thetaMaxDegrees = 10.0f;
 };
 
+enum class StreamlineStopReason {
+  None,
+  SeedOutsideRegion,
+  FieldEvalFailed,
+  WeakField,
+  OutOfBounds,
+  ZeroStep,
+  MaxStepsReached
+};
+
+struct StreamlineSeedReport {
+  int seedIndex = -1;
+  float position[3] = {0.0f, 0.0f, 0.0f};
+  StreamlineStopReason stopReason = StreamlineStopReason::None;
+  int pointCount = 0;
+  float length = 0.0f;
+};
+
+struct StreamlineBuildOutput {
+  bool ok = false;
+  std::string message;
+  int seedCount = 0;
+  int lineCount = 0;
+  std::array<int, 7> stopCounts{};
+  std::vector<StreamlineSeedReport> seedReports;
+  std::vector<std::vector<Vec3>> lines;
+};
+
+struct StreamlineTrace {
+  std::vector<Vec3> points;
+  StreamlineStopReason stopReason = StreamlineStopReason::None;
+};
+
 class StreamlineComputer {
  public:
-  std::vector<std::vector<Vec3>> build(const ParticleBlock& particles,
-                                       const StreamlineBuildSpec& spec);
+  StreamlineBuildOutput build(const ParticleBlock& particles,
+                              const StreamlineBuildSpec& spec);
 
  private:
   struct Bounds {
@@ -110,21 +152,32 @@ class StreamlineComputer {
                                      const Bounds& bounds,
                                      int nSeeds) const;
   SeedPoint makeManualSeed(const TrackingVector<ParticleData>& particles,
-                           const float seed[3]) const;
+                           const std::array<float, 3>& seed) const;
   void estimate_gradB(const ParticleBlock& particleBlock,
-                      const Bounds& fieldBounds);
+                      const Bounds& fieldBounds,
+                      StreamlineBuildSpec::FieldSource fieldSource);
   bool evalFieldAt(const float x[3], float outB[3], float& hsml) const;
-  bool evalDirectionAt(const Vec3& x, Vec3& dir, float& hsml) const;
+  StreamlineStopReason evalDirectionAt(const Vec3& x, Vec3& dir, float& hsml) const;
 
-  std::vector<Vec3> integrateBiStreamline(const Vec3& seed, float h_init, int maxstep) const;
-  std::vector<Vec3> integrateStreamline(const Vec3& seed, float h_init, int maxstep, float sign) const;
+  StreamlineTrace integrateBiStreamline(const Vec3& seed,
+                                        float h_init,
+                                        int maxSteps,
+                                        float stepScale) const;
+  StreamlineTrace integrateStreamline(const Vec3& seed,
+                                      float h_init,
+                                      int maxSteps,
+                                      float sign,
+                                      float stepScale) const;
   std::vector<Vec3> sampleByCurvature(const std::vector<Vec3>& fullLine, float theta_max_rad) const;
 
-  bool RK4stepArcLength(const Vec3& x, float& h, float sign, Vec3& x_next) const;
+  StreamlineStopReason RK4stepArcLength(const Vec3& x,
+                                        float& h,
+                                        float sign,
+                                        float stepScale,
+                                        Vec3& x_next) const;
   bool is_inside_(const Vec3& pos) const;
 
   static constexpr int   N_neighbours = 32;
-  static constexpr int   MaxStep = 1000000;
   static constexpr float MinStepFrac = 0.03f;
   static constexpr float MaxStepFrac = 0.25f;
   static constexpr float WeakFieldFloor = 1.0e-20f;

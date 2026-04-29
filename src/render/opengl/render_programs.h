@@ -16,7 +16,6 @@ struct RenderPrograms {
 #endif
 
 #ifdef VOLUME_RENDERING
-  GLuint rt = 0;
   GLuint octray = 0;
   GLuint upscale = 0;
   GLuint wboitParticle = 0;

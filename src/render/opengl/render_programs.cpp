@@ -29,10 +29,6 @@ bool InitRenderPrograms(RenderPrograms& p)
 #endif
 
 #ifdef VOLUME_RENDERING
-  p.rt = createShaderProgramWithHeader(fullscreenShaderSource,
-                                       rtFragmentShaderSource,
-                                       shaderHeader410);
-
   p.octray = createShaderProgramWithHeader(fullscreenShaderSource,
                                            octrayFragmentShaderSource,
                                            shaderHeader410);
@@ -75,7 +71,6 @@ void DestroyRenderPrograms(RenderPrograms& p)
 #endif
 
 #ifdef VOLUME_RENDERING
-  DeleteProgram(p.rt);
   DeleteProgram(p.octray);
   DeleteProgram(p.upscale);
   DeleteProgram(p.wboitParticle);

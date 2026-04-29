@@ -393,287 +393,6 @@ const vec2 V[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));
 void main(){ gl_Position = vec4(V[gl_VertexID],0,1); }
 )";
 
-const char* rtFragmentShaderSource = R"(
-uniform int uDebugMode;
-
-// ---- BVH TBO ----
-uniform samplerBuffer nodeMinTB;    // vec4(bmin.xyz,sigma_avg)
-uniform samplerBuffer nodeMaxTB;    // vec4(bmax.xyz,sigma_max)
-uniform isamplerBuffer nodeChildTB; // ivec4(left,right,first,count)
-uniform samplerBuffer particlesTB;  // vec4(pos.xyz, radius)
-uniform samplerBuffer partSigmaTB;  // float sigma
-
-// ---- Camera ----
-uniform mat4 invProj;
-uniform mat4 invView;    // Omit if unused.
-uniform mat4 view;    // Omit if unused.
-uniform vec3 uCamForward;
-uniform float uFocalPx;  // Screen focal length in px: 0.5*H/tan(fovY/2).
-uniform int   uRoot;
-uniform vec2  uResolution;
-
-// ---- LOD ----
-uniform int   uLodMode;       // 0:LeafOnly, 1:AutoLOD, 2:ForceNode
-uniform float uPxThreshold;   // Example: 1.0 to 2.0 px.
-
-// ---- Optics ----
-uniform float uTauMax;        // Early-exit threshold, for example 1.0.
-uniform float uStepBias;      // Small positive value for numerical stability.
-
-out vec4 oColor;
-
-// --------- Intersection helpers ---------
-bool hitAABB(vec3 mn, vec3 mx, vec3 ro, vec3 invDir, inout float t0, inout float t1) {
-    vec3 t1v = (mn - ro) * invDir;
-    vec3 t2v = (mx - ro) * invDir;
-    vec3 tminv = min(t1v, t2v);
-    vec3 tmaxv = max(t1v, t2v);
-    t0 = max(max(tminv.x, tminv.y), tminv.z);
-    t1 = min(min(tmaxv.x, tmaxv.y), tmaxv.z);
-    return t1 >= max(t0, 0.0);
-}
-
-
-float hitSphere(vec3 c, float r, vec3 ro, vec3 rd, out float tIn, out float tOut){
-    vec3 oc = ro - c;
-    float b = dot(oc, rd);
-    float c2 = dot(oc, oc) - r*r;
-    float disc = b*b - c2;
-    if (disc < 0.0) { tIn = tOut = -1.0; return -1.0; }
-    float s = sqrt(disc);
-    float t0 = -b - s;
-    float t1 = -b + s;
-
-    // Special handling when the ray starts inside.
-    if (t0 < 0.0 && t1 > 0.0) {
-        tIn = 0.0; // Start from the current position.
-        tOut = t1;
-        return t1;
-    }
-
-    tIn = (t0 > 0.0) ? t0 : ((t1 > 0.0) ? t1 : -1.0);
-    tOut = t1;
-    return (tIn > 0.0) ? tIn : -1.0;
-}
-
-// Approximate screen radius in pixels.
-float screenRadiusPx(float r_eff, float z_view, float focal_px){
-    return (z_view > 0.0) ? (focal_px * r_eff / z_view) : 1e9;
-}
-
-bool pointInsideAABB(vec3 p, vec3 mn, vec3 mx){
-    return all(greaterThanEqual(p, mn)) && all(lessThanEqual(p, mx));
-}
-
-vec3 heat(float t){          // t in [0,1]
-    t = clamp(t,0.0,1.0);
-    float r = smoothstep(0.5,1.0,t);
-    float g = t<0.5 ? smoothstep(0.0,0.5,t) : smoothstep(1.0,0.5,t);
-    float b = smoothstep(1.0,0.5,t);
-    return vec3(r,g,b);
-}
-
-void main(){
-    // --- Ray in view space ---
-    // Reconstruct NDC manually. Passing uv from the screen size is also fine.
-    vec2 ndc = vec2( (gl_FragCoord.x * 2.0) / float(uResolution.x) - 1.0,
-                     (gl_FragCoord.y * 2.0) / float(uResolution.y) - 1.0 ); // Adjust to the framework if needed.
-    vec4 pN = invProj * vec4(ndc, -1.0, 1.0);
-    pN /= pN.w;
-
-    // Origin and direction in view space.
-    vec3 ro_view = vec3(0.0);
-    vec3 rd_view = normalize(vec3(pN));
-
-    // Convert to world space.
-    vec3 ro = (invView * vec4(ro_view, 1.0)).xyz;
-    vec3 rd = normalize((invView * vec4(rd_view, 0.0)).xyz);
-    vec3 invDir = 1.0 / max(abs(rd), vec3(1e-30)) * sign(rd);
-
-    // --- Debug counters ---
-    int leafHits = 0;        // Number of hit leaves or particles.
-    int nodeApprox = 0;      // Number of integrations using node-sphere approximation.
-    int aabbMiss = 0;        // Number of AABB misses.
-    int visits = 0;
-    const int MAX_VISITS = 1512;
-
-    const float uSkipEps = 1.e-2;
-
-    // --- Iterative BVH traversal ---
-    struct StackItem { int id; float t0; float t1; vec3 center; float r; float sigma; float sigma_max;};
-    const int STACK_MAX = 64;
-    StackItem stack[STACK_MAX];
-    int sp=0;
-    float tau = 0.0;
-
-    vec4 rootMin = texelFetch(nodeMinTB, uRoot);
-    vec4 rootMax = texelFetch(nodeMaxTB, uRoot);
-    float rt0=0.0, rt1=1e30;
-    if (hitAABB(rootMin.xyz, rootMax.xyz, ro, invDir, rt0, rt1)) {
-        vec3  cRoot   = 0.5 * (rootMin.xyz + rootMax.xyz);
-        vec3  extRoot = rootMax.xyz - rootMin.xyz;
-        float rRoot   = 0.5 * length(extRoot);                 // Radius of the sphere approximation.
-        float sRoot  = rootMin.w;
-        float sRootMax = rootMax.w;
-
-        stack[sp++] = StackItem(uRoot, rt0, rt1, cRoot, rRoot, sRoot, sRootMax);
-    }
-
-    while(sp>0 && tau < uTauMax && visits < MAX_VISITS){
-        visits++;
-
-        StackItem it = stack[--sp];
-        int id   = it.id;
-        float t0 = it.t0;
-        float t1 = it.t1;
-
-        ivec4 ch    = texelFetch(nodeChildTB, id);
-        bool isLeaf = (ch.x<0 && ch.y<0);
-
-        if(isLeaf){
-            // ---- leaf node ----
-            int first = ch.z;
-            int count = ch.w; // Currently expected to be 1, but larger counts are allowed.
-            for(int k=0;k<count;k++){
-                vec4 pr = texelFetch(particlesTB, first+k);
-                float sigma = texelFetch(partSigmaTB, first+k).x;
-                float tIn,tOut;
-                if(hitSphere(pr.xyz, pr.w, ro, rd, tIn, tOut) > 0.0){
-                    float seg0 = max(tIn, t0);
-                    float seg1 = min(tOut, t1);
-                    float L = max(0.0, seg1 - seg0);
-                    tau += sigma * max(0.0, L - uStepBias);
-                    leafHits++;
-                    if(tau >= uTauMax) break;
-                }
-            }
-        }else{
-            // ---- LOD ----
-            float zView = dot(it.center - ro, uCamForward); 
-            bool useApprox = false;
-            if(uLodMode==1){
-                float r_px = screenRadiusPx(it.r, zView, uFocalPx);
-                if(r_px < uPxThreshold) useApprox = true;
-            }
-
-            if(useApprox){
-                // Approximate the node as a sphere and add it in one step.
-                float tIn,tOut;
-                if(hitSphere(it.center, it.r, ro, rd, tIn, tOut) > 0.0){
-                    float L = max(0.0, tOut - tIn);
-                    tau += it.sigma * max(0.0, L - uStepBias);
-                    nodeApprox++;
-
-                    if (tau >= uTauMax) break; 
-                    continue;
-                }
-            }
-
-            float possible = it.sigma_max * max(0.0, t1 - t0); // sigma_max is carried in StackItem.
-            if (possible < uSkipEps) {
-                continue;
-            }
-
-            int Li = ch.x, Ri = ch.y;
-            bool hL = false; float t0L=0.0, t1L=1e30; vec3 cL=vec3(0.0); float rL=0.0, sL=0.0, sL_max=0.0;
-            if (Li >= 0) {
-                vec4 lmin = texelFetch(nodeMinTB, Li);
-                vec4 lmax = texelFetch(nodeMaxTB, Li);
-                hL = hitAABB(lmin.xyz, lmax.xyz, ro, invDir, t0L, t1L);
-                if (hL) {
-                    // Clip to the parent interval.
-                    t0L = max(t0L, t0);
-                    t1L = min(t1L, t1);
-                    hL = (t1L >= t0L);
-                    if (hL) {
-                        cL = 0.5 * (lmin.xyz + lmax.xyz);
-                        rL = 0.5 * length(lmax.xyz - lmin.xyz);
-                        sL = lmin.w;
-                        sL_max = lmax.w;
-                    }
-                }
-            }
-
-            // Right child
-            bool hR = false; float t0R=0.0, t1R=1e30; vec3 cR=vec3(0.0); float rR=0.0, sR=0.0, sR_max=0.0;
-            if (Ri >= 0) {
-                vec4 rmin = texelFetch(nodeMinTB, Ri);
-                vec4 rmax = texelFetch(nodeMaxTB, Ri);
-                hR = hitAABB(rmin.xyz, rmax.xyz, ro, invDir, t0R, t1R);
-                if (hR) {
-                    t0R = max(t0R, t0);
-                    t1R = min(t1R, t1);
-                    hR = (t1R >= t0R);
-                    if (hR) {
-                        cR = 0.5 * (rmin.xyz + rmax.xyz);
-                        rR = 0.5 * length(rmax.xyz - rmin.xyz);
-                        sR = rmin.w;
-                        sR_max = rmax.w;
-                    }
-                }
-            }
-
-            // Process the nearer child first by pushing the farther child first.
-            if (hL && hR) {
-                bool Lnear = (t0L <= t0R);
-                // far
-                if (sp < STACK_MAX) {
-                    if (Lnear) stack[sp++] = StackItem(Ri, t0R, t1R, cR, rR, sR, sR_max);
-                    else       stack[sp++] = StackItem(Li, t0L, t1L, cL, rL, sL, sL_max);
-                }
-                // near
-                if (sp < STACK_MAX) {
-                    if (Lnear) stack[sp++] = StackItem(Li, t0L, t1L, cL, rL, sL, sL_max);
-                    else       stack[sp++] = StackItem(Ri, t0R, t1R, cR, rR, sR, sR_max);
-                }
-            } else if (hL) {
-                if (sp < STACK_MAX) stack[sp++] = StackItem(Li, t0L, t1L, cL, rL, sL, sL_max);
-            } else if (hR) {
-                if (sp < STACK_MAX) stack[sp++] = StackItem(Ri, t0R, t1R, cR, rR, sR, sR_max);
-            }
-        }
-    }
-
-    // ===== Debug visualization =====
-    if(uDebugMode == 10){
-        // Visit-count heat.
-        float t = float(visits) / max(1.0, float(MAX_VISITS));
-        //float t = float(visits) / 100.;
-        oColor = vec4(heat(t), 1.0);
-        return;
-    }
-    if(uDebugMode == 11){
-        // Tau heat normalized by uMaxTauVis.
-        float t = clamp(tau / max(uTauMax, 1e-6), 0.0, 1.0);
-        oColor = vec4(heat(t), 1.0);
-        return;
-    }
-    if(uDebugMode == 12){
-        // Leaf-hit count.
-        float t = clamp(float(leafHits)/64.0, 0.0, 1.0);
-        oColor = vec4(heat(t), 1.0);
-        return;
-    }
-    if(uDebugMode == 13){
-        // Approximation-use count.
-        float t = clamp(float(nodeApprox)/64.0, 0.0, 1.0);
-        oColor = vec4(heat(t), 1.0);
-        return;
-    }
-    if(uDebugMode == 14){
-        // AABB miss count.
-        float t = clamp(float(aabbMiss)/float(visits+1), 0.0, 1.0);
-        oColor = vec4(heat(t), 1.0);
-        return;
-    }
-
-    // Visualization: tone-map from tau as desired.
-    float a = clamp(tau / uTauMax, 0.0, 1.0);
-    oColor = vec4(1., 1., 1., 1 - exp(-tau));  // Example: 1 - exp(-tau).
-}
-)";
-
-
 const char* upscaleVS = R"(
 out vec2 vUV;
 void main(){
@@ -718,6 +437,7 @@ uniform float uPxThreshold;   // Example: 1.0 to 2.0 px.
 // ---- Optics ----
 uniform float uTauMax;        // Early-exit threshold, for example 1.0.
 uniform float uStepBias;      // Small positive value for numerical stability.
+uniform float uSkipEps;       // Skip cells whose maximum possible opacity is tiny.
 
 out vec4 FragColor;
 
@@ -828,9 +548,12 @@ void main(){
     float alpha=0.0; vec3 color=vec3(0.0);
 
     int visits = 0;
+    int leafStops = 0;
+    int lodStops = 0;
+    int emptySkips = 0;
     const int MAX_VISITS = 1000;
 
-    while(sp>0 && visits < MAX_VISITS){
+    while(sp>0 && alpha < 0.995 && visits < MAX_VISITS){
         int   id = stack[--sp];
         t0 = t0s[sp]; t1 = t1s[sp];
 
@@ -844,11 +567,10 @@ void main(){
         float sigma_max = vmax.w;
 
         // Pixel LOD: approximate in one step when the cell is sufficiently smaller than a pixel.
-        float radius = length(bmax - bmin);   // Simple diameter.
+        float radius = 0.5 * length(bmax - bmin);
         vec3 center = 0.5 * (bmin + bmax);
         float zView = dot(center - ro, uCamForward);
-        //float r_px = screenRadiusPx(radius, zView, uFocalPx);
-        float r_px = 1000.;
+        float r_px = screenRadiusPx(radius, zView, uFocalPx);
 
         bool isLeaf = false;
         ivec4 cA = texelFetch(childATB, id);
@@ -856,7 +578,16 @@ void main(){
         isLeaf = (cA.x<0 && cA.y<0 && cA.z<0 && cA.w<0 &&
                   cB.x<0 && cB.y<0 && cB.z<0 && cB.w<0);
 
-        if (isLeaf || r_px < 2.0*uPxThreshold) {
+        if (sigma_max <= 0.0 || sigma_max * max(0.0, t1 - t0) < uSkipEps) {
+            emptySkips++;
+            continue;
+        }
+
+        bool useLod = (!isLeaf && r_px < 2.0*uPxThreshold);
+        if (isLeaf || useLod) {
+            if (isLeaf) leafStops++;
+            else lodStops++;
+
             float dt = max(0.0, t1 - t0);
 
             // Compute uvw at the interval midpoint and trilerp sigma.
@@ -877,10 +608,15 @@ void main(){
             continue;
         }
 
-        // Move to children with spatial skipping.
+        // Move to children with spatial skipping.  Push far-to-near because
+        // the explicit stack is LIFO, so traversal itself is near-to-far.
         int childIdx[8] = int[8](cA.x,cA.y,cA.z,cA.w,cB.x,cB.y,cB.z,cB.w);
 
-        // Simple priority: for near-order traversal, two-step bubble push by entry t is also fine.
+        int hitId[8];
+        float hitT0[8];
+        float hitT1[8];
+        int hitCount = 0;
+
         for(int k=0;k<8;k++){
             int cid = childIdx[k];
             if (cid<0) continue;
@@ -889,8 +625,39 @@ void main(){
             float c0=t0, c1=t1;
             if(!rayBox(ro,invd, cmn, cmx, c0,c1)) continue;
             float cmax = texelFetch(nodeMaxTB, cid).w;
-            if (cmax <= 0.0) continue; // Skip empty children.
-            if (sp < STACK_MAX){ stack[sp]=cid; t0s[sp]=c0; t1s[sp]=c1; sp++; }
+            if (cmax <= 0.0 || cmax * max(0.0, c1 - c0) < uSkipEps) {
+                emptySkips++;
+                continue;
+            }
+            hitId[hitCount] = cid;
+            hitT0[hitCount] = c0;
+            hitT1[hitCount] = c1;
+            hitCount++;
+        }
+
+        for (int i = 1; i < hitCount; ++i) {
+            int idv = hitId[i];
+            float t0v = hitT0[i];
+            float t1v = hitT1[i];
+            int j = i - 1;
+            while (j >= 0 && hitT0[j] > t0v) {
+                hitId[j + 1] = hitId[j];
+                hitT0[j + 1] = hitT0[j];
+                hitT1[j + 1] = hitT1[j];
+                j--;
+            }
+            hitId[j + 1] = idv;
+            hitT0[j + 1] = t0v;
+            hitT1[j + 1] = t1v;
+        }
+
+        for (int i = hitCount - 1; i >= 0; --i) {
+            if (sp < STACK_MAX){
+                stack[sp]=hitId[i];
+                t0s[sp]=hitT0[i];
+                t1s[sp]=hitT1[i];
+                sp++;
+            }
         }
 
     }
@@ -900,6 +667,25 @@ void main(){
         //float t = float(visits) / max(1.0, float(MAX_VISITS));
         float t = float(visits) / 100.;
         FragColor = vec4(heat(t), 1.0);
+        return;
+    }
+    if(uDebugMode == 11){
+        float t = clamp(float(leafStops)/64.0, 0.0, 1.0);
+        FragColor = vec4(heat(t), 1.0);
+        return;
+    }
+    if(uDebugMode == 12){
+        float t = clamp(float(lodStops)/64.0, 0.0, 1.0);
+        FragColor = vec4(heat(t), 1.0);
+        return;
+    }
+    if(uDebugMode == 13){
+        float t = clamp(float(emptySkips)/64.0, 0.0, 1.0);
+        FragColor = vec4(heat(t), 1.0);
+        return;
+    }
+    if(uDebugMode == 14){
+        FragColor = vec4(vec3(alpha), 1.0);
         return;
     }
 

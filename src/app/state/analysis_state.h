@@ -1,4 +1,8 @@
 #pragma once
+#include <array>
+#include <string>
+#include <vector>
+
 #include "convex_hull_state.h"
 #include "image/rgb_image.h"
 #include "render/scene_objects.h"
@@ -41,7 +45,21 @@ struct StreamlinePreviewResultState {
 };
 
 struct StreamlineBuildResultState {
+  struct SeedReport {
+    int seedIndex = -1;
+    float position[3] = {0.f, 0.f, 0.f};
+    int stopReason = 0;
+    int pointCount = 0;
+    float length = 0.0f;
+  };
+
   bool cpuUpdated = false;
+  bool success = false;
+  std::string message;
+  int seedCount = 0;
+  int lineCount = 0;
+  std::array<int, 7> stopCounts{};
+  std::vector<SeedReport> seedReports;
   TrackingVector<LineObject> lines;
 };
 
@@ -69,6 +87,10 @@ struct ProjectionMovieResultState {
 #include "analysis/radial_profile.h"
 #include "analysis/histogram2d.h"
 
+#ifdef VOLUME_RENDERING
+#include "volume/adaptive_volume_tree.h"
+#endif
+
 struct RadialProfileResultState {
   bool computed = false;
   RadialProfileResult result;
@@ -78,6 +100,17 @@ struct Histogram2DResultState {
   bool computed = false;
   Histogram2DResult result;
 };
+
+#ifdef VOLUME_RENDERING
+struct VolumeRenderingResultState {
+  bool valid = false;
+  bool cpuUpdated = false;
+  bool success = false;
+  std::string message;
+  AdaptiveVolumeTree tree;
+  AdaptiveVolumeTreeStats stats;
+};
+#endif
 
 struct ProjectionPreviewDerivedState {
   bool computed = false;
@@ -103,6 +136,10 @@ struct AnalysisDerivedState {
   
 #ifdef ISO_CONTOUR
   IsoContourGeometryState isoContour;
+#endif
+
+#ifdef VOLUME_RENDERING
+  VolumeRenderingResultState volume;
 #endif
 
 #ifdef CLUMP_DATA_READ

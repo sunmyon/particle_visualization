@@ -198,9 +198,12 @@ struct StreamlinePreviewRequestState {
 
 struct StreamlineBuildRequestState {
   int nSeeds = 1;
+  int fieldSource = 0; // 0: velocity, 1: B field
+  int maxSteps = 1000000;
+  float stepScale = 0.15f;
   float thetaMaxDegrees = 10.0f;
   bool useManualSeed = false;
-  float manualSeed[3] = {0.f, 0.f, 0.f};
+  std::vector<std::array<float, 3>> manualSeeds{{0.f, 0.f, 0.f}};
 
   float seedCenter[3] = {0.f, 0.f, 0.f};
   float seedSize[3]   = {100.f, 100.f, 100.f};
@@ -226,6 +229,26 @@ struct IsoContourRequestState {
   int maxTreeLevel = 15;
   QuantityId selectedQuantity = QuantityId::Density;
   bool runRequested = false;
+  bool clearRequested = false;
+};
+#endif
+
+#ifdef VOLUME_RENDERING
+struct VolumeRenderingRequestState {
+  QuantityId selectedQuantity = QuantityId::Density;
+  int minParticlesPerLeaf = 64;
+  int maxTreeLevel = 16;
+  float sigmaScale = 1.0f;
+  std::vector<float> sigmaLut;
+  float sigmaLutValueMin = 1.0e-6f;
+  float sigmaLutValueMax = 1.0f;
+  bool sigmaLutLogSample = true;
+  bool logScale = true;
+  bool autoRange = true;
+  float valueMin = 1.0e-6f;
+  float valueMax = 1.0f;
+  bool balanceTree = false;
+  bool buildRequested = false;
   bool clearRequested = false;
 };
 #endif
@@ -319,6 +342,10 @@ struct AnalysisRequestState {
 #ifdef STREAM_LINE
   StreamlinePreviewRequestState streamlinePreview;
   StreamlineBuildRequestState streamlineBuild;
+#endif
+
+#ifdef VOLUME_RENDERING
+  VolumeRenderingRequestState volume;
 #endif
 
 #ifdef CLUMP_DATA_READ
@@ -460,6 +487,9 @@ struct SnapshotPostprocessState {
 struct SettingsRenderEditDraft {
   ParticleLabelRenderState particleLabels;
   VelocityRenderState velocity;
+#ifdef VOLUME_RENDERING
+  VolumeRenderState volume;
+#endif
   float diskOpacity = 1.0f;
   float ellipsoidOpacity = 1.0f;
   float isoContourOpacity = 1.0f;

@@ -11,6 +11,10 @@
 #include "render/opengl/projection_preview_gl.h"
 #include "render/opengl/render_programs.h"
 
+#ifdef VOLUME_RENDERING
+#include "render/opengl/adaptive_volume_renderer.h"
+#endif
+
 class OpenGLRenderBackend final : public RenderBackend {
 public:
   void init() override;
@@ -34,6 +38,9 @@ private:
 #ifdef ISO_CONTOUR
     std::uint64_t isoContour = 0;
 #endif
+#ifdef VOLUME_RENDERING
+    std::uint64_t volume = 0;
+#endif
   };
 
   RenderPrograms programs_;
@@ -50,6 +57,9 @@ private:
   PolyhedronRenderer polyhedron_;
 #ifdef ISO_CONTOUR
   IsoContourRenderer isocontour_;
+#endif
+#ifdef VOLUME_RENDERING
+  AdaptiveVolumeRenderer volume_;
 #endif
 
   CrossGizmoRenderer crossGizmo_;

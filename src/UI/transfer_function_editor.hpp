@@ -60,7 +60,7 @@ struct TFComponent {
 class TransferFunctionEditor {
 public:
   TransferFunctionEditor()
-    : rhoMin_(1.0f), rhoMax_(1e16f), yMax_(1.0f), logScale_(true), showAxes_(true)  {}
+    : rhoMin_(1.0f), rhoMax_(1e16f), yMax_(100.0f), logScale_(true), showAxes_(true)  {}
 
   // Draw the UI and optionally return the rho-to-sigma evaluator in outEval.
   bool showUI(std::function<float(float)>* outEval = nullptr) {
@@ -76,19 +76,19 @@ public:
     }
 
     // Range and scale.
-    ImGui::SeparatorText("Range / Scale");
+    ImGui::SeparatorText("Quantity range / sigma scale");
     float rMin = rhoMin_, rMax = rhoMax_;
     ImGui::SetNextItemWidth(220);
-    if (ImGui::InputFloat("rho min", &rMin, 0, 0, "%.3e")) { rhoMin_ = std::max(1e-30f, rMin); changed = true; }
+    if (ImGui::InputFloat("value min", &rMin, 0, 0, "%.3e")) { rhoMin_ = std::max(1e-30f, rMin); changed = true; }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220);
-    if (ImGui::InputFloat("rho max", &rMax, 0, 0, "%.3e")) { rhoMax_ = std::max(rMax, rhoMin_ * 1.0001f); changed = true; }
+    if (ImGui::InputFloat("value max", &rMax, 0, 0, "%.3e")) { rhoMax_ = std::max(rMax, rhoMin_ * 1.0001f); changed = true; }
     ImGui::SameLine();
     changed |= ImGui::Checkbox("log", &logScale_);
 
     // Display upper bound for y, allowing amplitudes above 1.
     ImGui::SetNextItemWidth(180);
-    if (ImGui::InputFloat("y max (display)", &yMax_, 0, 0, "%.3f")) {
+    if (ImGui::InputFloat("sigma max [1/norm length]", &yMax_, 1.0f, 10.0f, "%.3g")) {
       yMax_ = std::max(1e-6f, yMax_);
       changed = true;
     }
@@ -140,7 +140,10 @@ public:
       if(c.type == TFShape::Gaussian)
 	changed |= ImGui::Checkbox("log-domain Gaussian", &c.logDomain);
       
-      changed |= ImGui::SliderFloat("amplitude", &c.amp, 0.0f, 1.0f);
+      changed |= ImGui::SliderFloat("sigma amplitude [1/norm length]",
+                                    &c.amp,
+                                    0.0f,
+                                    yMax_);
       if (ImGui::Button("Remove")) { comps_.erase(comps_.begin() + i); changed = true; ImGui::Unindent(); ImGui::PopID(); break; }
       ImGui::Unindent();
       ImGui::Separator();
@@ -170,12 +173,75 @@ public:
     return std::max(s, 0.f);
   }
 
+  bool hasComponents() const {
+    return !comps_.empty();
+  }
+
   void set_window(){
     showWindow_ = true;
   }
 
+  void scaleAllAmplitudes(float factor)
+  {
+    if (!std::isfinite(factor) || factor <= 0.0f) {
+      return;
+    }
+    for (auto& c : comps_) {
+      c.amp = std::max(0.0f, c.amp * factor);
+    }
+    yMax_ = std::max(yMax_, maxAmplitude() * 1.2f);
+  }
+
+  float maxAmplitude() const
+  {
+    float out = 0.0f;
+    for (const auto& c : comps_) {
+      out = std::max(out, c.amp);
+    }
+    return out;
+  }
+
   void set_minmax(QuantityId& var, float val_min, float val_max){
-    if(flag_show == false || var != var_show_){
+    if (!std::isfinite(val_min) || !std::isfinite(val_max)) {
+      return;
+    }
+
+    val_min = std::max(val_min, 1.0e-30f);
+    val_max = std::max(val_max, val_min * 1.0001f);
+
+    const bool rangeChanged =
+      std::abs(std::log10(std::max(rhoMin_, 1.0e-30f)) -
+               std::log10(val_min)) > 1.0e-4f ||
+      std::abs(std::log10(std::max(rhoMax_, 1.0e-30f)) -
+               std::log10(val_max)) > 1.0e-4f;
+
+    if(flag_show == false || var != var_show_ || rangeChanged){
+      const float oldMin = rhoMin_;
+      const float oldMax = rhoMax_;
+      const bool preserveShape = flag_show && var == var_show_ && rangeChanged;
+
+      if (preserveShape) {
+        for (auto& c : comps_) {
+          const float x = x01FromRho(c.center);
+          const float left = handleX01(c, false);
+          const float right = handleX01(c, true);
+          rhoMin_ = val_min;
+          rhoMax_ = val_max;
+          c.center = rhoFromX01(x);
+          const float leftRho = rhoFromX01(left);
+          const float rightRho = rhoFromX01(right);
+          if (c.type == TFShape::Gaussian && c.logDomain) {
+            const float lo = std::log10(std::max(leftRho, 1.0e-30f));
+            const float hi = std::log10(std::max(rightRho, 1.0e-30f));
+            c.width = std::max(0.5f * std::abs(hi - lo), 1.0e-12f);
+          } else {
+            c.width = std::max(0.5f * std::abs(rightRho - leftRho), 1.0e-12f);
+          }
+          rhoMin_ = oldMin;
+          rhoMax_ = oldMax;
+        }
+      }
+
       rhoMin_ = val_min;
       rhoMax_ = val_max;
 
@@ -222,7 +288,6 @@ private:
   // Interactive editing state.
   enum class DragMode { None, Center, Left, Right };
   int selected_ = -1;
-  int hot_ = -1;
   DragMode drag_ = DragMode::None;
 
   // Add a component.
@@ -384,7 +449,6 @@ private:
     auto drawXTick = [&](float rho, const char* label){
       float x01 = x01FromRho(rho);
       ImVec2 a = toScreen01(x01, 0.0f);
-      ImVec2 b = toScreen01(x01, 0.02f);
       dl->AddLine(ImVec2(a.x, plot1_.y), ImVec2(a.x, plot1_.y+6), col, 1.0f);
       dl->AddText(ImVec2(a.x-20, plot1_.y+8), col, label);
     };
@@ -532,4 +596,3 @@ private:
     }
   }
 };
-

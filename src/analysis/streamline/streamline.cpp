@@ -1,7 +1,9 @@
 #include <Eigen/Core>
 #include <nanoflann.hpp>
 
+#include <array>
 #include <limits>
+#include <sstream>
 
 #include "analysis/streamline/streamline.h"
 
@@ -19,6 +21,31 @@ inline Eigen::Vector3f toEigen(const float p[3]) {
 inline float limiter_ratio(float dq_allowed, float dq_trial) {
   if (dq_trial <= 0.0f) return 1.0f;
   return std::clamp(dq_allowed / dq_trial, 0.0f, 1.0f);
+}
+
+inline int stopReasonIndex(StreamlineStopReason reason) {
+  return static_cast<int>(reason);
+}
+
+const char* stopReasonName(StreamlineStopReason reason) {
+  switch (reason) {
+    case StreamlineStopReason::None: return "none";
+    case StreamlineStopReason::SeedOutsideRegion: return "seed outside region";
+    case StreamlineStopReason::FieldEvalFailed: return "field eval failed";
+    case StreamlineStopReason::WeakField: return "weak field";
+    case StreamlineStopReason::OutOfBounds: return "out of bounds";
+    case StreamlineStopReason::ZeroStep: return "zero step";
+    case StreamlineStopReason::MaxStepsReached: return "max steps reached";
+  }
+  return "unknown";
+}
+
+float polylineLength(const std::vector<Vec3>& points) {
+  float total = 0.0f;
+  for (size_t i = 1; i < points.size(); ++i) {
+    total += len(points[i] - points[i - 1]);
+  }
+  return total;
 }
 
 }  // namespace
@@ -100,7 +127,7 @@ StreamlineComputer::selectSeeds(const TrackingVector<ParticleData>& particles,
 
 StreamlineComputer::SeedPoint
 StreamlineComputer::makeManualSeed(const TrackingVector<ParticleData>& particles,
-                                   const float seed[3]) const
+                                   const std::array<float, 3>& seed) const
 {
   float nearestDist2 = std::numeric_limits<float>::max();
   float hsml = 1.0e-6f;
@@ -120,12 +147,17 @@ StreamlineComputer::makeManualSeed(const TrackingVector<ParticleData>& particles
   return {{seed[0], seed[1], seed[2]}, hsml};
 }
 
-std::vector<std::vector<Vec3>>
+StreamlineBuildOutput
 StreamlineComputer::build(const ParticleBlock& particles,
                           const StreamlineBuildSpec& spec)
 {
+  StreamlineBuildOutput output;
+
   const Bounds gasBounds = makeGasBounds(particles.particles);
-  if (!gasBounds.valid) return {};
+  if (!gasBounds.valid) {
+    output.message = "No gas particles are available for streamline seeds.";
+    return output;
+  }
 
   Bounds seedBounds = makeBoxBounds(spec.seedRegion);
   if (!seedBounds.valid) seedBounds = gasBounds;
@@ -135,37 +167,88 @@ StreamlineComputer::build(const ParticleBlock& particles,
 
   std::vector<SeedPoint> seeds;
   if (spec.useManualSeed) {
-    seeds.push_back(makeManualSeed(particles.particles, spec.manualSeed));
+    for (const auto& seed : spec.manualSeeds) {
+      seeds.push_back(makeManualSeed(particles.particles, seed));
+    }
   } else {
     seeds = selectSeeds(particles.particles, seedBounds, spec.nSeeds);
   }
-  if (seeds.empty()) return {};
+  if (seeds.empty()) {
+    output.message = "No seed particles were found in the selected seed region.";
+    return output;
+  }
 
-  estimate_gradB(particles, fieldBounds);
+  if (spec.fieldSource == StreamlineBuildSpec::FieldSource::BField &&
+      !particles.hasSoAAs(soa_views::Bfield)) {
+    output.message = "B field was requested, but this snapshot has no Bfield data.";
+    return output;
+  }
+
+  estimate_gradB(particles, fieldBounds, spec.fieldSource);
+  if (!m_kdTree || cloud.particles.empty()) {
+    output.message = "No field particles were found in the selected streamline region.";
+    return output;
+  }
 
   const float theta_max =
     static_cast<float>(spec.thetaMaxDegrees * 3.14159265358979323846 / 180.0);
+  const int maxSteps = std::max(1, spec.maxSteps);
+  const float stepScale = std::max(1.0e-4f, spec.stepScale);
 
-  std::vector<std::vector<Vec3>> lines;
-  lines.reserve(seeds.size());
+  output.seedCount = static_cast<int>(seeds.size());
+  output.lines.reserve(seeds.size());
 
-  for (const auto& seed : seeds) {
+  output.seedReports.reserve(seeds.size());
+  for (size_t seedIndex = 0; seedIndex < seeds.size(); ++seedIndex) {
+    const auto& seed = seeds[seedIndex];
     const float h_init = std::max(1.0e-6f, 0.1f * seed.hsml);
-    auto line = integrateBiStreamline(seed.pos, h_init, MaxStep);
-    lines.push_back(sampleByCurvature(line, theta_max));
+    auto trace = integrateBiStreamline(seed.pos, h_init, maxSteps, stepScale);
+    ++output.stopCounts[stopReasonIndex(trace.stopReason)];
+
+    auto sampled = sampleByCurvature(trace.points, theta_max);
+    StreamlineSeedReport report;
+    report.seedIndex = static_cast<int>(seedIndex);
+    report.position[0] = seed.pos.x;
+    report.position[1] = seed.pos.y;
+    report.position[2] = seed.pos.z;
+    report.stopReason = trace.stopReason;
+    report.pointCount = static_cast<int>(sampled.size());
+    report.length = polylineLength(sampled);
+    output.seedReports.push_back(report);
+
+    if (!sampled.empty()) {
+      output.lines.push_back(std::move(sampled));
+    }
   }
 
-  return lines;
+  output.ok = !output.lines.empty();
+  output.lineCount = static_cast<int>(output.lines.size());
+  std::ostringstream msg;
+  msg << (output.ok ? "Streamline build completed" : "No visible streamlines")
+      << " (lines=" << output.lineCount
+      << ", seeds=" << output.seedCount
+      << "). Stops:";
+  bool anyStop = false;
+  for (int i = 0; i < static_cast<int>(output.stopCounts.size()); ++i) {
+    if (output.stopCounts[i] == 0) continue;
+    anyStop = true;
+    msg << " " << stopReasonName(static_cast<StreamlineStopReason>(i))
+        << "=" << output.stopCounts[i] << ";";
+  }
+  if (!anyStop) msg << " none=0;";
+  output.message = msg.str();
+  return output;
 }
 
 void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
-                                        const Bounds& fieldBounds) {
+                                        const Bounds& fieldBounds,
+                                        StreamlineBuildSpec::FieldSource fieldSource) {
   fieldBounds_ = fieldBounds;
 
   TrackingVector<particle_stream> p_stream;
   p_stream.reserve(particleBlock.particles.size());
 
-  const bool flag_Bfield = particleBlock.hasSoAAs(soa_views::Bfield);
+  const bool useBfield = fieldSource == StreamlineBuildSpec::FieldSource::BField;
 
   for (size_t i = 0; i < particleBlock.particles.size(); ++i) {
     const ParticleData& p = particleBlock.particles[i];
@@ -180,7 +263,7 @@ void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
     ps.pos[2] = p.pos[2];
     ps.cell_size = std::max(1.0e-6f, p.Hsml);
 
-    if (flag_Bfield) {
+    if (useBfield) {
       float bf[3] = {0.0f, 0.0f, 0.0f};
       if (particleBlock.readSoAAs(soa_views::Bfield, i, bf)) {
         ps.vect[0] = bf[0];
@@ -366,33 +449,40 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
   return true;
 }
 
-bool StreamlineComputer::evalDirectionAt(const Vec3& x, Vec3& dir, float& hsml) const {
+StreamlineStopReason StreamlineComputer::evalDirectionAt(const Vec3& x,
+                                                         Vec3& dir,
+                                                         float& hsml) const {
   float buf[3] = {0.0f, 0.0f, 0.0f};
   if (!evalFieldAt(&x.x, buf, hsml)) {
     dir = {0.0f, 0.0f, 0.0f};
-    return false;
+    return StreamlineStopReason::FieldEvalFailed;
   }
 
   const Vec3 B{buf[0], buf[1], buf[2]};
   const float b = len(B);
   if (b <= WeakFieldFloor) {
     dir = {0.0f, 0.0f, 0.0f};
-    return false;
+    return StreamlineStopReason::WeakField;
   }
 
   dir = B / b;
-  return true;
+  return StreamlineStopReason::None;
 }
 
-bool StreamlineComputer::RK4stepArcLength(const Vec3& x, float& h, float sign, Vec3& x_next) const {
+StreamlineStopReason StreamlineComputer::RK4stepArcLength(const Vec3& x,
+                                                          float& h,
+                                                          float sign,
+                                                          float stepScale,
+                                                          Vec3& x_next) const {
   Vec3 k1, k2, k3, k4;
   float hsml1 = 0.0f, hsml2 = 0.0f, hsml3 = 0.0f, hsml4 = 0.0f;
 
-  if (!evalDirectionAt(x, k1, hsml1)) return false;
+  StreamlineStopReason reason = evalDirectionAt(x, k1, hsml1);
+  if (reason != StreamlineStopReason::None) return reason;
 
   const float h_abs_prev = std::abs(h);
   const float h_abs = clamp_positive(
-      0.15f * hsml1,
+      stepScale * hsml1,
       std::max(1.0e-6f, MinStepFrac * hsml1),
       std::max(2.0e-6f, MaxStepFrac * hsml1));
 
@@ -400,53 +490,84 @@ bool StreamlineComputer::RK4stepArcLength(const Vec3& x, float& h, float sign, V
       ? std::copysign(std::min(std::max(h_abs_prev, 0.5f * h_abs), 2.0f * h_abs), sign)
       : std::copysign(h_abs, sign);
 
-  if (!evalDirectionAt(x + k1 * (0.5f * ds), k2, hsml2)) return false;
-  if (!evalDirectionAt(x + k2 * (0.5f * ds), k3, hsml3)) return false;
-  if (!evalDirectionAt(x + k3 * ds, k4, hsml4)) return false;
+  reason = evalDirectionAt(x + k1 * (0.5f * ds), k2, hsml2);
+  if (reason != StreamlineStopReason::None) return reason;
+  reason = evalDirectionAt(x + k2 * (0.5f * ds), k3, hsml3);
+  if (reason != StreamlineStopReason::None) return reason;
+  reason = evalDirectionAt(x + k3 * ds, k4, hsml4);
+  if (reason != StreamlineStopReason::None) return reason;
 
   x_next = x + (k1 + k2 * 2.0f + k3 * 2.0f + k4) * (ds / 6.0f);
   h = ds;
-  return true;
+  return StreamlineStopReason::None;
 }
 
-std::vector<Vec3> StreamlineComputer::integrateStreamline(const Vec3& seed, float h_init, int maxSteps, float sign) const {
-  std::vector<Vec3> line;
-  line.reserve(std::min(maxSteps, 4096));
+StreamlineTrace StreamlineComputer::integrateStreamline(const Vec3& seed,
+                                                        float h_init,
+                                                        int maxSteps,
+                                                        float sign,
+                                                        float stepScale) const {
+  StreamlineTrace trace;
+  trace.points.reserve(std::min(maxSteps, 4096));
 
   Vec3 x = seed;
   float h = h_init;
 
-  if (!is_inside_(x)) return line;
+  if (!is_inside_(x)) {
+    trace.stopReason = StreamlineStopReason::SeedOutsideRegion;
+    return trace;
+  }
 
   for (int i = 0; i < maxSteps; ++i) {
-    line.push_back(x);
+    trace.points.push_back(x);
     
     Vec3 x_next;
-    if (!RK4stepArcLength(x, h, sign, x_next)) break;
+    StreamlineStopReason reason =
+      RK4stepArcLength(x, h, sign, stepScale, x_next);
+    if (reason != StreamlineStopReason::None) {
+      trace.stopReason = reason;
+      return trace;
+    }
     
-    if (!is_inside_(x_next)) break;
+    if (!is_inside_(x_next)) {
+      trace.stopReason = StreamlineStopReason::OutOfBounds;
+      return trace;
+    }
 
     const Vec3 dx = x_next - x;
-    if (len2(dx) <= 1.0e-24f) break;
+    if (len2(dx) <= 1.0e-24f) {
+      trace.stopReason = StreamlineStopReason::ZeroStep;
+      return trace;
+    }
 
     x = x_next;
   }
 
-  return line;
+  trace.stopReason = StreamlineStopReason::MaxStepsReached;
+  return trace;
 }
 
-std::vector<Vec3> StreamlineComputer::integrateBiStreamline(const Vec3& seed, float h_init, int maxSteps) const {
-  auto backward = integrateStreamline(seed, h_init, maxSteps, -1.0f);
-  auto forward = integrateStreamline(seed, h_init, maxSteps, +1.0f);
+StreamlineTrace StreamlineComputer::integrateBiStreamline(const Vec3& seed,
+                                                          float h_init,
+                                                          int maxSteps,
+                                                          float stepScale) const {
+  auto backward = integrateStreamline(seed, h_init, maxSteps, -1.0f, stepScale);
+  auto forward = integrateStreamline(seed, h_init, maxSteps, +1.0f, stepScale);
 
-  std::vector<Vec3> fullLine;
-  if (!backward.empty()) {
-    std::reverse(backward.begin(), backward.end());
-    fullLine.insert(fullLine.end(), backward.begin(), backward.end());
-    if (!fullLine.empty()) fullLine.pop_back();
+  StreamlineTrace trace;
+  trace.stopReason = forward.stopReason != StreamlineStopReason::MaxStepsReached
+    ? forward.stopReason
+    : backward.stopReason;
+
+  if (!backward.points.empty()) {
+    std::reverse(backward.points.begin(), backward.points.end());
+    trace.points.insert(trace.points.end(),
+                        backward.points.begin(),
+                        backward.points.end());
+    if (!trace.points.empty()) trace.points.pop_back();
   }
-  fullLine.insert(fullLine.end(), forward.begin(), forward.end());
-  return fullLine;
+  trace.points.insert(trace.points.end(), forward.points.begin(), forward.points.end());
+  return trace;
 }
 
 bool StreamlineComputer::is_inside_(const Vec3& x) const {
