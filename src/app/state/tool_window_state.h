@@ -47,6 +47,11 @@ struct ProjectionMapUIState {
   ProjectionMapParams draftParams;
   bool useOriginalCoordinate = true;
   bool selectMode = false;
+  bool dragInitialized = false;
+  float dragLastX = 0.0f;
+  float dragLastY = 0.0f;
+  bool previewOpen = true;
+  uint64_t observedPreviewVersion = 0;
 
   bool fontWindowOpen = false;
   bool fontListRefreshRequested = true;

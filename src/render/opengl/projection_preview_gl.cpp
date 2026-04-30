@@ -8,6 +8,7 @@ ProjectionPreviewUIState ProjectionPreviewGL::makeUIState() const
   ui.textureId = (void*)(intptr_t)tex_;
   ui.width = width_;
   ui.height = height_;
+  ui.version = uploadedVersion_;
   ui.valid = (tex_ != 0 && width_ > 0 && height_ > 0);
   return ui;
 }

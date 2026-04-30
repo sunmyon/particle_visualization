@@ -447,15 +447,22 @@ bool VulkanContext::createDevice()
 
 bool VulkanContext::createDescriptorPool()
 {
+  // ImGui's Vulkan backend consumes one combined image sampler for the font
+  // atlas. Projection preview registers at most one additional live texture:
+  // the preview descriptor is reused for same-size updates and removed before
+  // reallocating after a size change. Keep a large spare margin for future
+  // ImGui textures because ImGui_ImplVulkan_AddTexture() does not expose a
+  // recoverable allocation status in this bundled backend.
+  constexpr std::uint32_t kImGuiCombinedImageSamplerDescriptors = 64;
   VkDescriptorPoolSize poolSizes[] = {
     { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-      IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
+      kImGuiCombinedImageSamplerDescriptors },
   };
 
   VkDescriptorPoolCreateInfo poolInfo{};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  poolInfo.maxSets = poolSizes[0].descriptorCount;
+  poolInfo.maxSets = kImGuiCombinedImageSamplerDescriptors;
   poolInfo.poolSizeCount = 1;
   poolInfo.pPoolSizes = poolSizes;
 

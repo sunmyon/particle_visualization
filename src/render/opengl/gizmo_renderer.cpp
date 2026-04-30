@@ -1,11 +1,28 @@
 #include "render/opengl/gizmo_renderer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
+
+namespace {
+
+ImVec2 PhysicalToImGui(float x, float y)
+{
+  const ImGuiIO& io = ImGui::GetIO();
+  const float scaleX = io.DisplayFramebufferScale.x > 0.0f
+                         ? io.DisplayFramebufferScale.x
+                         : 1.0f;
+  const float scaleY = io.DisplayFramebufferScale.y > 0.0f
+                         ? io.DisplayFramebufferScale.y
+                         : 1.0f;
+  return ImVec2(x / scaleX, y / scaleY);
+}
+
+} // namespace
 
 void CrossGizmoRenderer::init()
 {
@@ -42,7 +59,7 @@ void CrossGizmoRenderer::draw(const GizmoDrawContext& ctx,
 
   GLboolean wasDepthTest = glIsEnabled(GL_DEPTH_TEST);
   glDisable(GL_DEPTH_TEST);
-  glLineWidth(3.0f);
+  glLineWidth(4.0f);
 
   glm::vec3 forward  = glm::normalize(state.cameraTarget - state.cameraPos);
   glm::vec3 rightVec = glm::normalize(glm::cross(forward, state.cameraUp));
@@ -143,31 +160,47 @@ void CoordAxesRenderer::draw(const GizmoDrawContext& ctx,
 
   glLineWidth(3.0f);
 
-  glm::mat4 P_ortho = glm::ortho(-1.0f, +1.0f,
-                                 -1.0f, +1.0f,
-                                 -1.0f, +1.0f);
-
-  glm::mat4 T = glm::translate(glm::mat4(1.0f),
-                               glm::vec3(+0.85f, -0.75f, 0.0f));
-  glm::mat4 S = glm::scale(glm::mat4(1.0f),
-                           glm::vec3(0.1f, 0.1f, 0.1f));
-
-  glm::mat4 R_c = glm::mat4(glm::mat3(ctx.view));
-  glm::mat4 model_axes = T * R_c * S;
-
   glUseProgram(ctx.coordProgram);
 
-  GLint locModel      = glGetUniformLocation(ctx.coordProgram, "model");
-  GLint locView       = glGetUniformLocation(ctx.coordProgram, "view");
-  GLint locProjection = glGetUniformLocation(ctx.coordProgram, "projection");
+  const glm::mat3 viewRot(ctx.view);
+  const GLint locCamRot = glGetUniformLocation(ctx.coordProgram, "uCamRot");
+  const GLint locScale  = glGetUniformLocation(ctx.coordProgram, "uScale");
+  const GLint locOffset = glGetUniformLocation(ctx.coordProgram, "uOffset");
+  GLint viewport[4] = {0, 0, 1, 1};
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  const float width = static_cast<float>(std::max(viewport[2], 1));
+  const float height = static_cast<float>(std::max(viewport[3], 1));
+  const float axisScale = 0.17f;
+  const glm::vec2 offset(0.80f, -0.68f);
 
-  glUniformMatrix4fv(locModel,      1, GL_FALSE, glm::value_ptr(model_axes));
-  glUniformMatrix4fv(locView,       1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
-  glUniformMatrix4fv(locProjection, 1, GL_FALSE, glm::value_ptr(P_ortho));
+  glUniformMatrix3fv(locCamRot, 1, GL_FALSE, glm::value_ptr(viewRot));
+  glUniform2f(locScale, axisScale * height / width, axisScale);
+  glUniform2f(locOffset, offset.x, offset.y);
 
   glBindVertexArray(vao_);
   glDrawArrays(GL_LINES, 0, 6);
   glBindVertexArray(0);
+
+  if (ImDrawList* drawList = ImGui::GetBackgroundDrawList()) {
+    auto drawLabel = [&](const glm::vec3& axis,
+                         ImU32 color,
+                         const char* label) {
+      const glm::vec3 dir = viewRot * axis;
+      const glm::vec2 ndc =
+        offset + glm::vec2(dir.x * axisScale * height / width,
+                           dir.y * axisScale);
+      const float px = static_cast<float>(viewport[0]) +
+                       (ndc.x * 0.5f + 0.5f) * width;
+      const float py = static_cast<float>(viewport[1]) +
+                       (1.0f - (ndc.y * 0.5f + 0.5f)) * height;
+      const ImVec2 textPos = PhysicalToImGui(px + 4.0f, py + 4.0f);
+      drawList->AddText(textPos, color, label);
+    };
+
+    drawLabel(glm::vec3(1.0f, 0.0f, 0.0f), IM_COL32(255, 80, 80, 240), "X");
+    drawLabel(glm::vec3(0.0f, 1.0f, 0.0f), IM_COL32(80, 255, 80, 240), "Y");
+    drawLabel(glm::vec3(0.0f, 0.0f, 1.0f), IM_COL32(240, 240, 255, 240), "Z");
+  }
 
   glDepthMask(GL_TRUE);
   if (wasDepthTest) glEnable(GL_DEPTH_TEST);
@@ -343,7 +376,7 @@ void ColorbarLabelRenderer::draw(const ColorbarGizmoState& gizmo) const
   float scaleX = io.DisplayFramebufferScale.x;
   float scaleY = io.DisplayFramebufferScale.y;
 
-  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
   if (!drawList) return;
 
   const auto& layout = gizmo.layout;

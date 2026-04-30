@@ -324,7 +324,7 @@ static void DrawToolWindows(AppRuntimeState& runtime,
 		       runtime.settings.fileNavigation.navigation,
                        runtime.settings.fileNavigation.current);
 
-  DrawProjectionPreviewUI(projectionPreview);
+  DrawProjectionPreviewUI(tools.projectionMap, projectionPreview);
 }
 
 static void UpdateExternalInputs(AppServices& services,
@@ -532,6 +532,10 @@ void RunFrame(AppState& app,
               IFramePresenter& presenter)
 {
   BeginFrame(app.runtime, window);
+
+  app.view.camera.stopCameraMode =
+    app.ui.toolWindows.projectionMap.open &&
+    app.ui.toolWindows.projectionMap.selectMode;
 
   const InputExecutionResult inputResult =
     ExecuteInputEvents(app.runtime.inputEvents,

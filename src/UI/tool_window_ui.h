@@ -72,4 +72,5 @@ bool DrawMaskWindow(MaskUIState& ui,
                     MaskRequestState& request,
                     ParticleMaskConfig& mask);
 
-void DrawProjectionPreviewUI(const ProjectionPreviewUIState& st);
+void DrawProjectionPreviewUI(ProjectionMapUIState& state,
+                             const ProjectionPreviewUIState& st);

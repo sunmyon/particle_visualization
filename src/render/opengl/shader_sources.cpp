@@ -338,7 +338,7 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aColor;
 
 uniform mat3 uCamRot;    // Transposed inverse of the world-to-camera rotation; camera orientation.
-uniform float uScale;    // Axis length on screen, in NDC units.
+uniform vec2  uScale;    // Axis length on screen, aspect-corrected NDC units.
 uniform vec2  uOffset;   // Reference point at the lower-right of the screen, in NDC units.
 
 out vec3 vColor;

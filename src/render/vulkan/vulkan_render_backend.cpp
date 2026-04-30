@@ -1,6 +1,7 @@
 #include "render/render_backend.h"
 
 #include "platform/vulkan_context.h"
+#include "image/rgb_image.h"
 #include "projection/projection_map_ui_state.h"
 #include "render/colormap_defs.h"
 #include "render/render_resources.h"
@@ -9,6 +10,7 @@
 #include <vulkan/vulkan.h>
 
 #include <imgui.h>
+#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -19,11 +21,14 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 
 namespace {
 
@@ -132,6 +137,48 @@ struct VisualUniform {
   glm::uvec4 masks{0u};
   glm::vec4 fixedColor{1.0f, 0.9f, 0.2f, 0.92f};
   glm::vec4 renderParams{0.92f, 11.0f, 0.0f, 0.0f};
+};
+
+struct SolidUniform {
+  glm::mat4 view{1.0f};
+  glm::mat4 projection{1.0f};
+};
+
+struct SolidPushConstants {
+  float opacityScale = 1.0f;
+};
+
+struct SolidVertex {
+  glm::vec3 pos{0.0f};
+};
+
+struct SolidInstance {
+  glm::mat4 model{1.0f};
+  glm::vec3 color{1.0f};
+  float opacity = 1.0f;
+};
+
+struct SolidMesh {
+  VulkanBuffer vertexBuffer;
+  VulkanBuffer indexBuffer;
+  std::uint32_t indexCount = 0;
+};
+
+struct SolidInstanceSet {
+  VulkanBuffer buffer;
+  std::size_t count = 0;
+  RenderSceneVersion version = 0;
+};
+
+struct LineVertex {
+  glm::vec3 pos{0.0f};
+  glm::vec4 color{1.0f};
+};
+
+struct LineVertexSet {
+  VulkanBuffer buffer;
+  std::size_t count = 0;
+  RenderSceneVersion version = 0;
 };
 
 constexpr std::uint32_t kColormapAtlasWidth = 256;
@@ -264,6 +311,150 @@ glm::vec3 SafeNormalize(const glm::vec3& v, const glm::vec3& fallback)
   return v / std::sqrt(len2);
 }
 
+struct SolidMeshData {
+  std::vector<SolidVertex> vertices;
+  std::vector<std::uint32_t> indices;
+};
+
+SolidMeshData BuildCubeMeshData()
+{
+  SolidMeshData mesh;
+  const SolidVertex vertices[] = {
+    {{-0.5f, -0.5f, -0.5f}},
+    {{ 0.5f, -0.5f, -0.5f}},
+    {{ 0.5f,  0.5f, -0.5f}},
+    {{-0.5f,  0.5f, -0.5f}},
+    {{-0.5f, -0.5f,  0.5f}},
+    {{ 0.5f, -0.5f,  0.5f}},
+    {{ 0.5f,  0.5f,  0.5f}},
+    {{-0.5f,  0.5f,  0.5f}},
+  };
+  const std::uint32_t indices[] = {
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4,
+    4, 0, 3, 3, 7, 4,
+    1, 5, 6, 6, 2, 1,
+    4, 5, 1, 1, 0, 4,
+    3, 2, 6, 6, 7, 3,
+  };
+  mesh.vertices.assign(std::begin(vertices), std::end(vertices));
+  mesh.indices.assign(std::begin(indices), std::end(indices));
+  return mesh;
+}
+
+SolidMeshData BuildSphereMeshData(int stacks = 32, int slices = 64)
+{
+  SolidMeshData mesh;
+  for (int i = 0; i <= stacks; ++i) {
+    const float v = static_cast<float>(i) / static_cast<float>(stacks);
+    const float phi = glm::pi<float>() * (v - 0.5f);
+    const float z = std::sin(phi);
+    const float r = std::cos(phi);
+    for (int j = 0; j <= slices; ++j) {
+      const float u = static_cast<float>(j) / static_cast<float>(slices);
+      const float theta = 2.0f * glm::pi<float>() * u;
+      mesh.vertices.push_back({{r * std::cos(theta),
+                                r * std::sin(theta),
+                                z}});
+    }
+  }
+
+  for (int i = 0; i < stacks; ++i) {
+    for (int j = 0; j < slices; ++j) {
+      const std::uint32_t a =
+        static_cast<std::uint32_t>(i * (slices + 1) + j);
+      const std::uint32_t b =
+        static_cast<std::uint32_t>((i + 1) * (slices + 1) + j);
+      mesh.indices.insert(mesh.indices.end(),
+                          {a, b, b + 1u, a, b + 1u, a + 1u});
+    }
+  }
+  return mesh;
+}
+
+SolidMeshData BuildDiskMeshData(int slices = 64)
+{
+  SolidMeshData mesh;
+  mesh.vertices.push_back({{0.0f,  0.5f, 0.0f}});
+  mesh.vertices.push_back({{0.0f, -0.5f, 0.0f}});
+
+  for (int i = 0; i <= slices; ++i) {
+    const float th = 2.0f * glm::pi<float>() *
+                     static_cast<float>(i) / static_cast<float>(slices);
+    const float x = std::cos(th);
+    const float z = std::sin(th);
+    mesh.vertices.push_back({{x,  0.5f, z}});
+    mesh.vertices.push_back({{x, -0.5f, z}});
+  }
+
+  for (int i = 0; i < slices; ++i) {
+    const std::uint32_t ii = static_cast<std::uint32_t>(i);
+    mesh.indices.insert(mesh.indices.end(),
+                        {0u, 2u + ii * 2u, 2u + (ii + 1u) * 2u});
+    mesh.indices.insert(mesh.indices.end(),
+                        {1u, 3u + (ii + 1u) * 2u, 3u + ii * 2u});
+  }
+  for (int i = 0; i < slices; ++i) {
+    const std::uint32_t a = 2u + static_cast<std::uint32_t>(i) * 2u;
+    const std::uint32_t b = a + 1u;
+    const std::uint32_t c = 2u + static_cast<std::uint32_t>(i + 1) * 2u;
+    const std::uint32_t d = c + 1u;
+    mesh.indices.insert(mesh.indices.end(), {a, b, c, c, b, d});
+  }
+  return mesh;
+}
+
+const std::vector<std::pair<int, int>>& AllCuboidEdges()
+{
+  static const std::vector<std::pair<int, int>> edges = {
+    {0, 1}, {1, 2}, {2, 3}, {3, 0},
+    {4, 5}, {5, 6}, {6, 7}, {7, 4},
+    {0, 4}, {1, 5}, {2, 6}, {3, 7},
+  };
+  return edges;
+}
+
+const std::vector<std::pair<int, int>>& SelectedCuboidAxisEdges(
+  CuboidAxis axis)
+{
+  static const std::vector<std::pair<int, int>> xEdges = {
+    {0, 1}, {3, 2}, {4, 5}, {7, 6},
+  };
+  static const std::vector<std::pair<int, int>> yEdges = {
+    {1, 2}, {0, 3}, {5, 6}, {4, 7},
+  };
+  static const std::vector<std::pair<int, int>> zEdges = {
+    {0, 4}, {1, 5}, {2, 6}, {3, 7},
+  };
+
+  switch (axis) {
+    case CuboidAxis::X: return xEdges;
+    case CuboidAxis::Y: return yEdges;
+    case CuboidAxis::Z: return zEdges;
+  }
+  return zEdges;
+}
+
+void AppendLinePair(std::vector<LineVertex>& out,
+                    const glm::vec3& a,
+                    const glm::vec3& b,
+                    const glm::vec4& color)
+{
+  out.push_back({a, color});
+  out.push_back({b, color});
+}
+
+void AppendCuboidEdges(std::vector<LineVertex>& out,
+                       const CuboidObject& cuboid,
+                       const std::vector<std::pair<int, int>>& edges,
+                       const glm::vec4& color)
+{
+  const std::array<glm::vec3, 8> corners = computeCuboidCorners(cuboid);
+  for (const auto& edge : edges) {
+    AppendLinePair(out, corners[edge.first], corners[edge.second], color);
+  }
+}
+
 } // namespace
 
 class VulkanRenderBackend final : public RenderBackend {
@@ -290,6 +481,8 @@ public:
       vkDeviceWaitIdle(device_);
     }
     destroyPipeline();
+    destroySolidResources();
+    destroyProjectionPreviewResources();
     destroyBuffer(particleBuffer_);
     destroyBuffer(stressParticleBuffer_);
     for (VulkanBuffer& buffer : visualBuffers_) {
@@ -349,15 +542,18 @@ public:
     }
     syncParticles(scene);
     syncStressParticles(scene);
+    syncSolidInstances(scene);
+    syncLineVertices(scene);
     syncVisualUniform(0, false);
     syncVisualUniform(1, true);
+    syncSolidUniform();
     drawColorbarOverlay();
     drawGizmoOverlays();
   }
 
-  void updateProjectionPreview(const RgbImage&) override
+  void updateProjectionPreview(const RgbImage& image) override
   {
-    preview_ = ProjectionPreviewUIState{};
+    uploadProjectionPreview(image);
   }
 
   ProjectionPreviewUIState makeProjectionPreviewUIState() const override
@@ -369,8 +565,12 @@ public:
   {
     RenderBackendCapabilities caps;
     caps.particles = true;
+    caps.instancedObjects = true;
+    caps.lines = true;
+    caps.polyhedra = true;
     caps.colorbar = true;
     caps.gizmos = true;
+    caps.projectionPreview = true;
     return caps;
   }
 
@@ -496,7 +696,7 @@ private:
     if (!frame_.valid) {
       return;
     }
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) {
       return;
     }
@@ -518,7 +718,7 @@ private:
       return;
     }
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) {
       return;
     }
@@ -638,6 +838,315 @@ private:
                 scene.stressParticles.data(),
                 static_cast<std::size_t>(bytes));
     vkUnmapMemory(device_, stressParticleBuffer_.memory);
+  }
+
+  bool uploadToBuffer(VulkanBuffer& buffer,
+                      const void* data,
+                      VkDeviceSize bytes,
+                      VkBufferUsageFlags usage,
+                      const char* label)
+  {
+    if (bytes == 0) {
+      return true;
+    }
+    if (buffer.size < bytes) {
+      destroyBuffer(buffer);
+      buffer = createBuffer(bytes, usage);
+    }
+    if (buffer.memory == VK_NULL_HANDLE) {
+      return false;
+    }
+
+    void* mapped = nullptr;
+    if (!Check(vkMapMemory(device_, buffer.memory, 0, bytes, 0, &mapped),
+               label)) {
+      return false;
+    }
+    std::memcpy(mapped, data, static_cast<std::size_t>(bytes));
+    vkUnmapMemory(device_, buffer.memory);
+    return true;
+  }
+
+  bool uploadSolidMesh(SolidMesh& mesh, const SolidMeshData& data)
+  {
+    const VkDeviceSize vertexBytes =
+      static_cast<VkDeviceSize>(data.vertices.size() * sizeof(SolidVertex));
+    const VkDeviceSize indexBytes =
+      static_cast<VkDeviceSize>(data.indices.size() * sizeof(std::uint32_t));
+    if (vertexBytes == 0 || indexBytes == 0) {
+      return false;
+    }
+
+    const bool vertexOk =
+      uploadToBuffer(mesh.vertexBuffer,
+                     data.vertices.data(),
+                     vertexBytes,
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     "vkMapMemory(solid vertices)");
+    const bool indexOk =
+      uploadToBuffer(mesh.indexBuffer,
+                     data.indices.data(),
+                     indexBytes,
+                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                     "vkMapMemory(solid indices)");
+    if (vertexOk && indexOk) {
+      mesh.indexCount = static_cast<std::uint32_t>(data.indices.size());
+      return true;
+    }
+    return false;
+  }
+
+  bool ensureSolidMeshes()
+  {
+    if (cubeMesh_.indexCount == 0 && !uploadSolidMesh(cubeMesh_,
+                                                      BuildCubeMeshData())) {
+      return false;
+    }
+    if (ellipsoidMesh_.indexCount == 0 &&
+        !uploadSolidMesh(ellipsoidMesh_, BuildSphereMeshData())) {
+      return false;
+    }
+    if (diskMesh_.indexCount == 0 &&
+        !uploadSolidMesh(diskMesh_, BuildDiskMeshData())) {
+      return false;
+    }
+    return true;
+  }
+
+  bool ensureSolidDescriptorResources()
+  {
+    if (solidDescriptorSetLayout_ != VK_NULL_HANDLE) {
+      return solidDescriptorSet_ != VK_NULL_HANDLE &&
+             solidUniformBuffer_.buffer != VK_NULL_HANDLE;
+    }
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    if (!Check(vkCreateDescriptorSetLayout(device_,
+                                           &layoutInfo,
+                                           nullptr,
+                                           &solidDescriptorSetLayout_),
+               "vkCreateDescriptorSetLayout(solid)")) {
+      return false;
+    }
+
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    if (!Check(vkCreateDescriptorPool(device_,
+                                      &poolInfo,
+                                      nullptr,
+                                      &solidDescriptorPool_),
+               "vkCreateDescriptorPool(solid)")) {
+      return false;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = solidDescriptorPool_;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &solidDescriptorSetLayout_;
+    if (!Check(vkAllocateDescriptorSets(device_,
+                                        &allocInfo,
+                                        &solidDescriptorSet_),
+               "vkAllocateDescriptorSets(solid)")) {
+      return false;
+    }
+
+    solidUniformBuffer_ = createBuffer(sizeof(SolidUniform),
+                                       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    if (solidUniformBuffer_.buffer == VK_NULL_HANDLE) {
+      return false;
+    }
+
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = solidUniformBuffer_.buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(SolidUniform);
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = solidDescriptorSet_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &bufferInfo;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    return true;
+  }
+
+  void syncSolidUniform()
+  {
+    if (!frame_.valid || !ensureSolidDescriptorResources()) {
+      return;
+    }
+    SolidUniform uniform;
+    uniform.view = frame_.matrices.view;
+    uniform.projection = frame_.matrices.projection;
+    uniform.projection[1][1] *= -1.0f;
+    uploadToBuffer(solidUniformBuffer_,
+                   &uniform,
+                   sizeof(uniform),
+                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                   "vkMapMemory(solid uniform)");
+  }
+
+  void syncSolidInstanceSet(const std::vector<InstancedSolidItem>& items,
+                            RenderSceneVersion version,
+                            SolidInstanceSet& set,
+                            const char* label)
+  {
+    if (set.version == version) {
+      set.count = items.size();
+      return;
+    }
+
+    set.version = version;
+    set.count = items.size();
+    if (items.empty()) {
+      return;
+    }
+
+    std::vector<SolidInstance> instances;
+    instances.reserve(items.size());
+    for (const InstancedSolidItem& item : items) {
+      SolidInstance instance;
+      instance.model = item.model;
+      instance.color = item.color;
+      instance.opacity = item.opacity;
+      instances.push_back(instance);
+    }
+
+    uploadToBuffer(set.buffer,
+                   instances.data(),
+                   static_cast<VkDeviceSize>(instances.size() *
+                                             sizeof(SolidInstance)),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                   label);
+  }
+
+  void syncSolidInstances(const RenderSceneData& scene)
+  {
+    if (!ensureSolidMeshes()) {
+      return;
+    }
+    syncSolidInstanceSet(scene.cubes,
+                         scene.cubesVersion,
+                         cubeInstances_,
+                         "vkMapMemory(cube instances)");
+    syncSolidInstanceSet(scene.ellipsoids,
+                         scene.ellipsoidsVersion,
+                         ellipsoidInstances_,
+                         "vkMapMemory(ellipsoid instances)");
+    syncSolidInstanceSet(scene.disks,
+                         scene.disksVersion,
+                         diskInstances_,
+                         "vkMapMemory(disk instances)");
+  }
+
+  void syncLineVertexSet(const std::vector<LineVertex>& vertices,
+                         RenderSceneVersion version,
+                         LineVertexSet& set,
+                         const char* label)
+  {
+    if (set.version == version) {
+      set.count = vertices.size();
+      return;
+    }
+
+    set.version = version;
+    set.count = vertices.size();
+    if (vertices.empty()) {
+      return;
+    }
+
+    uploadToBuffer(set.buffer,
+                   vertices.data(),
+                   static_cast<VkDeviceSize>(vertices.size() *
+                                             sizeof(LineVertex)),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                   label);
+  }
+
+  static std::vector<LineVertex> BuildLineVertices(
+    const std::vector<LineRenderItem>& lines)
+  {
+    std::vector<LineVertex> vertices;
+    for (const LineRenderItem& item : lines) {
+      const glm::vec4 color(item.color, item.opacity);
+      if (item.mode == LinePrimitiveMode::List) {
+        for (std::size_t i = 1; i < item.points.size(); i += 2) {
+          AppendLinePair(vertices, item.points[i - 1], item.points[i], color);
+        }
+      } else {
+        for (std::size_t i = 1; i < item.points.size(); ++i) {
+          AppendLinePair(vertices, item.points[i - 1], item.points[i], color);
+        }
+      }
+    }
+    return vertices;
+  }
+
+  static std::vector<LineVertex> BuildCuboidVertices(
+    const std::vector<CuboidRenderItem>& cuboids)
+  {
+    std::vector<LineVertex> vertices;
+    for (const CuboidRenderItem& item : cuboids) {
+      AppendCuboidEdges(vertices,
+                        item.cuboid,
+                        AllCuboidEdges(),
+                        item.cuboid.edgeColor);
+      if (item.showHighlight) {
+        AppendCuboidEdges(vertices,
+                          item.cuboid,
+                          SelectedCuboidAxisEdges(item.selectedAxis),
+                          item.highlightColor);
+      }
+    }
+    return vertices;
+  }
+
+  static std::vector<LineVertex> BuildPolyhedronVertices(
+    const std::vector<PolyhedronRenderItem>& polyhedra)
+  {
+    std::vector<LineVertex> vertices;
+    for (const PolyhedronRenderItem& item : polyhedra) {
+      const glm::vec4 color(item.color, item.opacity);
+      for (std::size_t i = 1; i < item.vertices.size(); i += 2) {
+        AppendLinePair(vertices, item.vertices[i - 1], item.vertices[i], color);
+      }
+    }
+    return vertices;
+  }
+
+  void syncLineVertices(const RenderSceneData& scene)
+  {
+    syncLineVertexSet(BuildLineVertices(scene.lines),
+                      scene.linesVersion,
+                      lineVertices_,
+                      "vkMapMemory(line vertices)");
+    syncLineVertexSet(BuildCuboidVertices(scene.cuboids),
+                      scene.cuboidsVersion,
+                      cuboidVertices_,
+                      "vkMapMemory(cuboid vertices)");
+    syncLineVertexSet(BuildPolyhedronVertices(scene.polyhedra),
+                      scene.polyhedraVersion,
+                      polyhedronVertices_,
+                      "vkMapMemory(polyhedron vertices)");
   }
 
   VulkanBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage)
@@ -781,6 +1290,12 @@ private:
         newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
       barrier.srcAccessMask = 0;
       barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+               newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
                newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -968,6 +1483,141 @@ private:
       return false;
     }
     return true;
+  }
+
+  bool ensureProjectionPreviewSampler()
+  {
+    if (previewSampler_ != VK_NULL_HANDLE) {
+      return true;
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    return Check(vkCreateSampler(device_, &samplerInfo, nullptr, &previewSampler_),
+                 "vkCreateSampler(projection preview)");
+  }
+
+  void destroyProjectionPreviewResources()
+  {
+    if (previewDescriptorSet_ != VK_NULL_HANDLE) {
+      ImGui_ImplVulkan_RemoveTexture(previewDescriptorSet_);
+      previewDescriptorSet_ = VK_NULL_HANDLE;
+    }
+    destroyImage(previewImage_);
+    if (previewSampler_ != VK_NULL_HANDLE) {
+      vkDestroySampler(device_, previewSampler_, nullptr);
+      previewSampler_ = VK_NULL_HANDLE;
+    }
+    preview_ = ProjectionPreviewUIState{};
+    previewVersion_ = 0;
+  }
+
+  void uploadProjectionPreview(const RgbImage& image)
+  {
+    if (device_ == VK_NULL_HANDLE || image.width <= 0 || image.height <= 0 ||
+        image.rgb.size() !=
+          static_cast<std::size_t>(image.width * image.height * 3)) {
+      return;
+    }
+    if (previewVersion_ == image.version && preview_.valid) {
+      return;
+    }
+    if (!ensureProjectionPreviewSampler()) {
+      return;
+    }
+
+    std::vector<unsigned char> rgba(
+      static_cast<std::size_t>(image.width) *
+      static_cast<std::size_t>(image.height) * 4u);
+    for (std::size_t src = 0, dst = 0; src + 2 < image.rgb.size();
+         src += 3, dst += 4) {
+      rgba[dst + 0] = image.rgb[src + 0];
+      rgba[dst + 1] = image.rgb[src + 1];
+      rgba[dst + 2] = image.rgb[src + 2];
+      rgba[dst + 3] = 255;
+    }
+
+    const bool sizeChanged =
+      image.width != preview_.width || image.height != preview_.height ||
+      previewImage_.image == VK_NULL_HANDLE;
+    if (sizeChanged) {
+      if (previewDescriptorSet_ != VK_NULL_HANDLE) {
+        ImGui_ImplVulkan_RemoveTexture(previewDescriptorSet_);
+        previewDescriptorSet_ = VK_NULL_HANDLE;
+      }
+      destroyImage(previewImage_);
+      previewImage_ = createImage(static_cast<std::uint32_t>(image.width),
+                                  static_cast<std::uint32_t>(image.height),
+                                  VK_FORMAT_R8G8B8A8_UNORM,
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT);
+      if (previewImage_.image == VK_NULL_HANDLE) {
+        preview_ = ProjectionPreviewUIState{};
+        return;
+      }
+    }
+
+    VulkanBuffer staging =
+      createBuffer(static_cast<VkDeviceSize>(rgba.size()),
+                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    if (staging.memory == VK_NULL_HANDLE) {
+      return;
+    }
+
+    void* mapped = nullptr;
+    if (!Check(vkMapMemory(device_,
+                           staging.memory,
+                           0,
+                           static_cast<VkDeviceSize>(rgba.size()),
+                           0,
+                           &mapped),
+               "vkMapMemory(projection preview staging)")) {
+      destroyBuffer(staging);
+      return;
+    }
+    std::memcpy(mapped, rgba.data(), rgba.size());
+    vkUnmapMemory(device_, staging.memory);
+
+    const VkImageLayout oldLayout = sizeChanged
+      ? VK_IMAGE_LAYOUT_UNDEFINED
+      : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    const bool uploaded =
+      transitionImageLayout(previewImage_.image,
+                            oldLayout,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) &&
+      copyBufferToImage(staging.buffer,
+                        previewImage_.image,
+                        static_cast<std::uint32_t>(image.width),
+                        static_cast<std::uint32_t>(image.height)) &&
+      transitionImageLayout(previewImage_.image,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    destroyBuffer(staging);
+    if (!uploaded) {
+      preview_ = ProjectionPreviewUIState{};
+      return;
+    }
+
+    if (previewDescriptorSet_ == VK_NULL_HANDLE) {
+      previewDescriptorSet_ =
+        ImGui_ImplVulkan_AddTexture(previewSampler_,
+                                    previewImage_.view,
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    preview_.textureId = reinterpret_cast<void*>(previewDescriptorSet_);
+    preview_.width = image.width;
+    preview_.height = image.height;
+    preview_.version = image.version;
+    preview_.valid = previewDescriptorSet_ != VK_NULL_HANDLE;
+    previewVersion_ = image.version;
   }
 
   bool ensureDescriptorResources()
@@ -1166,6 +1816,63 @@ private:
     image = VulkanImage{};
   }
 
+  void destroySolidPipeline()
+  {
+    if (device_ == VK_NULL_HANDLE) {
+      return;
+    }
+    if (linePipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, linePipeline_, nullptr);
+      linePipeline_ = VK_NULL_HANDLE;
+    }
+    linePipelineRenderPass_ = VK_NULL_HANDLE;
+    if (solidPipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, solidPipeline_, nullptr);
+      solidPipeline_ = VK_NULL_HANDLE;
+    }
+    if (solidPipelineLayout_ != VK_NULL_HANDLE) {
+      vkDestroyPipelineLayout(device_, solidPipelineLayout_, nullptr);
+      solidPipelineLayout_ = VK_NULL_HANDLE;
+    }
+    solidPipelineRenderPass_ = VK_NULL_HANDLE;
+  }
+
+  void destroySolidResources()
+  {
+    destroySolidPipeline();
+    destroyBuffer(cubeMesh_.vertexBuffer);
+    destroyBuffer(cubeMesh_.indexBuffer);
+    cubeMesh_.indexCount = 0;
+    destroyBuffer(ellipsoidMesh_.vertexBuffer);
+    destroyBuffer(ellipsoidMesh_.indexBuffer);
+    ellipsoidMesh_.indexCount = 0;
+    destroyBuffer(diskMesh_.vertexBuffer);
+    destroyBuffer(diskMesh_.indexBuffer);
+    diskMesh_.indexCount = 0;
+    destroyBuffer(cubeInstances_.buffer);
+    destroyBuffer(ellipsoidInstances_.buffer);
+    destroyBuffer(diskInstances_.buffer);
+    destroyBuffer(lineVertices_.buffer);
+    destroyBuffer(cuboidVertices_.buffer);
+    destroyBuffer(polyhedronVertices_.buffer);
+    cubeInstances_ = SolidInstanceSet{};
+    ellipsoidInstances_ = SolidInstanceSet{};
+    diskInstances_ = SolidInstanceSet{};
+    lineVertices_ = LineVertexSet{};
+    cuboidVertices_ = LineVertexSet{};
+    polyhedronVertices_ = LineVertexSet{};
+    destroyBuffer(solidUniformBuffer_);
+    if (solidDescriptorPool_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorPool(device_, solidDescriptorPool_, nullptr);
+      solidDescriptorPool_ = VK_NULL_HANDLE;
+      solidDescriptorSet_ = VK_NULL_HANDLE;
+    }
+    if (solidDescriptorSetLayout_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorSetLayout(device_, solidDescriptorSetLayout_, nullptr);
+      solidDescriptorSetLayout_ = VK_NULL_HANDLE;
+    }
+  }
+
   bool ensurePipeline()
   {
     const VkRenderPass renderPass = context_.renderPass();
@@ -1354,6 +2061,357 @@ private:
     return ok;
   }
 
+  bool ensureObjectPipelineLayout()
+  {
+    if (solidPipelineLayout_ != VK_NULL_HANDLE) {
+      return true;
+    }
+    if (!ensureSolidDescriptorResources()) {
+      return false;
+    }
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(SolidPushConstants);
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &solidDescriptorSetLayout_;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushRange;
+    if (!Check(vkCreatePipelineLayout(device_,
+                                      &layoutInfo,
+                                      nullptr,
+                                      &solidPipelineLayout_),
+               "vkCreatePipelineLayout(solid)")) {
+      return false;
+    }
+    return true;
+  }
+
+  bool ensureSolidPipeline()
+  {
+    const VkRenderPass renderPass = context_.renderPass();
+    if (solidPipeline_ != VK_NULL_HANDLE &&
+        solidPipelineRenderPass_ == renderPass) {
+      return true;
+    }
+    if (solidPipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, solidPipeline_, nullptr);
+      solidPipeline_ = VK_NULL_HANDLE;
+    }
+    solidPipelineRenderPass_ = VK_NULL_HANDLE;
+    if (renderPass == VK_NULL_HANDLE || !ensureObjectPipelineLayout()) {
+      return false;
+    }
+
+    const std::vector<std::uint32_t> vert =
+      ReadSpirv(ShaderPath("solid.vert.spv"));
+    const std::vector<std::uint32_t> frag =
+      ReadSpirv(ShaderPath("solid.frag.spv"));
+    if (vert.empty() || frag.empty()) {
+      return false;
+    }
+
+    VkShaderModule vertModule = createShaderModule(vert);
+    VkShaderModule fragModule = createShaderModule(frag);
+    if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE) {
+      if (vertModule != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, vertModule, nullptr);
+      }
+      if (fragModule != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, fragModule, nullptr);
+      }
+      return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].stride = sizeof(SolidVertex);
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(SolidInstance);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+    VkVertexInputAttributeDescription attributes[7]{};
+    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT,
+                     static_cast<std::uint32_t>(offsetof(SolidVertex, pos))};
+    const std::uint32_t modelOffset =
+      static_cast<std::uint32_t>(offsetof(SolidInstance, model));
+    const std::uint32_t vec4Size =
+      static_cast<std::uint32_t>(sizeof(glm::vec4));
+    for (std::uint32_t i = 0; i < 4; ++i) {
+      attributes[1 + i] = {1 + i,
+                           1,
+                           VK_FORMAT_R32G32B32A32_SFLOAT,
+                           modelOffset + i * vec4Size};
+    }
+    attributes[5] = {5, 1, VK_FORMAT_R32G32B32_SFLOAT,
+                     static_cast<std::uint32_t>(offsetof(SolidInstance,
+                                                         color))};
+    attributes[6] = {6, 1, VK_FORMAT_R32_SFLOAT,
+                     static_cast<std::uint32_t>(offsetof(SolidInstance,
+                                                         opacity))};
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 2;
+    vertexInput.pVertexBindingDescriptions = bindings;
+    vertexInput.vertexAttributeDescriptionCount =
+      static_cast<std::uint32_t>(std::size(attributes));
+    vertexInput.pVertexAttributeDescriptions = attributes;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.blendEnable = VK_TRUE;
+    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo colorBlend{};
+    colorBlend.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlend.attachmentCount = 1;
+    colorBlend.pAttachments = &blendAttachment;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                      VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisample;
+    pipelineInfo.pColorBlendState = &colorBlend;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = solidPipelineLayout_;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    const bool ok = Check(vkCreateGraphicsPipelines(device_,
+                                                    VK_NULL_HANDLE,
+                                                    1,
+                                                    &pipelineInfo,
+                                                    nullptr,
+                                                    &solidPipeline_),
+                          "vkCreateGraphicsPipelines(solid)");
+    vkDestroyShaderModule(device_, vertModule, nullptr);
+    vkDestroyShaderModule(device_, fragModule, nullptr);
+    if (ok) {
+      solidPipelineRenderPass_ = renderPass;
+    }
+    return ok;
+  }
+
+  bool ensureLinePipeline()
+  {
+    const VkRenderPass renderPass = context_.renderPass();
+    if (linePipeline_ != VK_NULL_HANDLE &&
+        linePipelineRenderPass_ == renderPass) {
+      return true;
+    }
+    if (linePipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, linePipeline_, nullptr);
+      linePipeline_ = VK_NULL_HANDLE;
+    }
+    linePipelineRenderPass_ = VK_NULL_HANDLE;
+    if (renderPass == VK_NULL_HANDLE || !ensureObjectPipelineLayout()) {
+      return false;
+    }
+
+    const std::vector<std::uint32_t> vert =
+      ReadSpirv(ShaderPath("line.vert.spv"));
+    const std::vector<std::uint32_t> frag =
+      ReadSpirv(ShaderPath("line.frag.spv"));
+    if (vert.empty() || frag.empty()) {
+      return false;
+    }
+
+    VkShaderModule vertModule = createShaderModule(vert);
+    VkShaderModule fragModule = createShaderModule(frag);
+    if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE) {
+      if (vertModule != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, vertModule, nullptr);
+      }
+      if (fragModule != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, fragModule, nullptr);
+      }
+      return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription binding{};
+    binding.binding = 0;
+    binding.stride = sizeof(LineVertex);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attributes[2]{};
+    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT,
+                     static_cast<std::uint32_t>(offsetof(LineVertex, pos))};
+    attributes[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+                     static_cast<std::uint32_t>(offsetof(LineVertex, color))};
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount =
+      static_cast<std::uint32_t>(std::size(attributes));
+    vertexInput.pVertexAttributeDescriptions = attributes;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.blendEnable = VK_TRUE;
+    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo colorBlend{};
+    colorBlend.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlend.attachmentCount = 1;
+    colorBlend.pAttachments = &blendAttachment;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                      VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisample;
+    pipelineInfo.pColorBlendState = &colorBlend;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = solidPipelineLayout_;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    const bool ok = Check(vkCreateGraphicsPipelines(device_,
+                                                    VK_NULL_HANDLE,
+                                                    1,
+                                                    &pipelineInfo,
+                                                    nullptr,
+                                                    &linePipeline_),
+                          "vkCreateGraphicsPipelines(line)");
+    vkDestroyShaderModule(device_, vertModule, nullptr);
+    vkDestroyShaderModule(device_, fragModule, nullptr);
+    if (ok) {
+      linePipelineRenderPass_ = renderPass;
+    }
+    return ok;
+  }
+
   VkShaderModule createShaderModule(const std::vector<std::uint32_t>& code)
   {
     VkShaderModuleCreateInfo createInfo{};
@@ -1372,6 +2430,7 @@ private:
     if (device_ == VK_NULL_HANDLE) {
       return;
     }
+    destroySolidPipeline();
     for (VkPipeline& pipeline : pipelines_) {
       if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, pipeline, nullptr);
@@ -1415,6 +2474,21 @@ private:
                        stressParticleBuffer_,
                        stressParticleCount_,
                        1);
+    drawSolidLayer(commandBuffer,
+                   ellipsoidMesh_,
+                   ellipsoidInstances_,
+                   frame_.runtime.ellipsoids);
+    drawSolidLayer(commandBuffer,
+                   diskMesh_,
+                   diskInstances_,
+                   frame_.runtime.disks);
+    drawSolidLayer(commandBuffer,
+                   cubeMesh_,
+                   cubeInstances_,
+                   frame_.runtime.cubes);
+    drawLineSet(commandBuffer, cuboidVertices_, frame_.runtime.cuboids);
+    drawLineSet(commandBuffer, lineVertices_, frame_.runtime.lines);
+    drawLineSet(commandBuffer, polyhedronVertices_, frame_.runtime.polyhedra);
   }
 
   void drawParticleBuffer(VkCommandBuffer commandBuffer,
@@ -1444,6 +2518,95 @@ private:
                             nullptr);
 
     vkCmdDraw(commandBuffer, static_cast<std::uint32_t>(count), 1, 0, 0);
+  }
+
+  void drawSolidLayer(VkCommandBuffer commandBuffer,
+                      const SolidMesh& mesh,
+                      const SolidInstanceSet& instances,
+                      const RenderLayerState& runtime)
+  {
+    if (!runtime.show || instances.count == 0 ||
+        mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+        mesh.indexBuffer.buffer == VK_NULL_HANDLE ||
+        mesh.indexCount == 0 ||
+        instances.buffer.buffer == VK_NULL_HANDLE ||
+        !ensureSolidPipeline()) {
+      return;
+    }
+
+    VkDeviceSize offsets[] = {0, 0};
+    VkBuffer vertexBuffers[] = {mesh.vertexBuffer.buffer,
+                                instances.buffer.buffer};
+    vkCmdBindPipeline(commandBuffer,
+                      VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      solidPipeline_);
+    vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(commandBuffer,
+                         mesh.indexBuffer.buffer,
+                         0,
+                         VK_INDEX_TYPE_UINT32);
+    vkCmdBindDescriptorSets(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            solidPipelineLayout_,
+                            0,
+                            1,
+                            &solidDescriptorSet_,
+                            0,
+                            nullptr);
+
+    SolidPushConstants push;
+    push.opacityScale = std::clamp(runtime.opacity, 0.0f, 1.0f);
+    vkCmdPushConstants(commandBuffer,
+                       solidPipelineLayout_,
+                       VK_SHADER_STAGE_VERTEX_BIT,
+                       0,
+                       sizeof(push),
+                       &push);
+
+    vkCmdDrawIndexed(commandBuffer,
+                     mesh.indexCount,
+                     static_cast<std::uint32_t>(instances.count),
+                     0,
+                     0,
+                     0);
+  }
+
+  void drawLineSet(VkCommandBuffer commandBuffer,
+                   const LineVertexSet& vertices,
+                   const RenderLayerState& runtime)
+  {
+    if (!runtime.show || vertices.count == 0 ||
+        vertices.buffer.buffer == VK_NULL_HANDLE || !ensureLinePipeline()) {
+      return;
+    }
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindPipeline(commandBuffer,
+                      VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      linePipeline_);
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertices.buffer.buffer, offsets);
+    vkCmdBindDescriptorSets(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            solidPipelineLayout_,
+                            0,
+                            1,
+                            &solidDescriptorSet_,
+                            0,
+                            nullptr);
+
+    SolidPushConstants push;
+    push.opacityScale = std::clamp(runtime.opacity, 0.0f, 1.0f);
+    vkCmdPushConstants(commandBuffer,
+                       solidPipelineLayout_,
+                       VK_SHADER_STAGE_VERTEX_BIT,
+                       0,
+                       sizeof(push),
+                       &push);
+    vkCmdDraw(commandBuffer,
+              static_cast<std::uint32_t>(vertices.count),
+              1,
+              0,
+              0);
   }
 
   VulkanContext& context_;
@@ -1477,6 +2640,28 @@ private:
   VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
   std::array<VkPipeline, 2> pipelines_ = {VK_NULL_HANDLE, VK_NULL_HANDLE};
   VkRenderPass pipelineRenderPass_ = VK_NULL_HANDLE;
+  SolidMesh cubeMesh_;
+  SolidMesh ellipsoidMesh_;
+  SolidMesh diskMesh_;
+  SolidInstanceSet cubeInstances_;
+  SolidInstanceSet ellipsoidInstances_;
+  SolidInstanceSet diskInstances_;
+  LineVertexSet lineVertices_;
+  LineVertexSet cuboidVertices_;
+  LineVertexSet polyhedronVertices_;
+  VulkanBuffer solidUniformBuffer_;
+  VkDescriptorSetLayout solidDescriptorSetLayout_ = VK_NULL_HANDLE;
+  VkDescriptorPool solidDescriptorPool_ = VK_NULL_HANDLE;
+  VkDescriptorSet solidDescriptorSet_ = VK_NULL_HANDLE;
+  VkPipelineLayout solidPipelineLayout_ = VK_NULL_HANDLE;
+  VkPipeline solidPipeline_ = VK_NULL_HANDLE;
+  VkRenderPass solidPipelineRenderPass_ = VK_NULL_HANDLE;
+  VkPipeline linePipeline_ = VK_NULL_HANDLE;
+  VkRenderPass linePipelineRenderPass_ = VK_NULL_HANDLE;
+  VulkanImage previewImage_;
+  VkSampler previewSampler_ = VK_NULL_HANDLE;
+  VkDescriptorSet previewDescriptorSet_ = VK_NULL_HANDLE;
+  std::uint64_t previewVersion_ = 0;
   ProjectionPreviewUIState preview_;
 };
 

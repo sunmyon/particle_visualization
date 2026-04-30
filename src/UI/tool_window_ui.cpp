@@ -391,7 +391,11 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
                          ProjectionMapRequestState& request,
                          const ProjectionMapViewContext& ctx)
 {
-  if (!state.open) return;
+  if (!state.open) {
+    state.selectMode = false;
+    state.dragInitialized = false;
+    return;
+  }
 
   WindowCommandQueue& windowCommands = ctx.windowCommands;
   const float sideLengthInputScale =
@@ -454,6 +458,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
   if (ImGui::Button(state.selectMode ? "Exit Region Select" : "Select Region (Mouse Drag)")) {
     state.selectMode = !state.selectMode;
+    state.dragInitialized = false;
   }
   ImGui::PopStyleColor();
 
@@ -461,21 +466,28 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     ImGuiIO& io = ImGui::GetIO();
     const float xpos = io.MousePos.x;
     const float ypos = io.MousePos.y;
-    static float lastX = xpos;
-    static float lastY = ypos;
 
     if (ImGui::IsMouseDown(0)) {
-      request.arcballDragRequested = true;
-      request.dragOldX = lastX;
-      request.dragOldY = lastY;
-      request.dragNewX = xpos;
-      request.dragNewY = ypos;
-      request.displayWidth = io.DisplaySize.x;
-      request.displayHeight = io.DisplaySize.y;
+      if (!state.dragInitialized) {
+        state.dragLastX = xpos;
+        state.dragLastY = ypos;
+        state.dragInitialized = true;
+      } else if (xpos != state.dragLastX || ypos != state.dragLastY) {
+        request.arcballDragRequested = true;
+        request.dragOldX = state.dragLastX;
+        request.dragOldY = state.dragLastY;
+        request.dragNewX = xpos;
+        request.dragNewY = ypos;
+        request.displayWidth = io.DisplaySize.x;
+        request.displayHeight = io.DisplaySize.y;
+      }
+      state.dragLastX = xpos;
+      state.dragLastY = ypos;
+    } else {
+      state.dragInitialized = false;
     }
-
-    lastX = xpos;
-    lastY = ypos;
+  } else {
+    state.dragInitialized = false;
   }
 
   // -----------------------------
@@ -1253,11 +1265,21 @@ bool DrawMaskWindow(MaskUIState& state,
   return apply; // True when settings were applied.
 }
 
-void DrawProjectionPreviewUI(const ProjectionPreviewUIState& st)
+void DrawProjectionPreviewUI(ProjectionMapUIState& state,
+                             const ProjectionPreviewUIState& st)
 {
   if (!st.valid) return;
 
-  ImGui::Begin("2D Projection Map");
+  if (state.observedPreviewVersion != st.version) {
+    state.previewOpen = true;
+    state.observedPreviewVersion = st.version;
+  }
+  if (!state.previewOpen) return;
+
+  if (!ImGui::Begin("2D Projection Map", &state.previewOpen, ImGuiWindowFlags_None)) {
+    ImGui::End();
+    return;
+  }
   ImGui::Image((ImTextureID)st.textureId,
                ImVec2((float)st.width, (float)st.height));
   ImGui::End();
