@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 #include <glm/geometric.hpp>
 
@@ -129,14 +130,16 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     (!scheduling.interactionActive || proxyUpdateIntervalElapsed);
 
   if (forceProxyRebuild || scheduledProxyRebuild) {
+    std::vector<RenderParticle> nextProxy;
     const bool proxyOk =
       BuildParticleLodProxyDrawList(rs.scene.particles,
                                     rs.scene.particleLod,
                                     camera.cameraTarget,
                                     scheduling.particleLod,
-                                    rs.scene.particleLodProxy);
+                                    nextProxy);
     rs.scene.particleLodSettings = scheduling.particleLod;
     if (proxyOk) {
+      rs.scene.particleLodProxy = std::move(nextProxy);
       rs.scene.particleLodFocus = camera.cameraTarget;
       rs.scene.particleLodLastProxyBuildTime = currentTime;
       rs.scene.particleLodProxyRebuildPending = false;
@@ -146,6 +149,9 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
       rs.scene.particleLodLastProxyBuildTime = currentTime;
       rs.scene.particleLodProxyRebuildPending = false;
       ++rs.scene.particleLodVersion;
+    } else {
+      rs.scene.particleLodLastProxyBuildTime = currentTime;
+      rs.scene.particleLodProxyRebuildPending = true;
     }
   }
 

@@ -2,8 +2,8 @@
 
 #include "data/particle_block.h"
 
+#include "core/quantity.h"
 #include "render/particle_visual_config.h"
-#include "app/state/runtime_state.h"
 #include "render_resources.h"
 #include "render/scene_objects.h"
 

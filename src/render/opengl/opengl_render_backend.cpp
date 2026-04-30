@@ -9,8 +9,6 @@
 #include <string>
 #include <vector>
 
-#include "app/state/overlay_state.h"
-#include "app/state/render_runtime_state.h"
 #include "interaction/camera.h"
 #include "render/particle_visual_config.h"
 #include "render/particle_lod.h"
@@ -18,7 +16,9 @@
 #include "render/colormap_defs.h"
 #include "render/frame_matrices.h"
 #include "render/opengl/render_draw_helpers.h"
+#include "render/overlay_state.h"
 #include "render/render_resources.h"
+#include "render/render_state.h"
 #include "render/render_system.h"
 #include "render/render_viewport.h"
 
@@ -377,7 +377,10 @@ static void RenderParticlesToCache(OpenGLParticleFrameCache& cache,
   glDepthMask(GL_TRUE);
   glEnable(GL_BLEND);
   glBlendEquation(GL_FUNC_ADD);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glBlendFuncSeparate(GL_SRC_ALPHA,
+                      GL_ONE_MINUS_SRC_ALPHA,
+                      GL_ONE,
+                      GL_ONE_MINUS_SRC_ALPHA);
   glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

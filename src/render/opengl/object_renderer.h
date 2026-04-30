@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <glm/glm.hpp>
 #include <glad/glad.h>
-#include "app/state/render_runtime_state.h"
+#include "render/render_state.h"
 #include "render/scene_objects.h"
 #include "render/render_resources.h"
 #include "render/render_types.h"

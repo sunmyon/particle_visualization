@@ -1,9 +1,9 @@
 #pragma once
 
-#include "app/state/overlay_state.h"
-#include "app/state/render_runtime_state.h"
 #include "interaction/camera.h"
+#include "render/overlay_state.h"
 #include "render/particle_visual_config.h"
+#include "render/render_state.h"
 #include "render/render_viewport.h"
 
 struct RenderSystem;

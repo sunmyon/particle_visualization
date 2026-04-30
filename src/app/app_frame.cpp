@@ -1,6 +1,8 @@
 #include "app/app_frame.h"
 
 #include <cstddef>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include <imgui.h>
@@ -62,6 +64,17 @@ static bool QuerySystemAvailableMemoryBytes(size_t& outBytes)
   outBytes = availablePages * static_cast<size_t>(pageSize);
   return true;
 #elif defined(__linux__)
+  std::ifstream meminfo("/proc/meminfo");
+  std::string key;
+  std::string unit;
+  size_t valueKiB = 0;
+  while (meminfo >> key >> valueKiB >> unit) {
+    if (key == "MemAvailable:") {
+      outBytes = valueKiB * 1024u;
+      return true;
+    }
+  }
+
   struct sysinfo info {};
   if (sysinfo(&info) != 0) {
     return false;

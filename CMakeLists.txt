@@ -1,6 +1,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 project(particle_vis LANGUAGES C CXX)
+include(CTest)
 
 # ===== Basic settings =====
 set(CMAKE_CXX_STANDARD 17)
@@ -394,9 +395,11 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_visibility_actions.cpp
   ${SRC_DIR}/render/frame_matrices.cpp
   ${SRC_DIR}/render/colormap_defs.cpp
+  ${SRC_DIR}/render/render_backend.cpp
   ${SRC_DIR}/render/render_system.cpp
   ${SRC_DIR}/render/render_frame.cpp
   ${SRC_DIR}/render/particle_lod.cpp
+  ${SRC_DIR}/render/null_render_backend.cpp
   ${SRC_DIR}/render/opengl/opengl_render_backend.cpp
   ${SRC_DIR}/render/opengl/render_programs.cpp
   ${SRC_DIR}/render/opengl/shader_utils.cpp
@@ -561,6 +564,7 @@ add_executable(${PROJECT_NAME}
   ${IMGUI_SRC}
   ${IMPLOT_SRC}
 )
+target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_OPENGL_BACKEND)
 
 # ===== Include paths =====
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -1566,4 +1570,20 @@ if(UNIX)
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/check_include_boundaries.sh
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Checking source include layer boundaries")
+endif()
+
+if(BUILD_TESTING)
+  add_executable(null_backend_smoke
+    tests/null_backend_smoke.cpp
+    ${SRC_DIR}/render/render_backend.cpp
+    ${SRC_DIR}/render/null_render_backend.cpp)
+  target_include_directories(null_backend_smoke PRIVATE ${SRC_DIR})
+  if(TARGET glm::glm)
+    target_link_libraries(null_backend_smoke PRIVATE glm::glm)
+  elseif(GLM_INCLUDE_DIR)
+    target_include_directories(null_backend_smoke PRIVATE ${GLM_INCLUDE_DIR})
+  elseif(GLM_PC_FOUND)
+    target_include_directories(null_backend_smoke PRIVATE ${GLM_PC_INCLUDE_DIRS})
+  endif()
+  add_test(NAME null_backend_smoke COMMAND null_backend_smoke)
 endif()

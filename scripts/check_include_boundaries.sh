@@ -65,6 +65,10 @@ check_no_include "src/render" \
   "UI/" \
   "render must not include UI headers."
 
+check_no_include "src/render" \
+  "app/" \
+  "render must not include app-layer headers."
+
 if [[ "$status" -eq 0 ]]; then
   printf 'include boundary check passed\n'
 fi

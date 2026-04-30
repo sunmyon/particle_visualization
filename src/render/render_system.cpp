@@ -5,7 +5,7 @@
 void InitRenderSystem(RenderSystem& rs)
 {
   if (!rs.backend) {
-    rs.backend = CreateOpenGLRenderBackend();
+    rs.backend = CreateRenderBackend(DefaultRenderBackendKind());
   }
 
   rs.backend->init();

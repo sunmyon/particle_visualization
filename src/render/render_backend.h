@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <cstddef>
+#include <string_view>
 
 struct ProjectionPreviewUIState;
 struct RenderFrameState;
@@ -28,4 +29,15 @@ public:
   virtual RenderBackendMemoryInfo queryMemoryInfo() const { return {}; }
 };
 
+enum class RenderBackendKind {
+  OpenGL,
+  Null
+};
+
+RenderBackendKind ParseRenderBackendKind(std::string_view name,
+                                         RenderBackendKind fallback);
+RenderBackendKind DefaultRenderBackendKind();
+std::unique_ptr<RenderBackend> CreateRenderBackend(RenderBackendKind kind);
+
 std::unique_ptr<RenderBackend> CreateOpenGLRenderBackend();
+std::unique_ptr<RenderBackend> CreateNullRenderBackend();

@@ -4,7 +4,6 @@
 
 #include "render/opengl/object_renderer.h"
 #include "render/render_resources.h"
-#include "app/state/runtime_state.h"
 
 template<typename RendererT, typename RenderDataT>
 inline void SyncIfVersionChanged(RendererT& renderer,
