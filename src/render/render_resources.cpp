@@ -9,9 +9,13 @@
 
 void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,
-                          std::vector<RenderParticle>& out)
+                          std::vector<RenderParticle>& out,
+                          std::vector<RenderParticle>* stressOut)
 {
   out.clear();
+  if (stressOut) {
+    stressOut->clear();
+  }
 
   if (!input.valid()) {
     return;
@@ -19,6 +23,9 @@ void BuildRenderParticles(const ParticleRenderInput& input,
 
   const ParticleBlock& block = *input.block;
   out.reserve(block.particles.size());
+  if (stressOut) {
+    stressOut->reserve(block.particles.size() / 32);
+  }
 
   for (size_t i = 0; i < block.particles.size(); ++i) {
     const auto& p = block.particles[i];
@@ -47,6 +54,9 @@ void BuildRenderParticles(const ParticleRenderInput& input,
                                  visualConfig.types[type].selectedQuantity);
 
     out.push_back(rp);
+    if (stressOut && rp.flag_stress != 0) {
+      stressOut->push_back(rp);
+    }
   }
 }
 

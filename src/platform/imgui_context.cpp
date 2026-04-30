@@ -6,6 +6,11 @@
 #include <imgui_impl_opengl3.h>
 #include "implot.h"
 
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+#include "platform/vulkan_context.h"
+#include <imgui_impl_vulkan.h>
+#endif
+
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
@@ -132,6 +137,86 @@ private:
   GLFWwindow* window_ = nullptr;
   bool initialized_ = false;
 };
+
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+class GlfwVulkanImGuiBackend final : public ImGuiBackend {
+public:
+  GlfwVulkanImGuiBackend(GLFWwindow* window, VulkanContext& context)
+    : window_(window)
+    , context_(&context)
+  {
+  }
+
+  bool init() override
+  {
+    if (!window_ || !context_) {
+      return false;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
+    ImGui_ImplGlfw_InitForVulkan(window_, true);
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.Instance = context_->instance();
+    initInfo.PhysicalDevice = context_->physicalDevice();
+    initInfo.Device = context_->device();
+    initInfo.QueueFamily = context_->queueFamily();
+    initInfo.Queue = context_->queue();
+    initInfo.PipelineCache = VK_NULL_HANDLE;
+    initInfo.DescriptorPool = context_->descriptorPool();
+    initInfo.RenderPass = context_->renderPass();
+    initInfo.Subpass = 0;
+    initInfo.MinImageCount = context_->minImageCount();
+    initInfo.ImageCount = context_->imageCount();
+    initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.Allocator = nullptr;
+    ImGui_ImplVulkan_Init(&initInfo);
+
+    initialized_ = true;
+    return true;
+  }
+
+  void newFrame(int /*width*/, int /*height*/) override
+  {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+  }
+
+  void render() override
+  {
+    ImGui::Render();
+    context_->renderImGuiDrawData(ImGui::GetDrawData());
+  }
+
+  void shutdown() override
+  {
+    if (!initialized_) {
+      return;
+    }
+    if (context_ && context_->device() != VK_NULL_HANDLE) {
+      vkDeviceWaitIdle(context_->device());
+    }
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    ImPlot::DestroyContext();
+    initialized_ = false;
+  }
+
+private:
+  GLFWwindow* window_ = nullptr;
+  VulkanContext* context_ = nullptr;
+  bool initialized_ = false;
+};
+#endif
 #endif
 
 std::unique_ptr<ImGuiBackend> g_backend;
@@ -157,6 +242,24 @@ std::unique_ptr<ImGuiBackend> CreateHeadlessOpenGLImGuiBackend(int width,
                                                                int height)
 {
   return std::make_unique<HeadlessOpenGLImGuiBackend>(width, height);
+}
+
+std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
+  NativeWindowHandle window,
+  VulkanContext& context)
+{
+#if !defined(PARTICLE_VIS_HEADLESS_ONLY) && defined(PARTICLE_VIS_ENABLE_VULKAN_BACKEND)
+  if (window.backend != NativeWindowBackend::GLFW || !window.handle) {
+    return nullptr;
+  }
+  return std::make_unique<GlfwVulkanImGuiBackend>(
+    static_cast<GLFWwindow*>(window.handle),
+    context);
+#else
+  (void)window;
+  (void)context;
+  return nullptr;
+#endif
 }
 
 void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend)

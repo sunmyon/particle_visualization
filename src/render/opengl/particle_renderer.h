@@ -10,6 +10,13 @@ struct ParticleVisualConfig;
 struct RenderParticle;
 class ColorbarRenderer;
 
+struct ParticleDrawStyle {
+  bool fixedColor = false;
+  glm::vec4 color{1.0f, 0.9f, 0.2f, 0.9f};
+  float pointScale = 1.0f;
+  float alpha = 1.0f;
+};
+
 class ParticleRenderer {
 public:
   void init();
@@ -19,7 +26,8 @@ public:
             const glm::mat4& view,
             const glm::mat4& projection,
             const ParticleVisualConfig& visualConfig,
-            const ColorbarRenderer& colorbarRenderer) const;
+            const ColorbarRenderer& colorbarRenderer,
+            const ParticleDrawStyle& style = ParticleDrawStyle{}) const;
   void destroy();
 
   GLuint vao() const { return vao_; }

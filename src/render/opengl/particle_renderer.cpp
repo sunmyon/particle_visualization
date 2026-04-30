@@ -66,7 +66,8 @@ void ParticleRenderer::draw(GLuint particleProgram,
                             const glm::mat4& view,
                             const glm::mat4& projection,
                             const ParticleVisualConfig& visualConfig,
-                            const ColorbarRenderer& colorbarRenderer) const
+                            const ColorbarRenderer& colorbarRenderer,
+                            const ParticleDrawStyle& style) const
 {
   glUseProgram(particleProgram);
 
@@ -108,6 +109,15 @@ void ParticleRenderer::draw(GLuint particleProgram,
   glUniform1iv(glGetUniformLocation(particleProgram, "useLog"),     6, useLog);
   glUniform1iv(glGetUniformLocation(particleProgram, "periodicMapping"), 6, periodicMapping);
   glUniform1iv(glGetUniformLocation(particleProgram, "colormaps"),  6, samplers);
+  glUniform1i(glGetUniformLocation(particleProgram, "colorMode"),
+              style.fixedColor ? 1 : 0);
+  glUniform4fv(glGetUniformLocation(particleProgram, "fixedColor"),
+               1,
+               glm::value_ptr(style.color));
+  glUniform1f(glGetUniformLocation(particleProgram, "pointScale"),
+              style.pointScale);
+  glUniform1f(glGetUniformLocation(particleProgram, "globalAlpha"),
+              style.alpha);
 
   glBindVertexArray(vao_);
   glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(filteredCount_));

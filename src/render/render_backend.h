@@ -8,6 +8,7 @@ struct ProjectionPreviewUIState;
 struct RenderFrameState;
 struct RenderSceneData;
 struct RgbImage;
+class VulkanContext;
 
 struct RenderBackendMemoryInfo {
   bool gpuAvailableKnown = false;
@@ -61,3 +62,4 @@ std::unique_ptr<RenderBackend> CreateRenderBackend(RenderBackendKind kind);
 std::unique_ptr<RenderBackend> CreateOpenGLRenderBackend();
 std::unique_ptr<RenderBackend> CreateNullRenderBackend();
 std::unique_ptr<RenderBackend> CreateVulkanRenderBackend();
+std::unique_ptr<RenderBackend> CreateVulkanRenderBackend(VulkanContext& context);

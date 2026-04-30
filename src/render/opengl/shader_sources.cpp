@@ -11,6 +11,7 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform float pointSizes[6];
+uniform float pointScale;
 
 out float vHsml;
 out float val_show;
@@ -21,7 +22,7 @@ flat out int vType;
 void main()
 {
     gl_Position = projection * view * model * vec4(aPos, 1.0);
-    gl_PointSize = pointSizes[int(aType)];
+    gl_PointSize = max(pointSizes[int(aType)] * pointScale, 1.0);
 
     vHsml = aHsml;
     val_show = aValShow;
@@ -47,6 +48,9 @@ uniform vec3 lowColors[6];
 uniform vec3 highColors[6];
 uniform sampler2D colormaps[6];
 uniform int periodicMapping[6]; // 1: periodic display, 0: normal display
+uniform int colorMode; // 0: colormap, 1: fixed color overlay
+uniform vec4 fixedColor;
+uniform float globalAlpha;
 
 void main()
 {
@@ -64,22 +68,22 @@ void main()
     normVal = clamp(normVal, 0.0, 1.0);
   }
 
-  //vec3 color = mix(lowColors[vType], highColors[vType], normVal);
   vec3 color;
-  if(vType == 0)
+  if (colorMode == 1) {
+    color = fixedColor.rgb;
+  } else if(vType == 0) {
     color = texture(colormaps[0], vec2(normVal, 0.5)).rgb;
-  else if(vType == 1)
+  } else if(vType == 1) {
     color = texture(colormaps[1], vec2(normVal, 0.5)).rgb;
-  else if(vType == 2)
+  } else if(vType == 2) {
     color = texture(colormaps[2], vec2(normVal, 0.5)).rgb;
-  else if(vType == 3)
+  } else if(vType == 3) {
     color = texture(colormaps[3], vec2(normVal, 0.5)).rgb;
-  else if(vType == 4)
+  } else if(vType == 4) {
     color = texture(colormaps[4], vec2(normVal, 0.5)).rgb;
-  else if(vType == 5)
+  } else if(vType == 5) {
     color = texture(colormaps[5], vec2(normVal, 0.5)).rgb;
-
-  //vec3 color = texture(colormaps[vType], normVal).rgb; //it doesn't work for Mesa
+  }
 
   // --- point sprite: circle mask ---
   vec2 uv = gl_PointCoord * 2.0 - 1.0;    // [-1,1]
@@ -88,31 +92,7 @@ void main()
 
   // base alpha (soft edge)
   float edge = smoothstep(1.0, 0.90, r2); // outer 10% fade
-  float alpha = edge;
-
-  if (nodeFlag == 1) {
-    vec3 stressColor = vec3(1.0, 0.9, 0.2);
-
-  // ring mask: only near the edge
-  float ring = smoothstep(0.70, 0.82, r2) * (1.0 - smoothstep(0.82, 0.98, r2));
-
-  // optional: very subtle outer glow (still mostly edge)
-  float glow = smoothstep(0.55, 0.90, r2) * (1.0 - smoothstep(0.90, 1.00, r2));
-  glow *= 0.25; // Keep the glow subtle.
-
-  // Keep center color; tint only where ring/glow is present
-  float tint = clamp(ring * 1.0 + glow, 0.0, 1.0);
-  color = mix(color, stressColor, tint);
-
-  // Make ring brighter without recoloring center
-  color += ring * stressColor * 1.5;
-
-  // alpha: keep soft edge; stressed slightly less transparent near ring
-  alpha = max(alpha, ring * 0.9);
-  }
-
-  //if (nodeFlag == 1) 
-   // color = mix(color, vec3(1.0), 0.5);
+  float alpha = edge * ((colorMode == 1) ? fixedColor.a : globalAlpha);
 
   FragColor = vec4(color, alpha);
 }

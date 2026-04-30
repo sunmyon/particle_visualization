@@ -70,8 +70,11 @@ using RenderSceneVersion = std::uint64_t;
 struct RenderSceneData {
   std::vector<RenderParticle> particles;
   RenderSceneVersion particlesVersion = 1;
+  std::vector<RenderParticle> stressParticles;
+  RenderSceneVersion stressParticlesVersion = 1;
   ParticleLodTree particleLod;
   std::vector<RenderParticle> particleLodProxy;
+  std::vector<RenderParticle> particleLodStressProxy;
   ParticleLodSettings particleLodSettings;
   glm::vec3 particleLodFocus{0.0f};
   double particleLodLastProxyBuildTime = -1.0;
@@ -143,7 +146,8 @@ struct ParticleRenderInput {
 
 void BuildRenderParticles(const ParticleRenderInput& input,
                           const ParticleVisualConfig& visualConfig,
-                          std::vector<RenderParticle>& out);
+                          std::vector<RenderParticle>& out,
+                          std::vector<RenderParticle>* stressOut = nullptr);
 
 std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>& particles,
                                              const int velocity_subtraction);

@@ -510,6 +510,49 @@ static void DrawParticleCacheToCurrentFramebuffer(
   }
 }
 
+static void DrawStressParticleOverlay(const ParticleRenderer& renderer,
+                                      GLuint particleProgram,
+                                      const glm::mat4& model,
+                                      const glm::mat4& view,
+                                      const glm::mat4& projection,
+                                      const ParticleVisualConfig& visualConfig,
+                                      const ColorbarRenderer& colorbar)
+{
+  if (renderer.filteredCount() == 0) {
+    return;
+  }
+
+  const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+  GLboolean depthWriteWasEnabled = GL_TRUE;
+  GLint previousDepthFunc = GL_LESS;
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+  glGetIntegerv(GL_DEPTH_FUNC, &previousDepthFunc);
+
+  glEnable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+  glDepthFunc(GL_LEQUAL);
+
+  ParticleDrawStyle style;
+  style.fixedColor = true;
+  style.color = glm::vec4(1.0f, 0.9f, 0.2f, 0.92f);
+  style.pointScale = 1.35f;
+  renderer.draw(particleProgram,
+                model,
+                view,
+                projection,
+                visualConfig,
+                colorbar,
+                style);
+
+  glDepthFunc(static_cast<GLenum>(previousDepthFunc));
+  glDepthMask(depthWriteWasEnabled);
+  if (depthTestWasEnabled) {
+    glEnable(GL_DEPTH_TEST);
+  } else {
+    glDisable(GL_DEPTH_TEST);
+  }
+}
+
 #ifdef VOLUME_RENDERING
 static bool EqualVolumeDrawParams(const AdaptiveVolumeDrawParams& a,
                                   const AdaptiveVolumeDrawParams& b)
@@ -731,7 +774,9 @@ void OpenGLRenderBackend::init()
             << std::endl;
 
   particle_.init();
+  particleStress_.init();
   particleLod_.init();
+  particleLodStress_.init();
   velocity_.init();
 
   ellipsoid_.init();
@@ -799,7 +844,9 @@ void OpenGLRenderBackend::destroy()
   coordAxes_.destroy();
   DestroyParticleFrameCache(particleFrameCache_);
   velocity_.destroy();
+  particleLodStress_.destroy();
   particleLod_.destroy();
+  particleStress_.destroy();
   particle_.destroy();
 
   ellipsoid_.destroy();
@@ -987,6 +1034,10 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                        scene.particles,
                        scene.particlesVersion,
                        uploaded_.particles);
+  SyncIfVersionChanged(particleStress_,
+                       scene.stressParticles,
+                       scene.stressParticlesVersion,
+                       uploaded_.stressParticles);
 
   const bool useParticleLod = ShouldUseParticleLod(render,
                                                   scene.particleLodProxy,
@@ -997,6 +1048,10 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                          scene.particleLodProxy,
                          scene.particleLodVersion,
                          uploaded_.particleLod);
+    SyncIfVersionChanged(particleLodStress_,
+                         scene.particleLodStressProxy,
+                         scene.particleLodVersion,
+                         uploaded_.particleLodStress);
     particleFrameCache_.valid = false;
     particleLod_.draw(programs_.particle,
                       fm.model,
@@ -1004,6 +1059,13 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                       fm.projection,
                       particleVisual,
                       colorbar_);
+    DrawStressParticleOverlay(particleLodStress_,
+                              programs_.particle,
+                              fm.model,
+                              fm.view,
+                              fm.projection,
+                              particleVisual,
+                              colorbar_);
     particlesDrawn = true;
   }
 
@@ -1055,6 +1117,16 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                    fm.projection,
                    particleVisual,
                    colorbar_);
+  }
+
+  if (!useParticleLod) {
+    DrawStressParticleOverlay(particleStress_,
+                              programs_.particle,
+                              fm.model,
+                              fm.view,
+                              fm.projection,
+                              particleVisual,
+                              colorbar_);
   }
 
   if (render.velocity.show) {

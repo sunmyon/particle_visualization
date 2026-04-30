@@ -1,5 +1,7 @@
 #include <cstdlib>
+#include <memory>
 
+#include "render/render_backend.h"
 #include "render/render_system.h"
 #include "platform/platform_session.h"
 
@@ -18,6 +20,10 @@ int main()
     return EXIT_FAILURE;
   }
 
+  if (std::unique_ptr<RenderBackend> platformBackend =
+        platform.createRenderBackend()) {
+    render.backend = std::move(platformBackend);
+  }
   InitApplication(app, render);
   LoadInitialData(app);
   platform.startRemoteInput(app);

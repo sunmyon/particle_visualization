@@ -81,9 +81,11 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
   if (rs.build.particlesDirty) {
     BuildRenderParticles(input,
                          particleVisual,
-                         rs.scene.particles);
+                         rs.scene.particles,
+                         &rs.scene.stressParticles);
     rs.build.particlesDirty = false;
     ++rs.scene.particlesVersion;
+    ++rs.scene.stressParticlesVersion;
     result.particlesBuilt = true;
   }
 
@@ -95,6 +97,7 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
         !rs.scene.particleLodProxy.empty()) {
       rs.scene.particleLod = ParticleLodTree{};
       rs.scene.particleLodProxy.clear();
+      rs.scene.particleLodStressProxy.clear();
       ++rs.scene.particleLodVersion;
     }
     rs.scene.particleLodSettings = scheduling.particleLod;
@@ -140,12 +143,21 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     rs.scene.particleLodSettings = scheduling.particleLod;
     if (proxyOk) {
       rs.scene.particleLodProxy = std::move(nextProxy);
+      rs.scene.particleLodStressProxy.clear();
+      rs.scene.particleLodStressProxy.reserve(
+        rs.scene.particleLodProxy.size() / 32);
+      for (const RenderParticle& particle : rs.scene.particleLodProxy) {
+        if (particle.flag_stress != 0) {
+          rs.scene.particleLodStressProxy.push_back(particle);
+        }
+      }
       rs.scene.particleLodFocus = camera.cameraTarget;
       rs.scene.particleLodLastProxyBuildTime = currentTime;
       rs.scene.particleLodProxyRebuildPending = false;
       ++rs.scene.particleLodVersion;
     } else if (forceProxyRebuild) {
       rs.scene.particleLodProxy.clear();
+      rs.scene.particleLodStressProxy.clear();
       rs.scene.particleLodLastProxyBuildTime = currentTime;
       rs.scene.particleLodProxyRebuildPending = false;
       ++rs.scene.particleLodVersion;

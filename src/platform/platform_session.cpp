@@ -5,6 +5,10 @@
 #include "app/app_callbacks.h"
 #endif
 #include "platform/imgui_context.h"
+#include "render/render_backend.h"
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+#include "platform/vulkan_context.h"
+#endif
 
 #include <cstdlib>
 #include <iostream>
@@ -15,9 +19,35 @@
 #include <nfd.h>
 #endif
 
+namespace {
+
+bool WantsVulkanPlatform()
+{
+  const char* backend = std::getenv("PARTICLE_VIS_RENDER_BACKEND");
+  return backend &&
+         (std::string(backend) == "vulkan" || std::string(backend) == "vk");
+}
+
+std::unique_ptr<GraphicsContext> CreateSelectedGraphicsContext()
+{
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  if (WantsVulkanPlatform()) {
+    return CreateVulkanGraphicsContext();
+  }
+#else
+  if (WantsVulkanPlatform()) {
+    std::cerr << "Vulkan platform is not linked; using OpenGL platform."
+              << std::endl;
+  }
+#endif
+  return CreateDefaultGraphicsContext();
+}
+
+}
+
 PlatformSession::PlatformSession()
 {
-  graphics_ = CreateDefaultGraphicsContext();
+  graphics_ = CreateSelectedGraphicsContext();
   if (graphics_) {
     localPresenter_ =
       std::make_unique<LocalFramePresenter>(window_, *graphics_);
@@ -83,8 +113,16 @@ bool PlatformSession::init(AppState& app, CallbackContext& callbackCtx)
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (window_.hasWindow()) {
     AttachAppCallbacks(window_, callbackCtx);
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+    if (auto* vulkan = dynamic_cast<VulkanContext*>(graphics_.get())) {
+      imguiBackend =
+        CreateGlfwVulkanImGuiBackend(window_.nativeWindowHandle(), *vulkan);
+    } else
+#endif
+    {
     imguiBackend =
       CreateGlfwOpenGLImGuiBackend(window_.nativeWindowHandle());
+    }
   } else {
 #endif
     imguiBackend =
@@ -135,6 +173,16 @@ IFramePresenter& PlatformSession::presenter()
     return *remotePresenter_;
   }
   return *localPresenter_;
+}
+
+std::unique_ptr<RenderBackend> PlatformSession::createRenderBackend()
+{
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  if (auto* vulkan = dynamic_cast<VulkanContext*>(graphics_.get())) {
+    return CreateVulkanRenderBackend(*vulkan);
+  }
+#endif
+  return nullptr;
 }
 
 void PlatformSession::shutdown()

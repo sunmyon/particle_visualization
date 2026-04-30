@@ -62,7 +62,9 @@ public:
 private:
   struct UploadedVersions {
     std::uint64_t particles = 0;
+    std::uint64_t stressParticles = 0;
     std::uint64_t particleLod = 0;
+    std::uint64_t particleLodStress = 0;
     std::uint64_t velocity = 0;
     std::uint64_t cubes = 0;
     std::uint64_t ellipsoids = 0;
@@ -82,7 +84,9 @@ private:
   UploadedVersions uploaded_;
 
   ParticleRenderer particle_;
+  ParticleRenderer particleStress_;
   ParticleRenderer particleLod_;
+  ParticleRenderer particleLodStress_;
   OpenGLParticleFrameCache particleFrameCache_;
   VelocityFieldRenderer velocity_;
 

@@ -3,6 +3,7 @@
 #include <memory>
 
 struct NativeWindowHandle;
+class VulkanContext;
 
 class ImGuiBackend {
 public:
@@ -17,6 +18,9 @@ std::unique_ptr<ImGuiBackend> CreateGlfwOpenGLImGuiBackend(
   NativeWindowHandle window);
 std::unique_ptr<ImGuiBackend> CreateHeadlessOpenGLImGuiBackend(int width,
                                                                int height);
+std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
+  NativeWindowHandle window,
+  VulkanContext& context);
 
 void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend);
 void BeginImGuiFrame(int width, int height);

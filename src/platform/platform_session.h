@@ -10,6 +10,7 @@
 
 struct AppState;
 struct CallbackContext;
+class RenderBackend;
 
 class PlatformSession {
 public:
@@ -24,6 +25,7 @@ public:
   const WindowContext& window() const { return window_; }
 
   IFramePresenter& presenter();
+  std::unique_ptr<RenderBackend> createRenderBackend();
 
 private:
   WindowContext window_;

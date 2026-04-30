@@ -71,6 +71,9 @@ option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
 option(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND
   "Build the experimental Vulkan render backend when Vulkan is available"
   ON)
+option(PARTICLE_VIS_BUILD_VULKAN_PROBE
+  "Build the standalone GLFW/Vulkan swapchain probe when Vulkan is available"
+  ON)
 option(PARTICLE_VIS_HEADLESS_ONLY "Build particle_vis without GLFW/window support for EGL remote rendering" OFF)
 option(PARTICLE_VIS_BUILD_BATCH "Build GUI-less batch executable" OFF)
 option(AUTO_HEADLESS_ON_MISSING_GLFW "Automatically switch to headless mode when GLFW is unavailable on Linux" ON)
@@ -572,10 +575,42 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_OPENGL_BA
 if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
   find_package(Vulkan QUIET)
   if(TARGET Vulkan::Vulkan)
+    find_program(GLSLANG_VALIDATOR glslangValidator)
+    if(NOT GLSLANG_VALIDATOR)
+      message(FATAL_ERROR
+        "Vulkan render backend requires glslangValidator to compile shaders.")
+    endif()
+    set(PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/vulkan_shaders")
+    file(MAKE_DIRECTORY "${PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR}")
+    set(PARTICLE_VIS_VULKAN_SHADER_SOURCES
+      ${SRC_DIR}/render/vulkan/shaders/particle.vert
+      ${SRC_DIR}/render/vulkan/shaders/particle.frag)
+    set(PARTICLE_VIS_VULKAN_SHADER_OUTPUTS)
+    foreach(shader IN LISTS PARTICLE_VIS_VULKAN_SHADER_SOURCES)
+      get_filename_component(shader_name "${shader}" NAME)
+      set(shader_output
+        "${PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR}/${shader_name}.spv")
+      add_custom_command(
+        OUTPUT "${shader_output}"
+        COMMAND ${GLSLANG_VALIDATOR} -V "${shader}" -o "${shader_output}"
+        DEPENDS "${shader}"
+        COMMENT "Compiling Vulkan shader ${shader_name}"
+        VERBATIM)
+      list(APPEND PARTICLE_VIS_VULKAN_SHADER_OUTPUTS "${shader_output}")
+    endforeach()
+    add_custom_target(vulkan_shaders
+      DEPENDS ${PARTICLE_VIS_VULKAN_SHADER_OUTPUTS})
+
     target_sources(${PROJECT_NAME} PRIVATE
-      ${SRC_DIR}/render/vulkan/vulkan_render_backend.cpp)
+      ${SRC_DIR}/platform/vulkan_context.cpp
+      ${SRC_DIR}/render/vulkan/vulkan_render_backend.cpp
+      ${EXTERNAL_DIR}/imgui/backends/imgui_impl_vulkan.cpp)
     target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_VULKAN_BACKEND)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+      PARTICLE_VIS_VULKAN_SHADER_DIR="${PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR}")
+    add_dependencies(${PROJECT_NAME} vulkan_shaders)
     message(STATUS "Vulkan render backend: ON")
   else()
     message(STATUS "Vulkan render backend: OFF (Vulkan package not found)")
@@ -1574,6 +1609,22 @@ if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
 
   if(NOT MSVC)
     target_compile_options(remote_frame_viewer PRIVATE -Wall -Wextra)
+  endif()
+endif()
+
+if(PARTICLE_VIS_BUILD_VULKAN_PROBE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
+  find_package(Vulkan QUIET)
+  if(TARGET Vulkan::Vulkan)
+    add_executable(vulkan_probe
+      ${CMAKE_SOURCE_DIR}/tools/vulkan_probe/main.cpp)
+    target_link_libraries(vulkan_probe PRIVATE Vulkan::Vulkan)
+    detect_and_link_glfw(vulkan_probe "glfw" "glfw")
+    if(NOT MSVC)
+      target_compile_options(vulkan_probe PRIVATE -Wall -Wextra)
+    endif()
+    message(STATUS "Vulkan probe target: ON")
+  else()
+    message(STATUS "Vulkan probe target: OFF (Vulkan package not found)")
   endif()
 endif()
 
