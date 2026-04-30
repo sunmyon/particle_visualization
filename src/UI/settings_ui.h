@@ -41,6 +41,7 @@ struct SettingsMemoryView {
   size_t systemAvailableBytes = 0;
   bool gpuAvailableKnown = false;
   size_t gpuAvailableBytes = 0;
+  RenderBackendTimingInfo timing;
 };
 
 struct SettingsCameraView {

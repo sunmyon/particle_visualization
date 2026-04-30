@@ -58,6 +58,7 @@ struct RenderSchedulingState {
   bool skipVolumeWhileInteracting = true;
   bool cacheParticleFrames = true;
   bool cacheVolumeFrames = true;
+  float volumeFrameCacheScale = 1.0f;
   bool autoParticleLodOnSoftwareRenderer = true;
   ParticleLodSettings particleLod;
   float settleDelaySeconds = 0.15f;

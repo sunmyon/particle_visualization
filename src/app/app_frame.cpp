@@ -1,6 +1,8 @@
 #include "app/app_frame.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -182,8 +184,13 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       runtime.render.scheduling.cacheVolumeFrames &&
       viewport.width > 0 &&
       viewport.height > 0) {
+    const float scale =
+      std::clamp(runtime.render.scheduling.volumeFrameCacheScale, 0.25f, 1.0f);
     const size_t pixels =
-      static_cast<size_t>(viewport.width) * static_cast<size_t>(viewport.height);
+      static_cast<size_t>(
+        std::max(1, static_cast<int>(std::ceil(viewport.width * scale)))) *
+      static_cast<size_t>(
+        std::max(1, static_cast<int>(std::ceil(viewport.height * scale))));
     ctx.memory.gpuVolumeCacheBytes = pixels * 8; // RGBA16F estimate.
   }
 #endif
@@ -193,6 +200,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       renderSystem.backend->queryMemoryInfo();
     ctx.memory.gpuAvailableKnown = backendMemory.gpuAvailableKnown;
     ctx.memory.gpuAvailableBytes = backendMemory.gpuAvailableBytes;
+  }
+  if (renderSystem.backend) {
+    ctx.memory.timing = renderSystem.backend->queryTimingInfo();
   }
 
 #ifdef CLUMP_DATA_READ

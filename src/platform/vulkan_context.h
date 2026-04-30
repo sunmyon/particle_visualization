@@ -15,6 +15,7 @@ struct ImGui_ImplVulkanH_Window;
 
 class VulkanContext final : public GraphicsContext {
 public:
+  using PreRenderCallback = std::function<void(VkCommandBuffer)>;
   using PreImGuiDrawCallback = std::function<void(VkCommandBuffer)>;
 
   VulkanContext();
@@ -29,6 +30,7 @@ public:
   bool isHeadless() const override { return false; }
 
   void renderImGuiDrawData(ImDrawData* drawData);
+  void setPreRenderCallback(PreRenderCallback callback);
   void setPreImGuiDrawCallback(PreImGuiDrawCallback callback);
 
   VkInstance instance() const { return instance_; }
@@ -64,6 +66,7 @@ private:
   std::uint32_t minImageCount_ = 2;
   bool swapChainRebuild_ = false;
   bool frameRecorded_ = false;
+  PreRenderCallback preRender_;
   PreImGuiDrawCallback preImGuiDraw_;
 
   VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;

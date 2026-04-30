@@ -589,7 +589,10 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
       ${SRC_DIR}/render/vulkan/shaders/solid.vert
       ${SRC_DIR}/render/vulkan/shaders/solid.frag
       ${SRC_DIR}/render/vulkan/shaders/line.vert
-      ${SRC_DIR}/render/vulkan/shaders/line.frag)
+      ${SRC_DIR}/render/vulkan/shaders/line.frag
+      ${SRC_DIR}/render/vulkan/shaders/volume.vert
+      ${SRC_DIR}/render/vulkan/shaders/volume.frag
+      ${SRC_DIR}/render/vulkan/shaders/volume_cache.frag)
     set(PARTICLE_VIS_VULKAN_SHADER_OUTPUTS)
     foreach(shader IN LISTS PARTICLE_VIS_VULKAN_SHADER_SOURCES)
       get_filename_component(shader_name "${shader}" NAME)

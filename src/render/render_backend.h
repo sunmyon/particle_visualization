@@ -15,6 +15,17 @@ struct RenderBackendMemoryInfo {
   std::size_t gpuAvailableBytes = 0;
 };
 
+struct RenderBackendTimingInfo {
+  bool volumeGpuTimeKnown = false;
+  double volumeGpuMs = 0.0;
+  bool volumeWallLatencyKnown = false;
+  double volumeWallLatencyMs = 0.0;
+  bool volumeCacheUsed = false;
+  bool volumeCacheUpdated = false;
+  bool volumeCacheHit = false;
+  double volumeCacheScale = 1.0;
+};
+
 struct RenderBackendCapabilities {
   bool particles = false;
   bool particleLod = false;
@@ -46,6 +57,7 @@ public:
   virtual RenderBackendCapabilities capabilities() const { return {}; }
   virtual bool isSoftwareRenderer() const { return false; }
   virtual RenderBackendMemoryInfo queryMemoryInfo() const { return {}; }
+  virtual RenderBackendTimingInfo queryTimingInfo() const { return {}; }
 };
 
 enum class RenderBackendKind {

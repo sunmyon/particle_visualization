@@ -274,6 +274,10 @@ void VulkanContext::renderImGuiDrawData(ImDrawData* drawData)
     return;
   }
 
+  if (preRender_) {
+    preRender_(frame->CommandBuffer);
+  }
+
   VkRenderPassBeginInfo renderPassInfo{};
   renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   renderPassInfo.renderPass = windowData_->RenderPass;
@@ -345,6 +349,11 @@ VkExtent2D VulkanContext::swapchainExtent() const
 void VulkanContext::setPreImGuiDrawCallback(PreImGuiDrawCallback callback)
 {
   preImGuiDraw_ = std::move(callback);
+}
+
+void VulkanContext::setPreRenderCallback(PreRenderCallback callback)
+{
+  preRender_ = std::move(callback);
 }
 
 bool VulkanContext::createInstance()

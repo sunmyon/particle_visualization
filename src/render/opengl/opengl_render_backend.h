@@ -2,6 +2,7 @@
 
 #include "render/render_backend.h"
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -58,8 +59,14 @@ public:
   RenderBackendCapabilities capabilities() const override;
   bool isSoftwareRenderer() const override { return softwareRenderer_; }
   RenderBackendMemoryInfo queryMemoryInfo() const override;
+  RenderBackendTimingInfo queryTimingInfo() const override { return timing_; }
 
 private:
+#ifdef VOLUME_RENDERING
+  void pollVolumeTimingFence();
+  void markVolumeTimingFence();
+#endif
+
   struct UploadedVersions {
     std::uint64_t particles = 0;
     std::uint64_t stressParticles = 0;
@@ -116,4 +123,10 @@ private:
   bool softwareRenderer_ = false;
   bool hasNvxGpuMemoryInfo_ = false;
   bool hasAtiMeminfo_ = false;
+  RenderBackendTimingInfo timing_;
+#ifdef VOLUME_RENDERING
+  GLsync volumeTimingFence_ = nullptr;
+  std::chrono::steady_clock::time_point volumeTimingWallStart_;
+  bool volumeTimingWallStartValid_ = false;
+#endif
 };

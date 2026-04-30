@@ -222,6 +222,37 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   if (!backend.particles) {
     ImGui::TextDisabled("Current render backend does not draw particles.");
   }
+  ImGui::SeparatorText("Rendering timings");
+  if (memory.timing.volumeCacheUsed) {
+    const char* cacheState = memory.timing.volumeCacheUpdated
+      ? "updated"
+      : (memory.timing.volumeCacheHit ? "hit" : "idle");
+    if (memory.timing.volumeGpuTimeKnown) {
+      ImGui::Text("Last volume ray pass GPU: %.3f ms (%s, %.2fx cache)",
+                  memory.timing.volumeGpuMs,
+                  cacheState,
+                  memory.timing.volumeCacheScale);
+      if (memory.timing.volumeWallLatencyKnown) {
+        ImGui::Text("Last volume completion latency: %.3f ms CPU clock",
+                    memory.timing.volumeWallLatencyMs);
+      }
+    } else {
+      if (memory.timing.volumeWallLatencyKnown) {
+        ImGui::Text("Last volume completion latency: %.3f ms CPU clock (%s, %.2fx cache)",
+                    memory.timing.volumeWallLatencyMs,
+                    cacheState,
+                    memory.timing.volumeCacheScale);
+      } else {
+        ImGui::Text("Volume ray pass: waiting for timing (%s, %.2fx cache)",
+                    cacheState,
+                    memory.timing.volumeCacheScale);
+      }
+    }
+    ImGui::TextDisabled("Latency is CPU-observed time until GPU completion is visible.");
+  } else {
+    ImGui::TextDisabled("Volume ray pass timing: inactive");
+  }
+  ImGui::SeparatorText("Scene size");
   ImGui::Text("Particle LOD proxy: %zu points",
               memory.particleLodProxyCount);
   ImGui::Text("Particle LOD nodes: %zu", memory.particleLodNodeCount);
@@ -297,6 +328,16 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   }
   dirty |= ImGui::Checkbox("Cache unchanged volume frames",
                            &scheduling.cacheVolumeFrames);
+  if (backend.volumeFrameCache && scheduling.cacheVolumeFrames) {
+    dirty |= ImGui::SliderFloat("Volume cache resolution",
+                                &scheduling.volumeFrameCacheScale,
+                                0.25f,
+                                1.0f,
+                                "%.2fx");
+    scheduling.volumeFrameCacheScale =
+      std::clamp(scheduling.volumeFrameCacheScale, 0.25f, 1.0f);
+    ImGui::TextDisabled("Lower values redraw volume faster, with softer detail.");
+  }
   if (!backend.volumeFrameCache) {
     ImGui::EndDisabled();
     ImGui::SameLine();

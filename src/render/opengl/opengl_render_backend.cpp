@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cctype>
 #include <iostream>
 #include <string>
@@ -840,6 +841,13 @@ RenderBackendMemoryInfo OpenGLRenderBackend::queryMemoryInfo() const
 
 void OpenGLRenderBackend::destroy()
 {
+#ifdef VOLUME_RENDERING
+  if (volumeTimingFence_) {
+    glDeleteSync(volumeTimingFence_);
+    volumeTimingFence_ = nullptr;
+  }
+  volumeTimingWallStartValid_ = false;
+#endif
   crossGizmo_.destroy();
   coordAxes_.destroy();
   DestroyParticleFrameCache(particleFrameCache_);
@@ -902,9 +910,48 @@ RenderBackendCapabilities OpenGLRenderBackend::capabilities() const
   return caps;
 }
 
+#ifdef VOLUME_RENDERING
+void OpenGLRenderBackend::pollVolumeTimingFence()
+{
+  if (!volumeTimingFence_) {
+    return;
+  }
+  const GLenum result = glClientWaitSync(volumeTimingFence_, 0, 0);
+  if (result == GL_TIMEOUT_EXPIRED) {
+    return;
+  }
+  glDeleteSync(volumeTimingFence_);
+  volumeTimingFence_ = nullptr;
+  if (result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED) {
+    if (volumeTimingWallStartValid_) {
+      const auto now = std::chrono::steady_clock::now();
+      timing_.volumeWallLatencyKnown = true;
+      timing_.volumeWallLatencyMs =
+        std::chrono::duration<double, std::milli>(
+          now - volumeTimingWallStart_).count();
+    }
+  }
+  volumeTimingWallStartValid_ = false;
+}
+
+void OpenGLRenderBackend::markVolumeTimingFence()
+{
+  if (volumeTimingFence_) {
+    glDeleteSync(volumeTimingFence_);
+    volumeTimingFence_ = nullptr;
+  }
+  volumeTimingFence_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  volumeTimingWallStart_ = std::chrono::steady_clock::now();
+  volumeTimingWallStartValid_ = volumeTimingFence_ != nullptr;
+}
+#endif
+
 void OpenGLRenderBackend::render(const RenderFrameState& frame,
                                  const RenderSceneData& scene)
 {
+#ifdef VOLUME_RENDERING
+  pollVolumeTimingFence();
+#endif
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -925,6 +972,13 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
   const OverlayState& overlay = frame.overlay;
 
 #ifdef VOLUME_RENDERING
+  timing_.volumeCacheUsed = render.scheduling.cacheVolumeFrames;
+  timing_.volumeCacheUpdated = false;
+  timing_.volumeCacheHit = false;
+  timing_.volumeCacheScale =
+    std::clamp(static_cast<double>(render.scheduling.volumeFrameCacheScale),
+               0.25,
+               1.0);
   const bool skipVolumeForInteraction =
     render.scheduling.responsiveInteraction &&
     render.scheduling.interactionActive &&
@@ -1009,14 +1063,27 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
     };
 
     if (render.scheduling.cacheVolumeFrames) {
+      const float cacheScale =
+        std::clamp(render.scheduling.volumeFrameCacheScale, 0.25f, 1.0f);
+      AdaptiveVolumeDrawParams cacheParams = volumeParams;
+      cacheParams.resolution = glm::ivec2(
+        std::max(1, static_cast<int>(std::ceil(volumeParams.resolution.x *
+                                               cacheScale))),
+        std::max(1, static_cast<int>(std::ceil(volumeParams.resolution.y *
+                                               cacheScale))));
+      cacheParams.focalPixels = volumeParams.focalPixels * cacheScale;
       if (!VolumeFrameCacheMatches(volumeFrameCache_,
                                    scene.volumeVersion,
-                                   volumeParams)) {
+                                   cacheParams)) {
         RenderVolumeFrameToCache(volumeFrameCache_,
                                  volume_,
                                  programs_.octray,
                                  scene.volumeVersion,
-                                 volumeParams);
+                                 cacheParams);
+        markVolumeTimingFence();
+        timing_.volumeCacheUpdated = true;
+      } else {
+        timing_.volumeCacheHit = true;
       }
       drawVolumeLayer([&]() {
         DrawCachedVolumeFrame(volumeFrameCache_, programs_.upscale);
@@ -1026,7 +1093,10 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
       drawVolumeLayer([&]() {
         volume_.draw(programs_.octray, volumeParams);
       });
+      markVolumeTimingFence();
     }
+  } else {
+    timing_.volumeCacheUsed = false;
   }
 #endif
 
