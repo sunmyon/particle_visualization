@@ -21,6 +21,9 @@ extern const char* instancedSolidFragmentShaderSource;
 extern const char* coordShaderSource;
 extern const char* coordFragmentShaderSource;
 
+extern const char* textureBlitVertexShaderSource;
+extern const char* textureBlitFragmentShaderSource;
+
 #ifdef ISO_CONTOUR
 extern const char* isocontourVertexShaderSource;
 extern const char* isocontourFragmentShaderSource;

@@ -16,6 +16,7 @@
 #include "app/state/normalization_config.h"
 #include "app/settings_analysis_requests.h"
 #include "app/state/tool_window_commands.h"
+#include "data/particle_array.h"
 #include "render/render_system.h"
 
 #include "UI/common_ui.h"
@@ -69,7 +70,10 @@ static RenderViewport MakeRenderViewport(const WindowContext& window)
 
 static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
                                                    const AppRuntimeState& runtime,
-                                                   const AnalysisDerivedState& analysis)
+                                                   const AnalysisDerivedState& analysis,
+                                                   const AppDataState& data,
+                                                   const RenderSystem& renderSystem,
+                                                   const RenderViewport& viewport)
 {
   SettingsViewContext ctx;
   ctx.camera.position[0] = view.camera.cameraPos.x;
@@ -79,6 +83,43 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.camera.target[1] = view.camera.cameraTarget.y;
   ctx.camera.target[2] = view.camera.cameraTarget.z;
   ctx.snapshotLoading = runtime.snapshotLoad.busy;
+
+  if (data.particles) {
+    ctx.memory.particleCount =
+      data.particles->particleBlock.particles.size();
+    ctx.memory.cpuParticleBytes =
+      data.particles->particleBlock.particles.size() * sizeof(ParticleData) +
+      data.particles->flag_mask.size() * sizeof(uint8_t);
+  }
+  ctx.memory.renderParticleCount = renderSystem.scene.particles.size();
+  ctx.memory.cpuRenderSceneBytes =
+    renderSystem.scene.particles.size() * sizeof(RenderParticle) +
+    renderSystem.scene.velocityInstances.size() * sizeof(float);
+  ctx.memory.gpuParticleBufferBytes =
+    renderSystem.scene.particles.size() * sizeof(RenderParticle);
+
+  if (runtime.render.scheduling.cacheParticleFrames &&
+      viewport.width > 0 &&
+      viewport.height > 0) {
+    const size_t pixels =
+      static_cast<size_t>(viewport.width) * static_cast<size_t>(viewport.height);
+    ctx.memory.gpuParticleCacheBytes =
+      pixels * (sizeof(float) * 4 + 4); // RGBA16F + DEPTH24/32 estimate.
+  }
+
+#ifdef VOLUME_RENDERING
+  ctx.memory.volumeNodeCount = renderSystem.scene.volume.nodes.size();
+  ctx.memory.gpuVolumeTreeBytes =
+    renderSystem.scene.volume.nodes.size() *
+    (sizeof(float) * 16 + sizeof(int) * 8);
+  if (runtime.render.scheduling.cacheVolumeFrames &&
+      viewport.width > 0 &&
+      viewport.height > 0) {
+    const size_t pixels =
+      static_cast<size_t>(viewport.width) * static_cast<size_t>(viewport.height);
+    ctx.memory.gpuVolumeCacheBytes = pixels * sizeof(float) * 4; // RGBA16F estimate.
+  }
+#endif
 
 #ifdef CLUMP_DATA_READ
   ctx.analysis.clumpBatch = &analysis.clumpBatch;
@@ -104,11 +145,14 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
 static void DrawSettingsPanels(AppViewState& view,
                                AppRuntimeState& runtime,
                                AnalysisDerivedState& analysis,
+                               AppDataState& data,
+                               RenderSystem& renderSystem,
+                               const RenderViewport& viewport,
                                SettingsUIState& settingsUI,
                                WindowCommandQueue& windowCommands)
 {
   SettingsViewContext settingsView =
-    MakeSettingsViewContext(view, runtime, analysis);
+    MakeSettingsViewContext(view, runtime, analysis, data, renderSystem, viewport);
   SyncSettingsAnalysisDraftsFromRuntime(settingsUI.analysisEdit,
                                         runtime.analysisRequests);
   ShowSettingsUI(settingsUI,
@@ -125,12 +169,22 @@ static void DrawSettingsPanels(AppViewState& view,
 static void DrawMainUI(AppViewState& view,
 		       AppRuntimeState& runtime,
 		       AnalysisDerivedState& analysis,
+                       AppDataState& data,
+                       RenderSystem& render,
+                       const RenderViewport& viewport,
                        SettingsUIState& settingsUI,
                        WindowCommandQueue& windowCommands,
 		       const SnapshotCurrentState& current)
 {
   ShowTime(current);
-  DrawSettingsPanels(view, runtime, analysis, settingsUI, windowCommands);
+  DrawSettingsPanels(view,
+                     runtime,
+                     analysis,
+                     data,
+                     render,
+                     viewport,
+                     settingsUI,
+                     windowCommands);
 }
 
 static void DrawToolWindows(AppRuntimeState& runtime,
@@ -421,9 +475,13 @@ void RunFrame(AppState& app,
   app.runtime.snapshotLoad.busy =
     (app.services.snapshotIO && app.services.snapshotIO->isLoading());
 
+  const RenderViewport uiViewport = MakeRenderViewport(window);
   DrawMainUI(app.view,
 	     app.runtime,
 	     app.derived.analysis,
+             app.data,
+             render,
+             uiViewport,
 	     app.ui.settings,
              app.ui.windowCommands,
              app.runtime.settings.fileNavigation.current);

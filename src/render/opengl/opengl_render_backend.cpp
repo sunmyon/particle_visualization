@@ -82,7 +82,6 @@ static CoordAxesGizmoState BuildCoordAxesGizmoState(
   return state;
 }
 
-#ifdef VOLUME_RENDERING
 static bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
 {
   for (int c = 0; c < 4; ++c) {
@@ -93,6 +92,339 @@ static bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
   return true;
 }
 
+static bool EqualParticleTypeVisualConfig(const ParticleTypeVisualConfig& a,
+                                          const ParticleTypeVisualConfig& b)
+{
+  return a.selectedQuantity == b.selectedQuantity &&
+         a.pointSize == b.pointSize &&
+         a.colorMin == b.colorMin &&
+         a.colorMax == b.colorMax &&
+         a.useLogScale == b.useLogScale &&
+         a.hideParticles == b.hideParticles &&
+         a.periodicColorBar == b.periodicColorBar &&
+         a.colormapIndex == b.colormapIndex;
+}
+
+static bool EqualParticleVisualConfig(const ParticleVisualConfig& a,
+                                      const ParticleVisualConfig& b)
+{
+  for (int i = 0; i < kNumParticleTypes; ++i) {
+    if (!EqualParticleTypeVisualConfig(a.types[i], b.types[i])) return false;
+  }
+  return true;
+}
+
+static void DestroyParticleFrameCache(OpenGLParticleFrameCache& cache)
+{
+  if (cache.colorTexture != 0) {
+    glDeleteTextures(1, &cache.colorTexture);
+    cache.colorTexture = 0;
+  }
+  if (cache.depthRenderbuffer != 0) {
+    glDeleteRenderbuffers(1, &cache.depthRenderbuffer);
+    cache.depthRenderbuffer = 0;
+  }
+  if (cache.framebuffer != 0) {
+    glDeleteFramebuffers(1, &cache.framebuffer);
+    cache.framebuffer = 0;
+  }
+  if (cache.vao != 0) {
+    glDeleteVertexArrays(1, &cache.vao);
+    cache.vao = 0;
+  }
+  cache.width = 0;
+  cache.height = 0;
+  cache.particlesVersion = 0;
+  cache.valid = false;
+}
+
+static bool EnsureParticleFrameCacheTarget(OpenGLParticleFrameCache& cache,
+                                           int width,
+                                           int height)
+{
+  width = std::max(width, 1);
+  height = std::max(height, 1);
+
+  if (cache.framebuffer == 0) {
+    glGenFramebuffers(1, &cache.framebuffer);
+  }
+  if (cache.colorTexture == 0) {
+    glGenTextures(1, &cache.colorTexture);
+    glBindTexture(GL_TEXTURE_2D, cache.colorTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  }
+  if (cache.depthRenderbuffer == 0) {
+    glGenRenderbuffers(1, &cache.depthRenderbuffer);
+  }
+  if (cache.vao == 0) {
+    glGenVertexArrays(1, &cache.vao);
+  }
+
+  if (cache.width != width || cache.height != height) {
+    glBindTexture(GL_TEXTURE_2D, cache.colorTexture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA16F,
+                 width,
+                 height,
+                 0,
+                 GL_RGBA,
+                 GL_FLOAT,
+                 nullptr);
+
+    glBindRenderbuffer(GL_RENDERBUFFER, cache.depthRenderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER,
+                          GL_DEPTH_COMPONENT24,
+                          width,
+                          height);
+
+    cache.width = width;
+    cache.height = height;
+    cache.valid = false;
+  }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, cache.framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,
+                         GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D,
+                         cache.colorTexture,
+                         0);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                            GL_DEPTH_ATTACHMENT,
+                            GL_RENDERBUFFER,
+                            cache.depthRenderbuffer);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+  const bool complete =
+    glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glBindRenderbuffer(GL_RENDERBUFFER, 0);
+  return complete;
+}
+
+static bool ParticleFrameCacheMatches(
+  const OpenGLParticleFrameCache& cache,
+  std::uint64_t particlesVersion,
+  const glm::mat4& model,
+  const glm::mat4& view,
+  const glm::mat4& projection,
+  const ParticleVisualConfig& visualConfig,
+  int width,
+  int height)
+{
+  return cache.valid &&
+         cache.particlesVersion == particlesVersion &&
+         cache.width == width &&
+         cache.height == height &&
+         EqualMatrix(cache.model, model) &&
+         EqualMatrix(cache.view, view) &&
+         EqualMatrix(cache.projection, projection) &&
+         EqualParticleVisualConfig(cache.visualConfig, visualConfig);
+}
+
+static void DrawCachedTexture(GLuint texture,
+                              GLuint vao,
+                              GLuint program)
+{
+  if (texture == 0 || vao == 0 || program == 0) {
+    return;
+  }
+
+  glUseProgram(program);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  const GLint loc = glGetUniformLocation(program, "uLow");
+  if (loc >= 0) glUniform1i(loc, 0);
+
+  glBindVertexArray(vao);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glBindVertexArray(0);
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glUseProgram(0);
+}
+
+static void RenderParticlesToCache(OpenGLParticleFrameCache& cache,
+                                   const ParticleRenderer& particle,
+                                   GLuint particleProgram,
+                                   const glm::mat4& model,
+                                   const glm::mat4& view,
+                                   const glm::mat4& projection,
+                                   const ParticleVisualConfig& visualConfig,
+                                   const ColorbarRenderer& colorbar,
+                                   std::uint64_t particlesVersion,
+                                   int width,
+                                   int height)
+{
+  GLint previousFramebuffer = 0;
+  GLint previousViewport[4] = {0, 0, 0, 0};
+  GLfloat previousClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+  GLboolean depthWriteWasEnabled = GL_TRUE;
+  GLint blendSrcRgb = GL_ONE;
+  GLint blendDstRgb = GL_ZERO;
+  GLint blendSrcAlpha = GL_ONE;
+  GLint blendDstAlpha = GL_ZERO;
+  GLint blendEquationRgb = GL_FUNC_ADD;
+  GLint blendEquationAlpha = GL_FUNC_ADD;
+
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+  glGetIntegerv(GL_VIEWPORT, previousViewport);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+
+  if (!EnsureParticleFrameCacheTarget(cache, width, height)) {
+    glBindFramebuffer(GL_FRAMEBUFFER,
+                      static_cast<GLuint>(previousFramebuffer));
+    return;
+  }
+
+  glViewport(0, 0, width, height);
+  glEnable(GL_DEPTH_TEST);
+  glDepthMask(GL_TRUE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  particle.draw(particleProgram,
+                model,
+                view,
+                projection,
+                visualConfig,
+                colorbar);
+
+  cache.particlesVersion = particlesVersion;
+  cache.model = model;
+  cache.view = view;
+  cache.projection = projection;
+  cache.visualConfig = visualConfig;
+  cache.valid = true;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+  glViewport(previousViewport[0],
+             previousViewport[1],
+             previousViewport[2],
+             previousViewport[3]);
+  glClearColor(previousClearColor[0],
+               previousClearColor[1],
+               previousClearColor[2],
+               previousClearColor[3]);
+  glDepthMask(depthWriteWasEnabled);
+  glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
+                          static_cast<GLenum>(blendEquationAlpha));
+  glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
+                      static_cast<GLenum>(blendDstRgb),
+                      static_cast<GLenum>(blendSrcAlpha),
+                      static_cast<GLenum>(blendDstAlpha));
+  if (depthTestWasEnabled) {
+    glEnable(GL_DEPTH_TEST);
+  } else {
+    glDisable(GL_DEPTH_TEST);
+  }
+  if (blendWasEnabled) {
+    glEnable(GL_BLEND);
+  } else {
+    glDisable(GL_BLEND);
+  }
+}
+
+static void CopyParticleCacheDepthToCurrentFramebuffer(
+  const OpenGLParticleFrameCache& cache,
+  const RenderViewport& viewport)
+{
+  if (!cache.valid || cache.framebuffer == 0) {
+    return;
+  }
+
+  GLint drawFramebuffer = 0;
+  GLint readFramebuffer = 0;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, cache.framebuffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
+  glBlitFramebuffer(0,
+                    0,
+                    cache.width,
+                    cache.height,
+                    viewport.x,
+                    viewport.y,
+                    viewport.x + viewport.width,
+                    viewport.y + viewport.height,
+                    GL_DEPTH_BUFFER_BIT,
+                    GL_NEAREST);
+
+  glBindFramebuffer(GL_READ_FRAMEBUFFER,
+                    static_cast<GLuint>(readFramebuffer));
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                    static_cast<GLuint>(drawFramebuffer));
+}
+
+static void DrawParticleCacheToCurrentFramebuffer(
+  const OpenGLParticleFrameCache& cache,
+  GLuint program)
+{
+  if (!cache.valid) {
+    return;
+  }
+
+  const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+  GLboolean depthWriteWasEnabled = GL_TRUE;
+  GLint blendSrcRgb = GL_ONE;
+  GLint blendDstRgb = GL_ZERO;
+  GLint blendSrcAlpha = GL_ONE;
+  GLint blendDstAlpha = GL_ZERO;
+  GLint blendEquationRgb = GL_FUNC_ADD;
+  GLint blendEquationAlpha = GL_FUNC_ADD;
+
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+
+  glDisable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  DrawCachedTexture(cache.colorTexture, cache.vao, program);
+
+  glDepthMask(depthWriteWasEnabled);
+  glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
+                          static_cast<GLenum>(blendEquationAlpha));
+  glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
+                      static_cast<GLenum>(blendDstRgb),
+                      static_cast<GLenum>(blendSrcAlpha),
+                      static_cast<GLenum>(blendDstAlpha));
+  if (depthTestWasEnabled) {
+    glEnable(GL_DEPTH_TEST);
+  } else {
+    glDisable(GL_DEPTH_TEST);
+  }
+  if (blendWasEnabled) {
+    glEnable(GL_BLEND);
+  } else {
+    glDisable(GL_BLEND);
+  }
+}
+
+#ifdef VOLUME_RENDERING
 static bool EqualVolumeDrawParams(const AdaptiveVolumeDrawParams& a,
                                   const AdaptiveVolumeDrawParams& b)
 {
@@ -333,6 +665,7 @@ void OpenGLRenderBackend::destroy()
 {
   crossGizmo_.destroy();
   coordAxes_.destroy();
+  DestroyParticleFrameCache(particleFrameCache_);
   velocity_.destroy();
   particle_.destroy();
 
@@ -498,12 +831,49 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                        scene.particlesVersion,
                        uploaded_.particles);
 
-  particle_.draw(programs_.particle,
-                 fm.model,
-                 fm.view,
-                 fm.projection,
-                 particleVisual,
-                 colorbar_);
+  if (render.scheduling.cacheParticleFrames) {
+    if (!ParticleFrameCacheMatches(particleFrameCache_,
+                                   scene.particlesVersion,
+                                   fm.model,
+                                   fm.view,
+                                   fm.projection,
+                                   particleVisual,
+                                   viewport.width,
+                                   viewport.height)) {
+      RenderParticlesToCache(particleFrameCache_,
+                             particle_,
+                             programs_.particle,
+                             fm.model,
+                             fm.view,
+                             fm.projection,
+                             particleVisual,
+                             colorbar_,
+                             scene.particlesVersion,
+                             viewport.width,
+                             viewport.height);
+    }
+    if (particleFrameCache_.valid) {
+      DrawParticleCacheToCurrentFramebuffer(particleFrameCache_,
+                                            programs_.textureBlit);
+      CopyParticleCacheDepthToCurrentFramebuffer(particleFrameCache_,
+                                                 viewport);
+    } else {
+      particle_.draw(programs_.particle,
+                     fm.model,
+                     fm.view,
+                     fm.projection,
+                     particleVisual,
+                     colorbar_);
+    }
+  } else {
+    particleFrameCache_.valid = false;
+    particle_.draw(programs_.particle,
+                   fm.model,
+                   fm.view,
+                   fm.projection,
+                   particleVisual,
+                   colorbar_);
+  }
 
   if (render.velocity.show) {
     SyncIfVersionChanged(velocity_,

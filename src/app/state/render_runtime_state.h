@@ -54,6 +54,7 @@ struct VelocityRenderState : RenderLayerState {
 struct RenderSchedulingState {
   bool responsiveInteraction = true;
   bool skipVolumeWhileInteracting = true;
+  bool cacheParticleFrames = true;
   bool cacheVolumeFrames = true;
   float settleDelaySeconds = 0.15f;
   bool interactionActive = false;

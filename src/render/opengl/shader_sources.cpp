@@ -387,6 +387,25 @@ void main() {
 }
 )";
 
+const char* textureBlitVertexShaderSource = R"(
+out vec2 vUV;
+void main(){
+    const vec2 pos[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));
+    const vec2 uv[3]  = vec2[3](vec2(0,0),   vec2(2,0),  vec2(0,2));
+    gl_Position = vec4(pos[gl_VertexID], 0.0, 1.0);
+    vUV = uv[gl_VertexID];
+}
+)";
+
+const char* textureBlitFragmentShaderSource = R"(
+in  vec2 vUV;
+out vec4 FragColor;
+uniform sampler2D uLow;
+void main(){
+    FragColor = texture(uLow, vUV);
+}
+)";
+
 #ifdef VOLUME_RENDERING
 const char* fullscreenShaderSource = R"(
 const vec2 V[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));

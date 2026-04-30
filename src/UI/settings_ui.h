@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 struct CameraContext;
 struct WindowCommandQueue;
 struct SettingsUIState;
@@ -17,6 +19,20 @@ struct ProjectionMovieResultState;
 struct StreamlineBuildResultState;
 struct VolumeRenderingResultState;
 struct PythonBridgeViewState;
+struct RenderSceneData;
+struct RenderViewport;
+
+struct SettingsMemoryView {
+  size_t particleCount = 0;
+  size_t renderParticleCount = 0;
+  size_t volumeNodeCount = 0;
+  size_t cpuParticleBytes = 0;
+  size_t cpuRenderSceneBytes = 0;
+  size_t gpuParticleBufferBytes = 0;
+  size_t gpuParticleCacheBytes = 0;
+  size_t gpuVolumeTreeBytes = 0;
+  size_t gpuVolumeCacheBytes = 0;
+};
 
 struct SettingsCameraView {
   float position[3] = {0.f, 0.f, 0.f};
@@ -41,6 +57,7 @@ struct SettingsAnalysisResultView {
 struct SettingsViewContext {
   SettingsCameraView camera;
   SettingsAnalysisResultView analysis;
+  SettingsMemoryView memory;
 #ifdef PYTHON_BRIDGE
   const PythonBridgeViewState* pythonBridge = nullptr;
 #endif

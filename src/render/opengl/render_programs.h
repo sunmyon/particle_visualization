@@ -10,6 +10,7 @@ struct RenderPrograms {
   GLuint cubic = 0;
   GLuint coord = 0;
   GLuint colorbar = 0;
+  GLuint textureBlit = 0;
 
 #ifdef ISO_CONTOUR
   GLuint isocontour = 0;

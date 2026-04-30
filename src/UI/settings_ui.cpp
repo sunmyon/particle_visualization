@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <imgui.h>
 
@@ -34,6 +35,8 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
                                           const RenderRuntimeState& render,
                                           const QuantityState& quantity);
 static void DrawCameraInfoSection(const SettingsCameraView& camera);
+static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
+                                         SettingsActionRequestState& req);
 static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
 					    SettingsActionRequestState& req);
 static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
@@ -83,6 +86,7 @@ void ShowSettingsUI(SettingsUIState& ui,
                                 quantity);
 
   DrawCameraInfoSection(view.camera);
+  DrawPerformanceMemorySection(view.memory, settings.request);
   DrawParticleTypeSettingsSection(quantity, settings.request);
   DrawFileNavigationSection(settings.fileNavigation,
                             settings.snapshotFormat,
@@ -149,6 +153,75 @@ static void DrawCameraInfoSection(const SettingsCameraView& camera) {
               camera.position[0], camera.position[1], camera.position[2]);
   ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)",
               camera.target[0], camera.target[1], camera.target[2]);
+}
+
+static const char* FormatBytes(size_t bytes)
+{
+  static char buffers[4][64];
+  static int index = 0;
+  char* out = buffers[index++ % 4];
+
+  double value = static_cast<double>(bytes);
+  const char* unit = "B";
+  if (value >= 1024.0) {
+    value /= 1024.0;
+    unit = "KiB";
+  }
+  if (value >= 1024.0) {
+    value /= 1024.0;
+    unit = "MiB";
+  }
+  if (value >= 1024.0) {
+    value /= 1024.0;
+    unit = "GiB";
+  }
+  std::snprintf(out, 64, "%.2f %s", value, unit);
+  return out;
+}
+
+static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
+                                         SettingsActionRequestState& req)
+{
+  if (!ImGui::CollapsingHeader("Performance / Memory")) {
+    return;
+  }
+
+  ImGui::Text("Particles: %zu loaded, %zu renderable",
+              memory.particleCount,
+              memory.renderParticleCount);
+#ifdef VOLUME_RENDERING
+  ImGui::Text("Volume nodes: %zu", memory.volumeNodeCount);
+#endif
+
+  ImGui::SeparatorText("Estimated memory used by this app");
+  ImGui::Text("CPU particles: %s", FormatBytes(memory.cpuParticleBytes));
+  ImGui::Text("CPU render scene: %s", FormatBytes(memory.cpuRenderSceneBytes));
+  ImGui::Text("GPU particle buffer: %s",
+              FormatBytes(memory.gpuParticleBufferBytes));
+  ImGui::Text("GPU particle frame cache: %s",
+              FormatBytes(memory.gpuParticleCacheBytes));
+#ifdef VOLUME_RENDERING
+  ImGui::Text("GPU volume tree buffers: %s",
+              FormatBytes(memory.gpuVolumeTreeBytes));
+  ImGui::Text("GPU volume frame cache: %s",
+              FormatBytes(memory.gpuVolumeCacheBytes));
+#endif
+
+  ImGui::SeparatorText("GPU cache controls");
+  auto& scheduling = req.renderDraft.scheduling;
+  bool dirty = false;
+  dirty |= ImGui::Checkbox("Cache unchanged particle frames",
+                           &scheduling.cacheParticleFrames);
+#ifdef VOLUME_RENDERING
+  dirty |= ImGui::Checkbox("Cache unchanged volume frames",
+                           &scheduling.cacheVolumeFrames);
+#endif
+  ImGui::TextDisabled("LOD modes will fit here once particle LOD rendering is added.");
+
+  if (dirty) {
+    req.renderDraftDirty = true;
+    req.applyRenderRequested = true;
+  }
 }
 
 static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
@@ -900,8 +973,6 @@ static void DrawRenderingSection(const QuantityState& quantity,
 #ifdef VOLUME_RENDERING
   schedulingDirty |= ImGui::Checkbox("Hide volume while interacting",
                                      &scheduling.skipVolumeWhileInteracting);
-  schedulingDirty |= ImGui::Checkbox("Cache unchanged volume frames",
-                                     &scheduling.cacheVolumeFrames);
 #endif
   schedulingDirty |= ImGui::InputFloat("Interaction settle delay [s]",
                                        &scheduling.settleDelaySeconds,

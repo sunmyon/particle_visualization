@@ -23,6 +23,10 @@ bool InitRenderPrograms(RenderPrograms& p)
   p.coord = createShaderProgram(coordShaderSource,
                                 coordFragmentShaderSource);
 
+  p.textureBlit = createShaderProgramWithHeader(textureBlitVertexShaderSource,
+                                                textureBlitFragmentShaderSource,
+                                                shaderHeader410);
+
 #ifdef ISO_CONTOUR
   p.isocontour = createShaderProgram(isocontourVertexShaderSource,
                                      isocontourFragmentShaderSource);
@@ -65,6 +69,7 @@ void DestroyRenderPrograms(RenderPrograms& p)
   DeleteProgram(p.instancedSolid);
   DeleteProgram(p.coord);
   DeleteProgram(p.colorbar);
+  DeleteProgram(p.textureBlit);
 
 #ifdef ISO_CONTOUR
   DeleteProgram(p.isocontour);

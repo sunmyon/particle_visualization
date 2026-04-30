@@ -4,6 +4,7 @@
 
 #include <cstdint>
 
+#include "render/particle_visual_config.h"
 #include "render/opengl/field_renderer.h"
 #include "render/opengl/gizmo_renderer.h"
 #include "render/opengl/object_renderer.h"
@@ -27,6 +28,21 @@ struct OpenGLVolumeFrameCache {
   bool valid = false;
 };
 #endif
+
+struct OpenGLParticleFrameCache {
+  GLuint framebuffer = 0;
+  GLuint colorTexture = 0;
+  GLuint depthRenderbuffer = 0;
+  GLuint vao = 0;
+  int width = 0;
+  int height = 0;
+  std::uint64_t particlesVersion = 0;
+  glm::mat4 model{1.0f};
+  glm::mat4 view{1.0f};
+  glm::mat4 projection{1.0f};
+  ParticleVisualConfig visualConfig;
+  bool valid = false;
+};
 
 class OpenGLRenderBackend final : public RenderBackend {
 public:
@@ -60,6 +76,7 @@ private:
   UploadedVersions uploaded_;
 
   ParticleRenderer particle_;
+  OpenGLParticleFrameCache particleFrameCache_;
   VelocityFieldRenderer velocity_;
 
   EllipsoidRenderer ellipsoid_;
