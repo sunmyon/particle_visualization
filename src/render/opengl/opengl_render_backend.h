@@ -15,6 +15,19 @@
 #include "render/opengl/adaptive_volume_renderer.h"
 #endif
 
+#ifdef VOLUME_RENDERING
+struct OpenGLVolumeFrameCache {
+  GLuint framebuffer = 0;
+  GLuint texture = 0;
+  GLuint vao = 0;
+  int width = 0;
+  int height = 0;
+  std::uint64_t volumeVersion = 0;
+  AdaptiveVolumeDrawParams params;
+  bool valid = false;
+};
+#endif
+
 class OpenGLRenderBackend final : public RenderBackend {
 public:
   void init() override;
@@ -60,6 +73,7 @@ private:
 #endif
 #ifdef VOLUME_RENDERING
   AdaptiveVolumeRenderer volume_;
+  OpenGLVolumeFrameCache volumeFrameCache_;
 #endif
 
   CrossGizmoRenderer crossGizmo_;

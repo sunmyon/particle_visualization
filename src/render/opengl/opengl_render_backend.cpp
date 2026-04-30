@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <array>
 #include <vector>
 
 #include "app/state/overlay_state.h"
@@ -81,6 +82,216 @@ static CoordAxesGizmoState BuildCoordAxesGizmoState(
   return state;
 }
 
+#ifdef VOLUME_RENDERING
+static bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
+{
+  for (int c = 0; c < 4; ++c) {
+    for (int r = 0; r < 4; ++r) {
+      if (a[c][r] != b[c][r]) return false;
+    }
+  }
+  return true;
+}
+
+static bool EqualVolumeDrawParams(const AdaptiveVolumeDrawParams& a,
+                                  const AdaptiveVolumeDrawParams& b)
+{
+  return EqualMatrix(a.invProjection, b.invProjection) &&
+         EqualMatrix(a.invView, b.invView) &&
+         a.cameraForward == b.cameraForward &&
+         a.resolution == b.resolution &&
+         a.focalPixels == b.focalPixels &&
+         a.pixelThreshold == b.pixelThreshold &&
+         a.tauMax == b.tauMax &&
+         a.stepBias == b.stepBias &&
+         a.skipEpsilon == b.skipEpsilon &&
+         a.debugMode == b.debugMode &&
+         a.baseColor == b.baseColor &&
+         a.colorMode == b.colorMode &&
+         a.tfValueMin == b.tfValueMin &&
+         a.tfValueMax == b.tfValueMax &&
+         a.tfSigmaScale == b.tfSigmaScale &&
+         a.tfMaxSigma == b.tfMaxSigma &&
+         a.tfLogScale == b.tfLogScale &&
+         a.tfComponentCount == b.tfComponentCount &&
+         a.tfTypes == b.tfTypes &&
+         a.tfLogDomains == b.tfLogDomains &&
+         a.tfCenters == b.tfCenters &&
+         a.tfWidths == b.tfWidths &&
+         a.tfAmplitudes == b.tfAmplitudes;
+}
+
+static void DestroyVolumeFrameCache(
+  OpenGLVolumeFrameCache& cache)
+{
+  if (cache.texture != 0) {
+    glDeleteTextures(1, &cache.texture);
+    cache.texture = 0;
+  }
+  if (cache.framebuffer != 0) {
+    glDeleteFramebuffers(1, &cache.framebuffer);
+    cache.framebuffer = 0;
+  }
+  if (cache.vao != 0) {
+    glDeleteVertexArrays(1, &cache.vao);
+    cache.vao = 0;
+  }
+  cache.width = 0;
+  cache.height = 0;
+  cache.volumeVersion = 0;
+  cache.valid = false;
+}
+
+static bool EnsureVolumeFrameCacheTarget(
+  OpenGLVolumeFrameCache& cache,
+  int width,
+  int height)
+{
+  width = std::max(width, 1);
+  height = std::max(height, 1);
+
+  if (cache.framebuffer == 0) {
+    glGenFramebuffers(1, &cache.framebuffer);
+  }
+  if (cache.texture == 0) {
+    glGenTextures(1, &cache.texture);
+    glBindTexture(GL_TEXTURE_2D, cache.texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  }
+  if (cache.vao == 0) {
+    glGenVertexArrays(1, &cache.vao);
+  }
+
+  glBindTexture(GL_TEXTURE_2D, cache.texture);
+  if (cache.width != width || cache.height != height) {
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA16F,
+                 width,
+                 height,
+                 0,
+                 GL_RGBA,
+                 GL_FLOAT,
+                 nullptr);
+    cache.width = width;
+    cache.height = height;
+    cache.valid = false;
+  }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, cache.framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,
+                         GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D,
+                         cache.texture,
+                         0);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+  const bool complete =
+    glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return complete;
+}
+
+static bool VolumeFrameCacheMatches(
+  const OpenGLVolumeFrameCache& cache,
+  std::uint64_t volumeVersion,
+  const AdaptiveVolumeDrawParams& params)
+{
+  return cache.valid &&
+         cache.volumeVersion == volumeVersion &&
+         cache.width == params.resolution.x &&
+         cache.height == params.resolution.y &&
+         EqualVolumeDrawParams(cache.params, params);
+}
+
+static void RenderVolumeFrameToCache(
+  OpenGLVolumeFrameCache& cache,
+  const AdaptiveVolumeRenderer& volume,
+  GLuint volumeProgram,
+  std::uint64_t volumeVersion,
+  const AdaptiveVolumeDrawParams& params)
+{
+  GLint previousFramebuffer = 0;
+  GLint previousViewport[4] = {0, 0, 0, 0};
+  GLfloat previousClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+  GLboolean depthWriteWasEnabled = GL_TRUE;
+
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+  glGetIntegerv(GL_VIEWPORT, previousViewport);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+
+  if (!EnsureVolumeFrameCacheTarget(cache,
+                                    params.resolution.x,
+                                    params.resolution.y)) {
+    glBindFramebuffer(GL_FRAMEBUFFER,
+                      static_cast<GLuint>(previousFramebuffer));
+    return;
+  }
+
+  glViewport(0, 0, params.resolution.x, params.resolution.y);
+  glDisable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+  glDisable(GL_BLEND);
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  volume.draw(volumeProgram, params);
+
+  cache.volumeVersion = volumeVersion;
+  cache.params = params;
+  cache.valid = true;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+  glViewport(previousViewport[0],
+             previousViewport[1],
+             previousViewport[2],
+             previousViewport[3]);
+  glClearColor(previousClearColor[0],
+               previousClearColor[1],
+               previousClearColor[2],
+               previousClearColor[3]);
+  glDepthMask(depthWriteWasEnabled);
+  if (depthTestWasEnabled) {
+    glEnable(GL_DEPTH_TEST);
+  } else {
+    glDisable(GL_DEPTH_TEST);
+  }
+  if (blendWasEnabled) {
+    glEnable(GL_BLEND);
+  } else {
+    glDisable(GL_BLEND);
+  }
+}
+
+static void DrawCachedVolumeFrame(
+  const OpenGLVolumeFrameCache& cache,
+  GLuint program)
+{
+  if (!cache.valid || cache.texture == 0 || cache.vao == 0 || program == 0) {
+    return;
+  }
+
+  glUseProgram(program);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, cache.texture);
+  const GLint loc = glGetUniformLocation(program, "uLow");
+  if (loc >= 0) glUniform1i(loc, 0);
+
+  glBindVertexArray(cache.vao);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glBindVertexArray(0);
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glUseProgram(0);
+}
+#endif
+
 void OpenGLRenderBackend::init()
 {
   InitRenderPrograms(programs_);
@@ -140,6 +351,7 @@ void OpenGLRenderBackend::destroy()
 #endif
 #ifdef VOLUME_RENDERING
   volume_.destroy();
+  DestroyVolumeFrameCache(volumeFrameCache_);
 #endif
 }
 
@@ -215,46 +427,68 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
       volumeParams.tfWidths[static_cast<std::size_t>(i)] = comp.width;
       volumeParams.tfAmplitudes[static_cast<std::size_t>(i)] = comp.amplitude;
     }
-    const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
-    const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
-    GLboolean depthWriteWasEnabled = GL_TRUE;
-    GLint blendSrcRgb = GL_ONE;
-    GLint blendDstRgb = GL_ZERO;
-    GLint blendSrcAlpha = GL_ONE;
-    GLint blendDstAlpha = GL_ZERO;
-    GLint blendEquationRgb = GL_FUNC_ADD;
-    GLint blendEquationAlpha = GL_FUNC_ADD;
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
-    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
-    glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
-    glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
-    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+    auto drawVolumeLayer = [&](auto&& drawFn) {
+      const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+      const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+      GLboolean depthWriteWasEnabled = GL_TRUE;
+      GLint blendSrcRgb = GL_ONE;
+      GLint blendDstRgb = GL_ZERO;
+      GLint blendSrcAlpha = GL_ONE;
+      GLint blendDstAlpha = GL_ZERO;
+      GLint blendEquationRgb = GL_FUNC_ADD;
+      GLint blendEquationAlpha = GL_FUNC_ADD;
+      glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+      glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+      glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+      glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+      glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+      glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+      glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
 
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendEquation(GL_FUNC_ADD);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    volume_.draw(programs_.octray, volumeParams);
-
-    glDepthMask(depthWriteWasEnabled);
-    glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
-                            static_cast<GLenum>(blendEquationAlpha));
-    glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
-                        static_cast<GLenum>(blendDstRgb),
-                        static_cast<GLenum>(blendSrcAlpha),
-                        static_cast<GLenum>(blendDstAlpha));
-    if (depthTestWasEnabled) {
-      glEnable(GL_DEPTH_TEST);
-    } else {
       glDisable(GL_DEPTH_TEST);
-    }
-    if (blendWasEnabled) {
+      glDepthMask(GL_FALSE);
       glEnable(GL_BLEND);
+      glBlendEquation(GL_FUNC_ADD);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      drawFn();
+
+      glDepthMask(depthWriteWasEnabled);
+      glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
+                              static_cast<GLenum>(blendEquationAlpha));
+      glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
+                          static_cast<GLenum>(blendDstRgb),
+                          static_cast<GLenum>(blendSrcAlpha),
+                          static_cast<GLenum>(blendDstAlpha));
+      if (depthTestWasEnabled) {
+        glEnable(GL_DEPTH_TEST);
+      } else {
+        glDisable(GL_DEPTH_TEST);
+      }
+      if (blendWasEnabled) {
+        glEnable(GL_BLEND);
+      } else {
+        glDisable(GL_BLEND);
+      }
+    };
+
+    if (render.scheduling.cacheVolumeFrames) {
+      if (!VolumeFrameCacheMatches(volumeFrameCache_,
+                                   scene.volumeVersion,
+                                   volumeParams)) {
+        RenderVolumeFrameToCache(volumeFrameCache_,
+                                 volume_,
+                                 programs_.octray,
+                                 scene.volumeVersion,
+                                 volumeParams);
+      }
+      drawVolumeLayer([&]() {
+        DrawCachedVolumeFrame(volumeFrameCache_, programs_.upscale);
+      });
     } else {
-      glDisable(GL_BLEND);
+      volumeFrameCache_.valid = false;
+      drawVolumeLayer([&]() {
+        volume_.draw(programs_.octray, volumeParams);
+      });
     }
   }
 #endif

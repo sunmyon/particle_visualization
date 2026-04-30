@@ -900,6 +900,8 @@ static void DrawRenderingSection(const QuantityState& quantity,
 #ifdef VOLUME_RENDERING
   schedulingDirty |= ImGui::Checkbox("Hide volume while interacting",
                                      &scheduling.skipVolumeWhileInteracting);
+  schedulingDirty |= ImGui::Checkbox("Cache unchanged volume frames",
+                                     &scheduling.cacheVolumeFrames);
 #endif
   schedulingDirty |= ImGui::InputFloat("Interaction settle delay [s]",
                                        &scheduling.settleDelaySeconds,
