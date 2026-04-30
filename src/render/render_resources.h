@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/tracking_vector.h"
+#include "render/particle_lod.h"
 #include "render/scene_objects.h"
 #include "render_types.h"
 
@@ -69,6 +70,9 @@ using RenderSceneVersion = std::uint64_t;
 struct RenderSceneData {
   std::vector<RenderParticle> particles;
   RenderSceneVersion particlesVersion = 1;
+  ParticleLodTree particleLod;
+  ParticleLodSettings particleLodSettings;
+  RenderSceneVersion particleLodVersion = 1;
 
   std::vector<float> velocityInstances;
   RenderSceneVersion velocityVersion = 1;

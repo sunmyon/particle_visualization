@@ -3,6 +3,7 @@
 #include "render/render_backend.h"
 
 #include <cstdint>
+#include <vector>
 
 #include "render/particle_visual_config.h"
 #include "render/opengl/field_renderer.h"
@@ -57,6 +58,7 @@ public:
 private:
   struct UploadedVersions {
     std::uint64_t particles = 0;
+    std::uint64_t particleLod = 0;
     std::uint64_t velocity = 0;
     std::uint64_t cubes = 0;
     std::uint64_t ellipsoids = 0;
@@ -76,6 +78,8 @@ private:
   UploadedVersions uploaded_;
 
   ParticleRenderer particle_;
+  ParticleRenderer particleLod_;
+  std::vector<RenderParticle> particleLodDrawList_;
   OpenGLParticleFrameCache particleFrameCache_;
   VelocityFieldRenderer velocity_;
 

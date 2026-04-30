@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <imgui.h>
 
@@ -189,6 +190,7 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("Particles: %zu loaded, %zu renderable",
               memory.particleCount,
               memory.renderParticleCount);
+  ImGui::Text("Particle LOD nodes: %zu", memory.particleLodNodeCount);
 #ifdef VOLUME_RENDERING
   ImGui::Text("Volume nodes: %zu", memory.volumeNodeCount);
 #endif
@@ -198,6 +200,8 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("CPU render scene: %s", FormatBytes(memory.cpuRenderSceneBytes));
   ImGui::Text("GPU particle buffer: %s",
               FormatBytes(memory.gpuParticleBufferBytes));
+  ImGui::Text("CPU particle LOD tree: %s",
+              FormatBytes(memory.cpuParticleLodTreeBytes));
   ImGui::Text("GPU particle frame cache: %s",
               FormatBytes(memory.gpuParticleCacheBytes));
 #ifdef VOLUME_RENDERING
@@ -216,7 +220,46 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   dirty |= ImGui::Checkbox("Cache unchanged volume frames",
                            &scheduling.cacheVolumeFrames);
 #endif
-  ImGui::TextDisabled("LOD modes will fit here once particle LOD rendering is added.");
+
+  ImGui::SeparatorText("Particle LOD");
+  int particleLodMode = static_cast<int>(scheduling.particleLod.mode);
+  const char* lodLabels[] = {"Off", "While interacting", "Always"};
+  if (ImGui::Combo("Particle LOD mode",
+                   &particleLodMode,
+                   lodLabels,
+                   IM_ARRAYSIZE(lodLabels))) {
+    scheduling.particleLod.mode =
+      static_cast<ParticleLodMode>(particleLodMode);
+    dirty = true;
+  }
+  dirty |= ImGui::InputFloat("LOD pixel threshold",
+                             &scheduling.particleLod.pixelThreshold,
+                             0.25f,
+                             1.0f,
+                             "%.2f");
+  if (scheduling.particleLod.pixelThreshold < 0.5f) {
+    scheduling.particleLod.pixelThreshold = 0.5f;
+    dirty = true;
+  }
+  int minNodeParticles =
+    static_cast<int>(scheduling.particleLod.minNodeParticles);
+  if (ImGui::InputInt("LOD min particles per node",
+                      &minNodeParticles,
+                      8,
+                      64)) {
+    if (minNodeParticles < 1) minNodeParticles = 1;
+    scheduling.particleLod.minNodeParticles =
+      static_cast<std::uint32_t>(minNodeParticles);
+    dirty = true;
+  }
+  int maxDepth = static_cast<int>(scheduling.particleLod.maxDepth);
+  if (ImGui::InputInt("LOD max tree depth", &maxDepth, 1, 4)) {
+    if (maxDepth < 1) maxDepth = 1;
+    if (maxDepth > 30) maxDepth = 30;
+    scheduling.particleLod.maxDepth = static_cast<std::uint32_t>(maxDepth);
+    dirty = true;
+  }
+  ImGui::TextDisabled("LOD reduces particle count while the camera is moving.");
 
   if (dirty) {
     req.renderDraftDirty = true;

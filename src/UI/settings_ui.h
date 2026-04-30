@@ -25,10 +25,12 @@ struct RenderViewport;
 struct SettingsMemoryView {
   size_t particleCount = 0;
   size_t renderParticleCount = 0;
+  size_t particleLodNodeCount = 0;
   size_t volumeNodeCount = 0;
   size_t cpuParticleBytes = 0;
   size_t cpuRenderSceneBytes = 0;
   size_t gpuParticleBufferBytes = 0;
+  size_t cpuParticleLodTreeBytes = 0;
   size_t gpuParticleCacheBytes = 0;
   size_t gpuVolumeTreeBytes = 0;
   size_t gpuVolumeCacheBytes = 0;

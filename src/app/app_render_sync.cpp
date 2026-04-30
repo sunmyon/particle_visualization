@@ -4,6 +4,7 @@
 #include "app/state/render_runtime_state.h"
 #include "data/particle_array.h"
 #include "render/particle_visual_config.h"
+#include "render/particle_lod.h"
 #include "render/render_resources.h"
 #include "render/render_system.h"
 
@@ -32,9 +33,15 @@ static void PropagateDirtyFlags(const ParticleRenderInput& input,
 static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRenderInput& input,
                                                                const ParticleVisualConfig& particleVisual,
                                                                const VelocityRenderState& velocityState,
+                                                               const RenderSchedulingState& scheduling,
                                                                RenderSystem& rs)
 {
   ParticleRenderBuildResult result;
+
+  const bool lodTreeBuildSettingsChanged =
+    rs.scene.particleLodSettings.minNodeParticles !=
+      scheduling.particleLod.minNodeParticles ||
+    rs.scene.particleLodSettings.maxDepth != scheduling.particleLod.maxDepth;
 
   if (rs.build.particlesDirty) {
     BuildRenderParticles(input,
@@ -43,6 +50,14 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     rs.build.particlesDirty = false;
     ++rs.scene.particlesVersion;
     result.particlesBuilt = true;
+  }
+
+  if (result.particlesBuilt || lodTreeBuildSettingsChanged) {
+    BuildParticleLodTree(rs.scene.particles,
+                         scheduling.particleLod,
+                         rs.scene.particleLod);
+    rs.scene.particleLodSettings = scheduling.particleLod;
+    ++rs.scene.particleLodVersion;
   }
 
   if (rs.build.velocityInstancesDirty) {
@@ -200,6 +215,7 @@ ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& parti
     UpdateParticleRenderSceneData(particleInput,
                                   particleVisual,
                                   render.velocity,
+                                  render.scheduling,
                                   rs);
 
   UpdateObjectRenderSceneData(derived.scene,

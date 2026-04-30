@@ -10,6 +10,7 @@
 #include "app/state/render_runtime_state.h"
 #include "interaction/camera.h"
 #include "render/particle_visual_config.h"
+#include "render/particle_lod.h"
 #include "projection/projection_map_ui_state.h"
 #include "render/colormap_defs.h"
 #include "render/frame_matrices.h"
@@ -112,6 +113,25 @@ static bool EqualParticleVisualConfig(const ParticleVisualConfig& a,
     if (!EqualParticleTypeVisualConfig(a.types[i], b.types[i])) return false;
   }
   return true;
+}
+
+static bool ShouldUseParticleLod(const RenderRuntimeState& render,
+                                 const ParticleLodTree& tree)
+{
+  if (!tree.valid) {
+    return false;
+  }
+
+  switch (render.scheduling.particleLod.mode) {
+    case ParticleLodMode::Off:
+      return false;
+    case ParticleLodMode::WhileInteracting:
+      return render.scheduling.interactionActive;
+    case ParticleLodMode::Always:
+      return true;
+  }
+
+  return false;
 }
 
 static void DestroyParticleFrameCache(OpenGLParticleFrameCache& cache)
@@ -629,6 +649,7 @@ void OpenGLRenderBackend::init()
   InitRenderPrograms(programs_);
 
   particle_.init();
+  particleLod_.init();
   velocity_.init();
 
   ellipsoid_.init();
@@ -667,6 +688,7 @@ void OpenGLRenderBackend::destroy()
   coordAxes_.destroy();
   DestroyParticleFrameCache(particleFrameCache_);
   velocity_.destroy();
+  particleLod_.destroy();
   particle_.destroy();
 
   ellipsoid_.destroy();
@@ -831,7 +853,22 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                        scene.particlesVersion,
                        uploaded_.particles);
 
-  if (render.scheduling.cacheParticleFrames) {
+  const bool useParticleLod = ShouldUseParticleLod(render,
+                                                  scene.particleLod);
+  if (useParticleLod) {
+    BuildParticleLodDrawList(scene.particleLod,
+                             fm,
+                             render.scheduling.particleLod,
+                             particleLodDrawList_);
+    particleLod_.sync(particleLodDrawList_);
+    particleFrameCache_.valid = false;
+    particleLod_.draw(programs_.particle,
+                      fm.model,
+                      fm.view,
+                      fm.projection,
+                      particleVisual,
+                      colorbar_);
+  } else if (render.scheduling.cacheParticleFrames) {
     if (!ParticleFrameCacheMatches(particleFrameCache_,
                                    scene.particlesVersion,
                                    fm.model,

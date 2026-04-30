@@ -92,11 +92,14 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       data.particles->flag_mask.size() * sizeof(uint8_t);
   }
   ctx.memory.renderParticleCount = renderSystem.scene.particles.size();
+  ctx.memory.particleLodNodeCount = renderSystem.scene.particleLod.nodes.size();
   ctx.memory.cpuRenderSceneBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle) +
     renderSystem.scene.velocityInstances.size() * sizeof(float);
   ctx.memory.gpuParticleBufferBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle);
+  ctx.memory.cpuParticleLodTreeBytes =
+    EstimateParticleLodTreeBytes(renderSystem.scene.particleLod);
 
   if (runtime.render.scheduling.cacheParticleFrames &&
       viewport.width > 0 &&
@@ -104,7 +107,7 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
     const size_t pixels =
       static_cast<size_t>(viewport.width) * static_cast<size_t>(viewport.height);
     ctx.memory.gpuParticleCacheBytes =
-      pixels * (sizeof(float) * 4 + 4); // RGBA16F + DEPTH24/32 estimate.
+      pixels * (8 + 4); // RGBA16F + DEPTH24/32 estimate.
   }
 
 #ifdef VOLUME_RENDERING
@@ -117,7 +120,7 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       viewport.height > 0) {
     const size_t pixels =
       static_cast<size_t>(viewport.width) * static_cast<size_t>(viewport.height);
-    ctx.memory.gpuVolumeCacheBytes = pixels * sizeof(float) * 4; // RGBA16F estimate.
+    ctx.memory.gpuVolumeCacheBytes = pixels * 8; // RGBA16F estimate.
   }
 #endif
 

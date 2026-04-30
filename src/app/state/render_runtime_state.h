@@ -4,6 +4,8 @@
 
 #include <glm/vec3.hpp>
 
+#include "render/particle_lod.h"
+
 struct RenderLayerState {
   bool show = false;
   bool cpuUpdated = false;
@@ -56,6 +58,7 @@ struct RenderSchedulingState {
   bool skipVolumeWhileInteracting = true;
   bool cacheParticleFrames = true;
   bool cacheVolumeFrames = true;
+  ParticleLodSettings particleLod;
   float settleDelaySeconds = 0.15f;
   bool interactionActive = false;
 };

@@ -396,6 +396,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/colormap_defs.cpp
   ${SRC_DIR}/render/render_system.cpp
   ${SRC_DIR}/render/render_frame.cpp
+  ${SRC_DIR}/render/particle_lod.cpp
   ${SRC_DIR}/render/opengl/opengl_render_backend.cpp
   ${SRC_DIR}/render/opengl/render_programs.cpp
   ${SRC_DIR}/render/opengl/shader_utils.cpp
