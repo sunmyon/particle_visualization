@@ -243,6 +243,27 @@ ImVec2 PhysicalToImGui(float x, float y, const ColorbarLayoutPixels& layout)
                 (y + layout.offsetY) / scaleY);
 }
 
+ImVec2 PhysicalToImGui(float x, float y)
+{
+  const ImGuiIO& io = ImGui::GetIO();
+  const float scaleX = io.DisplayFramebufferScale.x > 0.0f
+                         ? io.DisplayFramebufferScale.x
+                         : 1.0f;
+  const float scaleY = io.DisplayFramebufferScale.y > 0.0f
+                         ? io.DisplayFramebufferScale.y
+                         : 1.0f;
+  return ImVec2(x / scaleX, y / scaleY);
+}
+
+glm::vec3 SafeNormalize(const glm::vec3& v, const glm::vec3& fallback)
+{
+  const float len2 = glm::dot(v, v);
+  if (len2 <= 1.0e-20f) {
+    return fallback;
+  }
+  return v / std::sqrt(len2);
+}
+
 } // namespace
 
 class VulkanRenderBackend final : public RenderBackend {
@@ -331,6 +352,7 @@ public:
     syncVisualUniform(0, false);
     syncVisualUniform(1, true);
     drawColorbarOverlay();
+    drawGizmoOverlays();
   }
 
   void updateProjectionPreview(const RgbImage&) override
@@ -348,10 +370,140 @@ public:
     RenderBackendCapabilities caps;
     caps.particles = true;
     caps.colorbar = true;
+    caps.gizmos = true;
     return caps;
   }
 
 private:
+  bool projectWorldToImGui(const glm::vec3& pos, ImVec2& out) const
+  {
+    if (!frame_.valid || frame_.viewport.width <= 0 || frame_.viewport.height <= 0) {
+      return false;
+    }
+
+    const glm::mat4 mvp =
+      frame_.matrices.projection * frame_.matrices.view * frame_.matrices.model;
+    const glm::vec4 clip = mvp * glm::vec4(pos, 1.0f);
+    if (clip.w <= 1.0e-8f) {
+      return false;
+    }
+
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    if (ndc.z < -1.0f || ndc.z > 1.0f) {
+      return false;
+    }
+
+    const float x =
+      static_cast<float>(frame_.viewport.x) +
+      (ndc.x * 0.5f + 0.5f) * static_cast<float>(frame_.viewport.width);
+    const float y =
+      static_cast<float>(frame_.viewport.y) +
+      (1.0f - (ndc.y * 0.5f + 0.5f)) *
+        static_cast<float>(frame_.viewport.height);
+    out = PhysicalToImGui(x, y);
+    return true;
+  }
+
+  void drawProjectedWorldLine(ImDrawList& drawList,
+                              const glm::vec3& a,
+                              const glm::vec3& b,
+                              ImU32 color,
+                              float thickness) const
+  {
+    ImVec2 p0;
+    ImVec2 p1;
+    if (projectWorldToImGui(a, p0) && projectWorldToImGui(b, p1)) {
+      drawList.AddLine(p0, p1, color, thickness);
+    }
+  }
+
+  void drawCrossGizmoOverlay(ImDrawList& drawList) const
+  {
+    const auto& cross = frame_.runtime.crossGizmo;
+    if (!cross.show) {
+      return;
+    }
+
+    const glm::vec3 forward =
+      SafeNormalize(frame_.camera.cameraTarget - frame_.camera.cameraPos,
+                    glm::vec3(0.0f, 0.0f, -1.0f));
+    const glm::vec3 right =
+      SafeNormalize(glm::cross(forward, frame_.camera.cameraUp),
+                    glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 up =
+      SafeNormalize(glm::cross(right, forward),
+                    glm::vec3(0.0f, 1.0f, 0.0f));
+
+    const glm::vec3 center = frame_.camera.cameraTarget;
+    const float size = std::max(cross.size, 0.0f);
+    constexpr float kCrossThickness = 2.0f;
+    const ImU32 white = IM_COL32(255, 255, 255, 235);
+    drawProjectedWorldLine(drawList,
+                           center - (right + up) * size,
+                           center + (right + up) * size,
+                           white,
+                           kCrossThickness);
+    drawProjectedWorldLine(drawList,
+                           center - (right - up) * size,
+                           center + (right - up) * size,
+                           white,
+                           kCrossThickness);
+    drawProjectedWorldLine(drawList,
+                           center - up * size,
+                           center + up * size,
+                           white,
+                           kCrossThickness);
+  }
+
+  void drawCoordAxesOverlay(ImDrawList& drawList) const
+  {
+    if (!frame_.runtime.coordAxes.show || frame_.viewport.width <= 0 ||
+        frame_.viewport.height <= 0) {
+      return;
+    }
+
+    const float axisLength =
+      0.085f * static_cast<float>(std::min(frame_.viewport.width,
+                                           frame_.viewport.height));
+    const float originX =
+      static_cast<float>(frame_.viewport.x) +
+      static_cast<float>(frame_.viewport.width) * 0.90f;
+    const float originY =
+      static_cast<float>(frame_.viewport.y) +
+      static_cast<float>(frame_.viewport.height) * 0.84f;
+    const ImVec2 origin = PhysicalToImGui(originX, originY);
+    const glm::mat3 viewRot(frame_.matrices.view);
+
+    auto drawAxis = [&](const glm::vec3& axis,
+                        ImU32 color,
+                        const char* label) {
+      const glm::vec3 rotated = viewRot * axis;
+      const ImVec2 end = PhysicalToImGui(originX + rotated.x * axisLength,
+                                         originY - rotated.y * axisLength);
+      drawList.AddLine(origin, end, color, 3.0f);
+      drawList.AddText(ImVec2(end.x + 4.0f, end.y + 4.0f),
+                       color,
+                       label);
+    };
+
+    drawAxis(glm::vec3(1.0f, 0.0f, 0.0f), IM_COL32(255, 80, 80, 240), "X");
+    drawAxis(glm::vec3(0.0f, 1.0f, 0.0f), IM_COL32(80, 255, 80, 240), "Y");
+    drawAxis(glm::vec3(0.0f, 0.0f, 1.0f), IM_COL32(240, 240, 255, 240), "Z");
+  }
+
+  void drawGizmoOverlays() const
+  {
+    if (!frame_.valid) {
+      return;
+    }
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    if (!drawList) {
+      return;
+    }
+    drawCrossGizmoOverlay(*drawList);
+    drawCoordAxesOverlay(*drawList);
+  }
+
   void drawColorbarOverlay() const
   {
     if (!frame_.valid || !frame_.runtime.colorbar.show) {
