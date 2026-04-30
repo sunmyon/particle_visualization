@@ -68,6 +68,9 @@ option(USE_MMAP "Use POSIX mmap for file IO" ${USE_MMAP_DEFAULT})
 option(USE_GLES            "Use OpenGL ES + EGL instead of desktop OpenGL" OFF)
 option(USE_EGL_HEADLESS    "Enable headless EGL OpenGL context for remote rendering" ON)
 option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
+option(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND
+  "Build the experimental Vulkan render backend when Vulkan is available"
+  ON)
 option(PARTICLE_VIS_HEADLESS_ONLY "Build particle_vis without GLFW/window support for EGL remote rendering" OFF)
 option(PARTICLE_VIS_BUILD_BATCH "Build GUI-less batch executable" OFF)
 option(AUTO_HEADLESS_ON_MISSING_GLFW "Automatically switch to headless mode when GLFW is unavailable on Linux" ON)
@@ -565,6 +568,19 @@ add_executable(${PROJECT_NAME}
   ${IMPLOT_SRC}
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_OPENGL_BACKEND)
+
+if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
+  find_package(Vulkan QUIET)
+  if(TARGET Vulkan::Vulkan)
+    target_sources(${PROJECT_NAME} PRIVATE
+      ${SRC_DIR}/render/vulkan/vulkan_render_backend.cpp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_VULKAN_BACKEND)
+    message(STATUS "Vulkan render backend: ON")
+  else()
+    message(STATUS "Vulkan render backend: OFF (Vulkan package not found)")
+  endif()
+endif()
 
 # ===== Include paths =====
 target_include_directories(${PROJECT_NAME} PRIVATE

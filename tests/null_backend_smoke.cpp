@@ -32,6 +32,9 @@ int main()
   ok &= Expect(ParseRenderBackendKind("opengl", RenderBackendKind::Null) ==
                  RenderBackendKind::OpenGL,
                "failed to parse OpenGL backend");
+  ok &= Expect(ParseRenderBackendKind("vulkan", RenderBackendKind::Null) ==
+                 RenderBackendKind::Vulkan,
+               "failed to parse Vulkan backend");
 
   #if defined(_WIN32)
   _putenv_s("PARTICLE_VIS_RENDER_BACKEND", "null");

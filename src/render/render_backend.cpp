@@ -29,6 +29,9 @@ RenderBackendKind ParseRenderBackendKind(std::string_view name,
   if (lower == "null" || lower == "none" || lower == "noop") {
     return RenderBackendKind::Null;
   }
+  if (lower == "vulkan" || lower == "vk") {
+    return RenderBackendKind::Vulkan;
+  }
   return fallback;
 }
 
@@ -61,6 +64,14 @@ std::unique_ptr<RenderBackend> CreateRenderBackend(RenderBackendKind kind)
     #endif
     case RenderBackendKind::Null:
       return CreateNullRenderBackend();
+    case RenderBackendKind::Vulkan:
+    #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+      return CreateVulkanRenderBackend();
+    #else
+      std::cerr << "Vulkan render backend is not linked; using null backend."
+                << std::endl;
+      return CreateNullRenderBackend();
+    #endif
   }
 
   #ifdef PARTICLE_VIS_ENABLE_OPENGL_BACKEND

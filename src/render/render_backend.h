@@ -49,7 +49,8 @@ public:
 
 enum class RenderBackendKind {
   OpenGL,
-  Null
+  Null,
+  Vulkan
 };
 
 RenderBackendKind ParseRenderBackendKind(std::string_view name,
@@ -59,3 +60,4 @@ std::unique_ptr<RenderBackend> CreateRenderBackend(RenderBackendKind kind);
 
 std::unique_ptr<RenderBackend> CreateOpenGLRenderBackend();
 std::unique_ptr<RenderBackend> CreateNullRenderBackend();
+std::unique_ptr<RenderBackend> CreateVulkanRenderBackend();
