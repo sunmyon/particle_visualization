@@ -2,13 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <limits>
 #include <numeric>
 
 #include <glm/geometric.hpp>
 
-#include "render/frame_matrices.h"
 #include "render/render_resources.h"
 
 namespace {
@@ -182,31 +180,69 @@ RenderParticle MakeRepresentativeParticle(const ParticleLodNode& node)
   return p;
 }
 
-void AppendLodNode(const ParticleLodTree& tree,
-                   std::int32_t nodeIndex,
-                   const FrameMatrices& frame,
-                   const ParticleLodSettings& settings,
-                   std::vector<RenderParticle>& out)
+void AppendLeafParticles(const std::vector<RenderParticle>& particles,
+                         const ParticleLodTree& tree,
+                         const ParticleLodNode& node,
+                         std::vector<RenderParticle>& out)
+{
+  for (std::uint32_t i = 0; i < node.count; ++i) {
+    out.push_back(particles[tree.indices[node.start + i]]);
+  }
+}
+
+bool WouldExceedOutputLimit(const std::vector<RenderParticle>& out,
+                            std::uint32_t extra,
+                            std::size_t maxOutputParticles)
+{
+  return out.size() + static_cast<std::size_t>(extra) > maxOutputParticles;
+}
+
+bool AppendDistanceLodNode(const std::vector<RenderParticle>& particles,
+                           const ParticleLodTree& tree,
+                           std::int32_t nodeIndex,
+                           const glm::vec3& focus,
+                           const ParticleLodSettings& settings,
+                           std::size_t maxOutputParticles,
+                           std::vector<RenderParticle>& out)
 {
   if (nodeIndex < 0 ||
       static_cast<std::size_t>(nodeIndex) >= tree.nodes.size()) {
-    return;
+    return true;
   }
 
   const ParticleLodNode& node = tree.nodes[static_cast<std::size_t>(nodeIndex)];
-  const glm::vec4 viewCenter =
-    frame.view * glm::vec4(BoundsCenter(node.bounds), 1.0f);
-  const float distance = std::max(1.0e-6f, std::abs(viewCenter.z));
-  const float screenRadius = frame.focalPx * node.radius / distance;
+  const float distance = std::max(1.0e-6f,
+                                  glm::length(BoundsCenter(node.bounds) - focus));
+  const bool smallFromFocus = (node.radius / distance) < settings.theta;
 
-  if (!HasChildren(node) || screenRadius <= settings.pixelThreshold) {
+  if (smallFromFocus) {
+    if (WouldExceedOutputLimit(out, 1, maxOutputParticles)) {
+      return false;
+    }
     out.push_back(MakeRepresentativeParticle(node));
-    return;
+    return true;
   }
 
-  for (int child : node.children) {
-    AppendLodNode(tree, child, frame, settings, out);
+  if (!HasChildren(node)) {
+    if (WouldExceedOutputLimit(out, node.count, maxOutputParticles)) {
+      return false;
+    }
+    AppendLeafParticles(particles, tree, node, out);
+    return true;
   }
+
+  for (int childIndex : node.children) {
+    if (!AppendDistanceLodNode(particles,
+                               tree,
+                               childIndex,
+                               focus,
+                               settings,
+                               maxOutputParticles,
+                               out)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace
@@ -234,17 +270,34 @@ void BuildParticleLodTree(const std::vector<RenderParticle>& particles,
   out.valid = !out.nodes.empty();
 }
 
-void BuildParticleLodDrawList(const ParticleLodTree& tree,
-                              const FrameMatrices& frame,
-                              const ParticleLodSettings& settings,
-                              std::vector<RenderParticle>& out)
+bool BuildParticleLodProxyDrawList(const std::vector<RenderParticle>& particles,
+                                   const ParticleLodTree& tree,
+                                   const glm::vec3& focus,
+                                   const ParticleLodSettings& settings,
+                                   std::vector<RenderParticle>& out)
 {
   out.clear();
   if (!tree.valid || tree.nodes.empty()) {
-    return;
+    return false;
   }
 
-  AppendLodNode(tree, 0, frame, settings, out);
+  const std::size_t targetCount =
+    std::max<std::size_t>(1,
+      static_cast<std::size_t>(static_cast<double>(tree.indices.size()) *
+                               static_cast<double>(settings.proxyFraction)));
+
+  out.reserve(targetCount);
+  const bool ok = AppendDistanceLodNode(particles,
+                                        tree,
+                                        0,
+                                        focus,
+                                        settings,
+                                        targetCount,
+                                        out);
+  if (!ok) {
+    out.clear();
+  }
+  return ok;
 }
 
 std::size_t EstimateParticleLodTreeBytes(const ParticleLodTree& tree)

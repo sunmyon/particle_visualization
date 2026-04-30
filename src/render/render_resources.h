@@ -71,7 +71,11 @@ struct RenderSceneData {
   std::vector<RenderParticle> particles;
   RenderSceneVersion particlesVersion = 1;
   ParticleLodTree particleLod;
+  std::vector<RenderParticle> particleLodProxy;
   ParticleLodSettings particleLodSettings;
+  glm::vec3 particleLodFocus{0.0f};
+  double particleLodLastProxyBuildTime = -1.0;
+  bool particleLodProxyRebuildPending = false;
   RenderSceneVersion particleLodVersion = 1;
 
   std::vector<float> velocityInstances;

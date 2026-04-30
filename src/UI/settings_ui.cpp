@@ -180,6 +180,32 @@ static const char* FormatBytes(size_t bytes)
   return out;
 }
 
+static void DrawMemoryPressureWarning(const char* label,
+                                      size_t estimate,
+                                      bool availableKnown,
+                                      size_t available)
+{
+  if (!availableKnown || available == 0) {
+    ImGui::Text("%s available: unknown", label);
+    return;
+  }
+
+  const double ratio = static_cast<double>(estimate) /
+                       static_cast<double>(available);
+  ImGui::Text("%s available: %s", label, FormatBytes(available));
+  if (ratio >= 0.9) {
+    ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.20f, 1.0f),
+                       "%s memory warning: estimate is %.0f%% of available",
+                       label,
+                       ratio * 100.0);
+  } else if (ratio >= 0.7) {
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.20f, 1.0f),
+                       "%s memory caution: estimate is %.0f%% of available",
+                       label,
+                       ratio * 100.0);
+  }
+}
+
 static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
                                          SettingsActionRequestState& req)
 {
@@ -190,18 +216,34 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("Particles: %zu loaded, %zu renderable",
               memory.particleCount,
               memory.renderParticleCount);
+  ImGui::Text("Particle LOD proxy: %zu points",
+              memory.particleLodProxyCount);
   ImGui::Text("Particle LOD nodes: %zu", memory.particleLodNodeCount);
 #ifdef VOLUME_RENDERING
   ImGui::Text("Volume nodes: %zu", memory.volumeNodeCount);
 #endif
 
   ImGui::SeparatorText("Estimated memory used by this app");
+  const size_t cpuEstimate =
+    memory.cpuParticleBytes +
+    memory.cpuRenderSceneBytes +
+    memory.cpuParticleLodTreeBytes;
+  const size_t gpuEstimate =
+    memory.gpuParticleBufferBytes +
+    memory.gpuParticleCacheBytes +
+    memory.gpuVolumeTreeBytes +
+    memory.gpuVolumeCacheBytes;
   ImGui::Text("CPU particles: %s", FormatBytes(memory.cpuParticleBytes));
   ImGui::Text("CPU render scene: %s", FormatBytes(memory.cpuRenderSceneBytes));
-  ImGui::Text("GPU particle buffer: %s",
-              FormatBytes(memory.gpuParticleBufferBytes));
   ImGui::Text("CPU particle LOD tree: %s",
               FormatBytes(memory.cpuParticleLodTreeBytes));
+  ImGui::Text("CPU estimated total: %s", FormatBytes(cpuEstimate));
+  DrawMemoryPressureWarning("CPU",
+                            cpuEstimate,
+                            memory.systemAvailableKnown,
+                            memory.systemAvailableBytes);
+  ImGui::Text("GPU particle buffer: %s",
+              FormatBytes(memory.gpuParticleBufferBytes));
   ImGui::Text("GPU particle frame cache: %s",
               FormatBytes(memory.gpuParticleCacheBytes));
 #ifdef VOLUME_RENDERING
@@ -210,9 +252,20 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("GPU volume frame cache: %s",
               FormatBytes(memory.gpuVolumeCacheBytes));
 #endif
+  ImGui::Text("GPU estimated total: %s", FormatBytes(gpuEstimate));
+  DrawMemoryPressureWarning("GPU",
+                            gpuEstimate,
+                            memory.gpuAvailableKnown,
+                            memory.gpuAvailableBytes);
 
   ImGui::SeparatorText("GPU cache controls");
   auto& scheduling = req.renderDraft.scheduling;
+  if (!req.particleLodTreeDraftInitialized) {
+    req.particleLodMinNodeParticlesDraft =
+      scheduling.particleLod.minNodeParticles;
+    req.particleLodMaxDepthDraft = scheduling.particleLod.maxDepth;
+    req.particleLodTreeDraftInitialized = true;
+  }
   bool dirty = false;
   dirty |= ImGui::Checkbox("Cache unchanged particle frames",
                            &scheduling.cacheParticleFrames);
@@ -232,34 +285,73 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
       static_cast<ParticleLodMode>(particleLodMode);
     dirty = true;
   }
-  dirty |= ImGui::InputFloat("LOD pixel threshold",
-                             &scheduling.particleLod.pixelThreshold,
-                             0.25f,
-                             1.0f,
+  dirty |= ImGui::Checkbox("Auto LOD on software renderer",
+                           &scheduling.autoParticleLodOnSoftwareRenderer);
+  dirty |= ImGui::InputFloat("LOD proxy fraction",
+                             &scheduling.particleLod.proxyFraction,
+                             0.05f,
+                             0.1f,
                              "%.2f");
-  if (scheduling.particleLod.pixelThreshold < 0.5f) {
-    scheduling.particleLod.pixelThreshold = 0.5f;
+  if (scheduling.particleLod.proxyFraction < 0.01f) {
+    scheduling.particleLod.proxyFraction = 0.01f;
     dirty = true;
   }
+  if (scheduling.particleLod.proxyFraction > 1.0f) {
+    scheduling.particleLod.proxyFraction = 1.0f;
+    dirty = true;
+  }
+  dirty |= ImGui::InputFloat("LOD theta",
+                             &scheduling.particleLod.theta,
+                             0.01f,
+                             0.05f,
+                             "%.3f");
+  if (scheduling.particleLod.theta < 0.01f) {
+    scheduling.particleLod.theta = 0.01f;
+    dirty = true;
+  }
+  dirty |= ImGui::InputFloat("LOD focus update distance",
+                             &scheduling.particleLod.focusUpdateDistance,
+                             0.01f,
+                             0.05f,
+                             "%.3f");
+  if (scheduling.particleLod.focusUpdateDistance < 0.0f) {
+    scheduling.particleLod.focusUpdateDistance = 0.0f;
+    dirty = true;
+  }
+  dirty |= ImGui::InputFloat("LOD proxy update rate [Hz]",
+                             &scheduling.particleLod.proxyUpdateRateHz,
+                             1.0f,
+                             5.0f,
+                             "%.1f");
+  if (scheduling.particleLod.proxyUpdateRateHz < 0.0f) {
+    scheduling.particleLod.proxyUpdateRateHz = 0.0f;
+    dirty = true;
+  }
+
   int minNodeParticles =
-    static_cast<int>(scheduling.particleLod.minNodeParticles);
+    static_cast<int>(req.particleLodMinNodeParticlesDraft);
   if (ImGui::InputInt("LOD min particles per node",
                       &minNodeParticles,
                       8,
                       64)) {
     if (minNodeParticles < 1) minNodeParticles = 1;
-    scheduling.particleLod.minNodeParticles =
+    req.particleLodMinNodeParticlesDraft =
       static_cast<std::uint32_t>(minNodeParticles);
-    dirty = true;
   }
-  int maxDepth = static_cast<int>(scheduling.particleLod.maxDepth);
+  int maxDepth = static_cast<int>(req.particleLodMaxDepthDraft);
   if (ImGui::InputInt("LOD max tree depth", &maxDepth, 1, 4)) {
     if (maxDepth < 1) maxDepth = 1;
     if (maxDepth > 30) maxDepth = 30;
-    scheduling.particleLod.maxDepth = static_cast<std::uint32_t>(maxDepth);
+    req.particleLodMaxDepthDraft = static_cast<std::uint32_t>(maxDepth);
+  }
+  if (ImGui::Button("Apply LOD tree settings")) {
+    scheduling.particleLod.minNodeParticles =
+      req.particleLodMinNodeParticlesDraft;
+    scheduling.particleLod.maxDepth = req.particleLodMaxDepthDraft;
     dirty = true;
   }
-  ImGui::TextDisabled("LOD reduces particle count while the camera is moving.");
+  ImGui::TextDisabled("Tree settings rebuild the tree only when Apply is pressed.");
+  ImGui::TextDisabled("Theta/proxy settings reuse the tree and rebuild only the proxy.");
 
   if (dirty) {
     req.renderDraftDirty = true;

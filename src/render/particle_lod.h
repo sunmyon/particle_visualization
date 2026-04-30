@@ -6,7 +6,6 @@
 
 #include <glm/glm.hpp>
 
-struct FrameMatrices;
 struct RenderParticle;
 
 enum class ParticleLodMode : int {
@@ -16,10 +15,13 @@ enum class ParticleLodMode : int {
 };
 
 struct ParticleLodSettings {
-  ParticleLodMode mode = ParticleLodMode::WhileInteracting;
-  float pixelThreshold = 3.0f;
-  std::uint32_t minNodeParticles = 64;
+  ParticleLodMode mode = ParticleLodMode::Off;
+  std::uint32_t minNodeParticles = 256;
   std::uint32_t maxDepth = 18;
+  float theta = 0.05f;
+  float proxyFraction = 0.8f;
+  float focusUpdateDistance = 0.05f;
+  float proxyUpdateRateHz = 5.0f;
 };
 
 struct ParticleLodBounds {
@@ -51,9 +53,10 @@ void BuildParticleLodTree(const std::vector<RenderParticle>& particles,
                           const ParticleLodSettings& settings,
                           ParticleLodTree& out);
 
-void BuildParticleLodDrawList(const ParticleLodTree& tree,
-                              const FrameMatrices& frame,
-                              const ParticleLodSettings& settings,
-                              std::vector<RenderParticle>& out);
+bool BuildParticleLodProxyDrawList(const std::vector<RenderParticle>& particles,
+                                   const ParticleLodTree& tree,
+                                   const glm::vec3& focus,
+                                   const ParticleLodSettings& settings,
+                                   std::vector<RenderParticle>& out);
 
 std::size_t EstimateParticleLodTreeBytes(const ParticleLodTree& tree);

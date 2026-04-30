@@ -25,6 +25,7 @@ struct RenderViewport;
 struct SettingsMemoryView {
   size_t particleCount = 0;
   size_t renderParticleCount = 0;
+  size_t particleLodProxyCount = 0;
   size_t particleLodNodeCount = 0;
   size_t volumeNodeCount = 0;
   size_t cpuParticleBytes = 0;
@@ -34,6 +35,10 @@ struct SettingsMemoryView {
   size_t gpuParticleCacheBytes = 0;
   size_t gpuVolumeTreeBytes = 0;
   size_t gpuVolumeCacheBytes = 0;
+  bool systemAvailableKnown = false;
+  size_t systemAvailableBytes = 0;
+  bool gpuAvailableKnown = false;
+  size_t gpuAvailableBytes = 0;
 };
 
 struct SettingsCameraView {

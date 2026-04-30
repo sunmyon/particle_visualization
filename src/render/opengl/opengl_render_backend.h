@@ -3,6 +3,7 @@
 #include "render/render_backend.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "render/particle_visual_config.h"
@@ -54,6 +55,8 @@ public:
 
   void updateProjectionPreview(const RgbImage& image) override;
   ProjectionPreviewUIState makeProjectionPreviewUIState() const override;
+  bool isSoftwareRenderer() const override { return softwareRenderer_; }
+  RenderBackendMemoryInfo queryMemoryInfo() const override;
 
 private:
   struct UploadedVersions {
@@ -79,7 +82,6 @@ private:
 
   ParticleRenderer particle_;
   ParticleRenderer particleLod_;
-  std::vector<RenderParticle> particleLodDrawList_;
   OpenGLParticleFrameCache particleFrameCache_;
   VelocityFieldRenderer velocity_;
 
@@ -103,4 +105,10 @@ private:
   ColorbarLabelRenderer colorbarLabels_;
 
   ProjectionPreviewGL preview_;
+
+  std::string glVendor_;
+  std::string glRenderer_;
+  bool softwareRenderer_ = false;
+  bool hasNvxGpuMemoryInfo_ = false;
+  bool hasAtiMeminfo_ = false;
 };

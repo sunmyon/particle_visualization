@@ -1,8 +1,15 @@
 #include "app/app_frame.h"
 
+#include <cstddef>
 #include <vector>
 
 #include <imgui.h>
+
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <sys/sysinfo.h>
+#endif
 
 #include "app/state/app_state.h"
 #include "app/execution/analysis_dispatch.h"
@@ -33,6 +40,40 @@
 #include "platform/window_context.h"
 
 #include "UI/clump_ui.h"
+
+static bool QuerySystemAvailableMemoryBytes(size_t& outBytes)
+{
+#if defined(__APPLE__)
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  vm_statistics64_data_t vmstat{};
+  if (host_statistics64(mach_host_self(),
+                        HOST_VM_INFO64,
+                        reinterpret_cast<host_info64_t>(&vmstat),
+                        &count) != KERN_SUCCESS) {
+    return false;
+  }
+  vm_size_t pageSize = 0;
+  if (host_page_size(mach_host_self(), &pageSize) != KERN_SUCCESS) {
+    return false;
+  }
+  const auto availablePages =
+    static_cast<size_t>(vmstat.free_count) +
+    static_cast<size_t>(vmstat.inactive_count);
+  outBytes = availablePages * static_cast<size_t>(pageSize);
+  return true;
+#elif defined(__linux__)
+  struct sysinfo info {};
+  if (sysinfo(&info) != 0) {
+    return false;
+  }
+  outBytes = static_cast<size_t>(info.freeram) *
+             static_cast<size_t>(info.mem_unit);
+  return true;
+#else
+  (void)outBytes;
+  return false;
+#endif
+}
 #include "projection/projection_map_ui_state.h"
 
 #ifdef PYTHON_BRIDGE
@@ -92,14 +133,19 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       data.particles->flag_mask.size() * sizeof(uint8_t);
   }
   ctx.memory.renderParticleCount = renderSystem.scene.particles.size();
+  ctx.memory.particleLodProxyCount =
+    renderSystem.scene.particleLodProxy.size();
   ctx.memory.particleLodNodeCount = renderSystem.scene.particleLod.nodes.size();
   ctx.memory.cpuRenderSceneBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle) +
+    renderSystem.scene.particleLodProxy.size() * sizeof(RenderParticle) +
     renderSystem.scene.velocityInstances.size() * sizeof(float);
   ctx.memory.gpuParticleBufferBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle);
   ctx.memory.cpuParticleLodTreeBytes =
     EstimateParticleLodTreeBytes(renderSystem.scene.particleLod);
+  ctx.memory.systemAvailableKnown =
+    QuerySystemAvailableMemoryBytes(ctx.memory.systemAvailableBytes);
 
   if (runtime.render.scheduling.cacheParticleFrames &&
       viewport.width > 0 &&
@@ -123,6 +169,13 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
     ctx.memory.gpuVolumeCacheBytes = pixels * 8; // RGBA16F estimate.
   }
 #endif
+
+  if (renderSystem.backend) {
+    const RenderBackendMemoryInfo backendMemory =
+      renderSystem.backend->queryMemoryInfo();
+    ctx.memory.gpuAvailableKnown = backendMemory.gpuAvailableKnown;
+    ctx.memory.gpuAvailableBytes = backendMemory.gpuAvailableBytes;
+  }
 
 #ifdef CLUMP_DATA_READ
   ctx.analysis.clumpBatch = &analysis.clumpBatch;
@@ -536,19 +589,23 @@ void RunFrame(AppState& app,
   AcknowledgeDerivedRebuild(*app.data.particles,
                             app.derived,
                             derivedRebuild);
+
+  const double currentTime = window.timeSeconds();
+  UpdateRenderInteractionActivity(app.runtime,
+                                  static_cast<float>(currentTime));
   
   const ParticleRenderInput particleRenderInput =
     MakeParticleRenderInput(*app.data.particles);
   const ParticleRenderBuildResult buildResult =
     UpdateRenderSceneData(particleRenderInput,
                           app.runtime.particleVisual,
+                          app.view.camera,
+                          currentTime,
+                          render.backend && render.backend->isSoftwareRenderer(),
                           app.runtime.render,
                           app.derived,
                           render);
   AcknowledgeParticleRenderBuild(*app.data.particles, buildResult);
-
-  UpdateRenderInteractionActivity(app.runtime,
-                                  static_cast<float>(window.timeSeconds()));
 
   const RenderViewport renderViewport = MakeRenderViewport(window);
   UpdateRenderFrameInput(app.renderFrameInput,

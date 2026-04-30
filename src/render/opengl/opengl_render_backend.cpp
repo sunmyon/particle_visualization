@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <iostream>
+#include <string>
 #include <vector>
 
 #include "app/state/overlay_state.h"
@@ -18,6 +21,16 @@
 #include "render/render_resources.h"
 #include "render/render_system.h"
 #include "render/render_viewport.h"
+
+#ifndef GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX
+#define GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX 0x9048
+#endif
+#ifndef GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX
+#define GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX 0x9049
+#endif
+#ifndef GL_TEXTURE_FREE_MEMORY_ATI
+#define GL_TEXTURE_FREE_MEMORY_ATI 0x87FC
+#endif
 
 static ColorBarLabelLayout ComputeColorbarLayout(
   const RenderViewport& viewport,
@@ -115,16 +128,66 @@ static bool EqualParticleVisualConfig(const ParticleVisualConfig& a,
   return true;
 }
 
-static bool ShouldUseParticleLod(const RenderRuntimeState& render,
-                                 const ParticleLodTree& tree)
+static std::string LowerCopy(std::string text)
 {
-  if (!tree.valid) {
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return text;
+}
+
+static bool LooksLikeSoftwareRenderer(const std::string& vendor,
+                                      const std::string& renderer)
+{
+  const std::string combined = LowerCopy(vendor + " " + renderer);
+  return combined.find("llvmpipe") != std::string::npos ||
+         combined.find("softpipe") != std::string::npos ||
+         combined.find("software rasterizer") != std::string::npos ||
+         combined.find("swr") != std::string::npos ||
+         combined.find("mesa offscreen") != std::string::npos;
+}
+
+static bool HasExtension(const char* extension)
+{
+  if (!extension) {
+    return false;
+  }
+
+  GLint count = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+  if (count > 0 && glGetStringi) {
+    for (GLint i = 0; i < count; ++i) {
+      const auto* ext =
+        reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i));
+      if (ext && std::string(ext) == extension) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const auto* extensions =
+    reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+  if (!extensions) {
+    return false;
+  }
+  const std::string all = extensions;
+  return all.find(extension) != std::string::npos;
+}
+
+static bool ShouldUseParticleLod(const RenderRuntimeState& render,
+                                 const std::vector<RenderParticle>& proxy,
+                                 bool softwareRenderer)
+{
+  if (proxy.empty()) {
     return false;
   }
 
   switch (render.scheduling.particleLod.mode) {
     case ParticleLodMode::Off:
-      return false;
+      return render.scheduling.autoParticleLodOnSoftwareRenderer &&
+             softwareRenderer &&
+             render.scheduling.interactionActive;
     case ParticleLodMode::WhileInteracting:
       return render.scheduling.interactionActive;
     case ParticleLodMode::Always:
@@ -648,6 +711,22 @@ void OpenGLRenderBackend::init()
 {
   InitRenderPrograms(programs_);
 
+  const auto* vendor = glGetString(GL_VENDOR);
+  const auto* renderer = glGetString(GL_RENDERER);
+  glVendor_ = vendor ? reinterpret_cast<const char*>(vendor) : "(unknown)";
+  glRenderer_ = renderer ? reinterpret_cast<const char*>(renderer) : "(unknown)";
+  softwareRenderer_ = LooksLikeSoftwareRenderer(glVendor_, glRenderer_);
+  hasNvxGpuMemoryInfo_ = HasExtension("GL_NVX_gpu_memory_info");
+  hasAtiMeminfo_ = HasExtension("GL_ATI_meminfo");
+  std::cout << "OpenGL vendor: " << glVendor_ << "\n"
+            << "OpenGL renderer: " << glRenderer_ << "\n"
+            << "OpenGL software renderer: "
+            << (softwareRenderer_ ? "yes" : "no") << "\n"
+            << "OpenGL memory info: "
+            << (hasNvxGpuMemoryInfo_ ? "GL_NVX_gpu_memory_info"
+                : hasAtiMeminfo_ ? "GL_ATI_meminfo" : "unknown")
+            << std::endl;
+
   particle_.init();
   particleLod_.init();
   velocity_.init();
@@ -680,6 +759,35 @@ void OpenGLRenderBackend::init()
   colorbar_.init();
   colorbar_.initColorMaps(cmapViews.data(),
                           static_cast<int>(cmapViews.size()));
+}
+
+RenderBackendMemoryInfo OpenGLRenderBackend::queryMemoryInfo() const
+{
+  RenderBackendMemoryInfo info;
+
+  if (hasNvxGpuMemoryInfo_) {
+    GLint availableKiB = 0;
+    glGetIntegerv(GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX,
+                  &availableKiB);
+    if (availableKiB > 0) {
+      info.gpuAvailableKnown = true;
+      info.gpuAvailableBytes =
+        static_cast<std::size_t>(availableKiB) * 1024u;
+    }
+    return info;
+  }
+
+  if (hasAtiMeminfo_) {
+    GLint values[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_TEXTURE_FREE_MEMORY_ATI, values);
+    if (values[0] > 0) {
+      info.gpuAvailableKnown = true;
+      info.gpuAvailableBytes =
+        static_cast<std::size_t>(values[0]) * 1024u;
+    }
+  }
+
+  return info;
 }
 
 void OpenGLRenderBackend::destroy()
@@ -854,13 +962,14 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                        uploaded_.particles);
 
   const bool useParticleLod = ShouldUseParticleLod(render,
-                                                  scene.particleLod);
+                                                  scene.particleLodProxy,
+                                                  softwareRenderer_);
+  bool particlesDrawn = false;
   if (useParticleLod) {
-    BuildParticleLodDrawList(scene.particleLod,
-                             fm,
-                             render.scheduling.particleLod,
-                             particleLodDrawList_);
-    particleLod_.sync(particleLodDrawList_);
+    SyncIfVersionChanged(particleLod_,
+                         scene.particleLodProxy,
+                         scene.particleLodVersion,
+                         uploaded_.particleLod);
     particleFrameCache_.valid = false;
     particleLod_.draw(programs_.particle,
                       fm.model,
@@ -868,7 +977,13 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                       fm.projection,
                       particleVisual,
                       colorbar_);
-  } else if (render.scheduling.cacheParticleFrames) {
+    particlesDrawn = true;
+  }
+
+  const bool useParticleFrameCache =
+    render.scheduling.cacheParticleFrames &&
+    !render.scheduling.interactionActive;
+  if (!particlesDrawn && useParticleFrameCache) {
     if (!ParticleFrameCacheMatches(particleFrameCache_,
                                    scene.particlesVersion,
                                    fm.model,
@@ -902,7 +1017,10 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
                      particleVisual,
                      colorbar_);
     }
-  } else {
+    particlesDrawn = true;
+  }
+
+  if (!particlesDrawn) {
     particleFrameCache_.valid = false;
     particle_.draw(programs_.particle,
                    fm.model,

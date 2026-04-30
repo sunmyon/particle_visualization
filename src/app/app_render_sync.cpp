@@ -1,8 +1,14 @@
 #include "app/app_render_sync.h"
 
+#include <algorithm>
+#include <limits>
+
+#include <glm/geometric.hpp>
+
 #include "app/state/app_state.h"
 #include "app/state/render_runtime_state.h"
 #include "data/particle_array.h"
+#include "interaction/camera.h"
 #include "render/particle_visual_config.h"
 #include "render/particle_lod.h"
 #include "render/render_resources.h"
@@ -32,6 +38,9 @@ static void PropagateDirtyFlags(const ParticleRenderInput& input,
 
 static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRenderInput& input,
                                                                const ParticleVisualConfig& particleVisual,
+                                                               const CameraContext& camera,
+                                                               double currentTime,
+                                                               bool softwareRenderer,
                                                                const VelocityRenderState& velocityState,
                                                                const RenderSchedulingState& scheduling,
                                                                RenderSystem& rs)
@@ -43,6 +52,31 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
       scheduling.particleLod.minNodeParticles ||
     rs.scene.particleLodSettings.maxDepth != scheduling.particleLod.maxDepth;
 
+  const bool lodProxySettingsChanged =
+    rs.scene.particleLodSettings.proxyFraction !=
+      scheduling.particleLod.proxyFraction ||
+    rs.scene.particleLodSettings.theta != scheduling.particleLod.theta ||
+    rs.scene.particleLodSettings.focusUpdateDistance !=
+      scheduling.particleLod.focusUpdateDistance ||
+    rs.scene.particleLodSettings.proxyUpdateRateHz !=
+      scheduling.particleLod.proxyUpdateRateHz;
+
+  const float focusUpdateDistance =
+    std::max(0.0f, scheduling.particleLod.focusUpdateDistance);
+  const bool lodFocusMoved =
+    glm::length(rs.scene.particleLodFocus - camera.cameraTarget) >
+    focusUpdateDistance;
+  const float proxyUpdateRateHz =
+    std::max(0.0f, scheduling.particleLod.proxyUpdateRateHz);
+  const double minProxyUpdateInterval =
+    proxyUpdateRateHz > 0.0f
+      ? 1.0 / static_cast<double>(proxyUpdateRateHz)
+      : std::numeric_limits<double>::infinity();
+  const bool proxyUpdateIntervalElapsed =
+    rs.scene.particleLodLastProxyBuildTime < 0.0 ||
+    currentTime - rs.scene.particleLodLastProxyBuildTime >=
+      minProxyUpdateInterval;
+
   if (rs.build.particlesDirty) {
     BuildRenderParticles(input,
                          particleVisual,
@@ -52,12 +86,67 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     result.particlesBuilt = true;
   }
 
-  if (result.particlesBuilt || lodTreeBuildSettingsChanged) {
+  const bool lodCanBeUsed =
+    scheduling.particleLod.mode != ParticleLodMode::Off ||
+    (scheduling.autoParticleLodOnSoftwareRenderer && softwareRenderer);
+  if (!lodCanBeUsed) {
+    if (rs.scene.particleLod.valid ||
+        !rs.scene.particleLodProxy.empty()) {
+      rs.scene.particleLod = ParticleLodTree{};
+      rs.scene.particleLodProxy.clear();
+      ++rs.scene.particleLodVersion;
+    }
+    rs.scene.particleLodSettings = scheduling.particleLod;
+    rs.scene.particleLodProxyRebuildPending = false;
+    if (rs.build.velocityInstancesDirty) {
+      UpdateVelocityRenderData(input,
+                               velocityState.subtraction,
+                               rs.scene.velocityInstances);
+      rs.build.velocityInstancesDirty = false;
+      ++rs.scene.velocityVersion;
+      result.velocityBuilt = true;
+    }
+    return result;
+  }
+
+  const bool lodTreeMissing =
+    !rs.scene.particleLod.valid && !rs.scene.particles.empty();
+  const bool rebuildLodTree =
+    result.particlesBuilt || lodTreeBuildSettingsChanged || lodTreeMissing;
+  if (rebuildLodTree) {
     BuildParticleLodTree(rs.scene.particles,
                          scheduling.particleLod,
                          rs.scene.particleLod);
+  }
+
+  if (lodFocusMoved) {
+    rs.scene.particleLodProxyRebuildPending = true;
+  }
+
+  const bool forceProxyRebuild = rebuildLodTree || lodProxySettingsChanged;
+  const bool scheduledProxyRebuild =
+    rs.scene.particleLodProxyRebuildPending &&
+    (!scheduling.interactionActive || proxyUpdateIntervalElapsed);
+
+  if (forceProxyRebuild || scheduledProxyRebuild) {
+    const bool proxyOk =
+      BuildParticleLodProxyDrawList(rs.scene.particles,
+                                    rs.scene.particleLod,
+                                    camera.cameraTarget,
+                                    scheduling.particleLod,
+                                    rs.scene.particleLodProxy);
     rs.scene.particleLodSettings = scheduling.particleLod;
-    ++rs.scene.particleLodVersion;
+    if (proxyOk) {
+      rs.scene.particleLodFocus = camera.cameraTarget;
+      rs.scene.particleLodLastProxyBuildTime = currentTime;
+      rs.scene.particleLodProxyRebuildPending = false;
+      ++rs.scene.particleLodVersion;
+    } else if (forceProxyRebuild) {
+      rs.scene.particleLodProxy.clear();
+      rs.scene.particleLodLastProxyBuildTime = currentTime;
+      rs.scene.particleLodProxyRebuildPending = false;
+      ++rs.scene.particleLodVersion;
+    }
   }
 
   if (rs.build.velocityInstancesDirty) {
@@ -205,6 +294,9 @@ static void UpdateCuboidAnnotationRenderSceneData(RenderLayerState& annotationSt
 
 ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& particleInput,
                                                 const ParticleVisualConfig& particleVisual,
+                                                const CameraContext& camera,
+                                                double currentTime,
+                                                bool softwareRenderer,
                                                 RenderRuntimeState& render,
                                                 const AppDerivedState& derived,
                                                 RenderSystem& rs)
@@ -214,6 +306,9 @@ ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& parti
   ParticleRenderBuildResult buildResult =
     UpdateParticleRenderSceneData(particleInput,
                                   particleVisual,
+                                  camera,
+                                  currentTime,
+                                  softwareRenderer,
                                   render.velocity,
                                   render.scheduling,
                                   rs);

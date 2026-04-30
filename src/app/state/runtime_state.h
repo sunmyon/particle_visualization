@@ -506,6 +506,9 @@ struct SettingsActionRequestState {
   bool renderDraftDirty = false;
   bool applyRenderRequested = false;
   SettingsRenderEditDraft renderDraft;
+  bool particleLodTreeDraftInitialized = false;
+  std::uint32_t particleLodMinNodeParticlesDraft = 256;
+  std::uint32_t particleLodMaxDepthDraft = 18;
 
   bool unitsDraftDirty = false;
   bool applyUnitsRequested = false;
