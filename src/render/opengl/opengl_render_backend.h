@@ -55,6 +55,7 @@ public:
 
   void updateProjectionPreview(const RgbImage& image) override;
   ProjectionPreviewUIState makeProjectionPreviewUIState() const override;
+  RenderBackendCapabilities capabilities() const override;
   bool isSoftwareRenderer() const override { return softwareRenderer_; }
   RenderBackendMemoryInfo queryMemoryInfo() const override;
 

@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#include "render/render_backend.h"
+
 struct CameraContext;
 struct WindowCommandQueue;
 struct SettingsUIState;
@@ -65,6 +67,7 @@ struct SettingsViewContext {
   SettingsCameraView camera;
   SettingsAnalysisResultView analysis;
   SettingsMemoryView memory;
+  RenderBackendCapabilities backend;
 #ifdef PYTHON_BRIDGE
   const PythonBridgeViewState* pythonBridge = nullptr;
 #endif

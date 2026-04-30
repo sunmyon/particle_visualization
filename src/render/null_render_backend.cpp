@@ -17,6 +17,8 @@ public:
     return preview_;
   }
 
+  RenderBackendCapabilities capabilities() const override { return {}; }
+
 private:
   ProjectionPreviewUIState preview_;
 };

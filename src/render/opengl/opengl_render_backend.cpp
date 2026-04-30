@@ -831,6 +831,30 @@ ProjectionPreviewUIState OpenGLRenderBackend::makeProjectionPreviewUIState() con
   return preview_.makeUIState();
 }
 
+RenderBackendCapabilities OpenGLRenderBackend::capabilities() const
+{
+  RenderBackendCapabilities caps;
+  caps.particles = true;
+  caps.particleLod = true;
+  caps.velocityField = true;
+  caps.instancedObjects = true;
+  caps.lines = true;
+  caps.polyhedra = true;
+  caps.colorbar = true;
+  caps.gizmos = true;
+  caps.projectionPreview = true;
+  #ifdef ISO_CONTOUR
+  caps.isoContour = true;
+  #endif
+  #ifdef VOLUME_RENDERING
+  caps.volumeRendering = true;
+  caps.volumeFrameCache = true;
+  #endif
+  caps.particleFrameCache = true;
+  caps.gpuMemoryQuery = hasNvxGpuMemoryInfo_ || hasAtiMeminfo_;
+  return caps;
+}
+
 void OpenGLRenderBackend::render(const RenderFrameState& frame,
                                  const RenderSceneData& scene)
 {

@@ -8,6 +8,7 @@
 
 #include "interaction/camera.h"
 #include "render/particle_visual_config.h"   // Concrete ParticleVisualConfig definition.
+#include "render/render_backend.h"
 #include "UI/file_format_dialog.h"
 #include "UI/volume_rendering_ui.h"
 #include "render/colormap_defs.h"  
@@ -37,6 +38,7 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
                                           const QuantityState& quantity);
 static void DrawCameraInfoSection(const SettingsCameraView& camera);
 static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
+                                         const RenderBackendCapabilities& backend,
                                          SettingsActionRequestState& req);
 static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
 					    SettingsActionRequestState& req);
@@ -87,7 +89,7 @@ void ShowSettingsUI(SettingsUIState& ui,
                                 quantity);
 
   DrawCameraInfoSection(view.camera);
-  DrawPerformanceMemorySection(view.memory, settings.request);
+  DrawPerformanceMemorySection(view.memory, view.backend, settings.request);
   DrawParticleTypeSettingsSection(quantity, settings.request);
   DrawFileNavigationSection(settings.fileNavigation,
                             settings.snapshotFormat,
@@ -207,6 +209,7 @@ static void DrawMemoryPressureWarning(const char* label,
 }
 
 static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
+                                         const RenderBackendCapabilities& backend,
                                          SettingsActionRequestState& req)
 {
   if (!ImGui::CollapsingHeader("Performance / Memory")) {
@@ -216,6 +219,9 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("Particles: %zu loaded, %zu renderable",
               memory.particleCount,
               memory.renderParticleCount);
+  if (!backend.particles) {
+    ImGui::TextDisabled("Current render backend does not draw particles.");
+  }
   ImGui::Text("Particle LOD proxy: %zu points",
               memory.particleLodProxyCount);
   ImGui::Text("Particle LOD nodes: %zu", memory.particleLodNodeCount);
@@ -242,15 +248,23 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
                             cpuEstimate,
                             memory.systemAvailableKnown,
                             memory.systemAvailableBytes);
-  ImGui::Text("GPU particle buffer: %s",
-              FormatBytes(memory.gpuParticleBufferBytes));
-  ImGui::Text("GPU particle frame cache: %s",
-              FormatBytes(memory.gpuParticleCacheBytes));
+  if (backend.particles) {
+    ImGui::Text("GPU particle buffer: %s",
+                FormatBytes(memory.gpuParticleBufferBytes));
+  }
+  if (backend.particleFrameCache) {
+    ImGui::Text("GPU particle frame cache: %s",
+                FormatBytes(memory.gpuParticleCacheBytes));
+  }
 #ifdef VOLUME_RENDERING
-  ImGui::Text("GPU volume tree buffers: %s",
-              FormatBytes(memory.gpuVolumeTreeBytes));
-  ImGui::Text("GPU volume frame cache: %s",
-              FormatBytes(memory.gpuVolumeCacheBytes));
+  if (backend.volumeRendering) {
+    ImGui::Text("GPU volume tree buffers: %s",
+                FormatBytes(memory.gpuVolumeTreeBytes));
+  }
+  if (backend.volumeFrameCache) {
+    ImGui::Text("GPU volume frame cache: %s",
+                FormatBytes(memory.gpuVolumeCacheBytes));
+  }
 #endif
   ImGui::Text("GPU estimated total: %s", FormatBytes(gpuEstimate));
   DrawMemoryPressureWarning("GPU",
@@ -267,14 +281,33 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
     req.particleLodTreeDraftInitialized = true;
   }
   bool dirty = false;
+  if (!backend.particleFrameCache) {
+    ImGui::BeginDisabled();
+  }
   dirty |= ImGui::Checkbox("Cache unchanged particle frames",
                            &scheduling.cacheParticleFrames);
+  if (!backend.particleFrameCache) {
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("unsupported by backend");
+  }
 #ifdef VOLUME_RENDERING
+  if (!backend.volumeFrameCache) {
+    ImGui::BeginDisabled();
+  }
   dirty |= ImGui::Checkbox("Cache unchanged volume frames",
                            &scheduling.cacheVolumeFrames);
+  if (!backend.volumeFrameCache) {
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("unsupported by backend");
+  }
 #endif
 
   ImGui::SeparatorText("Particle LOD");
+  if (!backend.particleLod) {
+    ImGui::BeginDisabled();
+  }
   int particleLodMode = static_cast<int>(scheduling.particleLod.mode);
   const char* lodLabels[] = {"Off", "While interacting", "Always"};
   if (ImGui::Combo("Particle LOD mode",
@@ -352,6 +385,10 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   }
   ImGui::TextDisabled("Tree settings rebuild the tree only when Apply is pressed.");
   ImGui::TextDisabled("Theta/proxy settings reuse the tree and rebuild only the proxy.");
+  if (!backend.particleLod) {
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Particle LOD is unsupported by the current backend.");
+  }
 
   if (dirty) {
     req.renderDraftDirty = true;

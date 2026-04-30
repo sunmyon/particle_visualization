@@ -49,6 +49,14 @@ int main()
   }
 
   backend->init();
+  const RenderBackendCapabilities caps = backend->capabilities();
+  ok &= Expect(!caps.particles, "null backend must not report particles");
+  ok &= Expect(!caps.projectionPreview,
+               "null backend must not report projection preview");
+  ok &= Expect(!caps.particleFrameCache,
+               "null backend must not report particle frame cache");
+  ok &= Expect(!caps.gpuMemoryQuery,
+               "null backend must not report GPU memory query");
 
   RenderFrameState frame;
   RenderSceneData scene;

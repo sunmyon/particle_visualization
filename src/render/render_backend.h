@@ -14,6 +14,23 @@ struct RenderBackendMemoryInfo {
   std::size_t gpuAvailableBytes = 0;
 };
 
+struct RenderBackendCapabilities {
+  bool particles = false;
+  bool particleLod = false;
+  bool velocityField = false;
+  bool instancedObjects = false;
+  bool lines = false;
+  bool polyhedra = false;
+  bool colorbar = false;
+  bool gizmos = false;
+  bool projectionPreview = false;
+  bool isoContour = false;
+  bool volumeRendering = false;
+  bool particleFrameCache = false;
+  bool volumeFrameCache = false;
+  bool gpuMemoryQuery = false;
+};
+
 class RenderBackend {
 public:
   virtual ~RenderBackend() = default;
@@ -25,6 +42,7 @@ public:
 
   virtual void updateProjectionPreview(const RgbImage& image) = 0;
   virtual ProjectionPreviewUIState makeProjectionPreviewUIState() const = 0;
+  virtual RenderBackendCapabilities capabilities() const { return {}; }
   virtual bool isSoftwareRenderer() const { return false; }
   virtual RenderBackendMemoryInfo queryMemoryInfo() const { return {}; }
 };

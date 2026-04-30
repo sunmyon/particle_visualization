@@ -137,6 +137,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.camera.target[1] = view.camera.cameraTarget.y;
   ctx.camera.target[2] = view.camera.cameraTarget.z;
   ctx.snapshotLoading = runtime.snapshotLoad.busy;
+  if (renderSystem.backend) {
+    ctx.backend = renderSystem.backend->capabilities();
+  }
 
   if (data.particles) {
     ctx.memory.particleCount =
@@ -160,7 +163,8 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.memory.systemAvailableKnown =
     QuerySystemAvailableMemoryBytes(ctx.memory.systemAvailableBytes);
 
-  if (runtime.render.scheduling.cacheParticleFrames &&
+  if (ctx.backend.particleFrameCache &&
+      runtime.render.scheduling.cacheParticleFrames &&
       viewport.width > 0 &&
       viewport.height > 0) {
     const size_t pixels =
@@ -174,7 +178,8 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.memory.gpuVolumeTreeBytes =
     renderSystem.scene.volume.nodes.size() *
     (sizeof(float) * 16 + sizeof(int) * 8);
-  if (runtime.render.scheduling.cacheVolumeFrames &&
+  if (ctx.backend.volumeFrameCache &&
+      runtime.render.scheduling.cacheVolumeFrames &&
       viewport.width > 0 &&
       viewport.height > 0) {
     const size_t pixels =
@@ -183,7 +188,7 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   }
 #endif
 
-  if (renderSystem.backend) {
+  if (renderSystem.backend && ctx.backend.gpuMemoryQuery) {
     const RenderBackendMemoryInfo backendMemory =
       renderSystem.backend->queryMemoryInfo();
     ctx.memory.gpuAvailableKnown = backendMemory.gpuAvailableKnown;
@@ -561,10 +566,14 @@ void RunFrame(AppState& app,
 
   ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
 
-  UpdateProjectionPreviewTexture(app.derived.analysis.projectionPreview, render);
+  const bool supportsProjectionPreview =
+    render.backend && render.backend->capabilities().projectionPreview;
+  if (supportsProjectionPreview) {
+    UpdateProjectionPreviewTexture(app.derived.analysis.projectionPreview, render);
+  }
   const ProjectionPreviewUIState projectionPreviewUI =
-    render.backend ? render.backend->makeProjectionPreviewUIState()
-                   : ProjectionPreviewUIState{};
+    supportsProjectionPreview ? render.backend->makeProjectionPreviewUIState()
+                              : ProjectionPreviewUIState{};
 
   DrawToolWindows(app.runtime,
                   app.ui.toolWindows,
@@ -614,7 +623,8 @@ void RunFrame(AppState& app,
                           app.runtime.particleVisual,
                           app.view.camera,
                           currentTime,
-                          render.backend && render.backend->isSoftwareRenderer(),
+                          render.backend && render.backend->capabilities().particles &&
+                            render.backend->isSoftwareRenderer(),
                           app.runtime.render,
                           app.derived,
                           render);
