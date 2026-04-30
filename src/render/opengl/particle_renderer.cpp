@@ -99,7 +99,7 @@ void ParticleRenderer::draw(GLuint particleProgram,
     if (cmap >= gNumColormaps) cmap = gNumColormaps - 1;
 
     glActiveTexture(GL_TEXTURE0 + i);
-    glBindTexture(GL_TEXTURE_1D, colorbarRenderer.colormapTexture(cmap));
+    glBindTexture(GL_TEXTURE_2D, colorbarRenderer.colormapTexture2D(cmap));
   }
 
   glUniform1fv(glGetUniformLocation(particleProgram, "pointSizes"), 6, pointSizes);

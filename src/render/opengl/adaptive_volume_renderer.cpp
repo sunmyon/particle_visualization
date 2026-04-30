@@ -29,6 +29,24 @@ void SetUniform1f(GLuint program, const char* name, GLfloat value)
   if (loc >= 0) glUniform1f(loc, value);
 }
 
+void SetUniform1iv(GLuint program,
+                   const char* name,
+                   GLsizei count,
+                   const int* values)
+{
+  const GLint loc = glGetUniformLocation(program, name);
+  if (loc >= 0) glUniform1iv(loc, count, values);
+}
+
+void SetUniform1fv(GLuint program,
+                   const char* name,
+                   GLsizei count,
+                   const float* values)
+{
+  const GLint loc = glGetUniformLocation(program, name);
+  if (loc >= 0) glUniform1fv(loc, count, values);
+}
+
 void SetUniform2f(GLuint program, const char* name, const glm::ivec2& value)
 {
   const GLint loc = glGetUniformLocation(program, name);
@@ -217,6 +235,19 @@ void AdaptiveVolumeRenderer::draw(GLuint program,
   SetUniform1f(program, "uStepBias", params.stepBias);
   SetUniform1f(program, "uSkipEps", params.skipEpsilon);
   SetUniform1i(program, "uDebugMode", params.debugMode);
+  SetUniform3f(program, "uVolumeColor", params.baseColor);
+  SetUniform1i(program, "uColorMode", params.colorMode);
+  SetUniform1f(program, "uTfValueMin", params.tfValueMin);
+  SetUniform1f(program, "uTfValueMax", params.tfValueMax);
+  SetUniform1f(program, "uTfSigmaScale", params.tfSigmaScale);
+  SetUniform1f(program, "uTfMaxSigma", params.tfMaxSigma);
+  SetUniform1i(program, "uTfLogScale", params.tfLogScale ? 1 : 0);
+  SetUniform1i(program, "uTfComponentCount", params.tfComponentCount);
+  SetUniform1iv(program, "uTfType", 16, params.tfTypes.data());
+  SetUniform1iv(program, "uTfLogDomain", 16, params.tfLogDomains.data());
+  SetUniform1fv(program, "uTfCenter", 16, params.tfCenters.data());
+  SetUniform1fv(program, "uTfWidth", 16, params.tfWidths.data());
+  SetUniform1fv(program, "uTfAmp", 16, params.tfAmplitudes.data());
 
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLES, 0, 3);

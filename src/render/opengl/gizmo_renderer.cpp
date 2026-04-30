@@ -217,51 +217,53 @@ void ColorbarRenderer::init()
 }
 
 namespace {
-GLuint CreateColormapTexture1D(const float* rgb, int nColors)
+GLuint CreateColormapTexture2DRow(const float* rgb, int nColors)
 {
   GLuint tex = 0;
   glGenTextures(1, &tex);
-  glBindTexture(GL_TEXTURE_1D, tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
 
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-  glTexImage1D(GL_TEXTURE_1D,
+  glTexImage2D(GL_TEXTURE_2D,
                0,
                GL_RGB32F,
                nColors,
+               1,
                0,
                GL_RGB,
                GL_FLOAT,
                rgb);
 
-  glBindTexture(GL_TEXTURE_1D, 0);
+  glBindTexture(GL_TEXTURE_2D, 0);
   return tex;
 }
 }
 
 void ColorbarRenderer::initColorMaps(const ColormapDefView* defs, int numColormaps)
 {
-  for (GLuint tex : colormapTextures_) {
+  for (GLuint tex : colormapTextures2D_) {
     if (tex) glDeleteTextures(1, &tex);
   }
-  colormapTextures_.clear();
+  colormapTextures2D_.clear();
 
   if (!defs || numColormaps <= 0) return;
 
-  colormapTextures_.reserve(numColormaps);
+  colormapTextures2D_.reserve(numColormaps);
   for (int i = 0; i < numColormaps; ++i) {
-    colormapTextures_.push_back(CreateColormapTexture1D(defs[i].data, defs[i].count));
+    colormapTextures2D_.push_back(CreateColormapTexture2DRow(defs[i].data, defs[i].count));
   }
 }
 
 void ColorbarRenderer::destroy()
 {
-  for (GLuint tex : colormapTextures_) {
+  for (GLuint tex : colormapTextures2D_) {
     if (tex) glDeleteTextures(1, &tex);
   }
-  colormapTextures_.clear();
+  colormapTextures2D_.clear();
 
   if (ebo_) glDeleteBuffers(1, &ebo_);
   if (vbo_) glDeleteBuffers(1, &vbo_);
@@ -311,7 +313,7 @@ void ColorbarRenderer::draw(const GizmoDrawContext& ctx,
   if (!gizmo.visible) return;
   if (vao_ == 0) return;
   if (gizmo.content.colormapIndex < 0) return;
-  if (static_cast<size_t>(gizmo.content.colormapIndex) >= colormapTextures_.size()) return;
+  if (static_cast<size_t>(gizmo.content.colormapIndex) >= colormapTextures2D_.size()) return;
 
   updateVertices_(gizmo);
 
@@ -321,14 +323,14 @@ void ColorbarRenderer::draw(const GizmoDrawContext& ctx,
   glUseProgram(ctx.colorbarProgram);
 
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_1D, colormapTextures_[gizmo.content.colormapIndex]);
+  glBindTexture(GL_TEXTURE_2D, colormapTextures2D_[gizmo.content.colormapIndex]);
   glUniform1i(glGetUniformLocation(ctx.colorbarProgram, "colormap"), 0);
 
   glBindVertexArray(vao_);
   glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
   glBindVertexArray(0);
 
-  glBindTexture(GL_TEXTURE_1D, 0);
+  glBindTexture(GL_TEXTURE_2D, 0);
 
   if (wasDepthTest) glEnable(GL_DEPTH_TEST);
 }

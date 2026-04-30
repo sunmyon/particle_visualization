@@ -54,8 +54,8 @@ unsigned int createShaderProgramWithHeader(const char* vertexSource,
   GLint success = 0;
   glGetProgramiv(program, GL_LINK_STATUS, &success);
   if (!success) {
-    char infoLog[511];
-    glGetProgramInfoLog(program, 511, nullptr, infoLog);
+    char infoLog[4096];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
     std::cerr << "ERROR::PROGRAM_LINKING_FAILED\n"
               << infoLog << std::endl;
     std::printf("ERROR::PROGRAM_LINKING_FAILED\n");

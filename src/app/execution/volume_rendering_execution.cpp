@@ -52,51 +52,6 @@ VolumeValueRange ComputeVolumeValueRange(const ParticleBlock& block,
   return range;
 }
 
-VolumeSigmaMapper MakeVolumeSigmaMapper(const VolumeRenderingRequestState& request)
-{
-  const float scale = std::max(request.sigmaScale, 0.0f);
-
-  if (!request.sigmaLut.empty()) {
-    const std::vector<float> lut = request.sigmaLut;
-    const float valueMin = request.sigmaLutValueMin;
-    const float valueMax = std::max(request.sigmaLutValueMax,
-                                    request.sigmaLutValueMin * (1.0f + 1.0e-6f));
-    const bool logSample = request.sigmaLutLogSample;
-
-    return [scale, lut, valueMin, valueMax, logSample](float value) {
-      if (!std::isfinite(value)) return 0.0f;
-      if (lut.empty()) return 0.0f;
-      if (value <= valueMin) return scale * std::max(lut.front(), 0.0f);
-      if (value >= valueMax) return scale * std::max(lut.back(), 0.0f);
-
-      float pos = 0.0f;
-      if (logSample) {
-        if (value <= 0.0f || valueMin <= 0.0f || valueMax <= valueMin) {
-          return 0.0f;
-        }
-        const float lo = std::log10(std::max(valueMin, 1.0e-30f));
-        const float hi = std::log10(std::max(valueMax, 1.0e-30f));
-        pos = (std::log10(std::max(value, 1.0e-30f)) - lo) /
-              std::max(hi - lo, 1.0e-6f);
-      } else {
-        pos = (value - valueMin) / std::max(valueMax - valueMin, 1.0e-6f);
-      }
-
-      const float fidx = std::clamp(pos, 0.0f, 1.0f) *
-                         static_cast<float>(lut.size() - 1);
-      const int i0 = static_cast<int>(std::floor(fidx));
-      const int i1 = std::min(i0 + 1, static_cast<int>(lut.size() - 1));
-      const float t = fidx - static_cast<float>(i0);
-      const float sigma = lut[static_cast<std::size_t>(i0)] * (1.0f - t) +
-                          lut[static_cast<std::size_t>(i1)] * t;
-      return scale * std::max(sigma, 0.0f);
-    };
-  }
-
-  // No transfer function means fully transparent.  Do not invent a fallback
-  // density-to-opacity mapping because that makes the default build opaque.
-  return [](float) { return 0.0f; };
-}
 }
 
 void ExecuteVolumeRenderingRequest(ParticleArray& particles,
@@ -171,14 +126,18 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
   AdaptiveVolumeTreeBuildResult built =
     BuildAdaptiveVolumeTreeFromParticles(particles.particleBlock,
                                          params,
-                                         MakeVolumeSigmaMapper(request));
+                                         [](float value) {
+                                           return std::isfinite(value)
+                                             ? std::max(value, 0.0f)
+                                             : 0.0f;
+                                         });
 
   result.tree = std::move(built.tree);
   result.stats = built.stats;
   result.valid = result.tree.valid();
   result.success = result.valid;
   result.message = built.warning.empty()
-    ? "Volume tree built."
+    ? "Volume tree built with raw values."
     : built.warning;
   result.cpuUpdated = true;
 

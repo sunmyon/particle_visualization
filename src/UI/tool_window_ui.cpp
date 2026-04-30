@@ -532,14 +532,16 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // -----------------------------
   // colormap
   // -----------------------------
+  const ColormapDef* colormaps = AvailableColormaps();
+  const int colormapCount = AvailableColormapCount();
   if (params.colormapindex < 0) params.colormapindex = 0;
-  if (params.colormapindex >= gNumColormaps) params.colormapindex = gNumColormaps - 1;
+  if (params.colormapindex >= colormapCount) params.colormapindex = colormapCount - 1;
   
-  const char* previewName = gColormapDefs[params.colormapindex].name;
+  const char* previewName = colormaps[params.colormapindex].name;
   if (ImGui::BeginCombo("Colormap##projection", previewName)) {
-    for (int i = 0; i < gNumColormaps; ++i) {
+    for (int i = 0; i < colormapCount; ++i) {
       bool selected = (params.colormapindex == i);
-      if (ImGui::Selectable(gColormapDefs[i].name, selected)) {
+      if (ImGui::Selectable(colormaps[i].name, selected)) {
 	params.colormapindex = i;
         paramsDirty = true;
       }

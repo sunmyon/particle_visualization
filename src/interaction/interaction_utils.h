@@ -26,11 +26,21 @@ public:
     return delta;
   }
 
+  void markInputActivity(float currentFrame) {
+    lastInputFrame_ = currentFrame;
+  }
+
+  bool inputActive(float currentFrame, float settleDelay) const {
+    return lastInputFrame_ >= 0.0f &&
+           currentFrame - lastInputFrame_ <= settleDelay;
+  }
+
 private:
   float lastX_ = 0.0f;
   float lastY_ = 0.0f;
   bool  firstMouse_ = true;
   float lastFrame_ = 0.0f;
+  float lastInputFrame_ = -1.0f;
 };
 
 glm::vec3 MapToSphere(float x, float y,

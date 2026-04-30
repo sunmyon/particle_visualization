@@ -45,7 +45,7 @@ uniform int useLog[6]; // 0: linear, 1: log display
 
 uniform vec3 lowColors[6];
 uniform vec3 highColors[6];
-uniform sampler1D colormaps[6];
+uniform sampler2D colormaps[6];
 uniform int periodicMapping[6]; // 1: periodic display, 0: normal display
 
 void main()
@@ -67,17 +67,17 @@ void main()
   //vec3 color = mix(lowColors[vType], highColors[vType], normVal);
   vec3 color;
   if(vType == 0)
-    color = texture(colormaps[0], normVal).rgb;
+    color = texture(colormaps[0], vec2(normVal, 0.5)).rgb;
   else if(vType == 1)
-    color = texture(colormaps[1], normVal).rgb;
+    color = texture(colormaps[1], vec2(normVal, 0.5)).rgb;
   else if(vType == 2)
-    color = texture(colormaps[2], normVal).rgb;
+    color = texture(colormaps[2], vec2(normVal, 0.5)).rgb;
   else if(vType == 3)
-    color = texture(colormaps[3], normVal).rgb;
+    color = texture(colormaps[3], vec2(normVal, 0.5)).rgb;
   else if(vType == 4)
-    color = texture(colormaps[4], normVal).rgb;
+    color = texture(colormaps[4], vec2(normVal, 0.5)).rgb;
   else if(vType == 5)
-    color = texture(colormaps[5], normVal).rgb;
+    color = texture(colormaps[5], vec2(normVal, 0.5)).rgb;
 
   //vec3 color = texture(colormaps[vType], normVal).rgb; //it doesn't work for Mesa
 
@@ -154,15 +154,15 @@ void main()
 }
 )";
 
-// Fragment shader for the colorbar, sampling color from a 1D texture.
+// Fragment shader for the colorbar, sampling a height-1 2D colormap texture.
 const char* colorbarFragmentShaderSource = R"(
 in vec2 TexCoords;
-uniform sampler1D colormap;
+uniform sampler2D colormap;
 out vec4 FragColor;
 void main()
 {
     // Use the horizontal texture coordinate TexCoords.x to sample the colormap.
-    FragColor = texture(colormap, TexCoords.x);
+    FragColor = texture(colormap, vec2(TexCoords.x, 0.5));
 }
 )";
 
@@ -438,6 +438,19 @@ uniform float uPxThreshold;   // Example: 1.0 to 2.0 px.
 uniform float uTauMax;        // Early-exit threshold, for example 1.0.
 uniform float uStepBias;      // Small positive value for numerical stability.
 uniform float uSkipEps;       // Skip cells whose maximum possible opacity is tiny.
+uniform vec3  uVolumeColor;
+uniform int   uColorMode;
+uniform float uTfValueMin;
+uniform float uTfValueMax;
+uniform float uTfSigmaScale;
+uniform float uTfMaxSigma;
+uniform int   uTfLogScale;
+uniform int   uTfComponentCount;
+uniform int   uTfType[16];
+uniform int   uTfLogDomain[16];
+uniform float uTfCenter[16];
+uniform float uTfWidth[16];
+uniform float uTfAmp[16];
 
 out vec4 FragColor;
 
@@ -447,6 +460,64 @@ vec3 heat(float t){          // t in [0,1]
     float g = t<0.5 ? smoothstep(0.0,0.5,t) : smoothstep(1.0,0.5,t);
     float b = smoothstep(1.0,0.5,t);
     return vec3(r,g,b);
+}
+
+float gaussianComponent(float value, int i) {
+    float width = max(uTfWidth[i], 1.0e-12);
+    float x = 0.0;
+    if (uTfLogDomain[i] != 0) {
+        if (value <= 0.0 || uTfCenter[i] <= 0.0) {
+            return 0.0;
+        }
+        x = (log(max(value, 1.0e-30)) / log(10.0) -
+             log(max(uTfCenter[i], 1.0e-30)) / log(10.0)) / width;
+    } else {
+        x = (value - uTfCenter[i]) / width;
+    }
+    return uTfAmp[i] * exp(-0.5 * x * x);
+}
+
+float transferNorm(float value) {
+    float lo = uTfValueMin;
+    float hi = max(uTfValueMax, lo + 1.0e-6);
+    float t = 0.0;
+    if (uTfLogScale != 0) {
+        if (value <= 0.0 || lo <= 0.0) {
+            return 0.0;
+        }
+        float llo = log(max(lo, 1.0e-30)) / log(10.0);
+        float lhi = log(max(hi, 1.0e-30)) / log(10.0);
+        t = (log(max(value, 1.0e-30)) / log(10.0) - llo) /
+            max(lhi - llo, 1.0e-6);
+    } else {
+        t = (value - lo) / max(hi - lo, 1.0e-6);
+    }
+    return clamp(t, 0.0, 1.0);
+}
+
+float transferSigma(float value) {
+    float sigma = 0.0;
+    int n = min(max(uTfComponentCount, 0), 16);
+    for (int i = 0; i < n; ++i) {
+        if (uTfType[i] == 0) {
+            sigma += gaussianComponent(value, i);
+        } else if (uTfType[i] == 1) {
+            sigma += (abs(value - uTfCenter[i]) <= max(uTfWidth[i], 0.0))
+                ? uTfAmp[i] : 0.0;
+        } else {
+            float dx = abs(value - uTfCenter[i]);
+            float width = max(uTfWidth[i], 1.0e-12);
+            sigma += (dx < width) ? uTfAmp[i] * (1.0 - dx / width) : 0.0;
+        }
+    }
+    return max(uTfSigmaScale, 0.0) * max(sigma, 0.0);
+}
+
+vec3 volumeColor(float value, float sigma) {
+    if (uColorMode == 1) {
+        return heat(transferNorm(value));
+    }
+    return uVolumeColor;
 }
 
 float screenRadiusPx(float r_eff, float z_view, float focal_px){
@@ -500,23 +571,6 @@ void main(){
     // Generate ray from view space to world space.
     vec2 ndc = vec2( (gl_FragCoord.x*2.0)/uResolution.x - 1.0,
                      (gl_FragCoord.y*2.0)/uResolution.y - 1.0 );
-
-
-    if (uDebugMode == 1) {
-        FragColor = vec4(1,0,1,1);
-        return;
-    }
-
-    if (uDebugMode == 2) {
-        // Obvious test pattern: UV gradient plus checkerboard.
-        float cx = step(0.5, fract(gl_FragCoord.x/16.0));
-        float cy = step(0.5, fract(gl_FragCoord.y/16.0));
-        float chk = mod(cx + cy, 2.0);
-        vec2 uv01 = gl_FragCoord.xy / uResolution;
-        vec3  col = mix(vec3(uv01, 0.5), vec3(1.0, 0.2, 0.8), chk);
-        FragColor = vec4(col, 1.0);
-        return;
-    }
 
     vec4 pN  = invProj * vec4(ndc, -1.0, 1.0);
     pN      /= pN.w;
@@ -578,7 +632,7 @@ void main(){
         isLeaf = (cA.x<0 && cA.y<0 && cA.z<0 && cA.w<0 &&
                   cB.x<0 && cB.y<0 && cB.z<0 && cB.w<0);
 
-        if (sigma_max <= 0.0 || sigma_max * max(0.0, t1 - t0) < uSkipEps) {
+        if (uTfMaxSigma <= 0.0 || uTfMaxSigma * max(0.0, t1 - t0) < uSkipEps) {
             emptySkips++;
             continue;
         }
@@ -597,12 +651,13 @@ void main(){
  
             vec4 sLo = texelFetch(cornerLoTB, id);
             vec4 sHi = texelFetch(cornerHiTB, id);
-            float sigma = trilerp8(sLo, sHi, uvw);
+            float value = trilerp8(sLo, sHi, uvw);
+            float sigma = transferSigma(value);
 
             float a  = 1.0 - exp(-sigma * dt);
             //float a  = 1.0 - exp(-sigma_avg * dt);
 
-            vec3 tfc = vec3(0.6,0.7,1.0); // Replace with the desired transfer function.
+            vec3 tfc = volumeColor(value, sigma);
             color += (1.0 - alpha) * a * tfc;
             alpha  = 1.0 - (1.0 - alpha)*(1.0 - a);
             continue;
@@ -624,8 +679,7 @@ void main(){
             vec3 cmx = texelFetch(nodeMaxTB, cid).xyz;
             float c0=t0, c1=t1;
             if(!rayBox(ro,invd, cmn, cmx, c0,c1)) continue;
-            float cmax = texelFetch(nodeMaxTB, cid).w;
-            if (cmax <= 0.0 || cmax * max(0.0, c1 - c0) < uSkipEps) {
+            if (uTfMaxSigma <= 0.0 || uTfMaxSigma * max(0.0, c1 - c0) < uSkipEps) {
                 emptySkips++;
                 continue;
             }
@@ -745,10 +799,6 @@ in VS_OUT {
     float spriteRadius;
 } fs;
 
-// --- Density to sigma conversion. Choose one path. ---
-// 1) 1D LUT path, assuming density is normalized to 0..1.
-uniform sampler1D uRho2Sigma;       // sigma in .r.
-
 // Coloring. Replace with a transfer function if needed.
 uniform vec3  uBaseColor = vec3(1.0);
 uniform int   uKernelMode;     // 0=Gaussian, 1=Poly6
@@ -769,9 +819,7 @@ void main(){
     float r = sqrt(r2);
     float b = r * R;
 
-    // Density to sigma.
     float rho   = fs.density;
-    //float sigma = texture(uRho2Sigma, clamp(rho, 0.0, 1.0)).r;
     float sigma = 0.1;
     if(rho < 0.01)
         sigma = 0.;

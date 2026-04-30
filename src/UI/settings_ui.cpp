@@ -9,16 +9,13 @@
 #include "interaction/camera.h"
 #include "render/particle_visual_config.h"   // Concrete ParticleVisualConfig definition.
 #include "UI/file_format_dialog.h"
+#include "UI/volume_rendering_ui.h"
 #include "render/colormap_defs.h"  
-#ifdef VOLUME_RENDERING
-#include "UI/transfer_function_editor.hpp"
-#endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <imgui.h>
-#include <limits>
 
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
@@ -50,73 +47,6 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const SettingsCameraView& camera);
 #ifdef PYTHON_BRIDGE
 static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit, const PythonBridgeViewState& view);
-#endif
-
-#ifdef VOLUME_RENDERING
-struct QuantityRangeAggregate {
-  float min = 0.0f;
-  float max = 1.0f;
-  bool valid = false;
-};
-
-static QuantityRangeAggregate AggregateQuantityRange(const QuantityState& quantity,
-                                                     QuantityId selected,
-                                                     bool positiveOnly)
-{
-  QuantityRangeAggregate out;
-  out.min = std::numeric_limits<float>::max();
-  out.max = -std::numeric_limits<float>::max();
-
-  const int qidx = static_cast<int>(selected);
-  if (qidx < 0 || qidx >= kMaxQ) {
-    out.min = positiveOnly ? 1.0e-6f : 0.0f;
-    out.max = 1.0f;
-    return out;
-  }
-
-  for (int t = 0; t < kNumTypes; ++t) {
-    const float typeMin = quantity.range.valueMin[qidx][t];
-    const float typeMax = quantity.range.valueMax[qidx][t];
-    if (!std::isfinite(typeMin) || !std::isfinite(typeMax)) continue;
-    if (typeMin == 0.0f && typeMax == 0.0f) continue;
-
-    if (positiveOnly) {
-      if (typeMax <= 0.0f) continue;
-      out.min = std::min(out.min, std::max(typeMin, typeMax * 1.0e-12f));
-      out.max = std::max(out.max, typeMax);
-    } else {
-      out.min = std::min(out.min, typeMin);
-      out.max = std::max(out.max, typeMax);
-    }
-    out.valid = true;
-  }
-
-  if (!out.valid) {
-    out.min = positiveOnly ? 1.0e-6f : 0.0f;
-    out.max = 1.0f;
-    return out;
-  }
-
-  if (out.max <= out.min) {
-    out.max = out.min + std::max(std::abs(out.min) * 1.0e-6f, 1.0e-6f);
-  }
-  return out;
-}
-
-static void BakeVolumeTransferFunction(TransferFunctionEditor& editor,
-                                       SettingsVolumeRenderingEdit& edit)
-{
-  if (!editor.hasComponents()) {
-    edit.sigmaLut.clear();
-    return;
-  }
-
-  RhoSigmaLUT lut = editor.bakeLUT(512);
-  edit.sigmaLut = lut.data();
-  edit.sigmaLutValueMin = lut.rhoMin();
-  edit.sigmaLutValueMax = lut.rhoMax();
-  edit.sigmaLutLogSample = lut.logSample();
-}
 #endif
 
 static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
@@ -197,6 +127,7 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
   }
 
   if (!request.renderDraftDirty && !request.applyRenderRequested) {
+    request.renderDraft.scheduling = render.scheduling;
     request.renderDraft.particleLabels = render.particleLabels;
     request.renderDraft.velocity = render.velocity;
 #ifdef VOLUME_RENDERING
@@ -230,13 +161,15 @@ static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
     if (ImGui::TreeNode(header.c_str())) {
       auto& cfg = req.particleVisualDraft.types[i];
       bool visualChanged = false;
+      const ColormapDef* colormaps = AvailableColormaps();
+      const int colormapCount = AvailableColormapCount();
 				
       std::string comboLabel = "Colormap##" + std::to_string(i);
-      const char* preview = gColormapDefs[cfg.colormapIndex].name;
+      const char* preview = colormaps[cfg.colormapIndex].name;
       if (ImGui::BeginCombo(comboLabel.c_str(), preview)) {
-	for (int k = 0; k < gNumColormaps; ++k) {
+	for (int k = 0; k < colormapCount; ++k) {
 	  bool selected = (cfg.colormapIndex == k);
-	  if (ImGui::Selectable(gColormapDefs[k].name, selected)) {
+	  if (ImGui::Selectable(colormaps[k].name, selected)) {
 	    cfg.colormapIndex = k;
 	    visualChanged = true;
 	  }
@@ -958,6 +891,29 @@ static void DrawRenderingSection(const QuantityState& quantity,
     }
     ImGui::EndCombo();
   }
+
+  auto& scheduling = settingsReq.renderDraft.scheduling;
+  bool schedulingDirty = false;
+  ImGui::SeparatorText("Interaction responsiveness");
+  schedulingDirty |= ImGui::Checkbox("Responsive interaction",
+                                     &scheduling.responsiveInteraction);
+#ifdef VOLUME_RENDERING
+  schedulingDirty |= ImGui::Checkbox("Hide volume while interacting",
+                                     &scheduling.skipVolumeWhileInteracting);
+#endif
+  schedulingDirty |= ImGui::InputFloat("Interaction settle delay [s]",
+                                       &scheduling.settleDelaySeconds,
+                                       0.01f,
+                                       0.05f,
+                                       "%.3f");
+  if (scheduling.settleDelaySeconds < 0.0f) {
+    scheduling.settleDelaySeconds = 0.0f;
+    schedulingDirty = true;
+  }
+  if (schedulingDirty) {
+    settingsReq.renderDraftDirty = true;
+    settingsReq.applyRenderRequested = true;
+  }
 		
   switch (ui.renderingMode) {
   case RENDER_PROJECTION_MAP: {
@@ -1256,221 +1212,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
 
 #ifdef VOLUME_RENDERING
   case RENDER_VOLUME: {
-    static TransferFunctionEditor transferEditor;
-    auto& volumeReq = edit.volume;
-    auto& volumeRender = settingsReq.renderDraft.volume;
-    bool volumeDirty = false;
-    bool renderDirty = false;
-
-    ImGui::SeparatorText("Tree construction");
-
-    if (ImGui::BeginCombo("Volume quantity",
-                          QuantityLabel(volumeReq.selectedQuantity))) {
-      for (int q = 0; q < catalog.nUIQ; ++q) {
-        QuantityId cand = catalog.uiQ[q];
-        bool selected = (cand == volumeReq.selectedQuantity);
-        if (ImGui::Selectable(QuantityLabel(cand), selected)) {
-          volumeReq.selectedQuantity = cand;
-          volumeDirty = true;
-        }
-        if (selected) ImGui::SetItemDefaultFocus();
-      }
-      ImGui::EndCombo();
-    }
-
-    volumeDirty |= ImGui::InputInt("Min particles per leaf",
-                                   &volumeReq.minParticlesPerLeaf);
-    if (volumeReq.minParticlesPerLeaf < 1) {
-      volumeReq.minParticlesPerLeaf = 1;
-      volumeDirty = true;
-    }
-
-    volumeDirty |= ImGui::SliderInt("Max tree level",
-                                    &volumeReq.maxTreeLevel,
-                                    1,
-                                    24);
-    volumeDirty |= ImGui::InputFloat("Sigma scale",
-                                     &volumeReq.sigmaScale,
-                                     0.1f,
-                                     1.0f,
-                                     "%g");
-    if (volumeReq.sigmaScale < 0.0f) {
-      volumeReq.sigmaScale = 0.0f;
-      volumeDirty = true;
-    }
-
-    ImGui::SeparatorText("Density to sigma transfer function");
-    ImGui::TextWrapped("The curve maps the selected quantity to extinction sigma. "
-                       "Changing it affects the next volume-tree build.");
-    if (volumeReq.autoRange) {
-      const QuantityRangeAggregate dataRange =
-        AggregateQuantityRange(quantity,
-                               volumeReq.selectedQuantity,
-                               volumeReq.logScale);
-      if (dataRange.valid) {
-        if (volumeReq.valueMin != dataRange.min ||
-            volumeReq.valueMax != dataRange.max) {
-          volumeReq.valueMin = dataRange.min;
-          volumeReq.valueMax = dataRange.max;
-          volumeDirty = true;
-        }
-      }
-      ImGui::Text("Editor range from loaded data: [%g, %g]",
-                  volumeReq.valueMin,
-                  volumeReq.valueMax);
-    }
-    if (volumeReq.autoRange) {
-      transferEditor.set_minmax(volumeReq.selectedQuantity,
-                                volumeReq.valueMin,
-                                volumeReq.valueMax);
-    }
-    if (ImGui::Button("Open sigma-density editor")) {
-      transferEditor.set_window();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Bake transfer function")) {
-      BakeVolumeTransferFunction(transferEditor, volumeReq);
-      volumeDirty = true;
-    }
-    if (!volumeReq.sigmaLut.empty()) {
-      ImGui::Text("Baked LUT: %zu samples, x range [%g, %g], %s sampling",
-                  volumeReq.sigmaLut.size(),
-                  volumeReq.sigmaLutValueMin,
-                  volumeReq.sigmaLutValueMax,
-                  volumeReq.sigmaLutLogSample ? "log" : "linear");
-      ImGui::TextWrapped("LUT y values are sigma in inverse normalized scene length; "
-                         "the ray integral uses tau = integral sigma ds.");
-    } else {
-      ImGui::TextWrapped("No baked transfer function yet. Sigma is zero, so the volume is transparent.");
-    }
-    ImGui::TextWrapped("For compact dense structures, sigma often needs to be much larger than 1 because "
-                       "the path length through the structure is small in normalized coordinates.");
-    if (ImGui::Button("x10 sigma amplitudes")) {
-      transferEditor.scaleAllAmplitudes(10.0f);
-      BakeVolumeTransferFunction(transferEditor, volumeReq);
-      volumeDirty = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("x0.1 sigma amplitudes")) {
-      transferEditor.scaleAllAmplitudes(0.1f);
-      BakeVolumeTransferFunction(transferEditor, volumeReq);
-      volumeDirty = true;
-    }
-    if (transferEditor.showUI(nullptr)) {
-      BakeVolumeTransferFunction(transferEditor, volumeReq);
-      volumeDirty = true;
-    }
-
-    volumeDirty |= ImGui::Checkbox("Log scale density mapping",
-                                   &volumeReq.logScale);
-    volumeDirty |= ImGui::Checkbox("Auto range",
-                                   &volumeReq.autoRange);
-    if (!volumeReq.autoRange) {
-      volumeDirty |= ImGui::InputFloat("Value min",
-                                       &volumeReq.valueMin,
-                                       0.0f,
-                                       0.0f,
-                                       "%g");
-      volumeDirty |= ImGui::InputFloat("Value max",
-                                       &volumeReq.valueMax,
-                                       0.0f,
-                                       0.0f,
-                                       "%g");
-    } else {
-      ImGui::Text("Current range: [%g, %g]",
-                  volumeReq.valueMin,
-                  volumeReq.valueMax);
-    }
-
-    volumeDirty |= ImGui::Checkbox("Balance tree (slow)",
-                                   &volumeReq.balanceTree);
-
-    if (ImGui::Button("Build volume tree")) {
-      BakeVolumeTransferFunction(transferEditor, volumeReq);
-      volumeReq.buildClicked = true;
-      edit.volumeDirty = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear volume tree")) {
-      volumeReq.clearClicked = true;
-      edit.volumeDirty = true;
-    }
-
-    ImGui::SeparatorText("Rendering");
-    renderDirty |= ImGui::Checkbox("Show adaptive volume",
-                                   &volumeRender.show);
-    renderDirty |= ImGui::InputFloat("LOD pixel threshold",
-                                     &volumeRender.pixelThreshold,
-                                     0.1f,
-                                     1.0f,
-                                     "%g");
-    renderDirty |= ImGui::InputFloat("Tau max",
-                                     &volumeRender.tauMax,
-                                     0.1f,
-                                     1.0f,
-                                     "%g");
-    renderDirty |= ImGui::InputFloat("Empty skip epsilon",
-                                     &volumeRender.skipEpsilon,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-    renderDirty |= ImGui::InputFloat("Step bias",
-                                     &volumeRender.stepBias,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-
-    const char* debugModes[] = {
-      "normal",
-      "visits",
-      "leaf stops",
-      "LOD stops",
-      "empty skips",
-      "alpha"
-    };
-    int debugSelection = 0;
-    switch (volumeRender.debugMode) {
-    case 10: debugSelection = 1; break;
-    case 11: debugSelection = 2; break;
-    case 12: debugSelection = 3; break;
-    case 13: debugSelection = 4; break;
-    case 14: debugSelection = 5; break;
-    default: debugSelection = 0; break;
-    }
-    if (ImGui::Combo("Debug view",
-                     &debugSelection,
-                     debugModes,
-                     IM_ARRAYSIZE(debugModes))) {
-      const int debugValues[] = {0, 10, 11, 12, 13, 14};
-      volumeRender.debugMode = debugValues[debugSelection];
-      renderDirty = true;
-    }
-
-    if (result.volume) {
-      ImGui::SeparatorText("Last build");
-      const auto& volume = *result.volume;
-      ImGui::TextColored(volume.valid ? ImVec4(0.6f, 1.0f, 0.6f, 1.0f)
-                                      : ImVec4(1.0f, 0.7f, 0.35f, 1.0f),
-                         "%s",
-                         volume.message.c_str());
-      ImGui::Text("Nodes: %zu  Leaves: %zu  Max depth: %zu",
-                  volume.stats.nodeCount,
-                  volume.stats.leafCount,
-                  volume.stats.maxDepth);
-      ImGui::Text("Particles: %zu  Empty dropped: %zu  Sigma max: %g",
-                  volume.stats.particleCount,
-                  volume.stats.emptyNodesDropped,
-                  volume.stats.sigmaMax);
-    }
-
-    if (volumeDirty) {
-      edit.volumeDirty = true;
-    }
-    if (renderDirty) {
-      settingsReq.renderDraftDirty = true;
-      settingsReq.applyRenderRequested = true;
-    }
-
+    DrawVolumeRenderingSettingsSection(quantity, edit, result, settingsReq);
     break;
   }
 #endif

@@ -249,6 +249,16 @@ static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
   BeginImGuiFrame(window.framebufferWidth(), window.framebufferHeight());
 }
 
+static void UpdateRenderInteractionActivity(AppRuntimeState& runtime,
+                                            float currentTime)
+{
+  auto& scheduling = runtime.render.scheduling;
+  scheduling.interactionActive =
+    scheduling.responsiveInteraction &&
+    runtime.interaction.inputActive(currentTime,
+                                    scheduling.settleDelaySeconds);
+}
+
 static int CurrentFileIndexForRequests(const FileNavigationRuntimeState& fileNav)
 {
   if (fileNav.current.loadedFileIndex >= 0) {
@@ -403,6 +413,10 @@ void RunFrame(AppState& app,
   if (inputResult.closeRequested) {
     window.requestClose();
   }
+  if (inputResult.cameraInteraction) {
+    app.runtime.interaction.markInputActivity(
+      static_cast<float>(window.timeSeconds()));
+  }
 
   app.runtime.snapshotLoad.busy =
     (app.services.snapshotIO && app.services.snapshotIO->isLoading());
@@ -471,6 +485,9 @@ void RunFrame(AppState& app,
                           app.derived,
                           render);
   AcknowledgeParticleRenderBuild(*app.data.particles, buildResult);
+
+  UpdateRenderInteractionActivity(app.runtime,
+                                  static_cast<float>(window.timeSeconds()));
 
   const RenderViewport renderViewport = MakeRenderViewport(window);
   UpdateRenderFrameInput(app.renderFrameInput,

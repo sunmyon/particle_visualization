@@ -353,6 +353,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI/common_ui.cpp
   ${SRC_DIR}/UI/tool_window_ui.cpp
   ${SRC_DIR}/UI/settings_ui.cpp
+  ${SRC_DIR}/UI/volume_rendering_ui.cpp
   ${SRC_DIR}/analysis/histogram2d.cpp
   ${SRC_DIR}/analysis/radial_profile.cpp
   ${SRC_DIR}/render/particle_label_overlay.cpp

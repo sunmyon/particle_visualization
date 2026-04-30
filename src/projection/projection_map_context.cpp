@@ -23,15 +23,17 @@ ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params
     glm::normalize(ctx.cuboidTransform * glm::vec3(0.0f, 0.0f, 1.0f));
 
   int colormapIndex = params.colormapindex;
+  const ColormapDef* colormaps = AvailableColormaps();
+  const int colormapCount = AvailableColormapCount();
   if (colormapIndex < 0) {
     colormapIndex = 0;
   }
-  if (colormapIndex >= gNumColormaps) {
-    colormapIndex = gNumColormaps - 1;
+  if (colormapIndex >= colormapCount) {
+    colormapIndex = colormapCount - 1;
   }
 
-  ctx.colorMap = gColormapDefs[colormapIndex].data;
-  ctx.colorMapSize = gColormapDefs[colormapIndex].count;
+  ctx.colorMap = colormaps[colormapIndex].data;
+  ctx.colorMapSize = colormaps[colormapIndex].count;
 
   ctx.scaleToPhysical = scaleToPhysical;
   ctx.time = time;

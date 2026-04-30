@@ -6,5 +6,8 @@ struct ColormapDef {
   int count;
 };
 
-extern const ColormapDef gColormapDefs[];
+const ColormapDef* AvailableColormaps();
+int AvailableColormapCount();
+
+extern const ColormapDef* gColormapDefs;
 extern const int gNumColormaps;

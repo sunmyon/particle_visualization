@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <array>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -19,6 +20,19 @@ struct AdaptiveVolumeDrawParams {
   float stepBias = 0.0f;
   float skipEpsilon = 1.0e-4f;
   int debugMode = 0;
+  glm::vec3 baseColor{0.6f, 0.7f, 1.0f};
+  int colorMode = 0;
+  float tfValueMin = 1.0e-6f;
+  float tfValueMax = 1.0f;
+  float tfSigmaScale = 1.0f;
+  float tfMaxSigma = 0.0f;
+  bool tfLogScale = true;
+  int tfComponentCount = 0;
+  std::array<int, 16> tfTypes{};
+  std::array<int, 16> tfLogDomains{};
+  std::array<float, 16> tfCenters{};
+  std::array<float, 16> tfWidths{};
+  std::array<float, 16> tfAmplitudes{};
 };
 
 class AdaptiveVolumeRenderer {

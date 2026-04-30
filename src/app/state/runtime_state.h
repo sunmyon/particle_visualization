@@ -239,10 +239,6 @@ struct VolumeRenderingRequestState {
   int minParticlesPerLeaf = 64;
   int maxTreeLevel = 16;
   float sigmaScale = 1.0f;
-  std::vector<float> sigmaLut;
-  float sigmaLutValueMin = 1.0e-6f;
-  float sigmaLutValueMax = 1.0f;
-  bool sigmaLutLogSample = true;
   bool logScale = true;
   bool autoRange = true;
   float valueMin = 1.0e-6f;
@@ -485,6 +481,7 @@ struct SnapshotPostprocessState {
 };
 
 struct SettingsRenderEditDraft {
+  RenderSchedulingState scheduling;
   ParticleLabelRenderState particleLabels;
   VelocityRenderState velocity;
 #ifdef VOLUME_RENDERING

@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "app/state/overlay_state.h"
@@ -105,9 +106,11 @@ void OpenGLRenderBackend::init()
   coordAxes_.init();
 
   std::vector<ColormapDefView> cmapViews;
-  cmapViews.reserve(gNumColormaps);
-  for (int i = 0; i < gNumColormaps; ++i) {
-    cmapViews.push_back({gColormapDefs[i].data, gColormapDefs[i].count});
+  const ColormapDef* colormaps = AvailableColormaps();
+  const int colormapCount = AvailableColormapCount();
+  cmapViews.reserve(colormapCount);
+  for (int i = 0; i < colormapCount; ++i) {
+    cmapViews.push_back({colormaps[i].data, colormaps[i].count});
   }
 
   colorbar_.init();
@@ -173,7 +176,11 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
   const OverlayState& overlay = frame.overlay;
 
 #ifdef VOLUME_RENDERING
-  if (render.volume.show && scene.volume.valid()) {
+  const bool skipVolumeForInteraction =
+    render.scheduling.responsiveInteraction &&
+    render.scheduling.interactionActive &&
+    render.scheduling.skipVolumeWhileInteracting;
+  if (render.volume.show && scene.volume.valid() && !skipVolumeForInteraction) {
     SyncIfVersionChanged(volume_,
                          scene.volume,
                          scene.volumeVersion,
@@ -190,7 +197,24 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
     volumeParams.stepBias       = render.volume.stepBias;
     volumeParams.skipEpsilon    = render.volume.skipEpsilon;
     volumeParams.debugMode      = render.volume.debugMode;
-
+    volumeParams.baseColor      = render.volume.baseColor;
+    volumeParams.colorMode      = std::clamp(render.volume.colorMode, 0, 1);
+    volumeParams.tfValueMin     = render.volume.tfValueMin;
+    volumeParams.tfValueMax     = render.volume.tfValueMax;
+    volumeParams.tfSigmaScale   = render.volume.tfSigmaScale;
+    volumeParams.tfMaxSigma     = render.volume.tfMaxSigma;
+    volumeParams.tfLogScale     = render.volume.tfLogScale;
+    volumeParams.tfComponentCount =
+      std::min(static_cast<int>(render.volume.tfComponents.size()), 16);
+    for (int i = 0; i < volumeParams.tfComponentCount; ++i) {
+      const auto& comp = render.volume.tfComponents[static_cast<std::size_t>(i)];
+      volumeParams.tfTypes[static_cast<std::size_t>(i)] = comp.type;
+      volumeParams.tfLogDomains[static_cast<std::size_t>(i)] =
+        comp.logDomain ? 1 : 0;
+      volumeParams.tfCenters[static_cast<std::size_t>(i)] = comp.center;
+      volumeParams.tfWidths[static_cast<std::size_t>(i)] = comp.width;
+      volumeParams.tfAmplitudes[static_cast<std::size_t>(i)] = comp.amplitude;
+    }
     const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
     GLboolean depthWriteWasEnabled = GL_TRUE;

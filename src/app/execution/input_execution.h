@@ -8,6 +8,7 @@ struct SettingsRuntimeState;
 
 struct InputExecutionResult {
   bool closeRequested = false;
+  bool cameraInteraction = false;
 };
 
 InputExecutionResult ExecuteInputEvents(InputEventQueue& input,

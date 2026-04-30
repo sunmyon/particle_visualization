@@ -137,10 +137,14 @@ InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
 
     switch (event.type) {
     case InputEventType::PointerMove:
+      if (event.primaryDown) {
+        result.cameraInteraction = true;
+      }
       ApplyPointerMove(event, interaction, camera);
       break;
 
     case InputEventType::PointerScroll:
+      result.cameraInteraction = true;
       ApplyCameraZoom(camera,
                       event.wheelY,
                       settings.minZoom,

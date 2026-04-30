@@ -6,47 +6,6 @@
 #include <cmath>
 #include <algorithm>
 
-class RhoSigmaLUT {
-public:
-    RhoSigmaLUT() = default;
-    RhoSigmaLUT(std::vector<float> lut, float rhoMin, float rhoMax, bool logSample)
-        : lut_(std::move(lut)), rhoMin_(rhoMin), rhoMax_(rhoMax), logSample_(logSample) {}
-
-    // Interpolated rho-to-sigma evaluation.
-    float operator()(float rho) const {
-        if (lut_.empty()) return 0.0f;
-        if (rho <= rhoMin_) return lut_.front();
-        if (rho >= rhoMax_) return lut_.back();
-
-        float pos;
-        if (logSample_) {
-            float lxMin = std::log10(rhoMin_);
-            float lxMax = std::log10(rhoMax_);
-            pos = (std::log10(rho) - lxMin) / (lxMax - lxMin);
-        } else {
-            pos = (rho - rhoMin_) / (rhoMax_ - rhoMin_);
-        }
-
-        float fidx = pos * (lut_.size() - 1);
-        int i0 = std::floor(fidx);
-        int i1 = std::min(i0 + 1, (int)lut_.size() - 1);
-        float t = fidx - i0;
-
-        return lut_[i0] * (1.0f - t) + lut_[i1] * t;
-    }
-
-    const std::vector<float>& data() const { return lut_; }
-    float rhoMin() const { return rhoMin_; }
-    float rhoMax() const { return rhoMax_; }
-    bool logSample() const { return logSample_; }
-
-private:
-    std::vector<float> lut_;
-    float rhoMin_ = 1.0f;
-    float rhoMax_ = 1.0f;
-    bool logSample_ = true;
-};
-
 enum class TFShape { Gaussian, Box, Triangle };
 
 struct TFComponent {
@@ -65,14 +24,20 @@ public:
   // Draw the UI and optionally return the rho-to-sigma evaluator in outEval.
   bool showUI(std::function<float(float)>* outEval = nullptr) {
     bool changed = false;
+    bool applyRequested = false;
+    const bool wasOpen = showWindow_;
     if (showWindow_ == false)
-      return changed;
+      return false;
     
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);	
     if (!ImGui::Begin("Transfer Function", &showWindow_, ImGuiWindowFlags_None)) {
       // Return early when the window is collapsed or minimized.
       ImGui::End();
-      return changed;
+      if (wasOpen && !showWindow_ && dirty_) {
+        dirty_ = false;
+        return true;
+      }
+      return false;
     }
 
     // Range and scale.
@@ -159,12 +124,29 @@ public:
       }
     }
 
+    dirty_ = dirty_ || changed;
+
+    ImGui::Separator();
+    if (ImGui::Button("Apply")) {
+      applyRequested = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(dirty_ ? "edited" : "applied");
+
     ImGui::End();
 
-    if (outEval) {
+    if (wasOpen && !showWindow_ && dirty_) {
+      applyRequested = true;
+    }
+
+    if (applyRequested) {
+      dirty_ = false;
+    }
+
+    if (applyRequested && outEval) {
       *outEval = [snap = *this](float rho) { return snap.evaluate(rho); };
     }
-    return changed;
+    return applyRequested;
   }
 
   float evaluate(float rho) const {
@@ -177,28 +159,16 @@ public:
     return !comps_.empty();
   }
 
+  const std::vector<TFComponent>& components() const {
+    return comps_;
+  }
+
+  float valueMin() const { return rhoMin_; }
+  float valueMax() const { return rhoMax_; }
+  bool logScale() const { return logScale_; }
+
   void set_window(){
     showWindow_ = true;
-  }
-
-  void scaleAllAmplitudes(float factor)
-  {
-    if (!std::isfinite(factor) || factor <= 0.0f) {
-      return;
-    }
-    for (auto& c : comps_) {
-      c.amp = std::max(0.0f, c.amp * factor);
-    }
-    yMax_ = std::max(yMax_, maxAmplitude() * 1.2f);
-  }
-
-  float maxAmplitude() const
-  {
-    float out = 0.0f;
-    for (const auto& c : comps_) {
-      out = std::max(out, c.amp);
-    }
-    return out;
   }
 
   void set_minmax(QuantityId& var, float val_min, float val_max){
@@ -250,32 +220,13 @@ public:
     }
   }
 
-  RhoSigmaLUT bakeLUT(int size) const {
-    std::vector<float> lut(size);
-    constexpr float eps = 1e-30f;
-    for (int i = 0; i < size; ++i) {
-      float rho;
-      if (logScale_) {
-	float lxMin = std::log10(std::max(rhoMin_, eps));
-	float lxMax = std::log10(std::max(rhoMax_, eps));
-	float t = (size == 1) ? 0.0f : (float)i / (size - 1);
-	rho = std::pow(10.0f, lxMin * (1.0f - t) + lxMax * t);
-      } else {
-	float t = (size == 1) ? 0.0f : (float)i / (size - 1);
-	rho = rhoMin_ * (1.0f - t) + rhoMax_ * t;
-      }
-      lut[i] = evaluate(rho);
-    }
-    
-    return RhoSigmaLUT(std::move(lut), rhoMin_, rhoMax_, logScale_);
-  }
-  
 private:
   // State.
   float rhoMin_, rhoMax_, yMax_;
   bool logScale_;
   bool showWindow_ = false;
   bool showAxes_ = true;
+  bool dirty_ = false;
 
   bool flag_show = false;
   QuantityId var_show_;

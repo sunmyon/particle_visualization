@@ -1,4 +1,9 @@
 #pragma once
+
+#include <vector>
+
+#include <glm/vec3.hpp>
+
 struct RenderLayerState {
   bool show = false;
   bool cpuUpdated = false;
@@ -46,7 +51,24 @@ struct VelocityRenderState : RenderLayerState {
   bool useLogScale = false;
 };
 
+struct RenderSchedulingState {
+  bool responsiveInteraction = true;
+  bool skipVolumeWhileInteracting = true;
+  float settleDelaySeconds = 0.15f;
+  bool interactionActive = false;
+};
+
 #ifdef VOLUME_RENDERING
+inline constexpr int kMaxVolumeTransferComponents = 16;
+
+struct VolumeTransferFunctionComponent {
+  int type = 0; // 0=Gaussian, 1=Box, 2=Triangle.
+  float center = 1.0f;
+  float width = 1.0f;
+  float amplitude = 0.0f;
+  bool logDomain = true;
+};
+
 struct VolumeRenderState : RenderLayerState {
   VolumeRenderState() { show = false; }
 
@@ -55,10 +77,20 @@ struct VolumeRenderState : RenderLayerState {
   float tauMax = 1.0f;
   float stepBias = 0.0f;
   float skipEpsilon = 1.0e-4f;
+  glm::vec3 baseColor{0.6f, 0.7f, 1.0f};
+  int colorMode = 0; // 0=fixed color, 1=procedural heat.
+  float tfValueMin = 1.0e-6f;
+  float tfValueMax = 1.0f;
+  float tfSigmaScale = 1.0f;
+  float tfMaxSigma = 0.0f;
+  bool tfLogScale = true;
+  std::vector<VolumeTransferFunctionComponent> tfComponents;
 };
 #endif
 
 struct RenderRuntimeState {
+  RenderSchedulingState scheduling;
+
   RenderLayerState lines;
   RenderLayerState disks;
   RenderLayerState cubes;

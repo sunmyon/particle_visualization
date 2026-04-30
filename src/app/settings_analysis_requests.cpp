@@ -116,10 +116,6 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
     edit.volume.minParticlesPerLeaf = requests.volume.minParticlesPerLeaf;
     edit.volume.maxTreeLevel = requests.volume.maxTreeLevel;
     edit.volume.sigmaScale = requests.volume.sigmaScale;
-    edit.volume.sigmaLut = requests.volume.sigmaLut;
-    edit.volume.sigmaLutValueMin = requests.volume.sigmaLutValueMin;
-    edit.volume.sigmaLutValueMax = requests.volume.sigmaLutValueMax;
-    edit.volume.sigmaLutLogSample = requests.volume.sigmaLutLogSample;
     edit.volume.logScale = requests.volume.logScale;
     edit.volume.autoRange = requests.volume.autoRange;
     edit.volume.valueMin = requests.volume.valueMin;
@@ -369,10 +365,6 @@ void SubmitVolumeRenderingRequest(SettingsVolumeRenderingEdit& edit,
   request.minParticlesPerLeaf = edit.minParticlesPerLeaf;
   request.maxTreeLevel = edit.maxTreeLevel;
   request.sigmaScale = edit.sigmaScale;
-  request.sigmaLut = edit.sigmaLut;
-  request.sigmaLutValueMin = edit.sigmaLutValueMin;
-  request.sigmaLutValueMax = edit.sigmaLutValueMax;
-  request.sigmaLutLogSample = edit.sigmaLutLogSample;
   request.logScale = edit.logScale;
   request.autoRange = edit.autoRange;
   request.valueMin = edit.valueMin;

@@ -94,14 +94,14 @@ public:
   void draw(const GizmoDrawContext& ctx,
             const ColorbarGizmoState& gizmo) const;
 
-  GLuint colormapTexture(int index) const
+  GLuint colormapTexture2D(int index) const
   {
     if (index < 0) return 0;
-    if (static_cast<size_t>(index) >= colormapTextures_.size()) return 0;
-    return colormapTextures_[index];
+    if (static_cast<size_t>(index) >= colormapTextures2D_.size()) return 0;
+    return colormapTextures2D_[index];
   }
 
-  int numColormaps() const { return static_cast<int>(colormapTextures_.size()); }
+  int numColormaps() const { return static_cast<int>(colormapTextures2D_.size()); }
 
 private:
   void updateVertices_(const ColorbarGizmoState& gizmo) const;
@@ -110,7 +110,7 @@ private:
   GLuint vbo_ = 0;
   GLuint ebo_ = 0;
 
-  std::vector<GLuint> colormapTextures_;
+  std::vector<GLuint> colormapTextures2D_;
 };
 
 
@@ -118,4 +118,3 @@ class ColorbarLabelRenderer {
 public:
   void draw(const ColorbarGizmoState& gizmo) const;
 };
-

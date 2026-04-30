@@ -120,6 +120,9 @@ void ExecuteSettingsActionRequests(ParticleArray& particles,
   }
 
   if (req.applyRenderRequested) {
+    const bool interactionActive = render.scheduling.interactionActive;
+    render.scheduling = req.renderDraft.scheduling;
+    render.scheduling.interactionActive = interactionActive;
     render.particleLabels = req.renderDraft.particleLabels;
     render.velocity = req.renderDraft.velocity;
 #ifdef VOLUME_RENDERING
