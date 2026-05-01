@@ -21,7 +21,8 @@ struct Hit {
 
 static std::vector<Hit> CollectHits(const ParticleArray& particles,
                                     const glm::vec3& queryPos,
-                                    float queryRadius)
+                                    float queryRadius,
+                                    bool sinkOnly)
 {
   std::vector<Hit> hits;
   const float radius2 = queryRadius * queryRadius;
@@ -29,7 +30,7 @@ static std::vector<Hit> CollectHits(const ParticleArray& particles,
   for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
     const auto& p = particles.particleBlock.particles[i];
 
-    if (p.type <= 2)
+    if (sinkOnly && p.type <= 2)
       continue;
 
     const float dx = p.pos[0] - queryPos.x;
@@ -49,6 +50,11 @@ static std::vector<Hit> CollectHits(const ParticleArray& particles,
   return hits;
 }
 
+static glm::vec3 ParticleLabelQueryCenter(const CameraContext& camCtx)
+{
+  return camCtx.cameraTarget;
+}
+
 } // namespace
 
 bool ParticleLabelOverlay::needsRebuild(const ParticleArray& particles,
@@ -61,7 +67,18 @@ bool ParticleLabelOverlay::needsRebuild(const ParticleArray& particles,
   if (particles.flagParticleIndexDirty)
     return true;
 
-  return glm::distance(camCtx.cameraPos, state.lastCameraPos) >= state.moveThreshold;
+  if (labels_.empty())
+    return true;
+
+  if (std::abs(lastQueryRadius_ - state.queryRadius) > 0.0f ||
+      lastMaxLabels_ != state.maxLabels ||
+      lastSinkOnly_ != state.sinkOnly) {
+    return true;
+  }
+
+  const glm::vec3 queryCenter = ParticleLabelQueryCenter(camCtx);
+  constexpr float kQueryCenterEpsilon = 1.0e-3f;
+  return glm::distance(queryCenter, lastQueryCenter_) > kQueryCenterEpsilon;
 }
 
 void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
@@ -70,11 +87,16 @@ void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
 {
   labels_.clear();
 
+  const glm::vec3 queryCenter = ParticleLabelQueryCenter(camCtx);
   const std::vector<Hit> hits =
-    CollectHits(particles, camCtx.cameraPos, state.queryRadius);
+    CollectHits(particles,
+                queryCenter,
+                std::max(state.queryRadius, 0.0f),
+                state.sinkOnly);
 
   const size_t n =
-    std::min(hits.size(), static_cast<size_t>(state.maxLabels));
+    std::min(hits.size(),
+             static_cast<size_t>(std::max(state.maxLabels, 0)));
 
   labels_.reserve(n);
 
@@ -86,6 +108,11 @@ void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
     item.id = p.ID;
     labels_.push_back(item);
   }
+
+  lastQueryCenter_ = queryCenter;
+  lastQueryRadius_ = state.queryRadius;
+  lastMaxLabels_ = state.maxLabels;
+  lastSinkOnly_ = state.sinkOnly;
 }
 
 void ParticleLabelOverlay::draw(const glm::mat4& view,

@@ -27,7 +27,7 @@ public:
   void destroy() override;
   void present(NativeWindowHandle window) override;
   RenderedFrame readDefaultFramebuffer(int width, int height) override;
-  bool isHeadless() const override { return false; }
+  bool isHeadless() const override { return headless_; }
 
   void renderImGuiDrawData(ImDrawData* drawData);
   void setPreRenderCallback(PreRenderCallback callback);
@@ -49,13 +49,24 @@ private:
   bool createDevice();
   bool createDescriptorPool();
   bool createSurfaceAndWindow(GLFWwindow* window);
+  bool createHeadlessTarget(int width, int height);
+  bool createHeadlessRenderPass();
+  bool createHeadlessImage(VkFormat format,
+                           VkImageUsageFlags usage,
+                           VkImageAspectFlags aspect,
+                           VkImage& image,
+                           VkDeviceMemory& memory,
+                           VkImageView& view);
+  RenderedFrame readHeadlessFramebuffer(int width, int height);
   void resizeIfNeeded();
   bool rebuildRenderPassWithDepth();
   void cleanupDepthResources();
+  void cleanupHeadlessResources();
   void cleanupWindow();
   void cleanupVulkan();
 
   GLFWwindow* window_ = nullptr;
+  bool headless_ = false;
   VkInstance instance_ = VK_NULL_HANDLE;
   VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
   VkDevice device_ = VK_NULL_HANDLE;
@@ -73,6 +84,22 @@ private:
   std::vector<VkImage> depthImages_;
   std::vector<VkDeviceMemory> depthMemories_;
   std::vector<VkImageView> depthImageViews_;
+
+  int headlessWidth_ = 0;
+  int headlessHeight_ = 0;
+  VkFormat headlessColorFormat_ = VK_FORMAT_R8G8B8A8_UNORM;
+  VkRenderPass headlessRenderPass_ = VK_NULL_HANDLE;
+  VkFramebuffer headlessFramebuffer_ = VK_NULL_HANDLE;
+  VkImage headlessColorImage_ = VK_NULL_HANDLE;
+  VkDeviceMemory headlessColorMemory_ = VK_NULL_HANDLE;
+  VkImageView headlessColorView_ = VK_NULL_HANDLE;
+  VkImage headlessDepthImage_ = VK_NULL_HANDLE;
+  VkDeviceMemory headlessDepthMemory_ = VK_NULL_HANDLE;
+  VkImageView headlessDepthView_ = VK_NULL_HANDLE;
+  VkCommandPool headlessCommandPool_ = VK_NULL_HANDLE;
+  VkCommandBuffer headlessCommandBuffer_ = VK_NULL_HANDLE;
+  VkFence headlessFence_ = VK_NULL_HANDLE;
+  void* moltenVkLibrary_ = nullptr;
 };
 
 std::unique_ptr<GraphicsContext> CreateVulkanGraphicsContext();

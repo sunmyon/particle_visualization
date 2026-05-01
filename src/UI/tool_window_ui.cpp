@@ -1,7 +1,10 @@
 #include "tool_window_ui.h"
+#include <ctime>
 #include <cstdio>
+#include <filesystem>
 #include <imgui.h>
 #include "implot.h"
+#include <string>
 
 #include "app/state/runtime_state.h"
 #include "app/state/tool_window_state.h"
@@ -21,6 +24,7 @@
 #include "projection/projection_geometry.h"
 #include "analysis/radial_profile.h"
 #include "analysis/histogram2d.h"
+#include "analysis/profile_histogram_export.h"
 
 #include <algorithm>
 
@@ -130,6 +134,204 @@ void SubmitHaloHistogramRequest(const HaloesUIState& state,
   request.histogramRange2Max = state.range2_max;
   request.computeHistogramRequested = true;
 }
+
+std::string MakePlotExportTimestamp()
+{
+  std::time_t now = std::time(nullptr);
+  std::tm local{};
+#if defined(_WIN32)
+  localtime_s(&local, &now);
+#else
+  localtime_r(&now, &local);
+#endif
+  char buf[32] = "";
+  std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &local);
+  return buf;
+}
+
+std::filesystem::path EnsurePlotExportFolder(char* folder, size_t folderSize)
+{
+  if (folder && folder[0] != '\0') {
+    return std::filesystem::path(folder);
+  }
+
+  const std::filesystem::path dir =
+    std::filesystem::temp_directory_path() /
+    ("particle_vis_implot_exports_" + MakePlotExportTimestamp());
+  if (folder && folderSize > 0) {
+    std::snprintf(folder, folderSize, "%s", dir.string().c_str());
+  }
+  return dir;
+}
+
+AnalysisPlotExportSpec MakePlotExportSpec(const PlotBatchExportViewContext& ctx,
+                                          const std::filesystem::path& dir,
+                                          const std::string& stem)
+{
+  AnalysisPlotExportSpec spec;
+  spec.directory = dir;
+  spec.stem = stem;
+  spec.snapshot.folderPath = ctx.snapshotFolderPath ? ctx.snapshotFolderPath : "";
+  spec.snapshot.fileFormat = ctx.snapshotFileFormat ? ctx.snapshotFileFormat : "";
+  spec.snapshot.initialIndex = ctx.initialIndex;
+  spec.snapshot.currentStep = ctx.currentStep;
+  spec.snapshot.skipStep = ctx.skipStep;
+  spec.snapshot.batchSize = ctx.batchSize;
+  spec.snapshot.useHDF5 = ctx.useHDF5;
+  spec.camera.position = glm::vec3(ctx.cameraPosition[0],
+                                   ctx.cameraPosition[1],
+                                   ctx.cameraPosition[2]);
+  spec.camera.target = glm::vec3(ctx.cameraTarget[0],
+                                 ctx.cameraTarget[1],
+                                 ctx.cameraTarget[2]);
+  return spec;
+}
+
+void StoreExportStatus(char* status,
+                       size_t statusSize,
+                       const AnalysisPlotExportResult& result)
+{
+  if (!status || statusSize == 0) return;
+  if (result.ok) {
+    std::snprintf(status,
+                  statusSize,
+                  "Saved %s",
+                  result.jobJsonPath.string().c_str());
+  } else {
+    std::snprintf(status, statusSize, "Export failed: %s", result.error.c_str());
+  }
+}
+
+void ExportRadialProfileIfNeeded(RadialProfileUIState& state,
+                                 const RadialProfileResultState& result,
+                                 const PlotBatchExportViewContext& ctx)
+{
+  if (!state.exportPlotPackage ||
+      !result.computed ||
+      !result.result.valid ||
+      result.version == state.lastExportedVersion) {
+    return;
+  }
+
+  const std::filesystem::path dir =
+    EnsurePlotExportFolder(state.exportFolder, sizeof(state.exportFolder));
+  const std::string stem =
+    "radial_profile_" + std::to_string(static_cast<unsigned long long>(result.version));
+  AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
+  AnalysisPlotExportResult exportResult =
+    ExportRadialProfilePlotPackage(spec, result.paramsUsed, result.result);
+  StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
+  if (exportResult.ok) {
+    state.lastExportedVersion = result.version;
+  }
+}
+
+void ExportHistogram2DIfNeeded(Histogram2DUIState& state,
+                               const Histogram2DResultState& result,
+                               const PlotBatchExportViewContext& ctx)
+{
+  if (!state.exportPlotPackage ||
+      !result.computed ||
+      !result.result.valid ||
+      result.version == state.lastExportedVersion) {
+    return;
+  }
+
+  const std::filesystem::path dir =
+    EnsurePlotExportFolder(state.exportFolder, sizeof(state.exportFolder));
+  const std::string stem =
+    "histogram2d_" + std::to_string(static_cast<unsigned long long>(result.version));
+  AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
+  AnalysisPlotExportResult exportResult =
+    ExportHistogram2DPlotPackage(spec, result.paramsUsed, result.result);
+  StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
+  if (exportResult.ok) {
+    state.lastExportedVersion = result.version;
+  }
+}
+
+void ExportTopParticleHistogramIfNeeded(TopParticlesUIState& state,
+                                        const TopParticlesResultState& result,
+                                        const PlotBatchExportViewContext& ctx)
+{
+  if (!state.exportHistogramPackage ||
+      !result.histogramComputed ||
+      result.histogramVersion == state.lastExportedHistogramVersion) {
+    return;
+  }
+
+  static constexpr const char* kQuantities[] = {
+    "x", "y", "z", "r", "Density", "Temperature", "Hsml", "Mass"
+  };
+  const int qIndex = std::clamp(state.selectedVar, 0, static_cast<int>(IM_ARRAYSIZE(kQuantities)) - 1);
+
+  BarHistogramPlotExportParams params;
+  params.kind = "top_particle_histogram";
+  params.title = "Top Particle Histogram";
+  params.xLabel = kQuantities[qIndex];
+  params.yLabel = "Count";
+  params.logX = state.histogramLogScaleX;
+  params.logY = state.histogramLogScaleY;
+  params.xMin = state.range1_min;
+  params.xMax = state.range1_max;
+  params.yMin = state.range2_min;
+  params.yMax = state.range2_max;
+  params.binSize = result.binSize;
+
+  const std::filesystem::path dir =
+    EnsurePlotExportFolder(state.exportFolder, sizeof(state.exportFolder));
+  const std::string stem =
+    "top_particle_histogram_" +
+    std::to_string(static_cast<unsigned long long>(result.histogramVersion));
+  AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
+  AnalysisPlotExportResult exportResult =
+    ExportBarHistogramPlotPackage(spec, params, result.binCenters, result.histBins);
+  StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
+  if (exportResult.ok) {
+    state.lastExportedHistogramVersion = result.histogramVersion;
+  }
+}
+
+void ExportHaloHistogramIfNeeded(HaloesUIState& state,
+                                 const PlotBatchExportViewContext& ctx)
+{
+  if (!state.exportHistogramPackage ||
+      !state.histogramComputed ||
+      state.histogramVersion == state.lastExportedHistogramVersion) {
+    return;
+  }
+
+  static constexpr const char* kQuantities[] = {
+    "Mass", "GasMass", "StellarMass", "GasMetallicity", "StellarMetallicity"
+  };
+  const int qIndex = std::clamp(state.selectedVar, 0, static_cast<int>(IM_ARRAYSIZE(kQuantities)) - 1);
+
+  BarHistogramPlotExportParams params;
+  params.kind = "halo_histogram";
+  params.title = "Halo Histogram";
+  params.xLabel = kQuantities[qIndex];
+  params.yLabel = "Count";
+  params.logX = state.histogramLogScaleX;
+  params.logY = state.histogramLogScaleY;
+  params.xMin = state.range1_min;
+  params.xMax = state.range1_max;
+  params.yMin = state.range2_min;
+  params.yMax = state.range2_max;
+  params.binSize = state.binSize;
+
+  const std::filesystem::path dir =
+    EnsurePlotExportFolder(state.exportFolder, sizeof(state.exportFolder));
+  const std::string stem =
+    "halo_histogram_" +
+    std::to_string(static_cast<unsigned long long>(state.histogramVersion));
+  AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
+  AnalysisPlotExportResult exportResult =
+    ExportBarHistogramPlotPackage(spec, params, state.binCenters, state.histBins);
+  StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
+  if (exportResult.ok) {
+    state.lastExportedHistogramVersion = state.histogramVersion;
+  }
+}
 }
 
 void DrawRadialProfileUI(RadialProfileUIState& state,
@@ -200,6 +402,13 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   }
 
   ImGui::InputFloat("Maximum Radius (cut)", &params.rmax, 0.0f, 0.0f, "%g");
+  ImGui::Checkbox("Save plot image + JSON after compute", &state.exportPlotPackage);
+  if (state.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", state.exportFolder);
+  }
+  if (state.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", state.lastExportStatus);
+  }
 
   if (ImGui::Button("Compute profile")) {
     SubmitRadialProfileRequest(state, request);
@@ -225,6 +434,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
       ImPlot::EndPlot();
     }
   }
+  ExportRadialProfileIfNeeded(state, result, ctx.exportContext);
 
   ImGui::End();
 }
@@ -291,6 +501,13 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   if (ImGui::Button("Compute Histogram")) {
     SubmitHistogram2DRequest(state, request);
   }
+  ImGui::Checkbox("Save plot image + JSON after compute", &state.exportPlotPackage);
+  if (state.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", state.exportFolder);
+  }
+  if (state.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", state.lastExportStatus);
+  }
 
   if (result.computed && result.result.valid) {
     size_t computedBins1 = result.result.values.size();
@@ -330,6 +547,7 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
       ImPlot::EndPlot();
     }
   }
+  ExportHistogram2DIfNeeded(state, result, ctx.exportContext);
 
   ImGui::End();
 }
@@ -987,6 +1205,13 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   if (ImGui::Button("Compute 1D Histogram")) {
     SubmitTopParticleHistogramRequest(state, request);
   }
+  ImGui::Checkbox("Save plot image + JSON after compute", &state.exportHistogramPackage);
+  if (state.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", state.exportFolder);
+  }
+  if (state.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", state.lastExportStatus);
+  }
 
   if (result.histogramComputed) {
     if (ImPlot::BeginPlot("Mass Histogram", ImVec2(-1, 300))) {
@@ -1007,6 +1232,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
       ImPlot::EndPlot();
     }
   }
+  ExportTopParticleHistogramIfNeeded(state, result, ctx.exportContext);
 
   ImGui::End();
 }
@@ -1176,6 +1402,13 @@ void DrawHaloesUI(HaloesUIState& state,
   if (ImGui::Button("Compute 1D Histogram")) {
     SubmitHaloHistogramRequest(state, request);
   }
+  ImGui::Checkbox("Save plot image + JSON after compute", &state.exportHistogramPackage);
+  if (state.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", state.exportFolder);
+  }
+  if (state.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", state.lastExportStatus);
+  }
 
   if (state.histogramComputed) {
     if (ImPlot::BeginPlot("Mass Histogram", ImVec2(-1, 300))) {
@@ -1195,6 +1428,7 @@ void DrawHaloesUI(HaloesUIState& state,
       ImPlot::EndPlot();
     }
   }
+  ExportHaloHistogramIfNeeded(state, ctx.exportContext);
 
   ImGui::End();
 #endif

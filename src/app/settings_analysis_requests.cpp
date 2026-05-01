@@ -74,7 +74,11 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
   if (!edit.isoContourDirty) {
     edit.isoContour.isoLevel = requests.isoContour.isoLevel;
     edit.isoContour.maxTreeLevel = requests.isoContour.maxTreeLevel;
+    edit.isoContour.minParticlesPerLeaf =
+      requests.isoContour.minParticlesPerLeaf;
     edit.isoContour.selectedQuantity = requests.isoContour.selectedQuantity;
+    edit.isoContour.cornerReconstructionMode =
+      requests.isoContour.cornerReconstructionMode;
   }
 #endif
 
@@ -121,6 +125,8 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
     edit.volume.valueMin = requests.volume.valueMin;
     edit.volume.valueMax = requests.volume.valueMax;
     edit.volume.balanceTree = requests.volume.balanceTree;
+    edit.volume.cornerReconstructionMode =
+      requests.volume.cornerReconstructionMode;
   }
 #endif
 
@@ -288,15 +294,19 @@ void SubmitIsoContourRequest(SettingsIsoContourEdit& edit,
                              bool& dirty,
                              IsoContourRequestState& request)
 {
-  if (!dirty && !edit.buildClicked && !edit.clearClicked) return;
+  if (!dirty && !edit.buildClicked && !edit.applyClicked && !edit.clearClicked) return;
 
   request.isoLevel = edit.isoLevel;
   request.maxTreeLevel = edit.maxTreeLevel;
+  request.minParticlesPerLeaf = edit.minParticlesPerLeaf;
   request.selectedQuantity = edit.selectedQuantity;
+  request.cornerReconstructionMode = edit.cornerReconstructionMode;
   request.runRequested = edit.buildClicked;
+  request.applyRequested = edit.applyClicked;
   request.clearRequested = edit.clearClicked;
 
   edit.buildClicked = false;
+  edit.applyClicked = false;
   edit.clearClicked = false;
   dirty = false;
 }
@@ -370,6 +380,7 @@ void SubmitVolumeRenderingRequest(SettingsVolumeRenderingEdit& edit,
   request.valueMin = edit.valueMin;
   request.valueMax = edit.valueMax;
   request.balanceTree = edit.balanceTree;
+  request.cornerReconstructionMode = edit.cornerReconstructionMode;
   request.buildRequested = edit.buildClicked;
   request.clearRequested = edit.clearClicked;
 

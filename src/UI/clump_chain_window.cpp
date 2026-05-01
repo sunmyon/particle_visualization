@@ -1,10 +1,82 @@
 #include <imgui.h>
 #include "implot.h"
 
+#include <algorithm>
+#include <ctime>
+#include <filesystem>
+#include <glm/vec3.hpp>
 #include "app/state/clump_window_state.h"
+#include "app/state/plot_export_state.h"
 #include "app/state/runtime_state.h"
+#include "analysis/profile_histogram_export.h"
 
 #include <string>
+
+namespace {
+std::string MakeExportTimestamp()
+{
+  std::time_t now = std::time(nullptr);
+  std::tm local{};
+#if defined(_WIN32)
+  localtime_s(&local, &now);
+#else
+  localtime_r(&now, &local);
+#endif
+  char buf[32] = "";
+  std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &local);
+  return buf;
+}
+
+std::filesystem::path EnsureExportFolder(char* folder, size_t folderSize)
+{
+  if (folder && folder[0] != '\0') {
+    return std::filesystem::path(folder);
+  }
+  const std::filesystem::path dir =
+    std::filesystem::temp_directory_path() /
+    ("particle_vis_implot_exports_" + MakeExportTimestamp());
+  if (folder && folderSize > 0) {
+    std::snprintf(folder, folderSize, "%s", dir.string().c_str());
+  }
+  return dir;
+}
+
+AnalysisPlotExportSpec MakeSpec(const PlotBatchExportViewContext& ctx,
+                                const std::filesystem::path& dir,
+                                const std::string& stem)
+{
+  AnalysisPlotExportSpec spec;
+  spec.directory = dir;
+  spec.stem = stem;
+  spec.snapshot.folderPath = ctx.snapshotFolderPath ? ctx.snapshotFolderPath : "";
+  spec.snapshot.fileFormat = ctx.snapshotFileFormat ? ctx.snapshotFileFormat : "";
+  spec.snapshot.initialIndex = ctx.initialIndex;
+  spec.snapshot.currentStep = ctx.currentStep;
+  spec.snapshot.skipStep = ctx.skipStep;
+  spec.snapshot.batchSize = ctx.batchSize;
+  spec.snapshot.useHDF5 = ctx.useHDF5;
+  spec.camera.position = glm::vec3(ctx.cameraPosition[0],
+                                   ctx.cameraPosition[1],
+                                   ctx.cameraPosition[2]);
+  spec.camera.target = glm::vec3(ctx.cameraTarget[0],
+                                 ctx.cameraTarget[1],
+                                 ctx.cameraTarget[2]);
+  return spec;
+}
+
+void StoreStatus(char* status, size_t statusSize, const AnalysisPlotExportResult& result)
+{
+  if (!status || statusSize == 0) return;
+  if (result.ok) {
+    std::snprintf(status,
+                  statusSize,
+                  "Saved %s",
+                  result.jobJsonPath.string().c_str());
+  } else {
+    std::snprintf(status, statusSize, "Export failed: %s", result.error.c_str());
+  }
+}
+}
 
 static void DrawSelectedClumpChainNavigation(ClumpChainWindowState& ui,
                                              const SnapshotNavigationState& nav,
@@ -87,7 +159,64 @@ static void DrawVerticalDashedLine(double x_value,
   }
 }
 
-static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui, double time)
+static void ExportClumpChainEvolutionIfNeeded(ClumpChainWindowState& ui,
+                                              const PlotBatchExportViewContext& exportContext)
+{
+  if (!ui.exportEvolutionPackage ||
+      !ui.computed ||
+      ui.evolutionVersion == ui.lastExportedEvolutionVersion) {
+    return;
+  }
+
+  const char* quantities[] = { "Density", "Temperature", "ClumpMass", "StellarMass" };
+  const int qIndex = std::clamp(ui.selectedVar, 0, static_cast<int>(IM_ARRAYSIZE(quantities)) - 1);
+
+  std::vector<PlotLineSeries> series;
+  for (size_t i = 0; i < ui.series.size(); ++i) {
+    const auto& source = ui.series[i];
+    if (!source.plot && static_cast<int>(i) != ui.selectedChainIndex) {
+      continue;
+    }
+    PlotLineSeries item;
+    item.label = "Chain " + std::to_string(source.globalId);
+    item.x.reserve(source.snapshots.size());
+    item.y.reserve(source.snapshots.size());
+    for (const auto& snap : source.snapshots) {
+      item.x.push_back(snap.time);
+      item.y.push_back(GetChainValue(snap, ui.selectedVar));
+    }
+    series.push_back(std::move(item));
+  }
+  if (series.empty()) return;
+
+  LineSeriesPlotExportParams params;
+  params.kind = "clump_chain_evolution";
+  params.title = "Clump Chain Evolution";
+  params.xLabel = "Time";
+  params.yLabel = quantities[qIndex];
+  params.logY = ui.useLogScaleY;
+  params.xMin = ui.xmin;
+  params.xMax = ui.xmax;
+  params.yMin = ui.ymin;
+  params.yMax = ui.ymax;
+
+  const std::filesystem::path dir =
+    EnsureExportFolder(ui.exportFolder, sizeof(ui.exportFolder));
+  const std::string stem =
+    "clump_chain_evolution_" +
+    std::to_string(static_cast<unsigned long long>(ui.evolutionVersion));
+  AnalysisPlotExportSpec spec = MakeSpec(exportContext, dir, stem);
+  AnalysisPlotExportResult result =
+    ExportLineSeriesPlotPackage(spec, params, series);
+  StoreStatus(ui.lastExportStatus, sizeof(ui.lastExportStatus), result);
+  if (result.ok) {
+    ui.lastExportedEvolutionVersion = ui.evolutionVersion;
+  }
+}
+
+static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui,
+                                       double time,
+                                       const PlotBatchExportViewContext& exportContext)
 {
   if (ui.selectedChainIndex < 0 ||
       ui.selectedChainIndex >= static_cast<int>(ui.series.size())) {
@@ -100,6 +229,13 @@ static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui, double time)
 
   ImGui::Checkbox("Use Log scale Y", &ui.useLogScaleY);
   ImGui::Checkbox("Use autoscale", &ui.autoScale);
+  ImGui::Checkbox("Save plot image + JSON after draw", &ui.exportEvolutionPackage);
+  if (ui.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", ui.exportFolder);
+  }
+  if (ui.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", ui.lastExportStatus);
+  }
 
   if (!ui.autoScale) {
     ImGui::InputFloat("X Axis Min", &ui.xmin, 0.0f, 0.0f, "%g");
@@ -172,6 +308,7 @@ static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui, double time)
     DrawVerticalDashedLine(time, red, 1.0f, 5.0f, 3.0f);
     ImPlot::EndPlot();
   }
+  ExportClumpChainEvolutionIfNeeded(ui, exportContext);
 }
 
 static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui)
@@ -207,7 +344,8 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui)
 
 void DrawClumpChainListUI(ClumpChainWindowState& ui,
                           const SnapshotNavigationState& nav,
-                          const SnapshotCurrentState& current)
+                          const SnapshotCurrentState& current,
+                          const PlotBatchExportViewContext& exportContext)
 {
   if (!ui.open) {
     return;
@@ -269,7 +407,7 @@ void DrawClumpChainListUI(ClumpChainWindowState& ui,
     }
 
     DrawSelectedClumpChainNavigation(ui, nav, current.loadedTime);
-    DrawSelectedClumpChainPlot(ui, current.loadedTime);
+    DrawSelectedClumpChainPlot(ui, current.loadedTime, exportContext);
     DrawSelectedClumpProjectionSection(ui);
   }
 

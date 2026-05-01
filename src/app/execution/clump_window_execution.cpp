@@ -148,6 +148,9 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     }
     ui.requestComputeHistogram = false;
     syncViewFromService();
+    if (ui.histogramComputed) {
+      ++ui.histogramVersion;
+    }
   }
 
   if (ui.requestFocusRow) {
@@ -314,6 +317,7 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
     item.valueFloats = cache.valueFloats;
     ui.evolutionCache.push_back(std::move(item));
   }
+  ++ui.evolutionVersion;
 }
 
 static void RecenterCameraPreservingDistance(CameraContext& cam,
@@ -387,8 +391,14 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
                 current.loadedScaleFactor);
     ui.requestBuild = false;
     syncViewFromService();
+    if (ui.computed) {
+      ++ui.evolutionVersion;
+    }
   } else if (ui.series.empty() && chain.computed()) {
     syncViewFromService();
+    if (ui.computed) {
+      ++ui.evolutionVersion;
+    }
   }
 
   if (ui.navigationLoadPending &&

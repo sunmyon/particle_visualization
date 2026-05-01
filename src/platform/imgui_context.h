@@ -18,6 +18,10 @@ std::unique_ptr<ImGuiBackend> CreateGlfwOpenGLImGuiBackend(
   NativeWindowHandle window);
 std::unique_ptr<ImGuiBackend> CreateHeadlessOpenGLImGuiBackend(int width,
                                                                int height);
+std::unique_ptr<ImGuiBackend> CreateHeadlessVulkanImGuiBackend(
+  VulkanContext& context,
+  int width,
+  int height);
 std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
   NativeWindowHandle window,
   VulkanContext& context);

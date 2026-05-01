@@ -313,6 +313,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   result.histogramComputed = true;
+  ++result.histogramVersion;
   req.computeHistogramRequested = false;
 }
 
@@ -636,6 +637,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
   }
 
   ui.histogramComputed = true;
+  ++ui.histogramVersion;
   request.computeHistogramRequested = false;
 #else
   (void)ui;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/state/plot_export_state.h"
+
 struct Histogram2DRequestState;
 struct Histogram2DResultState;
 struct Histogram2DUIState;
@@ -27,6 +29,7 @@ struct WindowCommandQueue;
 
 struct RadialProfileViewContext {
   const QuantityState& quantity;
+  PlotBatchExportViewContext exportContext;
 };
 
 void DrawRadialProfileUI(RadialProfileUIState& state,
@@ -36,6 +39,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 
 struct Histogram2DViewContext {
   const QuantityCatalogState& catalog;
+  PlotBatchExportViewContext exportContext;
 };
 
 void DrawHistogram2DUI(Histogram2DUIState& state,
@@ -62,6 +66,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                         const TopParticlesViewContext& ctx);
 
 struct HaloesViewContext {
+  PlotBatchExportViewContext exportContext;
 };
 
 void DrawHaloesUI(HaloesUIState& state,

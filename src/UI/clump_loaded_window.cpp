@@ -1,11 +1,17 @@
 #include <string>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 
+#include <glm/vec3.hpp>
 #include <imgui.h>
 #include "implot.h"
 
+#include "analysis/profile_histogram_export.h"
 #include "app/state/clump_window_state.h"
+#include "app/state/plot_export_state.h"
 #include "app/state/loaded_clump_tool.h"
 #include "data/clump_store.h"
 #include "app/state/tracking_view_state.h"
@@ -17,6 +23,118 @@ namespace {
   };
   constexpr int kNumEvolutionQuantities =
     sizeof(kEvolutionQuantities) / sizeof(kEvolutionQuantities[0]);
+
+  std::string MakeExportTimestamp()
+  {
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char buf[32] = "";
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &local);
+    return buf;
+  }
+
+  std::filesystem::path EnsureExportFolder(char* folder, size_t folderSize)
+  {
+    if (folder && folder[0] != '\0') {
+      return std::filesystem::path(folder);
+    }
+    const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() /
+      ("particle_vis_implot_exports_" + MakeExportTimestamp());
+    if (folder && folderSize > 0) {
+      std::snprintf(folder, folderSize, "%s", dir.string().c_str());
+    }
+    return dir;
+  }
+
+  AnalysisPlotExportSpec MakeSpec(const PlotBatchExportViewContext& ctx,
+                                  const std::filesystem::path& dir,
+                                  const std::string& stem)
+  {
+    AnalysisPlotExportSpec spec;
+    spec.directory = dir;
+    spec.stem = stem;
+    spec.snapshot.folderPath = ctx.snapshotFolderPath ? ctx.snapshotFolderPath : "";
+    spec.snapshot.fileFormat = ctx.snapshotFileFormat ? ctx.snapshotFileFormat : "";
+    spec.snapshot.initialIndex = ctx.initialIndex;
+    spec.snapshot.currentStep = ctx.currentStep;
+    spec.snapshot.skipStep = ctx.skipStep;
+    spec.snapshot.batchSize = ctx.batchSize;
+    spec.snapshot.useHDF5 = ctx.useHDF5;
+    spec.camera.position = glm::vec3(ctx.cameraPosition[0],
+                                     ctx.cameraPosition[1],
+                                     ctx.cameraPosition[2]);
+    spec.camera.target = glm::vec3(ctx.cameraTarget[0],
+                                   ctx.cameraTarget[1],
+                                   ctx.cameraTarget[2]);
+    return spec;
+  }
+
+  void StoreStatus(char* status,
+                   size_t statusSize,
+                   const AnalysisPlotExportResult& result)
+  {
+    if (!status || statusSize == 0) return;
+    if (result.ok) {
+      std::snprintf(status,
+                    statusSize,
+                    "Saved %s",
+                    result.jobJsonPath.string().c_str());
+    } else {
+      std::snprintf(status, statusSize, "Export failed: %s", result.error.c_str());
+    }
+  }
+
+  void ExportLoadedClumpEvolutionIfNeeded(LoadedClumpWindowState& ui,
+                                          const PlotBatchExportViewContext& ctx)
+  {
+    if (!ui.exportEvolutionPackage ||
+        !ui.showEvolutionPlot ||
+        ui.evolutionVersion == ui.lastExportedEvolutionVersion) {
+      return;
+    }
+
+    std::vector<PlotLineSeries> series;
+    series.reserve(ui.evolutionCache.size());
+    for (const auto& cache : ui.evolutionCache) {
+      PlotLineSeries item;
+      item.label = "Clump " + std::to_string(cache.clumpID);
+      item.x = cache.timeFloats;
+      item.y = cache.valueFloats;
+      series.push_back(std::move(item));
+    }
+    if (series.empty()) return;
+
+    const int qIndex = std::clamp(ui.selectedEvolutionVar, 0, kNumEvolutionQuantities - 1);
+    LineSeriesPlotExportParams params;
+    params.kind = "loaded_clump_evolution";
+    params.title = "Clump Evolution";
+    params.xLabel = "Time";
+    params.yLabel = kEvolutionQuantities[qIndex];
+    params.logY = ui.useLogScaleY;
+    params.xMin = ui.tMinInput;
+    params.xMax = ui.tMaxInput;
+    params.yMin = ui.valMinInput;
+    params.yMax = ui.valMaxInput;
+
+    const std::filesystem::path dir =
+      EnsureExportFolder(ui.exportFolder, sizeof(ui.exportFolder));
+    const std::string stem =
+      "loaded_clump_evolution_" +
+      std::to_string(static_cast<unsigned long long>(ui.evolutionVersion));
+    AnalysisPlotExportSpec spec = MakeSpec(ctx, dir, stem);
+    AnalysisPlotExportResult result =
+      ExportLineSeriesPlotPackage(spec, params, series);
+    StoreStatus(ui.lastExportStatus, sizeof(ui.lastExportStatus), result);
+    if (result.ok) {
+      ui.lastExportedEvolutionVersion = ui.evolutionVersion;
+    }
+  }
 }
 
 static void DrawClumpFileLoadSection(LoadedClumpWindowState& ui);
@@ -25,9 +143,11 @@ static void DrawLoadedClumpTable(LoadedClumpWindowState& ui);
 
 static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui);
 
-static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui);
+static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui,
+                                   const PlotBatchExportViewContext& exportContext);
 
-void DrawClumpListUI(LoadedClumpWindowState& ui)
+void DrawClumpListUI(LoadedClumpWindowState& ui,
+                     const PlotBatchExportViewContext& exportContext)
 {
   if (!ui.open) return;
 
@@ -37,7 +157,7 @@ void DrawClumpListUI(LoadedClumpWindowState& ui)
   DrawClumpFileLoadSection(ui);
   DrawLoadedClumpTable(ui);
   DrawClumpEvolutionControls(ui);
-  DrawClumpEvolutionPlot(ui);
+  DrawClumpEvolutionPlot(ui, exportContext);
 
   ImGui::End();
 }
@@ -141,9 +261,17 @@ static void DrawClumpEvolutionControls(LoadedClumpWindowState& ui)
     ui.requestUpdateEvolutionCache = true;
     ui.showEvolutionPlot = true;
   }
+  ImGui::Checkbox("Save plot image + JSON after draw", &ui.exportEvolutionPackage);
+  if (ui.exportFolder[0] != '\0') {
+    ImGui::TextWrapped("Export folder: %s", ui.exportFolder);
+  }
+  if (ui.lastExportStatus[0] != '\0') {
+    ImGui::TextWrapped("%s", ui.lastExportStatus);
+  }
 }
 
-static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui)
+static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui,
+                                   const PlotBatchExportViewContext& exportContext)
 {
   if (!ui.showEvolutionPlot)
     return;
@@ -171,4 +299,5 @@ static void DrawClumpEvolutionPlot(LoadedClumpWindowState& ui)
 
     ImPlot::EndPlot();
   }
+  ExportLoadedClumpEvolutionIfNeeded(ui, exportContext);
 }

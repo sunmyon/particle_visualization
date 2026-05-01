@@ -120,6 +120,8 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
     static_cast<std::size_t>(request.minParticlesPerLeaf);
   params.maxDepth = static_cast<std::size_t>(request.maxTreeLevel);
   params.balanceTree = request.balanceTree;
+  params.cornerReconstructionMode =
+    std::clamp(request.cornerReconstructionMode, 0, 2);
   params.emptySigmaEpsilon = 0.0f;
   params.expandBoundsByHsml = true;
 

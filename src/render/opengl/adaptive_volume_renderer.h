@@ -18,10 +18,14 @@ struct AdaptiveVolumeDrawParams {
   float pixelThreshold = 2.0f;
   float tauMax = 1.0f;
   float stepBias = 0.0f;
+  int maxSamplesPerCell = 32;
   float skipEpsilon = 1.0e-4f;
   int debugMode = 0;
   glm::vec3 baseColor{0.6f, 0.7f, 1.0f};
   int colorMode = 0;
+  int opticalModel = 0;
+  float emissionScale = 1.0f;
+  float absorptionScale = 1.0f;
   float tfValueMin = 1.0e-6f;
   float tfValueMax = 1.0f;
   float tfSigmaScale = 1.0f;

@@ -6,8 +6,8 @@
 #include <glm/glm.hpp>
 #include <algorithm>
 
-#include "analysis/isosurface/iso_surface_field.h"
 #include "analysis/isosurface/marching_cubes.h"
+#include "volume/adaptive_volume_tree.h"
 
 std::unordered_map<MarchingCubes::Edge, unsigned, MarchingCubes::EdgeHash> MarchingCubes::globalEdgeMap;
 std::unordered_map<MarchingCubes::GridKey, unsigned, MarchingCubes::GridKeyHash> MarchingCubes::vertexMap;
@@ -327,291 +327,78 @@ const int MarchingCubes::edgeToVertex[12][2] = {
 };
 
 
-Mesh MarchingCubes::buildIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-                               const IsoSurfaceTreeField& field,
-                               float isoLevel)
+Mesh MarchingCubes::buildIsoSurface(const AdaptiveVolumeTree& tree,
+                                    float isoLevel)
 {
   Mesh out;
   out.vertices.clear();
   out.indices.clear();
 
+  if (!tree.valid()) {
+    return out;
+  }
+
   globalEdgeMap.clear();
   vertexMap.clear();
-  
-  for (auto leaf : leaves) {
-    const glm::vec3 minB = leaf->box.min;
-    float size   = leaf->box.max.x - minB.x;
 
-    // 1) Read cached scalar values at the 8 corners.
-    const auto& cubeVal = field.edgeValues(leaf);
+  for (const AdaptiveVolumeTreeNode& node : tree.nodes) {
+    if (!node.isLeaf()) {
+      continue;
+    }
 
-    // 2) Marching-cubes classification.
+    const auto& cubeVal = node.cornerSigma;
+    const auto [minIt, maxIt] =
+      std::minmax_element(cubeVal.begin(), cubeVal.end());
+    if (isoLevel < *minIt || isoLevel > *maxIt) {
+      continue;
+    }
+
     int cubeIndex = 0;
-    for (int i = 0; i < 8; ++i)
-      if (cubeVal[i] < isoLevel) cubeIndex |= (1<<i);
+    for (int i = 0; i < 8; ++i) {
+      if (cubeVal[i] < isoLevel) {
+        cubeIndex |= (1 << i);
+      }
+    }
     int edgeMask = edgeTable[cubeIndex];
-    if (edgeMask == 0) continue;  // No intersection.
-    
-    
-    // 3) Generate and share vertices only on intersecting edges.
-    std::array<unsigned,12> eIdx;
-    for (int e = 0; e < 12; ++e) {
-      if (!(edgeMask & (1<<e))) continue;
-      int va = edgeToVertex[e][0],
-	vb = edgeToVertex[e][1];
-      glm::vec3 pa = minB + size*cubeOffsets[va];
-      glm::vec3 pb = minB + size*cubeOffsets[vb];
+    if (edgeMask == 0) {
+      continue;
+    }
 
-      // Interpolated intersection point.
-      glm::vec3 pv = vertexInterp(isoLevel, pa, pb, cubeVal[va], cubeVal[vb]);
-      auto vk = MarchingCubes::quantizePosition(pv);
-      
+    const glm::vec3 extent = node.boundsMax - node.boundsMin;
+    std::array<unsigned, 12> eIdx{};
+    for (int e = 0; e < 12; ++e) {
+      if (!(edgeMask & (1 << e))) {
+        continue;
+      }
+
+      const int va = edgeToVertex[e][0];
+      const int vb = edgeToVertex[e][1];
+      const glm::vec3 pa = node.boundsMin + extent * cubeOffsets[va];
+      const glm::vec3 pb = node.boundsMin + extent * cubeOffsets[vb];
+      const glm::vec3 pv =
+        vertexInterp(isoLevel, pa, pb, cubeVal[va], cubeVal[vb]);
+      const auto vk = MarchingCubes::quantizePosition(pv);
+
       auto itV = vertexMap.find(vk);
       unsigned vidx;
       if (itV == vertexMap.end()) {
-	vidx = out.vertices.size()/3;
-	vertexMap.emplace(vk, vidx);
-	out.vertices.push_back(pv.x);
-	out.vertices.push_back(pv.y);
-	out.vertices.push_back(pv.z);
+        vidx = static_cast<unsigned>(out.vertices.size() / 3);
+        vertexMap.emplace(vk, vidx);
+        out.vertices.push_back(pv.x);
+        out.vertices.push_back(pv.y);
+        out.vertices.push_back(pv.z);
       } else {
-	vidx = itV->second;
+        vidx = itV->second;
       }
       eIdx[e] = vidx;
     }
 
-    // 4) Generate triangles.
-    for (int i = 0; triTable[cubeIndex][i]!=-1; i+=3) {
-      out.indices.push_back(eIdx[ triTable[cubeIndex][i+0] ]);
-      out.indices.push_back(eIdx[ triTable[cubeIndex][i+1] ]);
-      out.indices.push_back(eIdx[ triTable[cubeIndex][i+2] ]);
+    for (int i = 0; triTable[cubeIndex][i] != -1; i += 3) {
+      out.indices.push_back(eIdx[triTable[cubeIndex][i + 0]]);
+      out.indices.push_back(eIdx[triTable[cubeIndex][i + 1]]);
+      out.indices.push_back(eIdx[triTable[cubeIndex][i + 2]]);
     }
   }
 
   return out;
-}
-
-Mesh MarchingCubes::buildAndStitchIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-					     const IsoSurfaceTreeField& field,
-					     const ParticleOctree& tree,
-					     float isoLevel)
-{
-    // 1) Generate only the isosurface.
-    Mesh mesh = buildIsoSurface(leaves, field, isoLevel);
-    
-    // 3) Stitch neighbors with depth difference 1 for all leaves and directions.
-    for (auto* leaf : leaves) {
-      for (int dir = 0; dir < 6; ++dir) {
-        auto nbrs = tree.findAllNeighbors(leaf, dir);
-
-        for (auto* nb : nbrs) {
-          if (std::abs(int(leaf->depth) - int(nb->depth)) == 1) {
-            stitchFace(tree, leaf, nb, dir, mesh);
-          }
-        }
-      }
-    }
-
-    return mesh;
-}
-
-std::vector<MarchingCubes::Edge> MarchingCubes::getFaceEdges(const BoundingBox& box, int dir) {
-    const glm::vec3& mn = box.min;
-    const glm::vec3& mx = box.max;
-    std::vector<Edge> edges;
-    switch (dir) {
-    case 0: // +X face, x=mx.x, YZ loop.
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mn.z));
-        break;
-    case 1: // -X face, x=mn.x.
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mx.z));
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mn.z));
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mn.x,mn.y,mn.z));
-        break;
-    case 2: // +Y face, y=mx.y, XZ loop.
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mn.z));
-        break;
-    case 3: // -Y face, y=mn.y.
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mx.z));
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mn.z));
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mn.z));
-        break;
-    case 4: // +Z face, z=mx.z, XY loop.
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mx.z), glm::vec3(mx.x,mn.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mx.z), glm::vec3(mx.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mx.z), glm::vec3(mn.x,mx.y,mx.z));
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mx.z), glm::vec3(mn.x,mn.y,mx.z));
-        break;
-    case 5: // -Z face, z=mn.z.
-        edges.emplace_back(glm::vec3(mn.x,mn.y,mn.z), glm::vec3(mn.x,mx.y,mn.z));
-        edges.emplace_back(glm::vec3(mn.x,mx.y,mn.z), glm::vec3(mx.x,mx.y,mn.z));
-        edges.emplace_back(glm::vec3(mx.x,mx.y,mn.z), glm::vec3(mx.x,mn.y,mn.z));
-        edges.emplace_back(glm::vec3(mx.x,mn.y,mn.z), glm::vec3(mn.x,mn.y,mn.z));
-        break;
-    }
-    return edges;
-}
-
-
-
-
-TrackingVector<MarchingCubes::Edge>
-MarchingCubes::findAllFineEdges(const ParticleOctree& tree,
-				const ParticleOctree::Node* coarse,
-                                int                         dir,
-				const Edge&                 cedge)
-{
-    TrackingVector<Edge> out;
-    std::vector<const ParticleOctree::Node*> roots;
-    roots.reserve(8);
-
-    // 1) Get all leaf nodes sharing the face with the coarse node.
-    auto allNbrLeaves = tree.findAllNeighbors(coarse, dir);
-
-    // 2) Move each leaf to the level with depth difference 1.
-    for (auto* leafNb : allNbrLeaves) {
-        // Ignore nodes that are shallower than or at the same depth.
-        if (leafNb->depth <= coarse->depth) continue;
-
-        // If depth == coarse.depth + 1, the node is already a root candidate.
-        const ParticleOctree::Node* root = leafNb;
-        if (leafNb->depth > coarse->depth + 1) {
-            // If finer than that, climb to the ancestor at depth + 1.
-            while (root->depth > coarse->depth + 1) {
-                root = root->parent;
-            }
-        }
-
-        roots.push_back(root);
-    }
-    
-    // Remove duplicates so the same node is not processed repeatedly.
-    std::sort(roots.begin(), roots.end());
-    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
-
-    glm::vec3 dirVec = cedge.p1 - cedge.p0;
-    float    len2   = glm::dot(dirVec, dirVec);
-
-    for (auto* r : roots) {
-        auto egs = getFaceEdges(r->box, dir);
-        for (auto& e : egs) {
-            // Check whether an endpoint of e lies in the interval [0,1] on cedge.
-            float t0 = glm::dot(e.p0 - cedge.p0, dirVec) / len2;
-            float t1 = glm::dot(e.p1 - cedge.p0, dirVec) / len2;
-            if ((t0 >= 0.0f && t0 <= 1.0f) ||
-                (t1 >= 0.0f && t1 <= 1.0f)) {
-                out.push_back(e);
-            }
-        }
-    }
-
-    auto cmpEdge = [](const Edge &a, const Edge &b){
-      if (a.p0.x != b.p0.x) return a.p0.x < b.p0.x;
-      if (a.p0.y != b.p0.y) return a.p0.y < b.p0.y;
-      if (a.p0.z != b.p0.z) return a.p0.z < b.p0.z;
-      if (a.p1.x != b.p1.x) return a.p1.x < b.p1.x;
-      if (a.p1.y != b.p1.y) return a.p1.y < b.p1.y;
-      return a.p1.z < b.p1.z;
-    };
-    
-    std::sort(out.begin(), out.end(), cmpEdge);
-    out.erase(std::unique(out.begin(), out.end(),
-			  [&](auto const &a, auto const &b){
-			    return !cmpEdge(a,b) && !cmpEdge(b,a);
-			  }),
-	      out.end());
-    
-    out.erase(std::unique(out.begin(), out.end(),
-        [](auto const &a, auto const &b){
-            return a.p0 == b.p0 && a.p1 == b.p1;
-        }), out.end());
-    
-    return out;
-}
-
-
-
-
-// --- stitchFace using the vertex map ---
-void MarchingCubes::stitchFace(const ParticleOctree&       tree,
-                               const ParticleOctree::Node* a,
-                               const ParticleOctree::Node* b,
-                               int                         dir,
-                               Mesh&                       out)
-{
-  // Use the same keys and map as buildIsoSurface.
-  // Depth order is coarse < fine.
-  const auto *coarse=a, *fine=b;
-  if (coarse->depth > fine->depth) std::swap(coarse,fine);
-
-  // Face edges of the coarse cell.
-  auto cEdges = getFaceEdges(coarse->box, dir);
-
-  for (auto const& c : cEdges) {
-    // On the fine side, find all leaves sharing the face, climb to depth+1, then getFaceEdges.
-    auto fLeaves = findAllFineEdges(tree, coarse, dir, c);
-    if (fLeaves.empty()) continue;
-
-    // Endpoint keys for c.
-    glm::vec3 c0 = c.p0, c1 = c.p1;
-    float eLen = glm::length(c1-c0);
-    
-    // 1) Sort all fine edges by t.
-    struct KV{ float t; Edge e; };
-    std::vector<KV> arr;
-    for (auto& fe : fLeaves) {
-      float t0 = glm::length(fe.p0-c0)/eLen;
-      float t1 = glm::length(fe.p1-c0)/eLen;
-      arr.push_back({t0,fe});
-      arr.push_back({t1,fe});
-    }
-    std::sort(arr.begin(), arr.end(), [](auto const&A, auto const&B){ return A.t < B.t; });
-
-    // 2) Unique t values.
-    std::vector<float> ts;
-    for (auto const&kv:arr)
-      if (ts.empty() || std::abs(ts.back()-kv.t)>1e-6f)
-	ts.push_back(kv.t);
-
-    // 3) Add a triangle fan for each adjacent interval.
-    //    Use the vertex map here too: push new vertices, otherwise return existing indices.
-    for (size_t i = 0; i+1 < ts.size(); ++i) {
-      float ta = ts[i], tb = ts[i+1];
-      glm::vec3 pa = c0 + ta*(c1-c0);
-      glm::vec3 pb = c0 + tb*(c1-c0);
-
-      // Quantized keys.
-      auto k0 = MarchingCubes::quantizePosition(pa);
-      auto k1 = MarchingCubes::quantizePosition(pb);
-      auto kc = MarchingCubes::quantizePosition(c0);
-      
-      // Existing vertex or new insertion.
-      auto ensure = [&](GridKey const& k, glm::vec3 const& pos){
-	auto it = vertexMap.find(k);
-	if (it != vertexMap.end()) return it->second;
-	unsigned idx = out.vertices.size()/3;
-	vertexMap.emplace(k, idx);
-	out.vertices.push_back(pos.x);
-	out.vertices.push_back(pos.y);
-	out.vertices.push_back(pos.z);
-	return idx;
-      };
-
-      unsigned iC = ensure(kc, c0);
-      unsigned iA = ensure(k0, pa);
-      unsigned iB = ensure(k1, pb);
-
-      out.indices.push_back(iC);
-      out.indices.push_back(iA);
-      out.indices.push_back(iB);
-    }
-  }
 }

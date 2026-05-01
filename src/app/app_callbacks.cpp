@@ -123,6 +123,18 @@ static void scroll_callback(GLFWwindow* window, double /*xoffset*/, double yoffs
   app.runtime.inputEvents.push(event);
 }
 
+static void mouse_button_callback(GLFWwindow* window,
+                                  int /*button*/,
+                                  int action,
+                                  int /*mods*/)
+{
+  if (action == GLFW_PRESS) {
+    // macOS can occasionally leave a GLFW window visually active but not ready
+    // for key input after focus changes. Make clicks explicitly restore focus.
+    glfwFocusWindow(window);
+  }
+}
+
 static void key_callback(GLFWwindow* window,
                          int key,
                          int /*scancode*/,
@@ -153,6 +165,7 @@ void AttachAppCallbacks(WindowContext& window, CallbackContext& callbackCtx)
 
   glfwSetWindowUserPointer(handle, &callbackCtx);
   glfwSetCursorPosCallback(handle, mouse_callback);
+  glfwSetMouseButtonCallback(handle, mouse_button_callback);
   glfwSetScrollCallback(handle, scroll_callback);
   glfwSetKeyCallback(handle, key_callback);
   glfwSetFramebufferSizeCallback(handle, framebuffer_size_callback);

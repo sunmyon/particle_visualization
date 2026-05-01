@@ -233,10 +233,14 @@ void AdaptiveVolumeRenderer::draw(GLuint program,
   SetUniform1f(program, "uPxThreshold", params.pixelThreshold);
   SetUniform1f(program, "uTauMax", params.tauMax);
   SetUniform1f(program, "uStepBias", params.stepBias);
+  SetUniform1i(program, "uMaxSamplesPerCell", params.maxSamplesPerCell);
   SetUniform1f(program, "uSkipEps", params.skipEpsilon);
   SetUniform1i(program, "uDebugMode", params.debugMode);
   SetUniform3f(program, "uVolumeColor", params.baseColor);
   SetUniform1i(program, "uColorMode", params.colorMode);
+  SetUniform1i(program, "uOpticalModel", params.opticalModel);
+  SetUniform1f(program, "uEmissionScale", params.emissionScale);
+  SetUniform1f(program, "uAbsorptionScale", params.absorptionScale);
   SetUniform1f(program, "uTfValueMin", params.tfValueMin);
   SetUniform1f(program, "uTfValueMax", params.tfValueMax);
   SetUniform1f(program, "uTfSigmaScale", params.tfSigmaScale);

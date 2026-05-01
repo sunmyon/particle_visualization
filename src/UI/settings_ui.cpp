@@ -12,6 +12,9 @@
 #include "UI/file_format_dialog.h"
 #include "UI/volume_rendering_ui.h"
 #include "render/colormap_defs.h"  
+#ifdef ISO_CONTOUR
+#include "analysis/isosurface/iso_contour_geometry.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -303,7 +306,7 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
                             memory.gpuAvailableKnown,
                             memory.gpuAvailableBytes);
 
-  ImGui::SeparatorText("GPU cache controls");
+  ImGui::SeparatorText("Interaction / caches");
   auto& scheduling = req.renderDraft.scheduling;
   if (!req.particleLodTreeDraftInitialized) {
     req.particleLodMinNodeParticlesDraft =
@@ -312,6 +315,21 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
     req.particleLodTreeDraftInitialized = true;
   }
   bool dirty = false;
+  dirty |= ImGui::Checkbox("Responsive interaction",
+                           &scheduling.responsiveInteraction);
+  dirty |= ImGui::InputFloat("Interaction settle delay [s]",
+                             &scheduling.settleDelaySeconds,
+                             0.01f,
+                             0.05f,
+                             "%.3f");
+  if (scheduling.settleDelaySeconds < 0.0f) {
+    scheduling.settleDelaySeconds = 0.0f;
+    dirty = true;
+  }
+#ifdef VOLUME_RENDERING
+  dirty |= ImGui::Checkbox("Hide volume while interacting",
+                           &scheduling.skipVolumeWhileInteracting);
+#endif
   if (!backend.particleFrameCache) {
     ImGui::BeginDisabled();
   }
@@ -676,18 +694,19 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
 
   changed |= ImGui::InputFloat("radius", &labels.queryRadius, 0.f, 0.f, "%g");
   changed |= ImGui::InputInt("number of particles", &labels.maxLabels);
+  changed |= ImGui::Checkbox("sink particles only", &labels.sinkOnly);
 
-  labels.moveThreshold = 0.1f * labels.queryRadius;
+  ImGui::TextDisabled("Particle IDs are searched around camera target (%.3g, %.3g, %.3g).",
+                      camera.target[0],
+                      camera.target[1],
+                      camera.target[2]);
 
-  if (ImGui::Button("show sink IDs")) {
+  if (ImGui::Button("show particle IDs")) {
     labels.show = true;
-    labels.lastCameraPos = glm::vec3(camera.position[0],
-                                     camera.position[1],
-                                     camera.position[2]);
     changed = true;
   }
 
-  if (ImGui::Button("disable sink IDs")) {
+  if (ImGui::Button("disable particle IDs")) {
     labels.show = false;
     changed = true;
   }
@@ -1027,8 +1046,8 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     if (ImGui::Button("calc disk radius from text file")) {
       batchReq.runClicked = true;
     }
-    ImGui::SameLine();
     if (batchJob.status == JobStatus::Running) {
+      ImGui::SameLine();
       if (ImGui::Button("cancel disk batch")) {
         batchReq.cancelClicked = true;
       }
@@ -1044,6 +1063,7 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
       edit.diskBatchDirty = true;
     }
 
+    ImGui::Spacing();
     break;
   }
 
@@ -1099,8 +1119,8 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     if (ImGui::Button("ellipsoidal fit from text file")) {
       batchReq.runClicked = true;
     }
-    ImGui::SameLine();
     if (batchJob.status == JobStatus::Running) {
+      ImGui::SameLine();
       if (ImGui::Button("cancel ellipsoid batch")) {
         batchReq.cancelClicked = true;
       }
@@ -1116,8 +1136,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
       edit.ellipsoidBatchDirty = true;
     }
 
+    ImGui::Spacing();
     break;
-  }			
+  }
 #endif      
   }
 }
@@ -1178,29 +1199,6 @@ static void DrawRenderingSection(const QuantityState& quantity,
     ImGui::EndCombo();
   }
 
-  auto& scheduling = settingsReq.renderDraft.scheduling;
-  bool schedulingDirty = false;
-  ImGui::SeparatorText("Interaction responsiveness");
-  schedulingDirty |= ImGui::Checkbox("Responsive interaction",
-                                     &scheduling.responsiveInteraction);
-#ifdef VOLUME_RENDERING
-  schedulingDirty |= ImGui::Checkbox("Hide volume while interacting",
-                                     &scheduling.skipVolumeWhileInteracting);
-#endif
-  schedulingDirty |= ImGui::InputFloat("Interaction settle delay [s]",
-                                       &scheduling.settleDelaySeconds,
-                                       0.01f,
-                                       0.05f,
-                                       "%.3f");
-  if (scheduling.settleDelaySeconds < 0.0f) {
-    scheduling.settleDelaySeconds = 0.0f;
-    schedulingDirty = true;
-  }
-  if (schedulingDirty) {
-    settingsReq.renderDraftDirty = true;
-    settingsReq.applyRenderRequested = true;
-  }
-		
   switch (ui.renderingMode) {
   case RENDER_PROJECTION_MAP: {
     if (ImGui::Button("make projection map"))
@@ -1453,21 +1451,9 @@ static void DrawRenderingSection(const QuantityState& quantity,
     auto& req = edit.isoContour;
     bool isoContourDirty = false;
 
-    isoContourDirty |= ImGui::InputFloat("Threshold value for iso-contour",
-                                         &req.isoLevel);
-    if (ImGui::SliderFloat("Opacity",
-                           &settingsReq.renderDraft.isoContourOpacity,
-                           0.0f,
-                           1.0f)) {
-      settingsReq.renderDraftDirty = true;
-      settingsReq.applyRenderRequested = true;
-    }
-    isoContourDirty |= ImGui::SliderInt("Maximum level of spatial tree",
-                                        &req.maxTreeLevel,
-                                        5,
-                                        20);
+    ImGui::SeparatorText("Tree construction");
 
-    if (ImGui::BeginCombo("Quantity for Iso-Contour",
+    if (ImGui::BeginCombo("Iso-contour quantity",
 			  QuantityLabel(req.selectedQuantity))) {
       for (int q = 0; q < catalog.nUIQ; ++q) {
 	QuantityId cand = catalog.uiQ[q];
@@ -1481,12 +1467,57 @@ static void DrawRenderingSection(const QuantityState& quantity,
       ImGui::EndCombo();
     }
 
-    if (ImGui::Button("Build spatial tree & mesh")) {
-      req.buildClicked = true;
+    isoContourDirty |= ImGui::InputInt("Min particles per leaf",
+                                       &req.minParticlesPerLeaf);
+    if (req.minParticlesPerLeaf < 1) {
+      req.minParticlesPerLeaf = 1;
+      isoContourDirty = true;
     }
 
-    if (ImGui::Button("disable Grid & Mesh")) {
+    isoContourDirty |= ImGui::SliderInt("Max tree level",
+                                        &req.maxTreeLevel,
+                                        1,
+                                        24);
+    const char* reconstructionModes[] = {
+      "Cell average (fast)",
+      "Shared corners",
+      "Face-gradient (slow)"
+    };
+    isoContourDirty |= ImGui::Combo("Corner reconstruction",
+                                    &req.cornerReconstructionMode,
+                                    reconstructionModes,
+                                    IM_ARRAYSIZE(reconstructionModes));
+    req.cornerReconstructionMode =
+      std::clamp(req.cornerReconstructionMode, 0, 2);
+
+    ImGui::TextDisabled("Changing tree parameters requires rebuilding the adaptive tree.");
+    if (ImGui::Button("Build iso-contour tree")) {
+      req.buildClicked = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear iso-contour tree")) {
       req.clearClicked = true;
+    }
+
+    ImGui::SeparatorText("Iso-surface extraction");
+    ImGui::TextUnformatted("Apply threshold reuses the cached tree and rebuilds only the mesh.");
+    isoContourDirty |= ImGui::InputFloat("Threshold value",
+                                         &req.isoLevel);
+    if (ImGui::Button("Apply threshold / rebuild mesh")) {
+      req.applyClicked = true;
+    }
+
+    ImGui::SeparatorText("Rendering");
+    if (ImGui::SliderFloat("Iso-contour opacity",
+                           &settingsReq.renderDraft.isoContourOpacity,
+                           0.0f,
+                           1.0f)) {
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
+
+    if (result.isoContour && !result.isoContour->message.empty()) {
+      ImGui::TextWrapped("%s", result.isoContour->message.c_str());
     }
     if (isoContourDirty) {
       edit.isoContourDirty = true;

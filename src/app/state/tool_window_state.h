@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <string>
 #include <vector>
 
 #include "app/state/clump_window_state.h"
 #include "app/state/file_format_dialog_state.h"
+#include "app/state/plot_export_state.h"
 #include "analysis/histogram2d.h"
 #include "analysis/radial_profile.h"
 #include "core/quantity.h"
@@ -22,6 +24,10 @@ struct RadialProfileUIState {
   int selectedXAxis = 0;
   int selectedVarIdx = 0;
   RadialProfileParams draftParams;
+  bool exportPlotPackage = true;
+  uint64_t lastExportedVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 };
 
 struct RadialProfileRequestState {
@@ -32,6 +38,10 @@ struct RadialProfileRequestState {
 struct Histogram2DUIState {
   bool open = false;
   Histogram2DParams draftParams;
+  bool exportPlotPackage = true;
+  uint64_t lastExportedVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 };
 
 struct Histogram2DRequestState {
@@ -93,6 +103,10 @@ struct TopParticlesUIState {
 
   bool useCameraCenter = false;
   float cameraRadius = 10.0f;
+  bool exportHistogramPackage = true;
+  uint64_t lastExportedHistogramVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 };
 
 struct TopParticlesRequestState {
@@ -132,6 +146,7 @@ struct TopParticlesResultState {
   TrackingVector<ParticleData> filtered;
 
   bool histogramComputed = false;
+  uint64_t histogramVersion = 0;
   TrackingVector<float> histBins;
   TrackingVector<float> binCenters;
 
@@ -142,6 +157,7 @@ struct TopParticlesResultState {
 
 struct TopParticlesViewContext {
   const QuantityState* quantity = nullptr;
+  PlotBatchExportViewContext exportContext;
 };
 
 struct HaloRowView {
@@ -182,11 +198,16 @@ struct HaloesUIState {
   float range2_max = 1.0f;
 
   bool histogramComputed = false;
+  uint64_t histogramVersion = 0;
   TrackingVector<float> histBins;
   TrackingVector<float> binCenters;
   float vmin = 0.0f;
   float vmax = 1.0f;
   float binSize = 1.0f;
+  bool exportHistogramPackage = true;
+  uint64_t lastExportedHistogramVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 };
 
 struct HaloesRequestState {

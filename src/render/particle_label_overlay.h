@@ -34,4 +34,8 @@ public:
 
 private:
   std::vector<ParticleLabelItem> labels_;
+  glm::vec3 lastQueryCenter_{0.0f};
+  float lastQueryRadius_ = -1.0f;
+  int lastMaxLabels_ = -1;
+  bool lastSinkOnly_ = true;
 };

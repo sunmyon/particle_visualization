@@ -80,6 +80,96 @@ private:
   bool initialized_ = false;
 };
 
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+class HeadlessVulkanImGuiBackend final : public ImGuiBackend {
+public:
+  HeadlessVulkanImGuiBackend(VulkanContext& context, int width, int height)
+    : context_(&context)
+    , width_(width)
+    , height_(height)
+  {
+  }
+
+  bool init() override
+  {
+    if (!context_) {
+      return false;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    setDisplaySize(width_, height_);
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.Instance = context_->instance();
+    initInfo.PhysicalDevice = context_->physicalDevice();
+    initInfo.Device = context_->device();
+    initInfo.QueueFamily = context_->queueFamily();
+    initInfo.Queue = context_->queue();
+    initInfo.PipelineCache = VK_NULL_HANDLE;
+    initInfo.DescriptorPool = context_->descriptorPool();
+    initInfo.RenderPass = context_->renderPass();
+    initInfo.Subpass = 0;
+    initInfo.MinImageCount = context_->minImageCount();
+    initInfo.ImageCount = context_->imageCount();
+    initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.Allocator = nullptr;
+    ImGui_ImplVulkan_Init(&initInfo);
+
+    initialized_ = true;
+    return true;
+  }
+
+  void newFrame(int width, int height) override
+  {
+    ImGui_ImplVulkan_NewFrame();
+    setDisplaySize(width, height);
+    ImGui::NewFrame();
+  }
+
+  void render() override
+  {
+    ImGui::Render();
+    context_->renderImGuiDrawData(ImGui::GetDrawData());
+  }
+
+  void shutdown() override
+  {
+    if (!initialized_) {
+      return;
+    }
+    if (context_ && context_->device() != VK_NULL_HANDLE) {
+      vkDeviceWaitIdle(context_->device());
+    }
+    ImGui_ImplVulkan_Shutdown();
+    ImGui::DestroyContext();
+    ImPlot::DestroyContext();
+    initialized_ = false;
+  }
+
+private:
+  void setDisplaySize(int width, int height)
+  {
+    width_ = width;
+    height_ = height;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width),
+                            static_cast<float>(height));
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+  }
+
+  VulkanContext* context_ = nullptr;
+  int width_ = 1280;
+  int height_ = 720;
+  bool initialized_ = false;
+};
+#endif
+
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 class GlfwOpenGLImGuiBackend final : public ImGuiBackend {
 public:
@@ -242,6 +332,21 @@ std::unique_ptr<ImGuiBackend> CreateHeadlessOpenGLImGuiBackend(int width,
                                                                int height)
 {
   return std::make_unique<HeadlessOpenGLImGuiBackend>(width, height);
+}
+
+std::unique_ptr<ImGuiBackend> CreateHeadlessVulkanImGuiBackend(
+  VulkanContext& context,
+  int width,
+  int height)
+{
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  return std::make_unique<HeadlessVulkanImGuiBackend>(context, width, height);
+#else
+  (void)context;
+  (void)width;
+  (void)height;
+  return nullptr;
+#endif
 }
 
 std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(

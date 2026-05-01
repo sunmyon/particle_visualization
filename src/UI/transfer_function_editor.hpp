@@ -19,7 +19,14 @@ struct TFComponent {
 class TransferFunctionEditor {
 public:
   TransferFunctionEditor()
-    : rhoMin_(1.0f), rhoMax_(1e16f), yMax_(100.0f), logScale_(true), showAxes_(true)  {}
+    : rhoMin_(1.0f),
+      rhoMax_(1e16f),
+      yPlotMax_(100.0f),
+      ampSliderMax_(100.0f),
+      logScale_(true),
+      showAxes_(true)
+  {
+  }
 
   // Draw the UI and optionally return the rho-to-sigma evaluator in outEval.
   bool showUI(std::function<float(float)>* outEval = nullptr) {
@@ -51,11 +58,10 @@ public:
     ImGui::SameLine();
     changed |= ImGui::Checkbox("log", &logScale_);
 
-    // Display upper bound for y, allowing amplitudes above 1.
+    // Display upper bound for y; this does not clamp stored amplitudes.
     ImGui::SetNextItemWidth(180);
-    if (ImGui::InputFloat("sigma max [1/norm length]", &yMax_, 1.0f, 10.0f, "%.3g")) {
-      yMax_ = std::max(1e-6f, yMax_);
-      changed = true;
+    if (ImGui::InputFloat("plot y max [display]", &yPlotMax_, 1.0f, 10.0f, "%.3g")) {
+      yPlotMax_ = std::max(1e-6f, yPlotMax_);
     }
     ImGui::SameLine();
     ImGui::Checkbox("show axes", &showAxes_);
@@ -105,10 +111,24 @@ public:
       if(c.type == TFShape::Gaussian)
 	changed |= ImGui::Checkbox("log-domain Gaussian", &c.logDomain);
       
-      changed |= ImGui::SliderFloat("sigma amplitude [1/norm length]",
+      changed |= ImGui::InputFloat("sigma amplitude [1/norm length]",
+                                   &c.amp,
+                                   0.0f,
+                                   0.0f,
+                                   "%.3g");
+      c.amp = std::max(c.amp, 0.0f);
+      ImGui::SetNextItemWidth(180);
+      if (ImGui::InputFloat("amplitude slider max",
+                            &ampSliderMax_,
+                            1.0f,
+                            10.0f,
+                            "%.3g")) {
+        ampSliderMax_ = std::max(1.0e-6f, ampSliderMax_);
+      }
+      changed |= ImGui::SliderFloat("amplitude drag",
                                     &c.amp,
                                     0.0f,
-                                    yMax_);
+                                    ampSliderMax_);
       if (ImGui::Button("Remove")) { comps_.erase(comps_.begin() + i); changed = true; ImGui::Unindent(); ImGui::PopID(); break; }
       ImGui::Unindent();
       ImGui::Separator();
@@ -222,7 +242,7 @@ public:
 
 private:
   // State.
-  float rhoMin_, rhoMax_, yMax_;
+  float rhoMin_, rhoMax_, yPlotMax_, ampSliderMax_;
   bool logScale_;
   bool showWindow_ = false;
   bool showAxes_ = true;
@@ -299,11 +319,11 @@ private:
 
   inline float y01FromAmp(float amp) const
   {
-    return (yMax_ > 0.f) ? (amp / yMax_) : 0.f;
+    return (yPlotMax_ > 0.f) ? (amp / yPlotMax_) : 0.f;
   }
   inline float ampFromY01(float y01) const
   {
-    return std::max(0.f, y01 * yMax_);
+    return std::max(0.f, y01 * yPlotMax_);
   }
   
   // Convert normalized 0..1 coordinates to screen coordinates.
@@ -347,13 +367,13 @@ private:
     // Approximate handle height, normalized consistently for drawing and hit testing.
     float yh  = (c.type==TFShape::Gaussian ? c.amp*std::exp(-0.5f)
 		 : (c.type==TFShape::Triangle ? c.amp*0.5f : c.amp));
-    float y01 = std::clamp(yh / yMax_, 0.0f, 1.0f);
+    float y01 = std::clamp(yh / yPlotMax_, 0.0f, 1.0f);
     return toScreen01(x01, y01);
   }
 
   ImVec2 centerPosScreen(const TFComponent& c) const {
     float x01 = x01FromRho(c.center);
-    float y01 = std::clamp(c.amp / yMax_, 0.0f, 1.0f);
+    float y01 = std::clamp(c.amp / yPlotMax_, 0.0f, 1.0f);
     return toScreen01(x01, y01);
   }
   
@@ -365,7 +385,7 @@ private:
       float x01 = (float)i / (S - 1);
       float rho = rhoFromX01(x01);
       float y = evaluate(rho);
-      float y01 = std::clamp(y / yMax_, 0.f, 1.0f);
+      float y01 = std::clamp(y / yPlotMax_, 0.f, 1.0f);
       poly[i] = toScreen01(x01, y01);
     }
     dl->AddPolyline(poly, S, IM_COL32(0, 180, 255, 255), false, 2.0f);
@@ -421,15 +441,15 @@ private:
       }
     }
 
-    // Y ticks from 0 to yMax_.
+    // Y ticks from 0 to yPlotMax_.
     auto drawYTick = [&](float y, const char* label){
-      float y01 = std::clamp(y / yMax_, 0.0f, 1.0f);
+      float y01 = std::clamp(y / yPlotMax_, 0.0f, 1.0f);
       ImVec2 a = toScreen01(0.0f, y01);
       dl->AddLine(ImVec2(plot0_.x-6, a.y), ImVec2(plot0_.x, a.y), col, 1.0f);
       dl->AddText(ImVec2(plot0_.x-56, a.y-7), col, label);
     };
     for (int i=0;i<=4;i++){
-      float y = yMax_ * (i/4.0f);
+      float y = yPlotMax_ * (i/4.0f);
       char buf[32]; snprintf(buf, sizeof(buf), "%.2f", y);
       drawYTick(y, buf);
     }
@@ -494,7 +514,7 @@ private:
       if (drag_ == DragMode::Center) {
 	// Center point: X controls center, Y controls amplitude.
 	c.center = std::clamp(rhoFromX01(x01), rhoMin_, rhoMax_);
-	c.amp    = std::max(0.0f, y01 * yMax_);
+	c.amp    = std::max(0.0f, y01 * yPlotMax_);
 	changed  = true;
       } else {
 	// Left and right handles: derive rhoH from X and update width.

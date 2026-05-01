@@ -118,6 +118,9 @@ InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
 
   for (const InputEvent& event : events) {
     if (event.type == InputEventType::Key) {
+      if (event.capturedByUI) {
+        continue;
+      }
       if (event.key == InputKey::Escape &&
           event.action == InputAction::Press) {
         result.closeRequested = true;

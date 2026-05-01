@@ -9,6 +9,7 @@
 #include "app/state/runtime_state.h"
 #include "app/state/ui_state.h"
 #include "core/quantity.h"
+#include "render/colormap_defs.h"
 
 #include <algorithm>
 #include <cmath>
@@ -239,6 +240,17 @@ void DrawVolumeRenderingSettingsSection(
 
   volumeDirty |= ImGui::Checkbox("Balance tree (slow)",
                                  &volumeReq.balanceTree);
+  const char* reconstructionModes[] = {
+    "Cell average (fast)",
+    "Shared corners",
+    "Face-gradient (slow)"
+  };
+  volumeDirty |= ImGui::Combo("Corner reconstruction",
+                              &volumeReq.cornerReconstructionMode,
+                              reconstructionModes,
+                              IM_ARRAYSIZE(reconstructionModes));
+  volumeReq.cornerReconstructionMode =
+    std::clamp(volumeReq.cornerReconstructionMode, 0, 2);
 
   if (ImGui::Button("Build volume tree")) {
     volumeReq.buildClicked = true;
@@ -253,11 +265,12 @@ void DrawVolumeRenderingSettingsSection(
   ImGui::SeparatorText("Rendering");
   renderDirty |= ImGui::Checkbox("Show adaptive volume",
                                  &volumeRender.show);
-  renderDirty |= ImGui::InputFloat("LOD pixel threshold",
+  renderDirty |= ImGui::InputFloat("LOD pixel threshold (0=off)",
                                    &volumeRender.pixelThreshold,
                                    0.1f,
                                    1.0f,
                                    "%g");
+  volumeRender.pixelThreshold = std::max(volumeRender.pixelThreshold, 0.0f);
   renderDirty |= ImGui::InputFloat("Tau max",
                                    &volumeRender.tauMax,
                                    0.1f,
@@ -268,25 +281,83 @@ void DrawVolumeRenderingSettingsSection(
                                    0.0f,
                                    0.0f,
                                    "%g");
-  renderDirty |= ImGui::InputFloat("Step bias",
+  renderDirty |= ImGui::InputFloat("Sample step length (0=one per cell)",
                                    &volumeRender.stepBias,
                                    0.0f,
                                    0.0f,
                                    "%g");
+  volumeRender.stepBias = std::max(volumeRender.stepBias, 0.0f);
+  renderDirty |= ImGui::InputInt("Max samples per cell",
+                                 &volumeRender.maxSamplesPerCell,
+                                 1,
+                                 8);
+  volumeRender.maxSamplesPerCell =
+    std::clamp(volumeRender.maxSamplesPerCell, 1, 256);
 
   ImGui::SeparatorText("Rendering color");
   const char* colorModes[] = {
     "Fixed color",
-    "Procedural heat"
+    "Procedural heat",
+    "Colormap"
   };
   renderDirty |= ImGui::Combo("Volume color mode",
                               &volumeRender.colorMode,
                               colorModes,
                               IM_ARRAYSIZE(colorModes));
-  volumeRender.colorMode = std::clamp(volumeRender.colorMode, 0, 1);
+  volumeRender.colorMode = std::clamp(volumeRender.colorMode, 0, 2);
   if (volumeRender.colorMode == 0) {
     renderDirty |= ImGui::ColorEdit3("Volume base color",
                                      &volumeRender.baseColor.x);
+  } else if (volumeRender.colorMode == 2) {
+    ImGui::TextUnformatted("Vulkan samples the selected colormap; OpenGL falls back to heat.");
+    const ColormapDef* colormaps = AvailableColormaps();
+    const int colormapCount = AvailableColormapCount();
+    volumeRender.colormapIndex =
+      std::clamp(volumeRender.colormapIndex, 0, std::max(0, colormapCount - 1));
+    const char* preview =
+      colormapCount > 0 ? colormaps[volumeRender.colormapIndex].name : "None";
+    if (ImGui::BeginCombo("Volume colormap", preview)) {
+      for (int i = 0; i < colormapCount; ++i) {
+        const bool selected = i == volumeRender.colormapIndex;
+        if (ImGui::Selectable(colormaps[i].name, selected)) {
+          volumeRender.colormapIndex = i;
+          renderDirty = true;
+        }
+        if (selected) {
+          ImGui::SetItemDefaultFocus();
+        }
+      }
+      ImGui::EndCombo();
+    }
+  }
+
+  ImGui::SeparatorText("Optical model");
+  const char* opticalModels[] = {
+    "Opacity",
+    "Emission",
+    "Emission + absorption"
+  };
+  renderDirty |= ImGui::Combo("Volume optical model",
+                              &volumeRender.opticalModel,
+                              opticalModels,
+                              IM_ARRAYSIZE(opticalModels));
+  volumeRender.opticalModel = std::clamp(volumeRender.opticalModel, 0, 2);
+  if (volumeRender.opticalModel != 0) {
+    renderDirty |= ImGui::InputFloat("Emission scale",
+                                     &volumeRender.emissionScale,
+                                     0.1f,
+                                     1.0f,
+                                     "%g");
+    volumeRender.emissionScale = std::max(volumeRender.emissionScale, 0.0f);
+  }
+  if (volumeRender.opticalModel == 2) {
+    renderDirty |= ImGui::InputFloat("Absorption scale",
+                                     &volumeRender.absorptionScale,
+                                     0.1f,
+                                     1.0f,
+                                     "%g");
+    volumeRender.absorptionScale =
+      std::max(volumeRender.absorptionScale, 0.0f);
   }
 
   if (volumeRender.debugMode != 0) {

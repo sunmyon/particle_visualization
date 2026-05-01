@@ -215,6 +215,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
 #ifdef STREAM_LINE
   ctx.analysis.streamlineBuild = &analysis.streamlineBuild;
 #endif
+#ifdef ISO_CONTOUR
+  ctx.analysis.isoContour = &analysis.isoContour;
+#endif
 #ifdef VOLUME_RENDERING
   ctx.analysis.volume = &analysis.volume;
 #endif
@@ -272,14 +275,37 @@ static void DrawMainUI(AppViewState& view,
 }
 
 static void DrawToolWindows(AppRuntimeState& runtime,
+			    const AppViewState& view,
 			    ToolWindowUIState& tools,
                             WindowCommandQueue& windowCommands,
                             const RadialProfileResultState& radialProfileResult,
                             const Histogram2DResultState& histogram2DResult,
                             const ProjectionPreviewUIState& projectionPreview)
 {
+  PlotBatchExportViewContext plotExportCtx;
+  plotExportCtx.snapshotFolderPath = runtime.settings.fileNavigation.input.folderPath;
+  plotExportCtx.snapshotFileFormat = runtime.settings.fileNavigation.input.fileFormat;
+  plotExportCtx.initialIndex =
+    runtime.settings.fileNavigation.navigation.initialIndex;
+  plotExportCtx.currentStep =
+    runtime.settings.fileNavigation.navigation.currentStep;
+  plotExportCtx.skipStep =
+    runtime.settings.fileNavigation.navigation.skipStep;
+  plotExportCtx.batchSize =
+    runtime.settings.fileNavigation.navigation.batchSize;
+#ifdef HAVE_HDF5
+  plotExportCtx.useHDF5 = runtime.settings.fileNavigation.input.useHDF5;
+#endif
+  plotExportCtx.cameraPosition[0] = view.camera.cameraPos.x;
+  plotExportCtx.cameraPosition[1] = view.camera.cameraPos.y;
+  plotExportCtx.cameraPosition[2] = view.camera.cameraPos.z;
+  plotExportCtx.cameraTarget[0] = view.camera.cameraTarget.x;
+  plotExportCtx.cameraTarget[1] = view.camera.cameraTarget.y;
+  plotExportCtx.cameraTarget[2] = view.camera.cameraTarget.z;
+
   TopParticlesViewContext topParticlesCtx;
   topParticlesCtx.quantity = &runtime.quantity;
+  topParticlesCtx.exportContext = plotExportCtx;
   DrawTopParticlesUI(tools.topParticles,
                      tools.topParticlesRequest,
                      tools.topParticlesResult,
@@ -295,7 +321,7 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                  tools.maskRequest,
                  runtime.settings.inputFilter.mask);
 
-  RadialProfileViewContext radialProfileCtx{runtime.quantity};
+  RadialProfileViewContext radialProfileCtx{runtime.quantity, plotExportCtx};
   DrawRadialProfileUI(tools.radialProfile,
                       tools.radialProfileRequest,
                       radialProfileResult,
@@ -314,25 +340,26 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                                 tools.projectionFontSelectionRequest);
   
 #ifdef HAVE_HDF5
-  HaloesViewContext haloesCtx{};
+  HaloesViewContext haloesCtx{plotExportCtx};
   DrawHaloesUI(tools.haloes,
                tools.haloesRequest,
                haloesCtx);
 #endif
   
-  Histogram2DViewContext histogram2DCtx{runtime.quantity.catalog};
+  Histogram2DViewContext histogram2DCtx{runtime.quantity.catalog, plotExportCtx};
   DrawHistogram2DUI(tools.histogram2D,
                     tools.histogram2DRequest,
 		    histogram2DResult,
 		    histogram2DCtx);
 
-  DrawClumpFinderUI(tools.clumpFind);
+  DrawClumpFinderUI(tools.clumpFind, plotExportCtx);
   
-  DrawClumpListUI(tools.clumpList);
+  DrawClumpListUI(tools.clumpList, plotExportCtx);
   
   DrawClumpChainListUI(tools.clumpChain,
 		       runtime.settings.fileNavigation.navigation,
-                       runtime.settings.fileNavigation.current);
+                       runtime.settings.fileNavigation.current,
+                       plotExportCtx);
 
   DrawProjectionPreviewUI(tools.projectionMap, projectionPreview);
 }
@@ -590,6 +617,7 @@ void RunFrame(AppState& app,
                               : ProjectionPreviewUIState{};
 
   DrawToolWindows(app.runtime,
+                  app.view,
                   app.ui.toolWindows,
                   app.ui.windowCommands,
                   app.derived.analysis.radial,
@@ -620,7 +648,6 @@ void RunFrame(AppState& app,
                         app.runtime.render,
 		        app.runtime.analysisTools.projectionMap);
   ApplyDerivedRenderInvalidation(derivedRebuild,
-                                 app.view.camera,
                                  app.runtime.render);
   AcknowledgeDerivedRebuild(*app.data.particles,
                             app.derived,

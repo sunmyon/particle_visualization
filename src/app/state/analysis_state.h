@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -93,11 +94,15 @@ struct ProjectionMovieResultState {
 
 struct RadialProfileResultState {
   bool computed = false;
+  uint64_t version = 0;
+  RadialProfileParams paramsUsed;
   RadialProfileResult result;
 };
 
 struct Histogram2DResultState {
   bool computed = false;
+  uint64_t version = 0;
+  Histogram2DParams paramsUsed;
   Histogram2DResult result;
 };
 

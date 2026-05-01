@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include "core/tracking_vector.h"
 
@@ -52,9 +53,14 @@ struct ClumpFinderWindowState {
   bool histogramBinsAuto = false;
 
   bool histogramComputed = false;
+  uint64_t histogramVersion = 0;
   TrackingVector<float> massHistogramValues;
   TrackingVector<ClumpFinderRowView> rows;
   TrackingVector<bool> showHull;
+  bool exportHistogramPackage = true;
+  uint64_t lastExportedHistogramVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 };
 
 struct LoadedClumpEvolutionCacheView {
@@ -98,6 +104,11 @@ struct LoadedClumpWindowState {
   float valMaxInput = 1.0e10f;
 
   bool showEvolutionPlot = false;
+  uint64_t evolutionVersion = 0;
+  bool exportEvolutionPackage = true;
+  uint64_t lastExportedEvolutionVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
   bool requestReload = false;
   bool requestUpdateEvolutionCache = false;
   bool requestFollowSelected = false;
@@ -172,6 +183,11 @@ struct ClumpChainWindowState {
   bool projectionBatchRunning = false;
   int projectionBatchCursor = 0;
   int projectionBatchChainIndex = -1;
+  uint64_t evolutionVersion = 0;
+  bool exportEvolutionPackage = true;
+  uint64_t lastExportedEvolutionVersion = 0;
+  char exportFolder[512] = "";
+  char lastExportStatus[512] = "";
 
   int clumpChainInitFileIndex = 0;
   int clumpChainNsnapshots = 1;

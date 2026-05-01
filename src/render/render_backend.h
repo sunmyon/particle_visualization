@@ -26,6 +26,23 @@ struct RenderBackendTimingInfo {
   double volumeCacheScale = 1.0;
 };
 
+struct RenderBackendVolumeStats {
+  bool known = false;
+  int width = 0;
+  int height = 0;
+  int sampleStep = 1;
+  double sampledRays = 0.0;
+  double rootHitFraction = 0.0;
+  double avgNodeVisitsPerRay = 0.0;
+  double avgChildHitsPerRay = 0.0;
+  double avgLeafStopsPerRay = 0.0;
+  double avgLodStopsPerRay = 0.0;
+  double nodeVisits = 0.0;
+  double childHits = 0.0;
+  double leafStops = 0.0;
+  double lodStops = 0.0;
+};
+
 struct RenderBackendCapabilities {
   bool particles = false;
   bool particleLod = false;
@@ -58,6 +75,8 @@ public:
   virtual bool isSoftwareRenderer() const { return false; }
   virtual RenderBackendMemoryInfo queryMemoryInfo() const { return {}; }
   virtual RenderBackendTimingInfo queryTimingInfo() const { return {}; }
+  virtual RenderBackendVolumeStats queryVolumeStats(int sampleStep) { (void)sampleStep; return {}; }
+  virtual void waitIdle() {}
 };
 
 enum class RenderBackendKind {

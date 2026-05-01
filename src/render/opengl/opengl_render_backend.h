@@ -60,6 +60,8 @@ public:
   bool isSoftwareRenderer() const override { return softwareRenderer_; }
   RenderBackendMemoryInfo queryMemoryInfo() const override;
   RenderBackendTimingInfo queryTimingInfo() const override { return timing_; }
+  RenderBackendVolumeStats queryVolumeStats(int sampleStep) override;
+  void waitIdle() override;
 
 private:
 #ifdef VOLUME_RENDERING
@@ -109,6 +111,8 @@ private:
 #ifdef VOLUME_RENDERING
   AdaptiveVolumeRenderer volume_;
   OpenGLVolumeFrameCache volumeFrameCache_;
+  AdaptiveVolumeDrawParams lastVolumeParams_;
+  bool lastVolumeDrawable_ = false;
 #endif
 
   CrossGizmoRenderer crossGizmo_;

@@ -6,7 +6,7 @@
 #include "data/spatial/particle_octree.h"
 #include "analysis/isosurface/mesh_data.h"
 
-class IsoSurfaceTreeField;
+struct AdaptiveVolumeTree;
 
 class MarchingCubes {
 public:
@@ -65,25 +65,8 @@ public:
       llround(p.z / EPS_POS)
     };
   }
-  
-  // leaves: leaf nodes from the spatially subdivided octree.
-  // particles: pointers and ranges into the source data.
-  // voxelSize and isoLevel: generation parameters.
-  static Mesh buildIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-                              const IsoSurfaceTreeField& field,
-			      float isoLevel);
-
-  static Mesh buildAndStitchIsoSurface(const TrackingVector<const ParticleOctree::Node*>& leaves,
-                                       const IsoSurfaceTreeField& field,
-                                       const ParticleOctree& tree,
-                                       float isoLevel);
-
-  
-  static void stitchFace(const ParticleOctree& tree,
-			 const ParticleOctree::Node*  coarse,
-			 const ParticleOctree::Node*  fine,
-			 int                  dir,
-			 Mesh&                out);  
+  static Mesh buildIsoSurface(const AdaptiveVolumeTree& tree,
+                              float isoLevel);
 
   static const std::array<glm::vec3,8> cubeOffsets;
   
@@ -95,13 +78,6 @@ private:
   static const int  triTable[256][16];
   static const int edgeToVertex[12][2];
 
-  static std::vector<Edge> getFaceEdges(const BoundingBox& box, int dir);
-  static TrackingVector<Edge>
-  findAllFineEdges(const ParticleOctree&      tree,
-		   const ParticleOctree::Node* coarse,
-		   int                        dir,
-		   const Edge&                cedge);
-  
   static std::unordered_map<Edge, unsigned, EdgeHash> globalEdgeMap;
 
   // Map from coordinate key to vertex index.

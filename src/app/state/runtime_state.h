@@ -227,8 +227,11 @@ struct StellarDensityRequestState {
 struct IsoContourRequestState {
   float isoLevel = 0.0f;
   int maxTreeLevel = 15;
+  int minParticlesPerLeaf = 64;
   QuantityId selectedQuantity = QuantityId::Density;
+  int cornerReconstructionMode = 1; // 0=cell average, 1=shared corners, 2=face gradient.
   bool runRequested = false;
+  bool applyRequested = false;
   bool clearRequested = false;
 };
 #endif
@@ -244,6 +247,7 @@ struct VolumeRenderingRequestState {
   float valueMin = 1.0e-6f;
   float valueMax = 1.0f;
   bool balanceTree = false;
+  int cornerReconstructionMode = 1;
   bool buildRequested = false;
   bool clearRequested = false;
 };

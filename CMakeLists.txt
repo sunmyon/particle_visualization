@@ -31,7 +31,7 @@ option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
 option(USE_LETTERBOX       "Use Letter box"                      ON)
 option(CLUMP_DATA_READ     "Enable Clump data read"              ON)
-option(ISO_CONTOUR         "Enable iso-contour/VTK"              ON)
+option(ISO_CONTOUR         "Enable iso-contour"                  ON)
 option(GEOMETRICAL_ANALYSIS "Enable geometrical analysis"        ON)
 option(STREAM_LINE         "Enable streamline feature"           ON)
 option(VOLUME_RENDERING    "Enable volume rendering"             ON)
@@ -350,7 +350,7 @@ function(particle_vis_add_glfw_submodule_if_present)
 endfunction()
 
 foreach(_particle_vis_dep IN ITEMS
-    glfw glm eigen vtk hdf5 libzmq cppzmq nlohmann_json lua cgal gmp mpfr)
+    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua cgal gmp mpfr)
   particle_vis_register_dependency_prefixes("${_particle_vis_dep}")
 endforeach()
 
@@ -363,6 +363,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI/volume_rendering_ui.cpp
   ${SRC_DIR}/analysis/histogram2d.cpp
   ${SRC_DIR}/analysis/radial_profile.cpp
+  ${SRC_DIR}/analysis/profile_histogram_export.cpp
   ${SRC_DIR}/render/particle_label_overlay.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
   ${SRC_DIR}/platform/imgui_context.cpp
@@ -375,6 +376,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/app/app_services.cpp  
   ${SRC_DIR}/app/app_callbacks.cpp
   ${SRC_DIR}/app/app_lifecycle.cpp
+  ${SRC_DIR}/app/volume_gpu_batch.cpp
   ${SRC_DIR}/app/app_frame.cpp
   ${SRC_DIR}/app/execution/input_execution.cpp
   ${SRC_DIR}/app/execution/analysis_dispatch.cpp
@@ -590,6 +592,7 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
       ${SRC_DIR}/render/vulkan/shaders/solid.frag
       ${SRC_DIR}/render/vulkan/shaders/line.vert
       ${SRC_DIR}/render/vulkan/shaders/line.frag
+      ${SRC_DIR}/render/vulkan/shaders/particle_cache.frag
       ${SRC_DIR}/render/vulkan/shaders/volume.vert
       ${SRC_DIR}/render/vulkan/shaders/volume.frag
       ${SRC_DIR}/render/vulkan/shaders/volume_cache.frag)
@@ -679,7 +682,7 @@ if(APPLE)
   find_program(_BREW brew)
   if(_BREW)
     # List the required Homebrew packages.
-    set(_brew_packages libomp vtk hdf5 lua gmp mpfr eigen)
+    set(_brew_packages libomp hdf5 lua gmp mpfr eigen)
     if(PYTHON_BRIDGE)
       list(APPEND _brew_packages zeromq cppzmq nlohmann-json)
     endif()
@@ -800,8 +803,8 @@ endfunction()
 
 
 function(detect_and_link_glfw target lib_name pkg_name)
-  # lib_name: CMake package name, e.g. GLFW, GMP, VTK.
-  # pkg_name: pkg-config package name, e.g. glfw3, gmp, vtk.
+  # lib_name: CMake package name, e.g. GLFW, GMP.
+  # pkg_name: pkg-config package name, e.g. glfw3, gmp.
 
   # 1. CMake find_package.
   find_package(glfw QUIET CONFIG)
@@ -924,83 +927,17 @@ else()
 endif()
 
 
-# ===== ISO_CONTOUR (VTK integration) =====
+# ===== ISO_CONTOUR =====
 if(ISO_CONTOUR)
-  if(DEFINED ENV{VTK_DIR} AND EXISTS "$ENV{VTK_DIR}")
-    set(VTK_DIR "$ENV{VTK_DIR}" CACHE PATH "VTK package directory (from environment)" FORCE)
-  endif()
-   
-  if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}")
-    list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_ROOT}" "$ENV{VCPKG_ROOT}/installed")
-  endif()
-  if(DEFINED ENV{VCPKG_INSTALLED} AND EXISTS "$ENV{VCPKG_INSTALLED}")
-    list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_INSTALLED}")
-  endif()
-  
-  # VTK modules to use, matching the old Makefile list.
-  set(VTK_COMPONENTS
-    CommonCore
-    CommonDataModel
-    CommonExecutionModel
-    FiltersCore
-    FiltersExtraction
-    FiltersGeneral
-    FiltersAMR
-    FiltersHyperTree
-    FiltersHybrid
-    FiltersSources
-    FiltersModeling
-    CommonMisc
+  target_sources(${PROJECT_NAME} PRIVATE
+    ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
+    ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
+    ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
   )
-  
-  # Detect VTK. This expects VTK 9.x; adjust the version constraint if needed.
-  find_package(VTK 9.0 COMPONENTS ${VTK_COMPONENTS} QUIET)
-# find_package(VTK CONFIG REQUIRED BYPASS_PROVIDER COMPONENTS ${VTK_COMPONENTS})
-#  find_package(VTK)
-
-  if(VTK_FOUND)
-    if(VTK_VERSION VERSION_LESS "9.0" OR VTK_VERSION VERSION_GREATER_EQUAL "10.0")
-#    message(FATAL_ERROR "VTK 9.x is required, but found ${VTK_VERSION}")
-    endif()
-
-    # Additional sources corresponding to the old Makefile.
-    target_sources(${PROJECT_NAME} PRIVATE
-      ${SRC_DIR}/analysis/isosurface/iso_contour_build.cpp
-      ${SRC_DIR}/analysis/isosurface/iso_surface_field.cpp
-      ${SRC_DIR}/analysis/isosurface/marching_cubes.cpp
-      ${SRC_DIR}/analysis/isosurface/connectivity_test.cpp
-      ${SRC_DIR}/analysis/isosurface/isosurface_generator.cpp
-    )
-
-    # Include paths.
-    target_include_directories(${PROJECT_NAME} PRIVATE
-      ${SRC_DIR}/analysis/isosurface
-      ${VTK_INCLUDE_DIRS}      # VTK headers
-    )
-
-    # Link imported targets, which is the preferred CMake style.
-    # Example: VTK::CommonCore, VTK::FiltersCore, ...
-    foreach(c IN LISTS VTK_COMPONENTS)
-      target_link_libraries(${PROJECT_NAME} PRIVATE VTK::${c})
-    endforeach()
-  else()
-    message(WARNING
-      "ISO_CONTOUR was enabled, but VTK was not found. Disabling ISO_CONTOUR for this build.")
-    set(ISO_CONTOUR OFF CACHE BOOL "Enable iso-contour/VTK" FORCE)
-  endif()
-  
-  # Help macOS find VTK dylibs at runtime, like the old Makefile rpath flags.
-  if(APPLE)
-    # Add VTK_ROOT/lib to rpath; adjust the path if needed.
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-      BUILD_RPATH "${VTK_ROOT}/lib"
-      INSTALL_RPATH "${VTK_ROOT}/lib")
-  endif()
-  
-  if(ISO_CONTOUR)
-    # Pass ISO_CONTOUR to C++.
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
-  endif()
+  target_include_directories(${PROJECT_NAME} PRIVATE
+    ${SRC_DIR}/analysis/isosurface
+  )
+  target_compile_definitions(${PROJECT_NAME} PRIVATE ISO_CONTOUR)
 endif()
 
 if(NOT PARTICLE_VIS_HEADLESS_ONLY)

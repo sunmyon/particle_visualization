@@ -566,10 +566,14 @@ static bool EqualVolumeDrawParams(const AdaptiveVolumeDrawParams& a,
          a.pixelThreshold == b.pixelThreshold &&
          a.tauMax == b.tauMax &&
          a.stepBias == b.stepBias &&
+         a.maxSamplesPerCell == b.maxSamplesPerCell &&
          a.skipEpsilon == b.skipEpsilon &&
          a.debugMode == b.debugMode &&
          a.baseColor == b.baseColor &&
          a.colorMode == b.colorMode &&
+         a.opticalModel == b.opticalModel &&
+         a.emissionScale == b.emissionScale &&
+         a.absorptionScale == b.absorptionScale &&
          a.tfValueMin == b.tfValueMin &&
          a.tfValueMax == b.tfValueMax &&
          a.tfSigmaScale == b.tfSigmaScale &&
@@ -839,6 +843,11 @@ RenderBackendMemoryInfo OpenGLRenderBackend::queryMemoryInfo() const
   return info;
 }
 
+void OpenGLRenderBackend::waitIdle()
+{
+  glFinish();
+}
+
 void OpenGLRenderBackend::destroy()
 {
 #ifdef VOLUME_RENDERING
@@ -911,6 +920,129 @@ RenderBackendCapabilities OpenGLRenderBackend::capabilities() const
 }
 
 #ifdef VOLUME_RENDERING
+RenderBackendVolumeStats OpenGLRenderBackend::queryVolumeStats(int sampleStep)
+{
+  RenderBackendVolumeStats stats;
+  if (!lastVolumeDrawable_ || !volume_.hasData() || programs_.octray == 0) {
+    return stats;
+  }
+
+  sampleStep = std::max(1, sampleStep);
+  AdaptiveVolumeDrawParams params = lastVolumeParams_;
+  const int fullWidth = std::max(1, params.resolution.x);
+  const int fullHeight = std::max(1, params.resolution.y);
+  const int width = std::max(1, fullWidth / sampleStep);
+  const int height = std::max(1, fullHeight / sampleStep);
+  params.resolution = glm::ivec2(width, height);
+  params.focalPixels *= static_cast<float>(height) /
+                        static_cast<float>(fullHeight);
+  params.debugMode = 20;
+
+  GLint previousFramebuffer = 0;
+  GLint previousViewport[4] = {0, 0, 0, 0};
+  const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+  glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+  GLuint framebuffer = 0;
+  GLuint texture = 0;
+  glGenFramebuffers(1, &framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+  glGenTextures(1, &texture);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D,
+               0,
+               GL_RGBA32F,
+               width,
+               height,
+               0,
+               GL_RGBA,
+               GL_FLOAT,
+               nullptr);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,
+                         GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D,
+                         texture,
+                         0);
+  const GLenum drawBuffer = GL_COLOR_ATTACHMENT0;
+  glDrawBuffers(1, &drawBuffer);
+
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+    glViewport(0, 0, width, height);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    volume_.draw(programs_.octray, params);
+    glFinish();
+
+    std::vector<float> pixels(static_cast<std::size_t>(width) *
+                              static_cast<std::size_t>(height) * 4u);
+    glReadPixels(0,
+                 0,
+                 width,
+                 height,
+                 GL_RGBA,
+                 GL_FLOAT,
+                 pixels.data());
+
+    double nodeVisits = 0.0;
+    double childHits = 0.0;
+    double leafStops = 0.0;
+    double rootHits = 0.0;
+    for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+      const double visits = static_cast<double>(pixels[i + 0]);
+      nodeVisits += visits;
+      childHits += static_cast<double>(pixels[i + 1]);
+      leafStops += static_cast<double>(pixels[i + 2]);
+      if (visits > 0.0) {
+        rootHits += 1.0;
+      }
+    }
+
+    const double sampledRays = static_cast<double>(width) *
+                               static_cast<double>(height);
+    stats.known = true;
+    stats.width = width;
+    stats.height = height;
+    stats.sampleStep = sampleStep;
+    stats.sampledRays = sampledRays;
+    stats.rootHitFraction = sampledRays > 0.0 ? rootHits / sampledRays : 0.0;
+    stats.nodeVisits = nodeVisits;
+    stats.childHits = childHits;
+    stats.leafStops = leafStops;
+    stats.avgNodeVisitsPerRay = sampledRays > 0.0 ? nodeVisits / sampledRays : 0.0;
+    stats.avgChildHitsPerRay = sampledRays > 0.0 ? childHits / sampledRays : 0.0;
+    stats.avgLeafStopsPerRay = sampledRays > 0.0 ? leafStops / sampledRays : 0.0;
+  }
+
+  glDeleteTextures(1, &texture);
+  glDeleteFramebuffers(1, &framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+  glViewport(previousViewport[0],
+             previousViewport[1],
+             previousViewport[2],
+             previousViewport[3]);
+  if (depthTestWasEnabled) glEnable(GL_DEPTH_TEST);
+  else glDisable(GL_DEPTH_TEST);
+  if (blendWasEnabled) glEnable(GL_BLEND);
+  else glDisable(GL_BLEND);
+  return stats;
+}
+#else
+RenderBackendVolumeStats OpenGLRenderBackend::queryVolumeStats(int sampleStep)
+{
+  (void)sampleStep;
+  return {};
+}
+#endif
+
+#ifdef VOLUME_RENDERING
 void OpenGLRenderBackend::pollVolumeTimingFence()
 {
   if (!volumeTimingFence_) {
@@ -951,6 +1083,7 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
 {
 #ifdef VOLUME_RENDERING
   pollVolumeTimingFence();
+  lastVolumeDrawable_ = false;
 #endif
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -998,10 +1131,16 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
     volumeParams.pixelThreshold = render.volume.pixelThreshold;
     volumeParams.tauMax         = render.volume.tauMax;
     volumeParams.stepBias       = render.volume.stepBias;
+    volumeParams.maxSamplesPerCell =
+      std::clamp(render.volume.maxSamplesPerCell, 1, 256);
     volumeParams.skipEpsilon    = render.volume.skipEpsilon;
     volumeParams.debugMode      = render.volume.debugMode;
     volumeParams.baseColor      = render.volume.baseColor;
     volumeParams.colorMode      = std::clamp(render.volume.colorMode, 0, 1);
+    volumeParams.opticalModel   = std::clamp(render.volume.opticalModel, 0, 2);
+    volumeParams.emissionScale  = std::max(render.volume.emissionScale, 0.0f);
+    volumeParams.absorptionScale =
+      std::max(render.volume.absorptionScale, 0.0f);
     volumeParams.tfValueMin     = render.volume.tfValueMin;
     volumeParams.tfValueMax     = render.volume.tfValueMax;
     volumeParams.tfSigmaScale   = render.volume.tfSigmaScale;
@@ -1018,6 +1157,8 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
       volumeParams.tfWidths[static_cast<std::size_t>(i)] = comp.width;
       volumeParams.tfAmplitudes[static_cast<std::size_t>(i)] = comp.amplitude;
     }
+    lastVolumeParams_ = volumeParams;
+    lastVolumeDrawable_ = true;
     auto drawVolumeLayer = [&](auto&& drawFn) {
       const GLboolean depthTestWasEnabled = glIsEnabled(GL_DEPTH_TEST);
       const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);

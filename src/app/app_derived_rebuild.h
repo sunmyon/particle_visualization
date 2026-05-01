@@ -33,5 +33,4 @@ void AcknowledgeDerivedRebuild(ParticleArray& particles,
                                const DerivedRebuildResult& rebuild);
 
 void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
-                                    const CameraContext& camera,
                                     RenderRuntimeState& render);

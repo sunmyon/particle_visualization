@@ -1,25 +1,20 @@
 #version 450
 
-struct VolumeNode {
-  vec4 nodeMin;   // boundsMin.xyz, sigmaAvg
-  vec4 nodeMax;   // boundsMax.xyz, sigmaMax
-  ivec4 childA;   // children 0..3
-  ivec4 childB;   // children 4..7
-  vec4 cornerLo;  // corner values 0..3
-  vec4 cornerHi;  // corner values 4..7
-};
-
 layout(location = 0) in vec2 inNdc;
 layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 7) uniform sampler2D colormapAtlas;
 
 layout(set = 0, binding = 0) uniform VolumeParams {
   mat4 invProj;
   mat4 invView;
   vec4 cameraForwardFocal;   // xyz camera forward, w focal pixels
-  vec4 rayParams;            // x pixelThreshold, y tauMax, z stepBias, w skipEpsilon
+  vec4 rayParams;            // x pixelThreshold, y tauMax, z sample step length, w skipEpsilon
   vec4 baseColorAndMode;     // rgb base color, w color mode
   vec4 tfRangeScale;         // x valueMin, y valueMax, z sigmaScale, w maxSigma
   ivec4 tfControl;           // x logScale, y component count, z root, w debug mode
+  ivec4 colorControl;        // x colormap row, y colormap row count
+  vec4 opticalParams;        // x model, y emission scale, z absorption scale, w max samples
   ivec4 tfType[4];
   ivec4 tfLogDomain[4];
   vec4 tfCenter[4];
@@ -27,9 +22,24 @@ layout(set = 0, binding = 0) uniform VolumeParams {
   vec4 tfAmp[4];
 } params;
 
-layout(set = 0, binding = 1, std430) readonly buffer VolumeNodes {
-  VolumeNode nodes[];
-} volume;
+layout(set = 0, binding = 1, std430) readonly buffer VolumeNodeMin {
+  vec4 nodeMin[];
+} volumeNodeMin;
+layout(set = 0, binding = 2, std430) readonly buffer VolumeNodeMax {
+  vec4 nodeMax[];
+} volumeNodeMax;
+layout(set = 0, binding = 3, std430) readonly buffer VolumeChildA {
+  ivec4 childA[];
+} volumeChildA;
+layout(set = 0, binding = 4, std430) readonly buffer VolumeChildB {
+  ivec4 childB[];
+} volumeChildB;
+layout(set = 0, binding = 5, std430) readonly buffer VolumeCornerLo {
+  vec4 cornerLo[];
+} volumeCornerLo;
+layout(set = 0, binding = 6, std430) readonly buffer VolumeCornerHi {
+  vec4 cornerHi[];
+} volumeCornerHi;
 
 vec3 heat(float t)
 {
@@ -112,6 +122,11 @@ float transferSigma(float value)
 
 vec3 volumeColor(float value)
 {
+  if (params.baseColorAndMode.w > 1.5) {
+    float rows = max(float(params.colorControl.y), 1.0);
+    float y = (float(max(params.colorControl.x, 0)) + 0.5) / rows;
+    return texture(colormapAtlas, vec2(transferNorm(value), y)).rgb;
+  }
   if (params.baseColorAndMode.w > 0.5) {
     return heat(transferNorm(value));
   }
@@ -175,8 +190,8 @@ void main()
   vec3 rd = normalize((params.invView * vec4(vec3(pN), 0.0)).xyz);
   vec3 invd = 1.0 / max(abs(rd), vec3(1.0e-30)) * sign(rd);
 
-  vec3 rootMin = volume.nodes[root].nodeMin.xyz;
-  vec3 rootMax = volume.nodes[root].nodeMax.xyz;
+  vec3 rootMin = volumeNodeMin.nodeMin[root].xyz;
+  vec3 rootMax = volumeNodeMax.nodeMax[root].xyz;
   float t0 = 0.0;
   float t1 = 1.0e30;
   if (!rayBox(ro, invd, rootMin, rootMax, t0, t1)) {
@@ -200,6 +215,7 @@ void main()
   int visits = 0;
   int leafStops = 0;
   int lodStops = 0;
+  int childHits = 0;
   int emptySkips = 0;
   const int MAX_VISITS = 1000;
 
@@ -209,8 +225,8 @@ void main()
     t1 = t1s[sp];
     visits++;
 
-    vec4 nodeMin = volume.nodes[id].nodeMin;
-    vec4 nodeMax = volume.nodes[id].nodeMax;
+    vec4 nodeMin = volumeNodeMin.nodeMin[id];
+    vec4 nodeMax = volumeNodeMax.nodeMax[id];
     vec3 bmin = nodeMin.xyz;
     vec3 bmax = nodeMax.xyz;
 
@@ -219,8 +235,8 @@ void main()
     float zView = dot(center - ro, params.cameraForwardFocal.xyz);
     float rPx = screenRadiusPx(radius, zView, params.cameraForwardFocal.w);
 
-    ivec4 cA = volume.nodes[id].childA;
-    ivec4 cB = volume.nodes[id].childB;
+    ivec4 cA = volumeChildA.childA[id];
+    ivec4 cB = volumeChildB.childB[id];
     bool isLeaf = cA.x < 0 && cA.y < 0 && cA.z < 0 && cA.w < 0 &&
                   cB.x < 0 && cB.y < 0 && cB.z < 0 && cB.w < 0;
 
@@ -230,7 +246,9 @@ void main()
       continue;
     }
 
-    bool useLod = !isLeaf && rPx < 2.0 * params.rayParams.x;
+    bool useLod = params.rayParams.x > 0.0 &&
+                  !isLeaf &&
+                  rPx < 2.0 * params.rayParams.x;
     if (isLeaf || useLod) {
       if (isLeaf) {
         leafStops++;
@@ -238,18 +256,50 @@ void main()
         lodStops++;
       }
 
-      float dt = max(0.0, t1 - t0);
-      vec3 pmid = ro + rd * (0.5 * (t0 + t1));
+      float interval = max(0.0, t1 - t0);
+      float requestedStep = params.rayParams.z;
+      int maxSamples = int(clamp(params.opticalParams.w, 1.0, 256.0));
+      int sampleCount = (requestedStep > 0.0)
+        ? int(clamp(ceil(interval / requestedStep), 1.0, float(maxSamples)))
+        : 1;
+      float dt = interval / float(sampleCount);
       vec3 size = max(bmax - bmin, vec3(1.0e-8));
-      vec3 uvw = clamp((pmid - bmin) / size, 0.0, 1.0);
-      float value =
-        trilerp8(volume.nodes[id].cornerLo, volume.nodes[id].cornerHi, uvw);
-      float sigma = transferSigma(value);
-
-      float a = 1.0 - exp(-sigma * dt);
-      vec3 tfc = volumeColor(value);
-      color += (1.0 - alpha) * a * tfc;
-      alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+      int opticalModel = int(params.opticalParams.x + 0.5);
+      for (int sampleIndex = 0; sampleIndex < 256 && sampleIndex < sampleCount;
+           ++sampleIndex) {
+        float ts = t0 + (float(sampleIndex) + 0.5) * dt;
+        vec3 pmid = ro + rd * ts;
+        vec3 uvw = clamp((pmid - bmin) / size, 0.0, 1.0);
+        float value =
+          trilerp8(volumeCornerLo.cornerLo[id],
+                   volumeCornerHi.cornerHi[id],
+                   uvw);
+        float sigma = transferSigma(value);
+        vec3 tfc = volumeColor(value);
+        if (opticalModel == 0) {
+          float a = 1.0 - exp(-sigma * dt);
+          color += (1.0 - alpha) * a * tfc;
+          alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+        } else {
+          float transmittance = 1.0 - alpha;
+          float emission = sigma * max(params.opticalParams.y, 0.0);
+          float absorption =
+            (opticalModel == 2) ? sigma * max(params.opticalParams.z, 0.0) : 0.0;
+          color += transmittance * tfc * emission * dt;
+          if (absorption > 0.0) {
+            float a = 1.0 - exp(-absorption * dt);
+            alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+          } else {
+            alpha = max(alpha,
+                        clamp(max(max(color.r, color.g), color.b),
+                              0.0,
+                              0.995));
+          }
+        }
+        if (alpha >= 0.995) {
+          break;
+        }
+      }
       continue;
     }
 
@@ -264,8 +314,8 @@ void main()
     for (int k = 0; k < 8; ++k) {
       int cid = childIdx[k];
       if (cid < 0) continue;
-      vec3 childMin = volume.nodes[cid].nodeMin.xyz;
-      vec3 childMax = volume.nodes[cid].nodeMax.xyz;
+      vec3 childMin = volumeNodeMin.nodeMin[cid].xyz;
+      vec3 childMax = volumeNodeMax.nodeMax[cid].xyz;
       float c0 = t0;
       float c1 = t1;
       if (!rayBox(ro, invd, childMin, childMax, c0, c1)) {
@@ -276,6 +326,7 @@ void main()
         emptySkips++;
         continue;
       }
+      childHits++;
       hitId[hitCount] = cid;
       hitT0[hitCount] = c0;
       hitT1[hitCount] = c1;
@@ -326,6 +377,13 @@ void main()
   }
   if (params.tfControl.w == 14) {
     outColor = vec4(vec3(alpha), 1.0);
+    return;
+  }
+  if (params.tfControl.w == 20) {
+    outColor = vec4(float(visits),
+                    float(childHits),
+                    float(leafStops),
+                    1.0);
     return;
   }
 

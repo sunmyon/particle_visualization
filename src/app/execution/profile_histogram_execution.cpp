@@ -35,6 +35,8 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
     request.params.ymax = result.result.ymax;
   }
 
+  result.paramsUsed = request.params;
+  ++result.version;
   request.runRequested = false;
 }
 
@@ -58,5 +60,7 @@ void ExecuteHistogram2DRequest(Histogram2DRequestState& request,
     request.params.range2_max = result.result.range2_max;
   }
 
+  result.paramsUsed = request.params;
+  ++result.version;
   request.runRequested = false;
 }

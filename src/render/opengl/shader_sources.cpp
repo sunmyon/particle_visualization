@@ -294,7 +294,6 @@ void main() {
 #endif
 
 const char* instancedSolidVertexShaderSource = R"(
-#version 330 core
 layout(location = 0) in vec3 aPos;
 
 layout(location = 1) in vec4 iModel0;
@@ -321,7 +320,6 @@ void main()
 )";
 
 const char* instancedSolidFragmentShaderSource = R"(
-#version 330 core
 in vec3 vColor;
 in float vOpacity;
 
@@ -435,10 +433,14 @@ uniform float uPxThreshold;   // Example: 1.0 to 2.0 px.
 
 // ---- Optics ----
 uniform float uTauMax;        // Early-exit threshold, for example 1.0.
-uniform float uStepBias;      // Small positive value for numerical stability.
+uniform float uStepBias;      // Sample step length; 0 means one sample per cell.
+uniform int   uMaxSamplesPerCell;
 uniform float uSkipEps;       // Skip cells whose maximum possible opacity is tiny.
 uniform vec3  uVolumeColor;
 uniform int   uColorMode;
+uniform int   uOpticalModel;
+uniform float uEmissionScale;
+uniform float uAbsorptionScale;
 uniform float uTfValueMin;
 uniform float uTfValueMax;
 uniform float uTfSigmaScale;
@@ -603,6 +605,7 @@ void main(){
     int visits = 0;
     int leafStops = 0;
     int lodStops = 0;
+    int childHits = 0;
     int emptySkips = 0;
     const int MAX_VISITS = 1000;
 
@@ -636,29 +639,52 @@ void main(){
             continue;
         }
 
-        bool useLod = (!isLeaf && r_px < 2.0*uPxThreshold);
+        bool useLod = (uPxThreshold > 0.0 && !isLeaf && r_px < 2.0*uPxThreshold);
         if (isLeaf || useLod) {
             if (isLeaf) leafStops++;
             else lodStops++;
 
-            float dt = max(0.0, t1 - t0);
-
-            // Compute uvw at the interval midpoint and trilerp sigma.
-            vec3 pmid = ro + rd * (0.5*(t0+t1));
+            float interval = max(0.0, t1 - t0);
+            int maxSamples = clamp(uMaxSamplesPerCell, 1, 256);
+            int sampleCount = (uStepBias > 0.0)
+                ? int(clamp(ceil(interval / uStepBias), 1.0, float(maxSamples)))
+                : 1;
+            float dt = interval / float(sampleCount);
             vec3 size = max(bmax - bmin, vec3(1e-8));
-            vec3 uvw  = clamp((pmid - bmin) / size, 0.0, 1.0);
- 
             vec4 sLo = texelFetch(cornerLoTB, id);
             vec4 sHi = texelFetch(cornerHiTB, id);
-            float value = trilerp8(sLo, sHi, uvw);
-            float sigma = transferSigma(value);
 
-            float a  = 1.0 - exp(-sigma * dt);
-            //float a  = 1.0 - exp(-sigma_avg * dt);
-
-            vec3 tfc = volumeColor(value, sigma);
-            color += (1.0 - alpha) * a * tfc;
-            alpha  = 1.0 - (1.0 - alpha)*(1.0 - a);
+            for (int sampleIndex = 0;
+                 sampleIndex < 256 && sampleIndex < sampleCount;
+                 ++sampleIndex) {
+                float ts = t0 + (float(sampleIndex) + 0.5) * dt;
+                vec3 pmid = ro + rd * ts;
+                vec3 uvw = clamp((pmid - bmin) / size, 0.0, 1.0);
+                float value = trilerp8(sLo, sHi, uvw);
+                float sigma = transferSigma(value);
+                vec3 tfc = volumeColor(value, sigma);
+                if (uOpticalModel == 0) {
+                    float a = 1.0 - exp(-sigma * dt);
+                    color += (1.0 - alpha) * a * tfc;
+                    alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+                } else {
+                    float transmittance = 1.0 - alpha;
+                    float emission = sigma * max(uEmissionScale, 0.0);
+                    float absorption =
+                        (uOpticalModel == 2) ? sigma * max(uAbsorptionScale, 0.0) : 0.0;
+                    color += transmittance * tfc * emission * dt;
+                    if (absorption > 0.0) {
+                        float a = 1.0 - exp(-absorption * dt);
+                        alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+                    } else {
+                        alpha = max(alpha, clamp(max(max(color.r, color.g), color.b),
+                                                 0.0, 0.995));
+                    }
+                }
+                if (alpha >= 0.995) {
+                    break;
+                }
+            }
             continue;
         }
 
@@ -682,6 +708,7 @@ void main(){
                 emptySkips++;
                 continue;
             }
+            childHits++;
             hitId[hitCount] = cid;
             hitT0[hitCount] = c0;
             hitT1[hitCount] = c1;
@@ -739,6 +766,13 @@ void main(){
     }
     if(uDebugMode == 14){
         FragColor = vec4(vec3(alpha), 1.0);
+        return;
+    }
+    if(uDebugMode == 20){
+        FragColor = vec4(float(visits),
+                         float(childHits),
+                         float(leafStops),
+                         1.0);
         return;
     }
 

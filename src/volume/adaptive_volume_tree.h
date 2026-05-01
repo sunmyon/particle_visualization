@@ -46,6 +46,7 @@ struct AdaptiveVolumeTreeBuildParams {
   float emptySigmaEpsilon = 0.0f;
   bool balanceTree = false;
   bool expandBoundsByHsml = true;
+  int cornerReconstructionMode = 1; // 0=cell average, 1=shared corners, 2=face gradient.
 };
 
 struct AdaptiveVolumeTreeStats {

@@ -227,28 +227,60 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
                               RenderLayerState& isoContourRenderState)
 {
   if (request.clearRequested) {
-    geometry.verts.clear();
-    geometry.inds.clear();
+    geometry.clear();
     isoContourRenderState.show = false;
     isoContourRenderState.cpuUpdated = true;
     request.clearRequested = false;
     return;
   }
 
-  if (!request.runRequested) {
+  if (!request.runRequested && !request.applyRequested) {
     return;
   }
 
+  const bool rebuildTreeRequested = request.runRequested;
+  const bool applyThresholdRequested = request.applyRequested;
   request.runRequested = false;
+  request.applyRequested = false;
 
   IsoContourBuildParams params;
   params.selectedQuantity = request.selectedQuantity;
   params.isoLevel = request.isoLevel;
   params.maxTreeLevel = request.maxTreeLevel;
+  params.minParticles =
+    static_cast<std::size_t>(std::max(1, request.minParticlesPerLeaf));
+  params.cornerReconstructionMode =
+    std::clamp(request.cornerReconstructionMode, 0, 2);
 
-  Mesh mesh = BuildIsoContourMesh(particles.particleBlock, params);
-  geometry.verts = std::move(mesh.vertices);
-  geometry.inds = std::move(mesh.indices);
+  std::string treeMessage;
+  const bool cacheMatches =
+    geometry.cacheMatches(params.selectedQuantity,
+                          params.maxTreeLevel,
+                          static_cast<int>(params.minParticles),
+                          params.cornerReconstructionMode);
+  if (rebuildTreeRequested || !cacheMatches) {
+    IsoContourTreeBuildResult tree =
+      BuildAdaptiveIsoContourTree(particles.particleBlock, params);
+    geometry.adaptiveTree = std::move(tree.tree);
+    geometry.adaptiveTreeValid = geometry.adaptiveTree.valid();
+    geometry.cachedQuantity = params.selectedQuantity;
+    geometry.cachedMaxTreeLevel = params.maxTreeLevel;
+    geometry.cachedMinParticlesPerLeaf =
+      static_cast<int>(params.minParticles);
+    geometry.cachedCornerReconstructionMode =
+      params.cornerReconstructionMode;
+    treeMessage = std::move(tree.message);
+  } else if (applyThresholdRequested) {
+    treeMessage = "Adaptive tree cache reused.";
+  }
+
+  IsoContourBuildResult built =
+    ExtractAdaptiveIsoContourMesh(geometry.adaptiveTree, params.isoLevel);
+  geometry.verts = std::move(built.mesh.vertices);
+  geometry.inds = std::move(built.mesh.indices);
+  geometry.message = treeMessage.empty()
+    ? std::move(built.message)
+    : treeMessage + "; " + built.message;
 
   isoContourRenderState.show = true;
   isoContourRenderState.cpuUpdated = true;

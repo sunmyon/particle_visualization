@@ -278,7 +278,6 @@ void AcknowledgeDerivedRebuild(ParticleArray& particles,
 }
 
 void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
-                                    const CameraContext& camera,
                                     RenderRuntimeState& render)
 {
 #ifdef GEOMETRICAL_ANALYSIS
@@ -322,7 +321,4 @@ void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
     render.lines.show = rebuild.lineLayer.visible;
   }
 
-  if (rebuild.particleLabelsUpdated) {
-    render.particleLabels.lastCameraPos = camera.cameraPos;
-  }
 }

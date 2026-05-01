@@ -40,9 +40,8 @@ struct ParticleLabelRenderState : RenderLayerState {
   ParticleLabelRenderState() { show = false; }
 
   float queryRadius = 0.0f;
-  float moveThreshold = 0.0f;
   int maxLabels = 50;
-  glm::vec3 lastCameraPos{0.0f};
+  bool sinkOnly = true;
 };
 
 struct VelocityRenderState : RenderLayerState {
@@ -83,9 +82,14 @@ struct VolumeRenderState : RenderLayerState {
   float pixelThreshold = 2.0f;
   float tauMax = 1.0f;
   float stepBias = 0.0f;
+  int maxSamplesPerCell = 32;
   float skipEpsilon = 1.0e-4f;
   glm::vec3 baseColor{0.6f, 0.7f, 1.0f};
-  int colorMode = 0; // 0=fixed color, 1=procedural heat.
+  int colorMode = 0; // 0=fixed color, 1=procedural heat, 2=colormap.
+  int colormapIndex = 1;
+  int opticalModel = 0; // 0=opacity, 1=emission, 2=emission+absorption.
+  float emissionScale = 1.0f;
+  float absorptionScale = 1.0f;
   float tfValueMin = 1.0e-6f;
   float tfValueMax = 1.0f;
   float tfSigmaScale = 1.0f;

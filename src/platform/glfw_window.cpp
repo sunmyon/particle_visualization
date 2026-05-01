@@ -67,6 +67,11 @@ bool GlfwWindow::createWindow(int width, int height, const char* title)
     return false;
   }
 
+  const char* hidden = std::getenv("PARTICLE_VIS_HIDDEN_WINDOW");
+  if (hidden && std::string(hidden) == "1") {
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+  }
+
   handle_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
   if (!handle_) {
     std::cerr << "Failed to create GLFW window" << std::endl;
