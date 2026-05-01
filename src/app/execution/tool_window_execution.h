@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-class ParticleArray;
+class SimulationDataset;
 class ProjectionMapGenerator;
 class HaloStore;
 struct CameraContext;
@@ -11,7 +11,7 @@ struct Histogram2DRequestState;
 struct Histogram2DResultState;
 struct Histogram2DUIState;
 struct NormalizationContext;
-struct ParticleBlock;
+struct SimulationBlock;
 struct ProjectionMapUIState;
 struct ProjectionFontSelectionRequestState;
 struct QuantityState;
@@ -31,7 +31,7 @@ struct TrackingTargetState;
 void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
                                        TopParticlesRequestState& req,
                                        TopParticlesResultState& result,
-                                       ParticleArray& particles,
+                                       SimulationDataset& particles,
                                        CameraContext& camera,
                                        TrackingTargetState& tracking,
                                        SnapshotPostprocessState& post,
@@ -40,7 +40,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
                                         RadialProfileRequestState& request,
                                         RadialProfileResultState& result,
-                                        const ParticleBlock& partblock,
+                                        const SimulationBlock& partblock,
                                         const glm::vec3& camCenter,
                                         NormalizationContext& normalization,
                                         QuantityState& quantity);
@@ -48,7 +48,7 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
 void ExecuteHistogram2DWindowRequests(Histogram2DUIState& ui,
                                       Histogram2DRequestState& request,
                                       Histogram2DResultState& result,
-                                      const ParticleBlock& partblock,
+                                      const SimulationBlock& partblock,
                                       const Histogram2DContext& ctx);
 
 void ExecuteProjectionFontSelectionRequests(ProjectionMapUIState& ui,
@@ -61,6 +61,6 @@ void ExecuteMaskWindowRequests(MaskUIState& ui,
 void ExecuteHaloesWindowRequests(HaloesUIState& ui,
                                  HaloesRequestState& request,
                                  HaloStore& haloes,
-                                 ParticleArray& particles,
+                                 SimulationDataset& particles,
                                  CameraContext& camera,
                                  const NormalizationContext& normalization);

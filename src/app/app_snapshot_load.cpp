@@ -4,8 +4,8 @@
 #include "app/state/snapshot_state_sync.h"
 #include "app/app_services.h"
 #include "FileIO/snapshot_io_service.h"
-#include "data/particle_block.h"
-#include "data/particle_block_validation.h"
+#include "data/simulation_block.h"
+#include "data/simulation_block_validation.h"
 #include "data/header_info.h"
 #include "core/physics_constants.h"
 
@@ -15,14 +15,14 @@
 
 static void RescaleCameraForNormalizationChange(CameraContext* camera,
                                                 bool hadPreviousParticles,
-                                                float oldNormalizedScale,
-                                                float newNormalizedScale)
+                                                float oldWorldToRenderScale,
+                                                float newWorldToRenderScale)
 {
   if (!camera || !hadPreviousParticles) return;
-  if (!std::isfinite(oldNormalizedScale) || oldNormalizedScale <= 0.0f) return;
-  if (!std::isfinite(newNormalizedScale) || newNormalizedScale <= 0.0f) return;
+  if (!std::isfinite(oldWorldToRenderScale) || oldWorldToRenderScale <= 0.0f) return;
+  if (!std::isfinite(newWorldToRenderScale) || newWorldToRenderScale <= 0.0f) return;
 
-  const float ratio = newNormalizedScale / oldNormalizedScale;
+  const float ratio = newWorldToRenderScale / oldWorldToRenderScale;
   if (!std::isfinite(ratio) || ratio <= 0.0f || ratio == 1.0f) return;
 
   camera->cameraPos *= ratio;
@@ -159,9 +159,9 @@ static void GenerateTestDataSnapshot(AppDataState& data,
                                      AppRuntimeState& runtime)
 {
   HeaderInfo header;
-  ParticleBlock block = ParticleBlock::makeTestParticleBlock(header);
-  ParticleBlock oldBlock;
-  data.particles->setParticleBlock(std::move(block),
+  SimulationBlock block = SimulationBlock::makeTestSimulationBlock(header);
+  SimulationBlock oldBlock;
+  data.particles->setSimulationBlock(std::move(block),
                                    &oldBlock,
                                    header,
                                    runtime.settings.normalization,
@@ -238,9 +238,9 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
   auto& nav = fileNav.navigation;
   const SnapshotNavigationState previousNavigation = nav;
   const bool hadPreviousParticles =
-    data.particles && !data.particles->particleBlock.particles.empty();
-  const float oldNormalizedScale =
-    data.particles ? data.particles->particleBlock.normalizedScale : 1.0f;
+    data.particles && !data.particles->simulationBlock.particles.empty();
+  const float oldWorldToRenderScale =
+    data.particles ? data.particles->simulationBlock.worldToRenderScale : 1.0f;
   nav.currentStep = req.targetStep;
   RecomputeCurrentFileIndex(fileNav);
   const int newFileIndex = nav.currentFileIndex;
@@ -264,8 +264,8 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
       return;
     }
 
-    const ParticleBlockValidationResult validation =
-      ValidateParticleBlock(loaded.block);
+    const SimulationBlockValidationResult validation =
+      ValidateSimulationBlock(loaded.block);
     if (!validation.valid) {
       nav = previousNavigation;
       MarkSnapshotLoadFailure(runtime.snapshotLoad,
@@ -275,8 +275,8 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
       req = SnapshotLoadRequestState{};
       return;
     }
-    ParticleBlock oldBlock;
-    data.particles->setParticleBlock(std::move(loaded.block),
+    SimulationBlock oldBlock;
+    data.particles->setSimulationBlock(std::move(loaded.block),
                                      &oldBlock,
                                      loaded.header,
                                      runtime.settings.normalization,
@@ -287,8 +287,8 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
   if (data.particles) {
     RescaleCameraForNormalizationChange(camera,
                                         hadPreviousParticles,
-                                        oldNormalizedScale,
-                                        data.particles->particleBlock.normalizedScale);
+                                        oldWorldToRenderScale,
+                                        data.particles->simulationBlock.worldToRenderScale);
   }
 
   fileNav.current.loadedFileIndex = nav.currentFileIndex;

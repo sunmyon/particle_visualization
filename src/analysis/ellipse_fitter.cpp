@@ -2,7 +2,7 @@
 // EllipseFitter.cpp
 #include <queue>
 #include "analysis/ellipse_fitter.h"
-#include "data/particle_data.h"
+#include "data/simulation_element.h"
 
 #include <memory>
 #include <glm/glm.hpp>
@@ -29,8 +29,8 @@ std::vector<int> EllipseFitter::extractComponent(double thr, int seedIndex) cons
 	std::vector<MyResultItem> ret;	
         nanoflann::SearchParameters sp;
 	float q[3];
-        normalizedParticlePosition((*dataPtr_)[i], normalizedScale_, q);
-        const float h = normalizedParticleHsml((*dataPtr_)[i], normalizedScale_);
+        renderPosition((*dataPtr_)[i], worldToRenderScale_, q);
+        const float h = renderSupportRadius((*dataPtr_)[i], worldToRenderScale_);
         kdtree_->radiusSearch(q, h * h, ret, sp);
         for (auto& r : ret) {
             int j = r.first;
@@ -69,14 +69,14 @@ int EllipseFitter::find_nearest_gas_particle(const float pos[3]) const {
 }
 
 
-bool EllipseFitter::computeEllipse(const ParticleBlock& block,
+bool EllipseFitter::computeEllipse(const SimulationBlock& block,
                                    int64_t ID_A,
                                    int64_t ID_B,
                                    EllipsoidObject& out)
 {
-  const std::vector<ParticleData>& data = block.particles;
+  const std::vector<SimulationElement>& data = block.particles;
   dataPtr_ = &data;
-  normalizedScale_ = block.normalizedScale;
+  worldToRenderScale_ = block.worldToRenderScale;
 
   int index_a, index_b;  
   size_t count = 0;
@@ -105,14 +105,14 @@ bool EllipseFitter::computeEllipse(const ParticleBlock& block,
   }
 
   // 2) Build the KD-tree dynamically.
-  PointCloud<ParticleData> cloud{ &data, normalizedScale_ };
+  PointCloud<SimulationElement> cloud{ &data, worldToRenderScale_ };
   kdtree_.reset(new KDTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams()));
   kdtree_->buildIndex();
   
   float posA[3];
   float posB[3];
-  normalizedParticlePosition((*dataPtr_)[index_a], normalizedScale_, posA);
-  normalizedParticlePosition((*dataPtr_)[index_b], normalizedScale_, posB);
+  renderPosition((*dataPtr_)[index_a], worldToRenderScale_, posA);
+  renderPosition((*dataPtr_)[index_b], worldToRenderScale_, posB);
   int indexA = find_nearest_gas_particle(posA);
   int indexB = find_nearest_gas_particle(posB);
 
@@ -207,7 +207,7 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
     centroid.setZero();
     for (int idx: comp){
         const glm::vec3 pos =
-          normalizedParticlePosition((*dataPtr_)[idx], normalizedScale_);
+          renderPosition((*dataPtr_)[idx], worldToRenderScale_);
         centroid.x() += pos.x;
         centroid.y() += pos.y;
         centroid.z() += pos.z;
@@ -217,7 +217,7 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
     Eigen::Matrix3d C = Eigen::Matrix3d::Zero();
     for (int idx: comp){
         const glm::vec3 pos =
-          normalizedParticlePosition((*dataPtr_)[idx], normalizedScale_);
+          renderPosition((*dataPtr_)[idx], worldToRenderScale_);
         Eigen::Vector3d d;
         d.x() = pos.x - centroid.x();
         d.y() = pos.y - centroid.y();

@@ -8,17 +8,17 @@
 
 #include "app/state/app_state.h"
 #include "app/state/render_runtime_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "interaction/camera.h"
 #include "render/particle_visual_config.h"
 #include "render/particle_lod.h"
 #include "render/render_resources.h"
 #include "render/render_system.h"
 
-ParticleRenderInput MakeParticleRenderInput(const ParticleArray& particles)
+ParticleRenderInput MakeParticleRenderInput(const SimulationDataset& particles)
 {
   return ParticleRenderInput{
-    &particles.particleBlock,
+    &particles.simulationBlock,
     &particles.flag_mask,
     &particles.flag_stress,
     particles.particlesDirty,
@@ -180,7 +180,7 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
   return result;
 }
 
-void AcknowledgeParticleRenderBuild(ParticleArray& particles,
+void AcknowledgeParticleRenderBuild(SimulationDataset& particles,
                                     const ParticleRenderBuildResult& result)
 {
   if (result.particlesBuilt) {

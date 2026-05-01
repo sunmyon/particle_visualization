@@ -16,7 +16,7 @@
 #include "interaction/camera.h"
 #include "render/scene_objects.h"
 #include "render/colormap_defs.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "data/halo_store.h"
 
 #include "projection/make_2D_projection_map.h"
@@ -244,7 +244,7 @@ void ExportHistogram2DIfNeeded(Histogram2DUIState& state,
     "histogram2d_" + std::to_string(static_cast<unsigned long long>(result.version));
   AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
   Histogram2DParams paramsForBatch = result.paramsUsed;
-  paramsForBatch.cameraRadius *= ctx.normalizedToOriginalScale;
+  paramsForBatch.cameraRadius *= ctx.renderToWorldScale;
   AnalysisPlotExportResult exportResult =
     ExportHistogram2DPlotPackage(spec, paramsForBatch, result.result);
   StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
@@ -619,15 +619,15 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   }
 
   WindowCommandQueue& windowCommands = ctx.windowCommands;
-  const float normalizedToOriginal = ctx.normalization.toPhysicalScale();
-  const float originalToNormalized = ctx.normalization.toNormalizedScale();
+  const float renderToWorld = ctx.normalization.toPhysicalScale();
+  const float worldToRender = ctx.normalization.toNormalizedScale();
 
   if (!state.paramsInitialized ||
       state.observedToolRevision != ctx.tool.revision) {
     state.draftParams = ctx.tool.params;
     for (int i = 0; i < 3; ++i) {
-      state.xlen_input[i] = state.draftParams.xlen[i] * normalizedToOriginal;
-      state.xoffset_input[i] = state.draftParams.xoffset[i] * normalizedToOriginal;
+      state.xlen_input[i] = state.draftParams.xlen[i] * renderToWorld;
+      state.xoffset_input[i] = state.draftParams.xoffset[i] * renderToWorld;
     }
     state.paramsInitialized = true;
     state.observedToolRevision = ctx.tool.revision;
@@ -640,16 +640,16 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   ImGui::Begin("make projectoin map", &state.open, ImGuiWindowFlags_None);
 
   if (ImGui::InputFloat3("side length (original)", state.xlen_input)) {
-    params.xlen[0] = state.xlen_input[0] * originalToNormalized;
-    params.xlen[1] = state.xlen_input[1] * originalToNormalized;
-    params.xlen[2] = state.xlen_input[2] * originalToNormalized;
+    params.xlen[0] = state.xlen_input[0] * worldToRender;
+    params.xlen[1] = state.xlen_input[1] * worldToRender;
+    params.xlen[2] = state.xlen_input[2] * worldToRender;
     paramsDirty = true;
   }
 
   if (ImGui::InputFloat3("offset center (original)", state.xoffset_input)) {
-    params.xoffset[0] = state.xoffset_input[0] * originalToNormalized;
-    params.xoffset[1] = state.xoffset_input[1] * originalToNormalized;
-    params.xoffset[2] = state.xoffset_input[2] * originalToNormalized;
+    params.xoffset[0] = state.xoffset_input[0] * worldToRender;
+    params.xoffset[1] = state.xoffset_input[1] * worldToRender;
+    params.xoffset[2] = state.xoffset_input[2] * worldToRender;
     paramsDirty = true;
   }
   
@@ -1108,9 +1108,9 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                   "ID %lld: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g",
                   static_cast<long long>(particleId),
                   quantity.toDisplay(QuantityId::Mass, p.mass),
-                  p.original_pos[0], p.original_pos[1], p.original_pos[2],
+                  p.position[0], p.position[1], p.position[2],
                   p.vel[0], p.vel[1], p.vel[2],
-                  p.original_hsml, p.density, p.temperature);
+                  p.supportRadius, p.density, p.temperature);
 
     if (ImGui::Selectable(label, state.historySel == (int)i)) {
       state.historySel = (int)i;
@@ -1166,9 +1166,9 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                   "ID %lld: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
                   static_cast<long long>(particleId),
                   quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass),
-                  result.filtered[i].original_pos[0], result.filtered[i].original_pos[1], result.filtered[i].original_pos[2],
+                  result.filtered[i].position[0], result.filtered[i].position[1], result.filtered[i].position[2],
                   result.filtered[i].vel[0], result.filtered[i].vel[1], result.filtered[i].vel[2],
-                  result.filtered[i].original_hsml,
+                  result.filtered[i].supportRadius,
                   result.filtered[i].density, result.filtered[i].temperature);
 
     if (ImGui::Selectable(label)) {
@@ -1293,7 +1293,7 @@ void DrawHaloesUI(HaloesUIState& state,
 
     ImGui::Checkbox("Mass-weighted", &state.recomputeUseMassWeight);
     ImGui::SameLine();
-    ImGui::Checkbox("Use original_pos (recommended)", &state.recomputeUseOriginalPos);
+    ImGui::Checkbox("Use position (recommended)", &state.recomputeUseOriginalPos);
 
     ImGui::InputInt("Min N particles", &state.recomputeMinParticles);
     if (state.recomputeMinParticles < 1) state.recomputeMinParticles = 1;

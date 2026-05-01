@@ -1,6 +1,6 @@
 #pragma once
 
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 
 class ClumpData;
 #ifdef CLUMP_DATA_READ

@@ -23,8 +23,8 @@
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
-#include "data/particle_array.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_dataset.h"
+#include "data/sample_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -103,7 +103,7 @@ void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
   }
 }
 
-void ExecuteSettingsActionRequests(ParticleArray& particles,
+void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    QuantityState& quantity,
                                    ParticleVisualConfig& particleVisual,
                                    RenderRuntimeState& render,
@@ -188,7 +188,7 @@ void ExecuteSettingsActionRequests(ParticleArray& particles,
   }
 }
 
-void ExecuteCameraPlacementRequests(ParticleArray& particles,
+void ExecuteCameraPlacementRequests(SimulationDataset& particles,
 				    const NormalizationContext& normalization,
 				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
@@ -202,8 +202,8 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
     glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
 
     float scale = normalization.toNormalizedScale();
-    if (particles.particleBlock.normalizedScale > 0.0f) {
-      scale = particles.particleBlock.normalizedScale;
+    if (particles.simulationBlock.worldToRenderScale > 0.0f) {
+      scale = particles.simulationBlock.worldToRenderScale;
     }
     camCtx.cameraTarget =
       glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]) * scale;
@@ -379,7 +379,7 @@ static void ApplyCameraAlignmentFromAxis(CameraContext& camCtx,
   camCtx.cameraOrientation = glm::quat_cast(glm::inverse(view));
 }
 
-static bool ResolveTrackingCenter(ParticleArray& particles,
+static bool ResolveTrackingCenter(SimulationDataset& particles,
                                   ClumpStore& clumpStore,
                                   const NormalizationContext& normalization,
                                   TrackingTargetState& track,
@@ -441,10 +441,10 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
 
     if (track.followSinkParticleMostMassive || !found) {
       double massMax = -1.0;
-      for (const auto& p : particles.particleBlock.particles) {
+      for (const auto& p : particles.simulationBlock.particles) {
         if (p.type < 3) continue;
         if (p.mass > massMax) {
-          normalizedParticlePosition(p, particles.particleBlock.normalizedScale, targetPos);
+          renderPosition(p, particles.simulationBlock.worldToRenderScale, targetPos);
           massMax = p.mass;
           found = true;
         }
@@ -461,11 +461,11 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
                            ? static_cast<double>(track.massCenterRadius) * static_cast<double>(track.massCenterRadius)
                            : -1.0;
 
-        for (const auto& p : particles.particleBlock.particles) {
+        for (const auto& p : particles.simulationBlock.particles) {
           if (p.type == 1 || p.type == 2) continue;
           if (p.type == 0 && p.density < track.massCenterMinDensity) continue;
           const glm::vec3 pos =
-            normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+            renderPosition(p, particles.simulationBlock.worldToRenderScale);
 
           const double dx = static_cast<double>(targetPos[0]) - static_cast<double>(pos.x);
           const double dy = static_cast<double>(targetPos[1]) - static_cast<double>(pos.y);
@@ -495,7 +495,7 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
 }
 
 
-void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+void ExecutePostSnapshotLoadActions(SimulationDataset& particles,
                                     ClumpStore& clumpStore,
                                     NormalizationContext& normalization,
                                     TrackingTargetState& track,
@@ -525,7 +525,7 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
       op.flagSubtractBulkVelocity = track.amSubtractBulkVelocity;
       
       glm::vec3 axis(0.0f, 0.0f, 1.0f);
-      if (particles.particleBlock.ComputeAngularMomentumAxis(op, axis)) {
+      if (particles.simulationBlock.ComputeAngularMomentumAxis(op, axis)) {
         axis = StabilizeAxisSign(axis, track);
         ApplyCameraAlignmentFromAxis(camCtx, center, axis, track.amViewMode);
       } else {

@@ -58,7 +58,7 @@ void InitApplication(AppState& app, RenderSystem& render)
 {
   InitAppServices(app.services);
 
-  app.data.particles = new ParticleArray();
+  app.data.particles = new SimulationDataset();
 
   InitRenderSystem(render);
 }

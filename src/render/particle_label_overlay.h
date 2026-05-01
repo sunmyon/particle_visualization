@@ -7,7 +7,7 @@
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
 
-class ParticleArray;
+class SimulationDataset;
 struct CameraContext;
 struct RenderViewport;
 struct ParticleLabelRenderState;
@@ -19,11 +19,11 @@ struct ParticleLabelItem {
 
 class ParticleLabelOverlay {
 public:
-  bool needsRebuild(const ParticleArray& particles,
+  bool needsRebuild(const SimulationDataset& particles,
                     const CameraContext& camCtx,
                     const ParticleLabelRenderState& state) const;
 
-  void rebuild(const ParticleArray& particles,
+  void rebuild(const SimulationDataset& particles,
                const CameraContext& camCtx,
                const ParticleLabelRenderState& state);
 

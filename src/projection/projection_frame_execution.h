@@ -6,11 +6,11 @@
 
 #include <string>
 
-class ParticleArray;
+class SimulationDataset;
 class ProjectionMapGenerator;
 
 struct ProjectionFrameExecutionContext {
-  ParticleArray& particles;
+  SimulationDataset& particles;
   ProjectionMapGenerator& generator;
   const UnitSystem& units;
   double scaleToPhysical = 1.0;

@@ -2,7 +2,7 @@
 
 #include "FileIO/snapshot_load_params.h"
 #include "FileIO/snapshot_read_result.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 
 struct NormalizationContext;
 struct InputFilterConfig;
@@ -19,7 +19,7 @@ public:
   std::vector<int64_t> getStarParticleID(int indexFile,
                                          const SnapshotLoadParams& params,
                                          const InputFilterConfig& filter);
-  void generateTestData(ParticleArray* P,
+  void generateTestData(SimulationDataset* P,
                         HeaderInfo& header,
                         NormalizationContext& normalization,
                         QuantityState& quantity);

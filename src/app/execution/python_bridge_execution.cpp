@@ -6,7 +6,7 @@
 #include "PythonBridge/BridgeAdapter.h"
 #include "app/state/runtime_state.h"
 #include "app/app_services.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "platform/shell_utils.h"
 
 namespace {
@@ -47,7 +47,7 @@ void OpenPythonBridgeInBrowser(const PythonBridgeViewState& view)
 }
 } // namespace
 
-void ExecutePythonBridgeRequests(ParticleArray& particles,
+void ExecutePythonBridgeRequests(SimulationDataset& particles,
                                  PythonBridgeState& service,
                                  PythonBridgeRequestState& request,
                                  PythonBridgeViewState& view)
@@ -72,7 +72,7 @@ void ExecutePythonBridgeRequests(ParticleArray& particles,
         view.lastError = "Bridge creation failed";
       } else {
         const uint64_t N =
-          static_cast<uint64_t>(particles.particleBlock.particles.size());
+          static_cast<uint64_t>(particles.simulationBlock.particles.size());
 
         if (!service.ptr->init(N, /*withB=*/true, "cppvis_pos")) {
           view.lastError = service.ptr->lastError().empty()

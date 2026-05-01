@@ -15,7 +15,7 @@
 
 namespace {
   struct ReaderSelection {
-    std::unique_ptr<IParticleReader> reader;
+    std::unique_ptr<IElementReader> reader;
     std::vector<FieldSpec> format;
     std::string fullPath;
   };
@@ -91,7 +91,7 @@ bool SnapshotLoader::readFile(int fileNumber,
   TIME_FUNCTION();
 
   HeaderInfo& header = outResult.header;
-  ParticleBlock& outBlock = outResult.block;
+  SimulationBlock& outBlock = outResult.block;
   header = HeaderInfo{};
 
   header.UnitLength_in_cm         = params.units.length_cm;
@@ -121,7 +121,7 @@ bool SnapshotLoader::readFile(int fileNumber,
 
     if (filter.enabled) {
       ParticleMask pmask{filter.mask};
-      ok = sel.reader->readRange(outBlock, 0, sel.reader->particleCount(),
+      ok = sel.reader->readRange(outBlock, 0, sel.reader->elementCount(),
                                  sel.format, &pmask);
     }else{
       ok = sel.reader->readAll(outBlock, sel.format);
@@ -158,10 +158,10 @@ std::vector<int64_t> SnapshotLoader::getStarParticleID(int indexFile,
   return IDs;
 }
 
-void SnapshotLoader::generateTestData(ParticleArray* P,
+void SnapshotLoader::generateTestData(SimulationDataset* P,
                                       HeaderInfo& header,
                                       NormalizationContext& normalization,
                                       QuantityState& quantity) {
-  ParticleBlock block = ParticleBlock::makeTestParticleBlock(header);
-  P->setParticleBlock(std::move(block), nullptr, header, normalization, quantity);
+  SimulationBlock block = SimulationBlock::makeTestSimulationBlock(header);
+  P->setSimulationBlock(std::move(block), nullptr, header, normalization, quantity);
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "FileIO/particle_reader.h"
+#include "FileIO/element_reader.h"
 #include "FileIO/file_mask.h"
 #include "FileIO/file_layout.h"
 #include "data/header_info.h"
@@ -13,7 +13,7 @@
 #include <iostream>
 #include <vector>
 
-class GadgetBinaryReader final : public IParticleReader {
+class GadgetBinaryReader final : public IElementReader {
 public:
   bool open(const std::string& path, HeaderInfo& header) override
   {
@@ -47,11 +47,11 @@ public:
     massTable_.fill(0.0);
   }
 
-  size_t particleCount() const override { return npart_; }
+  size_t elementCount() const override { return npart_; }
 
   bool is_binary() override { return false; }
 
-  bool readRange(ParticleBlock& out,
+  bool readRange(SimulationBlock& out,
                  size_t begin,
                  size_t count,
                  const std::vector<FieldSpec>& fields,
@@ -59,7 +59,7 @@ public:
   {
     if (begin + count > npart_) return false;
 
-    ParticleBlock all;
+    SimulationBlock all;
     if (!readAllParticles_(all, fields)) return false;
 
     const bool masked = (mask != nullptr) && mask->active();
@@ -68,7 +68,7 @@ public:
     if (masked) {
       size_t thinCandidates = 0;
       for (size_t i = begin; i < begin + count; ++i) {
-        const ParticleData& p = all.particles[i];
+        const SimulationElement& p = all.particles[i];
         if (mask->typeEnabled(p.type) && mask->typeThinOK(p.type)) {
           ++thinCandidates;
         }
@@ -79,11 +79,11 @@ public:
     size_t written = 0;
     for (size_t i = begin; i < begin + count; ++i) {
       if (masked) {
-        const ParticleData& p = all.particles[i];
+        const SimulationElement& p = all.particles[i];
         CoreSample c;
-        c.pos[0] = p.original_pos[0];
-        c.pos[1] = p.original_pos[1];
-        c.pos[2] = p.original_pos[2];
+        c.pos[0] = p.position[0];
+        c.pos[1] = p.position[1];
+        c.pos[2] = p.position[2];
         c.id = all.particleId(i);
         c.type = p.type;
         if (!mask->pass(c)) continue;
@@ -196,7 +196,7 @@ private:
     return true;
   }
 
-  void initAllOutput_(ParticleBlock& out, const std::vector<FieldSpec>& fields)
+  void initAllOutput_(SimulationBlock& out, const std::vector<FieldSpec>& fields)
   {
     out.clear();
     out.resize(npart_);
@@ -211,9 +211,9 @@ private:
     }
   }
 
-  static void initSubsetOutput_(ParticleBlock& out,
+  static void initSubsetOutput_(SimulationBlock& out,
                                 size_t count,
-                                const ParticleBlock& source)
+                                const SimulationBlock& source)
   {
     out.clear();
     out.resize(count);
@@ -225,9 +225,9 @@ private:
     }
   }
 
-  static void copyRecord_(ParticleBlock& dst,
+  static void copyRecord_(SimulationBlock& dst,
                           size_t dstIndex,
-                          const ParticleBlock& src,
+                          const SimulationBlock& src,
                           size_t srcIndex)
   {
     dst.particles[dstIndex] = src.particles[srcIndex];
@@ -242,7 +242,7 @@ private:
     }
   }
 
-  bool readAllParticles_(ParticleBlock& out, const std::vector<FieldSpec>& fields)
+  bool readAllParticles_(SimulationBlock& out, const std::vector<FieldSpec>& fields)
   {
     file_.clear();
     file_.seekg(static_cast<std::streamoff>(dataOffset_), std::ios::beg);
@@ -275,7 +275,7 @@ private:
     return true;
   }
 
-  bool readPositions_(ParticleBlock& out)
+  bool readPositions_(SimulationBlock& out)
   {
     std::vector<uint8_t> block;
     if (!readBlock_(block)) return false;
@@ -283,25 +283,25 @@ private:
     if (block.size() == comps * sizeof(float)) {
       const float* v = reinterpret_cast<const float*>(block.data());
       for (size_t i = 0; i < npart_; ++i) {
-        out.particles[i].original_pos[0] = v[3 * i + 0];
-        out.particles[i].original_pos[1] = v[3 * i + 1];
-        out.particles[i].original_pos[2] = v[3 * i + 2];
+        out.particles[i].position[0] = v[3 * i + 0];
+        out.particles[i].position[1] = v[3 * i + 1];
+        out.particles[i].position[2] = v[3 * i + 2];
       }
       return true;
     }
     if (block.size() == comps * sizeof(double)) {
       const double* v = reinterpret_cast<const double*>(block.data());
       for (size_t i = 0; i < npart_; ++i) {
-        out.particles[i].original_pos[0] = static_cast<float>(v[3 * i + 0]);
-        out.particles[i].original_pos[1] = static_cast<float>(v[3 * i + 1]);
-        out.particles[i].original_pos[2] = static_cast<float>(v[3 * i + 2]);
+        out.particles[i].position[0] = static_cast<float>(v[3 * i + 0]);
+        out.particles[i].position[1] = static_cast<float>(v[3 * i + 1]);
+        out.particles[i].position[2] = static_cast<float>(v[3 * i + 2]);
       }
       return true;
     }
     return false;
   }
 
-  bool readVelocities_(ParticleBlock& out)
+  bool readVelocities_(SimulationBlock& out)
   {
     std::vector<uint8_t> block;
     if (!readBlock_(block)) return false;
@@ -327,7 +327,7 @@ private:
     return false;
   }
 
-  bool readIds_(ParticleBlock& out)
+  bool readIds_(SimulationBlock& out)
   {
     std::vector<uint8_t> block;
     if (!readBlock_(block)) return false;
@@ -350,7 +350,7 @@ private:
     return false;
   }
 
-  bool readMasses_(ParticleBlock& out)
+  bool readMasses_(SimulationBlock& out)
   {
     const size_t massBlockCount = massBlockParticleCount_();
     std::vector<uint8_t> block;
@@ -366,7 +366,7 @@ private:
     size_t massCursor = 0;
     for (int type = 0; type < 6; ++type) {
       for (int j = 0; j < counts_[type]; ++j, ++global) {
-        ParticleData& p = out.particles[global];
+        SimulationElement& p = out.particles[global];
         p.type = static_cast<uint8_t>(type);
         if (massTable_[type] > 0.0) {
           p.mass = static_cast<float>(massTable_[type]);
@@ -397,7 +397,7 @@ private:
     return n;
   }
 
-  bool readGasFieldBlock_(ParticleBlock& out, const FieldSpec& spec)
+  bool readGasFieldBlock_(SimulationBlock& out, const FieldSpec& spec)
   {
     if (counts_[0] <= 0) return true;
 
@@ -445,16 +445,16 @@ private:
         block.data() + i * comps * dataTypeSize(actual.type);
       switch (actual.type) {
       case DataType::Float:
-        writeFieldToParticleBlock(out, i, fl, reinterpret_cast<const float*>(src));
+        writeFieldToSimulationBlock(out, i, fl, reinterpret_cast<const float*>(src));
         break;
       case DataType::Double:
-        writeFieldToParticleBlock(out, i, fl, reinterpret_cast<const double*>(src));
+        writeFieldToSimulationBlock(out, i, fl, reinterpret_cast<const double*>(src));
         break;
       case DataType::Int32:
-        writeFieldToParticleBlock(out, i, fl, reinterpret_cast<const int32_t*>(src));
+        writeFieldToSimulationBlock(out, i, fl, reinterpret_cast<const int32_t*>(src));
         break;
       case DataType::Int64:
-        writeFieldToParticleBlock(out, i, fl, reinterpret_cast<const int64_t*>(src));
+        writeFieldToSimulationBlock(out, i, fl, reinterpret_cast<const int64_t*>(src));
         break;
       }
     }

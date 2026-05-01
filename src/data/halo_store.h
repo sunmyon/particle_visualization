@@ -6,8 +6,8 @@
 #include <vector>
 
 #include <vector>
-#include "data/particle_block.h"
-#include "data/particle_data.h"
+#include "data/simulation_block.h"
+#include "data/simulation_element.h"
 #include "data/halo_data.h"
 
 class HaloStore {
@@ -61,7 +61,7 @@ public:
   
   bool loadFromHDF5(const char* fname, bool loadIDs = true);
   
-  void recomputeHaloPositionsFromParticles(const ParticleBlock& block,
+  void recomputeHaloPositionsFromParticles(const SimulationBlock& block,
                                            bool useMassWeight,
                                            bool useOriginalPos);
 

@@ -6,13 +6,13 @@
 
 #include "data/data_type.h"
 
-class ParticleData {
+class SimulationElement {
 public:
-  ParticleData() noexcept {}
+  SimulationElement() noexcept {}
   
-  float original_pos[3]; // Coordinates read from the file.
+  float position[3]; // Coordinates read from the file.
   float vel[3];
-  float original_hsml;
+  float supportRadius;
   float density;
   float temperature;
   float mass;            // mass
@@ -20,15 +20,15 @@ public:
 
   float getValue(const std::string &var) const{
     if (var == "x")
-      return original_pos[0];
+      return position[0];
     else if (var == "y")
-      return original_pos[1];
+      return position[1];
     else if (var == "z")
-      return original_pos[2];
+      return position[2];
     else if (var == "r") {
-      const float r2 = original_pos[0] * original_pos[0] +
-                       original_pos[1] * original_pos[1] +
-                       original_pos[2] * original_pos[2];
+      const float r2 = position[0] * position[0] +
+                       position[1] * position[1] +
+                       position[2] * position[2];
       return std::sqrt(r2);
     }
     else if (var == "Density")
@@ -36,7 +36,7 @@ public:
     else if (var == "Temperature")
       return temperature;
     else if (var == "Hsml")
-      return original_hsml;
+      return supportRadius;
     else if (var == "Mass")
       return mass;
     else {
@@ -47,7 +47,7 @@ public:
 };
 
 struct AoSExtensionBuffer {
-  size_t stride = 0;               // bytes per particle
+  size_t stride = 0;               // bytes per element
   std::vector<uint8_t> bytes;      // size = stride * N
 
   void resize(size_t n) {
@@ -65,7 +65,7 @@ struct AoSExtensionBuffer {
 
 struct SoAField {
   DataType type{};
-  int comps = 1;                   // number of components per particle
+  int comps = 1;                   // number of components per element
   std::vector<uint8_t> bytes;      // raw data buffer
 
   void resize(size_t n) {

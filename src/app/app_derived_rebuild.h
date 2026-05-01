@@ -1,6 +1,6 @@
 #pragma once
 
-class ParticleArray;
+class SimulationDataset;
 struct AppDerivedState;
 struct CameraContext;
 struct ProjectionMapToolState;
@@ -22,13 +22,13 @@ struct DerivedRebuildResult {
   bool particleLabelsUpdated = false;
 };
 
-DerivedRebuildResult RebuildDerivedState(const ParticleArray& particles,
+DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
                                          const CameraContext& camera,
                                          AppDerivedState& derived,
                                          const RenderRuntimeState& render,
                                          const ProjectionMapToolState& projection);
 
-void AcknowledgeDerivedRebuild(ParticleArray& particles,
+void AcknowledgeDerivedRebuild(SimulationDataset& particles,
                                AppDerivedState& derived,
                                const DerivedRebuildResult& rebuild);
 

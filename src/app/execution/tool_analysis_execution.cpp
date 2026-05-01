@@ -4,7 +4,7 @@
 #include "app/execution/tool_window_execution.h"
 #include "app/state/tool_window_state.h"
 #include "analysis/histogram2d.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "interaction/camera.h"
 
 void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
@@ -12,7 +12,7 @@ void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
 {
   Histogram2DContext histCtx;
   histCtx.cameraCenter = &input.camera.cameraTarget;
-  histCtx.normalizedScale = input.particles.particleBlock.normalizedScale;
+  histCtx.worldToRenderScale = input.particles.simulationBlock.worldToRenderScale;
 #ifdef USE_CONVEX_HULL
   auto visibleHulls = input.analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
@@ -21,7 +21,7 @@ void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
   ExecuteRadialProfileWindowRequests(tools.radialProfile,
                                      tools.radialProfileRequest,
                                      input.analysis.radial,
-                                     input.particles.particleBlock,
+                                     input.particles.simulationBlock,
                                      input.camera.cameraTarget,
                                      input.normalization,
                                      input.quantity);
@@ -29,6 +29,6 @@ void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
   ExecuteHistogram2DWindowRequests(tools.histogram2D,
                                    tools.histogram2DRequest,
                                    input.analysis.hist2D,
-                                   input.particles.particleBlock,
+                                   input.particles.simulationBlock,
                                    histCtx);
 }

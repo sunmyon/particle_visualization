@@ -4,7 +4,7 @@
 #include <unordered_set>
 
 // ParticleOctree constructor.
-ParticleOctree::ParticleOctree(std::vector<ParticleDataForTree>&& all,
+ParticleOctree::ParticleOctree(std::vector<SimulationElementForTree>&& all,
                                const BoundingBox&                    worldBox,
                                size_t                                minParticles,
                                size_t                                maxDepth,
@@ -38,7 +38,7 @@ ParticleOctree::buildNode(const BoundingBox& box,
 
 
 void ParticleOctree::Node::subdivide(ParticleOctree&           tree,  
-				     std::vector<ParticleDataForTree>& particles,
+				     std::vector<SimulationElementForTree>& particles,
                                      size_t                               minParticles,
                                      size_t                               maxDepth,
                                      size_t                               depth,
@@ -121,7 +121,7 @@ void ParticleOctree::Node::subdivide(ParticleOctree&           tree,
   for (int i = 0; i < 8; ++i) {
     const BoundingBox& cb = childBoxes[i];
     auto it = std::partition(beginIt, endIt,
-			     [&](const ParticleDataForTree& p){ return cb.contains(p.pos); });
+			     [&](const SimulationElementForTree& p){ return cb.contains(p.pos); });
     size_t newCount = std::distance(beginIt, it);
     children[i]->start = offset;
     children[i]->count = newCount;
@@ -305,7 +305,7 @@ namespace {
 // ------------- public -------------
 void ParticleOctree::querySphere(const glm::vec3& center,
                                  float            radius,
-                                 std::vector<const ParticleDataForTree*>& out) const
+                                 std::vector<const SimulationElementForTree*>& out) const
 {
     out.clear();
     querySphereRecursive(root_.get(), center, radius*radius, out);
@@ -317,7 +317,7 @@ void ParticleOctree::querySphereRecursive(
         const Node*                     node,
         const glm::vec3&                center,
         float                           radius2,
-        std::vector<const ParticleDataForTree*>& out) const
+        std::vector<const SimulationElementForTree*>& out) const
 {
   if (!node) return;
 
@@ -326,7 +326,7 @@ void ParticleOctree::querySphereRecursive(
 
   if (node->isLeaf) {
     // Check particles directly.
-    const ParticleDataForTree* base = &particles_[node->start];
+    const SimulationElementForTree* base = &particles_[node->start];
     for (size_t i = 0; i < node->count; ++i) {
       const auto& p = base[i];
       float r2 = glm::dot(p.pos - center, p.pos - center);

@@ -250,7 +250,7 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
 
       ImGui::TableSetColumnIndex(0);
       char label[256];
-      std::snprintf(label, sizeof(label), "%4d   %4d    %g    original_pos=(%.3f, %.3f, %.3f) %g",
+      std::snprintf(label, sizeof(label), "%4d   %4d    %g    position=(%.3f, %.3f, %.3f) %g",
                     row.sourceIndex, row.count, row.mass,
                     row.pos[0], row.pos[1], row.pos[2], 0.0);
 

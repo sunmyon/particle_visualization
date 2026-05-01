@@ -29,7 +29,7 @@
 #include "config/config_data.h"
 #include "config/config_io.h"
 #include "config/config_validation.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "interaction/camera.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_tool_state.h"
@@ -385,7 +385,7 @@ void InitCoreBatchApp(AppState& app)
 {
   app.services.snapshotIO = std::make_unique<SnapshotIOService>();
   app.services.projectionMap2D = std::make_unique<ProjectionMapGenerator>();
-  app.data.particles = new ParticleArray();
+  app.data.particles = new SimulationDataset();
 
 #ifdef GEOMETRICAL_ANALYSIS
   app.services.diskFinder = std::make_unique<DiskRadiusFinder>();
@@ -451,11 +451,11 @@ bool BatchInputsUseOriginalCoordinates(const json& root)
   throw std::runtime_error("coordinateSpace must be 'original' or 'normalized'");
 }
 
-float LoadedSnapshotNormalizedScale(const AppState& app)
+float LoadedSnapshotWorldToRenderScale(const AppState& app)
 {
   if (app.data.particles &&
-      app.data.particles->particleBlock.normalizedScale > 0.0f) {
-    return app.data.particles->particleBlock.normalizedScale;
+      app.data.particles->simulationBlock.worldToRenderScale > 0.0f) {
+    return app.data.particles->simulationBlock.worldToRenderScale;
   }
   return 1.0f;
 }
@@ -466,33 +466,33 @@ void RefreshCameraDistance(CameraContext& camera)
 }
 
 void ConvertCameraBatchInputToInternal(CameraContext& camera,
-                                       float normalizedScale,
+                                       float worldToRenderScale,
                                        bool inputIsOriginal)
 {
   if (inputIsOriginal) {
-    camera.cameraPos *= normalizedScale;
-    camera.cameraTarget *= normalizedScale;
+    camera.cameraPos *= worldToRenderScale;
+    camera.cameraTarget *= worldToRenderScale;
   }
   RefreshCameraDistance(camera);
 }
 
 void ConvertProjectionBatchInputToInternal(ProjectionMapParams& params,
-                                           float normalizedScale,
+                                           float worldToRenderScale,
                                            bool inputIsOriginal)
 {
   if (!inputIsOriginal) return;
   for (int axis = 0; axis < 3; ++axis) {
-    params.xlen[axis] *= normalizedScale;
-    params.xoffset[axis] *= normalizedScale;
+    params.xlen[axis] *= worldToRenderScale;
+    params.xoffset[axis] *= worldToRenderScale;
   }
 }
 
 void ConvertHistogramBatchInputToInternal(Histogram2DParams& params,
-                                          float normalizedScale,
+                                          float worldToRenderScale,
                                           bool inputIsOriginal)
 {
   if (inputIsOriginal) {
-    params.cameraRadius *= normalizedScale;
+    params.cameraRadius *= worldToRenderScale;
   }
 }
 
@@ -504,12 +504,12 @@ bool RunProjectionMapJob(AppState& app,
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
-  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  const float worldToRenderScale = LoadedSnapshotWorldToRenderScale(app);
   ConvertCameraBatchInputToInternal(camera,
-                                    normalizedScale,
+                                    worldToRenderScale,
                                     coordinateInputsAreOriginal);
   ConvertProjectionBatchInputToInternal(app.runtime.analysisTools.projectionMap.params,
-                                        normalizedScale,
+                                        worldToRenderScale,
                                         coordinateInputsAreOriginal);
 
   ProjectionFrameExecutionContext frameCtx{
@@ -552,12 +552,12 @@ bool RunProjectionMovieJob(AppState& app,
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
-  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  const float worldToRenderScale = LoadedSnapshotWorldToRenderScale(app);
   ConvertCameraBatchInputToInternal(camera,
-                                    normalizedScale,
+                                    worldToRenderScale,
                                     coordinateInputsAreOriginal);
   ConvertProjectionBatchInputToInternal(app.runtime.analysisTools.projectionMap.params,
-                                        normalizedScale,
+                                        worldToRenderScale,
                                         coordinateInputsAreOriginal);
 
   auto& request = app.runtime.analysisRequests.projectionMovie;
@@ -635,7 +635,7 @@ bool RunRadialProfileJob(AppState& app,
     return false;
   }
   ConvertCameraBatchInputToInternal(camera,
-                                    LoadedSnapshotNormalizedScale(app),
+                                    LoadedSnapshotWorldToRenderScale(app),
                                     coordinateInputsAreOriginal);
 
   RadialProfileRequestState request;
@@ -648,7 +648,7 @@ bool RunRadialProfileJob(AppState& app,
   RadialProfileResultState result;
   ExecuteRadialProfileRequest(request,
                               result,
-                              app.data.particles->particleBlock,
+                              app.data.particles->simulationBlock,
                               camera.cameraTarget,
                               app.runtime.settings.normalization,
                               app.runtime.quantity);
@@ -676,15 +676,15 @@ bool RunHistogram2DJob(AppState& app,
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
-  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  const float worldToRenderScale = LoadedSnapshotWorldToRenderScale(app);
   ConvertCameraBatchInputToInternal(camera,
-                                    normalizedScale,
+                                    worldToRenderScale,
                                     coordinateInputsAreOriginal);
 
   Histogram2DRequestState request;
   ApplyHistogram2DJson(job, request.params);
   ConvertHistogramBatchInputToInternal(request.params,
-                                       normalizedScale,
+                                       worldToRenderScale,
                                        coordinateInputsAreOriginal);
   request.runRequested = true;
 
@@ -694,7 +694,7 @@ bool RunHistogram2DJob(AppState& app,
   Histogram2DResultState result;
   ExecuteHistogram2DRequest(request,
                             result,
-                            app.data.particles->particleBlock,
+                            app.data.particles->simulationBlock,
                             ctx);
   if (!result.computed || !result.result.valid) {
     std::cerr << "2D histogram failed\n";

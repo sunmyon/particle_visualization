@@ -94,7 +94,7 @@ namespace {
     resetStoreFromSpec(fl);
   }
 
-  void copy_chunk_to_soa(ParticleBlock& out,
+  void copy_chunk_to_soa(SimulationBlock& out,
 			 const FieldLayout& fl,
 			 size_t outBase,
 			 size_t nread,
@@ -126,7 +126,7 @@ H5::DataSet HDF5Reader::openDataSetWithDAPL(const std::string& fullPath) const{
   return H5::DataSet(did);
 }
 
-bool HDF5Reader::readRange(ParticleBlock& out,
+bool HDF5Reader::readRange(SimulationBlock& out,
 			   size_t begin, size_t count,
 			   const std::vector<FieldSpec>& fields,
 			   ParticleMask* mask)
@@ -554,7 +554,7 @@ bool HDF5Reader::prepare_chunk_context_(ChunkContext& ctx,
   return true;
 }
 
-void HDF5Reader::dispatch_opened_field_chunk_(ParticleBlock& out,
+void HDF5Reader::dispatch_opened_field_chunk_(SimulationBlock& out,
                                               const OpenedField& of,
                                               const ChunkContext& ctx)
 {
@@ -563,14 +563,14 @@ void HDF5Reader::dispatch_opened_field_chunk_(ParticleBlock& out,
   if (of.fl->dest == DestKind::AoSCore) {
     if (!ctx.masked) {
       for (size_t j = 0; j < ctx.nread; ++j) {
-        ParticleData& p = out.particles[ctx.outBase + j];
+        SimulationElement& p = out.particles[ctx.outBase + j];
         const uint8_t* src = of.buf.data() + j * of.bpp;
         of.fl->store(p, src);
       }
     } else {
       for (size_t kk = 0; kk < ctx.keepPtr->size(); ++kk) {
         const uint32_t j = (*ctx.keepPtr)[kk];
-        ParticleData& p = out.particles[ctx.outBase + kk];
+        SimulationElement& p = out.particles[ctx.outBase + kk];
         const uint8_t* src = of.buf.data() + (size_t)j * of.bpp;
         of.fl->store(p, src);
       }
@@ -589,10 +589,10 @@ void HDF5Reader::dispatch_opened_field_chunk_(ParticleBlock& out,
       const size_t oi = ctx.outBase + j;
       const uint8_t* src = of.buf.data() + j * of.bpp;
       switch (of.fl->spec.type) {
-        case DataType::Float:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const float*>(src)); break;
-        case DataType::Double: writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const double*>(src)); break;
-        case DataType::Int32:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const int32_t*>(src)); break;
-        case DataType::Int64:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const int64_t*>(src)); break;
+        case DataType::Float:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const float*>(src)); break;
+        case DataType::Double: writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const double*>(src)); break;
+        case DataType::Int32:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const int32_t*>(src)); break;
+        case DataType::Int64:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const int64_t*>(src)); break;
       }
     }
   } else {
@@ -601,10 +601,10 @@ void HDF5Reader::dispatch_opened_field_chunk_(ParticleBlock& out,
       const size_t oi = ctx.outBase + kk;
       const uint8_t* src = of.buf.data() + (size_t)j * of.bpp;
       switch (of.fl->spec.type) {
-        case DataType::Float:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const float*>(src)); break;
-        case DataType::Double: writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const double*>(src)); break;
-        case DataType::Int32:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const int32_t*>(src)); break;
-        case DataType::Int64:  writeFieldToParticleBlock(out, oi, *of.fl, reinterpret_cast<const int64_t*>(src)); break;
+        case DataType::Float:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const float*>(src)); break;
+        case DataType::Double: writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const double*>(src)); break;
+        case DataType::Int32:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const int32_t*>(src)); break;
+        case DataType::Int64:  writeFieldToSimulationBlock(out, oi, *of.fl, reinterpret_cast<const int64_t*>(src)); break;
       }
     }
   }
@@ -688,7 +688,7 @@ HDF5Reader::probe_temp_synth_availability_(int ptype,
   return avail;
 }
 
-void HDF5Reader::synthesize_temperature_chunk_(ParticleBlock& out,
+void HDF5Reader::synthesize_temperature_chunk_(SimulationBlock& out,
                                                const ChunkContext& ctx,
                                                const TempSynthAvailability& tempAvail,
                                                const TempSynthBuffers& tmp)
@@ -776,7 +776,7 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
   return true;
 }
 
-void HDF5Reader::allocate_output_from_layout_(ParticleBlock& out,
+void HDF5Reader::allocate_output_from_layout_(SimulationBlock& out,
                                   const BinaryReadLayout& layout,
                                   size_t totalCount)
 {
@@ -874,7 +874,7 @@ bool HDF5Reader::build_keep_chunk_(int ptype, size_t localStart, size_t n,
   return true;
 }
 
-void HDF5Reader::apply_density_scale_(ParticleBlock& out)
+void HDF5Reader::apply_density_scale_(SimulationBlock& out)
 {
   if (factor_density_ == 1.0) return;
   
@@ -883,7 +883,7 @@ void HDF5Reader::apply_density_scale_(ParticleBlock& out)
   }
 }
 
-void HDF5Reader::apply_bfield_scale_(ParticleBlock& out)
+void HDF5Reader::apply_bfield_scale_(SimulationBlock& out)
 {
   if (factor_Bfield_ == 1.0) return;
 
@@ -909,13 +909,13 @@ void HDF5Reader::apply_bfield_scale_(ParticleBlock& out)
   }
 }
 
-void HDF5Reader::initialize_particle_defaults_chunk_(ParticleBlock& out,
+void HDF5Reader::initialize_particle_defaults_chunk_(SimulationBlock& out,
 						     int ptype,
 						     size_t outBase,
 						     size_t nwrite)
 {
   for (size_t kk = 0; kk < nwrite; ++kk) {
-    ParticleData& p = out.particles[outBase + kk];
+    SimulationElement& p = out.particles[outBase + kk];
     p.type = ptype;
     if (mass_type_[ptype] > 0.0) {
       p.mass = (float)mass_type_[ptype];

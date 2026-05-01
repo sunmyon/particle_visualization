@@ -23,12 +23,12 @@
 #include "app/state/snapshot_state_sync.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 #include "config/config_io.h"
 #include "config/config_validation.h"
 #include "core/quantity.h"
-#include "data/particle_array.h"
-#include "data/particle_block.h"
+#include "data/simulation_dataset.h"
+#include "data/simulation_block.h"
 #include "platform/imgui_context.h"
 #include "platform/platform_session.h"
 #include "render/render_frame.h"
@@ -217,19 +217,19 @@ void ConfigureTransferFunction(const json& obj,
   }
 }
 
-bool FindMostMassiveParticleTarget(const ParticleBlock& block,
+bool FindMostMassiveParticleTarget(const SimulationBlock& block,
                                    int type,
                                    glm::vec3& outTarget)
 {
   bool found = false;
   float bestMass = -1.0f;
-  for (const ParticleData& p : block.particles) {
+  for (const SimulationElement& p : block.particles) {
     if (static_cast<int>(p.type) != type) {
       continue;
     }
     if (!found || p.mass > bestMass) {
       bestMass = p.mass;
-      outTarget = normalizedParticlePosition(p, block.normalizedScale);
+      outTarget = renderPosition(p, block.worldToRenderScale);
       found = true;
     }
   }
@@ -237,7 +237,7 @@ bool FindMostMassiveParticleTarget(const ParticleBlock& block,
 }
 
 void ApplyBatchCameraJson(const json& root,
-                          const ParticleBlock& block,
+                          const SimulationBlock& block,
                           CameraContext& camera)
 {
   camera = CameraContext{};
@@ -507,7 +507,7 @@ int RunVolumeGpuBatchFromJson(const char* path)
       ++render.scene.volumeVersion;
 
       ApplyBatchCameraJson(root,
-                           app.data.particles->particleBlock,
+                           app.data.particles->simulationBlock,
                            app.view.camera);
 
       const RenderViewport batchViewport = MakeBatchViewport(platform.window());

@@ -4,7 +4,7 @@
 #include "app/state/render_runtime_state.h"
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/state/tracking_view_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "interaction/camera.h"
 #include "interaction/interaction_utils.h"
 #include "platform/shell_utils.h"
@@ -117,8 +117,8 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
 
   if (request.setAxisFromAngularMomentumRequested) {
     ProjectionAngularMomentumFrame frame =
-      ComputeAngularMomentumFrame(ctx.projection.particles.particleBlock.particles,
-                                  ctx.projection.particles.particleBlock.normalizedScale,
+      ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock.particles,
+                                  ctx.projection.particles.simulationBlock.worldToRenderScale,
                                   glm::vec3(params.xoffset[0],
                                             params.xoffset[1],
                                             params.xoffset[2]),

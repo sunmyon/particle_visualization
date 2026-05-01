@@ -66,13 +66,13 @@ void FindClump::union_sets(std::vector<int>& parent, int a, int b) {
 }
 
 // Clump detection routine.
-void FindClump::findClumps(std::vector<ParticleData>& originalParticles,
-                           float normalizedScale,
+void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
+                           float worldToRenderScale,
 			   const std::string &var
 			   )
 {
-  std::vector<ParticleDataFiltered> filteredParticles =
-    filterParticles(originalParticles, normalizedScale, params_.densityThreshold, var);
+  std::vector<SimulationElementFiltered> filteredParticles =
+    filterParticles(originalParticles, worldToRenderScale, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -115,7 +115,7 @@ void FindClump::findClumps(std::vector<ParticleData>& originalParticles,
     std::vector<MyResultItem> ret_matches;
 
     if(params_.useHsml)
-      searchRadius = cloud.pts[i].normalized_hsml * cloud.pts[i].normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+      searchRadius = cloud.pts[i].renderSupportRadius * cloud.pts[i].renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 		
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 	
@@ -125,7 +125,7 @@ void FindClump::findClumps(std::vector<ParticleData>& originalParticles,
 	continue;
 	    
       if(params_.useHsml){
-	double LinkingLength_j = cloud.pts[neighbor_index].normalized_hsml * cloud.pts[neighbor_index].normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+	double LinkingLength_j = cloud.pts[neighbor_index].renderSupportRadius * cloud.pts[neighbor_index].renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 	if(LinkingLength_j > match.second)
 	  continue;
       }
@@ -215,7 +215,7 @@ void FindClump::findClumps(std::vector<ParticleData>& originalParticles,
   });
  
   // Create sortedParticles from the sort result.
-  std::vector<ParticleDataFiltered> sortedParticles;
+  std::vector<SimulationElementFiltered> sortedParticles;
   sortedParticles.resize(groupIndex.size());
   for (size_t i = 0; i < groupIndex.size(); i++)
     sortedParticles[i] = cloud.pts[groupIndex[i].second];  
@@ -395,12 +395,12 @@ namespace pruning {
 }
 
 
-void FindClump::findClumpsDendrogram(std::vector<ParticleData>& originalParticles,
-                                     float normalizedScale,
+void FindClump::findClumpsDendrogram(std::vector<SimulationElement>& originalParticles,
+                                     float worldToRenderScale,
                                      const std::string &var)
 {
-  std::vector<ParticleDataFiltered> filteredParticles =
-    filterParticles(originalParticles, normalizedScale, params_.densityThreshold, var);
+  std::vector<SimulationElementFiltered> filteredParticles =
+    filterParticles(originalParticles, worldToRenderScale, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -448,7 +448,7 @@ void FindClump::findClumpsDendrogram(std::vector<ParticleData>& originalParticle
   //int currentClusterID = 0;  
   
   for (int idx : sortedIndices) {
-    const ParticleDataFiltered& p = cloud.pts[idx];
+    const SimulationElementFiltered& p = cloud.pts[idx];
     double query_pt[3] = { p.pos[0], p.pos[1], p.pos[2] };
 
     // Get type aliases that depend on KDTree_t.
@@ -459,7 +459,7 @@ void FindClump::findClumpsDendrogram(std::vector<ParticleData>& originalParticle
     // Declare ret_matches with the correct result type.
     std::vector<MyResultItem> ret_matches;
     
-    double searchRadius = p.normalized_hsml * p.normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+    double searchRadius = p.renderSupportRadius * p.renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
     
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 
@@ -638,7 +638,7 @@ void FindClump::findClumpsDendrogram(std::vector<ParticleData>& originalParticle
   flagDirty = true;
 }
 
-void FindClump::calc_node_statistic(StructureNode *ns, const std::vector<ParticleDataFiltered>& p){
+void FindClump::calc_node_statistic(StructureNode *ns, const std::vector<SimulationElementFiltered>& p){
   if(ns->_done_statistics == true)
     return;
 
@@ -739,21 +739,21 @@ void FindClump::sortNodesByHierarchy() {
 
 
 // Example filtering operation.
-std::vector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const std::vector<ParticleData>& particles,
-                                                                           float normalizedScale,
+std::vector<FindClump::SimulationElementFiltered> FindClump::filterParticles(const std::vector<SimulationElement>& particles,
+                                                                           float worldToRenderScale,
                                                                            double threshold,
                                                                            const std::string &var) const{
-  std::vector<ParticleDataFiltered> filtered;
+  std::vector<SimulationElementFiltered> filtered;
   for (size_t i = 0; i < particles.size(); ++i) {
-      const ParticleData &p = particles[i];
+      const SimulationElement &p = particles[i];
       if(p.type >= 3){
-	ParticleDataFiltered copy = filter_particle_for_clump_find(p, i, normalizedScale, var);
+	SimulationElementFiltered copy = filter_particle_for_clump_find(p, i, worldToRenderScale, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
       
       if (p.getValue(var) >= threshold) {
-	ParticleDataFiltered copy = filter_particle_for_clump_find(p, i, normalizedScale, var);
+	SimulationElementFiltered copy = filter_particle_for_clump_find(p, i, worldToRenderScale, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
@@ -761,8 +761,8 @@ std::vector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const st
   return filtered;
 }
 
-std::vector<ParticleData> FindClump::getAllChildren(StructureNode* node, std::vector<ParticleData>& original_p) const{
-  std::vector<ParticleData> pts;
+std::vector<SimulationElement> FindClump::getAllChildren(StructureNode* node, std::vector<SimulationElement>& original_p) const{
+  std::vector<SimulationElement> pts;
   if (!node)
     return pts;
 
@@ -773,7 +773,7 @@ std::vector<ParticleData> FindClump::getAllChildren(StructureNode* node, std::ve
 
   // Recursively process child nodes and merge their indices.
   for (StructureNode* child : node->children) {
-    std::vector<ParticleData> childIndices = getAllChildren(child, original_p);
+    std::vector<SimulationElement> childIndices = getAllChildren(child, original_p);
     pts.insert(pts.end(), childIndices.begin(), childIndices.end());
   }
 
@@ -785,7 +785,7 @@ std::vector<ParticleData> FindClump::getAllChildren(StructureNode* node, std::ve
 
 #ifdef CLUMP_DATA_READ
 void FindClump::do_FOF_and_output_clump_data(int method,
-                                             ParticleBlock& block,
+                                             SimulationBlock& block,
                                              double snapshotTime,
                                              char *filename,
                                              int snapshotIndex){
@@ -888,7 +888,7 @@ void FindClump::findClumpsInNextSnapshot(void){
 
 
 
-void FindClump::writeFOFtoHDF5(const ParticleBlock& block,
+void FindClump::writeFOFtoHDF5(const SimulationBlock& block,
 			       double snapshotTime,
 			       const std::string &filename,
 			       int snapshotIndex)
@@ -964,7 +964,7 @@ void FindClump::writeFOFtoHDF5(const ParticleBlock& block,
       }
       
       for(int k=0;k<3;k++){
-	position[k] += particles[idx].mass * particles[idx].original_pos[k];
+	position[k] += particles[idx].mass * particles[idx].position[k];
 	velocity[k] += particles[idx].mass * particles[idx].vel[k];
       }
 

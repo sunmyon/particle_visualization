@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <string>
 
-struct ParticleBlock;
+struct SimulationBlock;
 enum class QuantityId : int;
 
 #ifdef ISO_CONTOUR
@@ -39,13 +39,13 @@ struct IsoContourTreeBuildResult {
   std::string message;
 };
 
-Mesh BuildIsoContourMesh(const ParticleBlock& particles,
+Mesh BuildIsoContourMesh(const SimulationBlock& particles,
                          const IsoContourBuildParams& params);
 IsoContourBuildResult BuildIsoContourMeshDetailed(
-  const ParticleBlock& particles,
+  const SimulationBlock& particles,
   const IsoContourBuildParams& params);
 IsoContourTreeBuildResult BuildAdaptiveIsoContourTree(
-  const ParticleBlock& particles,
+  const SimulationBlock& particles,
   const IsoContourBuildParams& params);
 IsoContourBuildResult ExtractAdaptiveIsoContourMesh(
   const AdaptiveVolumeTree& tree,

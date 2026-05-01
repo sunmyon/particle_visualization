@@ -6,10 +6,10 @@
 #include <functional>
 #include <glm/glm.hpp>
 
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 
 Histogram2DResult
-Histogram2DComputer::compute(const ParticleBlock& partblock,
+Histogram2DComputer::compute(const SimulationBlock& partblock,
                              const Histogram2DParams& params,
                              const Histogram2DContext& ctx) const
 {
@@ -20,17 +20,17 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
     return result;
   }
 
-  std::function<bool(const ParticleData&)> condition =
-    [](const ParticleData&) { return true; };
+  std::function<bool(const SimulationElement&)> condition =
+    [](const SimulationElement&) { return true; };
 
 #ifdef USE_CONVEX_HULL
   if (params.useConvexHull) {
-    condition = [&ctx](const ParticleData& p) -> bool {
+    condition = [&ctx](const SimulationElement& p) -> bool {
       if (!ctx.convexHulls || ctx.convexHulls->empty()) {
         return false;
       }
 
-      const glm::vec3 pos = normalizedParticlePosition(p, ctx.normalizedScale);
+      const glm::vec3 pos = renderPosition(p, ctx.worldToRenderScale);
       const std::array<double, 3> pt = { pos.x, pos.y, pos.z };
 
       for (const auto& hull : *ctx.convexHulls) {
@@ -44,17 +44,17 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
 #endif
 
   if (params.useCameraCenter) {
-    auto isWithinRadius = [&ctx, &params](const ParticleData& p) -> bool {
+    auto isWithinRadius = [&ctx, &params](const SimulationElement& p) -> bool {
       if (!ctx.cameraCenter) {
         return false;
       }
 
-      glm::vec3 pos = normalizedParticlePosition(p, ctx.normalizedScale);
+      glm::vec3 pos = renderPosition(p, ctx.worldToRenderScale);
       return glm::length(pos - *ctx.cameraCenter) <= params.cameraRadius;
     };
 
     auto prevFunc = condition;
-    condition = [prevFunc, isWithinRadius](const ParticleData& p) -> bool {
+    condition = [prevFunc, isWithinRadius](const SimulationElement& p) -> bool {
       return prevFunc(p) && isWithinRadius(p);
     };
   }
@@ -69,7 +69,7 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
     bool firstY = true;
 
     for (size_t ipart = 0; ipart < partblock.particles.size(); ipart++) {
-      const ParticleData& p = partblock.particles[ipart];
+      const SimulationElement& p = partblock.particles[ipart];
       if (p.type != 0) continue;
       if (!condition(p)) continue;
 
@@ -140,7 +140,7 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
   }
 
   for (size_t ipart = 0; ipart < partblock.particles.size(); ipart++) {
-    const ParticleData& p = partblock.particles[ipart];
+    const SimulationElement& p = partblock.particles[ipart];
     if (p.type != 0) continue;
     if (!condition(p)) continue;
 

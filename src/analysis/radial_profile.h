@@ -4,7 +4,7 @@
 #include <string>
 #include <glm/glm.hpp>
 
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 #include <vector>
 #include "core/quantity.h"
 #include "core/units.h"
@@ -57,7 +57,7 @@ public:
     units_ = units;
   }
 
-  RadialProfileResult compute(const ParticleBlock& partblock,
+  RadialProfileResult compute(const SimulationBlock& partblock,
 			      double scaleToPhysical,
                               const RadialProfileParams& params,
 			      const glm::vec3& cam_center);

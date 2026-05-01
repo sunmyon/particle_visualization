@@ -15,7 +15,7 @@
 #endif
 
 struct ParticleVisualConfig;
-struct ParticleBlock;
+struct SimulationBlock;
 
 struct RenderParticle {
   float pos[3];
@@ -133,10 +133,10 @@ struct RenderSceneBuildState {
   bool polyhedraDirty = true;
 };
 
-class ParticleData;
+class SimulationElement;
 
 struct ParticleRenderInput {
-  const ParticleBlock* block = nullptr;
+  const SimulationBlock* block = nullptr;
   const std::vector<uint8_t>* visibilityMask = nullptr;
   const std::vector<uint8_t>* stressFlags = nullptr;
   bool particlesDirty = false;
@@ -150,8 +150,8 @@ void BuildRenderParticles(const ParticleRenderInput& input,
                           std::vector<RenderParticle>& out,
                           std::vector<RenderParticle>* stressOut = nullptr);
 
-std::vector<float> BuildVelocityInstanceData(const std::vector<ParticleData>& particles,
-                                             float normalizedScale,
+std::vector<float> BuildVelocityInstanceData(const std::vector<SimulationElement>& particles,
+                                             float worldToRenderScale,
                                              const int velocity_subtraction);
 
 void UpdateVelocityRenderData(const ParticleRenderInput& input,

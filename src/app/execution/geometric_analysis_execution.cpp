@@ -23,8 +23,8 @@
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
-#include "data/particle_array.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_dataset.h"
+#include "data/sample_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -34,7 +34,7 @@
 #include "analysis/disk_radius.h"
 #include "analysis/ellipse_fitter.h"
 
-void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
+void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
 				      NormalizationContext& normalization,
 				      DiskRadiusFinder& diskFinder,
 				      DiskAnalysisRequestState& request,
@@ -57,9 +57,9 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 
   DiskRadiusFinder::Params param{};
   bool found = false;
-  for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
-    const auto& p = particles.particleBlock.particles[i];
-    if (particles.particleBlock.particleIdSigned(i) != request.targetParticleId) {
+  for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+    const auto& p = particles.simulationBlock.particles[i];
+    if (particles.simulationBlock.particleIdSigned(i) != request.targetParticleId) {
       continue;
     }
     if (request.rejectTypeZeroTarget && p.type == 0) {
@@ -71,7 +71,7 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
     param.mass = p.mass;
     for (int k = 0; k < 3; ++k) {
       const glm::vec3 pos =
-        normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+        renderPosition(p, particles.simulationBlock.worldToRenderScale);
       param.center[k] = pos[k];
       param.v_center[k] = p.vel[k];
     }
@@ -94,8 +94,8 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
   disk.opacity = request.diskOpacity;
   disk.tag = request.diskTag;
 
-  if (diskFinder.compute(particles.particleBlock.particles,
-                         particles.particleBlock.normalizedScale,
+  if (diskFinder.compute(particles.simulationBlock.particles,
+                         particles.simulationBlock.worldToRenderScale,
                          param,
                          disk)) {
     result.valid  = true;
@@ -405,7 +405,7 @@ static void FinishDiskBatchExecution(FileNavigationRuntimeState& fileNav,
   }
 }
 
-void ExecuteDiskBatchRequest(ParticleArray& particles,
+void ExecuteDiskBatchRequest(SimulationDataset& particles,
 			     NormalizationContext& normalization,
 			     FileNavigationRuntimeState& fileNav,
 			     SnapshotLoadRuntimeState& snapshotLoad,
@@ -462,7 +462,7 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
   FinishDiskBatchExecution(fileNav, snapshotLoad, runtime, result);
 }
 
-void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
+void ExecuteSingleEllipsoidAnalysisRequest(SimulationDataset& particles,
                                            EllipseFitter& ellipsoidFitter,
                                            EllipsoidAnalysisRequestState& request,
                                            EllipsoidAnalysisResultState& result)
@@ -481,7 +481,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
   result = EllipsoidAnalysisResultState{};
 
   EllipsoidObject obj;
-  if (ellipsoidFitter.computeEllipse(particles.particleBlock,
+  if (ellipsoidFitter.computeEllipse(particles.simulationBlock,
                                      request.particleId1,
                                      request.particleId2,
                                      obj)) {
@@ -646,7 +646,7 @@ static void FinishEllipsoidBatchExecution(FileNavigationRuntimeState& fileNav,
   }
 }
 
-void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+void ExecuteEllipsoidBatchRequest(SimulationDataset& particles,
 				  FileNavigationRuntimeState& fileNav,
 					  SnapshotLoadRuntimeState& snapshotLoad,
 					  EllipseFitter& ellipsoidFitter,

@@ -2,11 +2,11 @@
 
 #include "app/state/app_state.h"
 #include "app/state/render_runtime_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "interaction/camera.h"
 #include "projection/projection_map_tool_state.h"
 
-static bool UpdateOverlayState(const ParticleArray& particles,
+static bool UpdateOverlayState(const SimulationDataset& particles,
                                const CameraContext& camera,
                                const ParticleLabelRenderState& state,
                                OverlayState& overlay)
@@ -189,7 +189,7 @@ static DerivedLayerUpdate UpdateCuboidAnnotationDerivedState(bool requested,
   return {true, showAnnotation};
 }
 
-DerivedRebuildResult RebuildDerivedState(const ParticleArray& particles,
+DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
                                          const CameraContext& camera,
                                          AppDerivedState& derived,
                                          const RenderRuntimeState& render,
@@ -248,7 +248,7 @@ DerivedRebuildResult RebuildDerivedState(const ParticleArray& particles,
   return rebuild;
 }
 
-void AcknowledgeDerivedRebuild(ParticleArray& particles,
+void AcknowledgeDerivedRebuild(SimulationDataset& particles,
                                AppDerivedState& derived,
                                const DerivedRebuildResult& rebuild)
 {

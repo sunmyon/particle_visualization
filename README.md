@@ -1,5 +1,26 @@
 # particle_visualization
 
+## Data Model / データモデル
+
+The core data model treats particles and mesh cells as spatial samples. Mesh
+connectivity is intentionally not part of the common model; cell-centered mesh
+data can be analyzed and rendered through position, support radius, and field
+arrays.
+
+現在の core data model は、粒子と mesh cell を「空間サンプル」として共通に
+扱います。mesh connectivity は共通モデルには含めず、cell center・代表半径・
+field array によって近似的な解析/描画を行います。
+
+This keeps the common path lightweight for particle data, SPH-like data, and
+cell-centered mesh outputs such as Voronoi/Arepo-style snapshots. Explicit mesh
+topology should remain optional and feature-specific, for example for a future
+structured-grid or exact mesh-surface tool.
+
+この方針により、粒子データ、SPH 的なデータ、Voronoi/Arepo 形式の cell
+centered output を同じ軽量な経路で扱えます。明示的な mesh topology は、将来
+structured grid や厳密な mesh surface 表示が必要になった場合の optional な
+機能として扱います。
+
 ## Clone
 
 ```bash

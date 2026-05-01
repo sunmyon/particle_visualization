@@ -1,10 +1,10 @@
 #pragma once
 
 #include "data/header_info.h"
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 
 struct SnapshotReadResult {
   int fileIndex = -1;
   HeaderInfo header{};
-  ParticleBlock block{};
+  SimulationBlock block{};
 };

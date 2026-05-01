@@ -9,9 +9,9 @@
 #include <nanoflann.hpp>
 
 #include "render/scene_objects.h"
-#include "data/particle_coordinates.h"
-#include "data/particle_block.h"
-#include "data/particle_data.h"
+#include "data/sample_coordinates.h"
+#include "data/simulation_block.h"
+#include "data/simulation_element.h"
 #include <glm/glm.hpp>
 
 class EllipseFitter {
@@ -23,7 +23,7 @@ class EllipseFitter {
    * - data is passed by reference and does not need copying.
    * - A KD-tree is built internally on each call.
    */
-  bool computeEllipse(const ParticleBlock& block,
+  bool computeEllipse(const SimulationBlock& block,
                       int64_t ID_A,
                       int64_t ID_B,
                       EllipsoidObject& out);
@@ -33,25 +33,25 @@ class EllipseFitter {
   template<typename T>
   struct PointCloud {
     const std::vector<T>* pts;
-    float normalizedScale = 1.0f;
+    float worldToRenderScale = 1.0f;
     inline size_t kdtree_get_point_count() const { return pts->size(); }
     inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
-      return normalizedParticlePosition((*pts)[idx], normalizedScale)[dim];
+      return renderPosition((*pts)[idx], worldToRenderScale)[dim];
     }
     template <class BBOX> bool kdtree_get_bbox(BBOX&) const { return false; }
   };
   
-  // KD-tree type alias for ParticleData.
+  // KD-tree type alias for SimulationElement.
   using KDTree = nanoflann::KDTreeSingleIndexAdaptor<
-    nanoflann::L2_Simple_Adaptor<float, PointCloud<ParticleData>>,
-    PointCloud<ParticleData>,
+    nanoflann::L2_Simple_Adaptor<float, PointCloud<SimulationElement>>,
+    PointCloud<SimulationElement>,
     3
     >;
   
   // Recreated for each run.
   std::unique_ptr<KDTree> kdtree_;
-  const std::vector<ParticleData>* dataPtr_{nullptr};
-  float normalizedScale_ = 1.0f;
+  const std::vector<SimulationElement>* dataPtr_{nullptr};
+  float worldToRenderScale_ = 1.0f;
   
   std::vector<int> extractComponent(double thr, int seedIndex) const;
   void computePCA3D(const std::vector<int>& comp,

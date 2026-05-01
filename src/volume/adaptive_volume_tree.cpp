@@ -7,8 +7,8 @@
 #include <unordered_map>
 #include <utility>
 
-#include "data/particle_block.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_block.h"
+#include "data/sample_coordinates.h"
 #include "data/spatial/particle_octree.h"
 
 namespace {
@@ -658,18 +658,18 @@ struct TreeBuilder {
   }
 };
 
-BoundingBox ComputeParticleBounds(const ParticleBlock& block,
+BoundingBox ComputeParticleBounds(const SimulationBlock& block,
                                   const AdaptiveVolumeTreeBuildParams& params)
 {
   BoundingBox bounds;
   bounds.min = glm::vec3(std::numeric_limits<float>::max());
   bounds.max = glm::vec3(-std::numeric_limits<float>::max());
 
-  for (const ParticleData& p : block.particles) {
+  for (const SimulationElement& p : block.particles) {
     const float h = params.expandBoundsByHsml
-      ? std::max(normalizedParticleHsml(p, block.normalizedScale), 0.0f)
+      ? std::max(renderSupportRadius(p, block.worldToRenderScale), 0.0f)
       : 0.0f;
-    const glm::vec3 pos = normalizedParticlePosition(p, block.normalizedScale);
+    const glm::vec3 pos = renderPosition(p, block.worldToRenderScale);
     bounds.min = glm::min(bounds.min, pos - glm::vec3(h));
     bounds.max = glm::max(bounds.max, pos + glm::vec3(h));
   }
@@ -737,17 +737,17 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromOctree(
 }
 
 AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
-  const ParticleBlock& particles,
+  const SimulationBlock& particles,
   const AdaptiveVolumeTreeBuildParams& params,
   const VolumeSigmaMapper& sigmaMapper)
 {
-  std::vector<ParticleDataForTree> treeParticles;
+  std::vector<SimulationElementForTree> treeParticles;
   treeParticles.reserve(particles.particles.size());
 
   for (std::size_t i = 0; i < particles.particles.size(); ++i) {
-    const ParticleData& p = particles.particles[i];
-    ParticleDataForTree out;
-    out.pos = normalizedParticlePosition(p, particles.normalizedScale);
+    const SimulationElement& p = particles.particles[i];
+    SimulationElementForTree out;
+    out.pos = renderPosition(p, particles.worldToRenderScale);
     out.val = getScalarValue(particles,
                              p,
                              static_cast<int>(i),

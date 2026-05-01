@@ -6,7 +6,7 @@
 #include <sstream>
 
 #include "analysis/streamline/streamline.h"
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 
 
 namespace {
@@ -52,8 +52,8 @@ float polylineLength(const std::vector<Vec3>& points) {
 }  // namespace
 
 StreamlineComputer::Bounds
-StreamlineComputer::makeGasBounds(const std::vector<ParticleData>& particles,
-                                  float normalizedScale) const
+StreamlineComputer::makeGasBounds(const std::vector<SimulationElement>& particles,
+                                  float worldToRenderScale) const
 {
   Bounds bounds;
   for (int k = 0; k < 3; ++k) {
@@ -63,7 +63,7 @@ StreamlineComputer::makeGasBounds(const std::vector<ParticleData>& particles,
 
   for (const auto& p : particles) {
     if (p.type != 0) continue;
-    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
     for (int k = 0; k < 3; ++k) {
       bounds.min[k] = std::min(bounds.min[k], pos[k]);
       bounds.max[k] = std::max(bounds.max[k], pos[k]);
@@ -93,8 +93,8 @@ StreamlineComputer::makeBoxBounds(const StreamlineBoxSpec& box) const
 }
 
 std::vector<StreamlineComputer::SeedPoint>
-StreamlineComputer::selectSeeds(const std::vector<ParticleData>& particles,
-                                float normalizedScale,
+StreamlineComputer::selectSeeds(const std::vector<SimulationElement>& particles,
+                                float worldToRenderScale,
                                 const Bounds& bounds,
                                 int nSeeds) const
 {
@@ -107,7 +107,7 @@ StreamlineComputer::selectSeeds(const std::vector<ParticleData>& particles,
   for (size_t i = 0; i < particles.size(); ++i) {
     const auto& p = particles[i];
     if (p.type != 0) continue;
-    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
     if (pos[0] < bounds.min[0] || pos[0] > bounds.max[0]) continue;
     if (pos[1] < bounds.min[1] || pos[1] > bounds.max[1]) continue;
     if (pos[2] < bounds.min[2] || pos[2] > bounds.max[2]) continue;
@@ -123,18 +123,18 @@ StreamlineComputer::selectSeeds(const std::vector<ParticleData>& particles,
   for (int i = 0; i < n_actual; ++i) {
     const size_t idx = static_cast<size_t>((double)i * selected_indices.size() / n_actual);
     const auto& p = particles[selected_indices[idx]];
-    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
 
     seeds.push_back({{pos.x, pos.y, pos.z},
                      std::max(1.0e-6f,
-                              normalizedParticleHsml(p, normalizedScale))});
+                              renderSupportRadius(p, worldToRenderScale))});
   }
   return seeds;
 }
 
 StreamlineComputer::SeedPoint
-StreamlineComputer::makeManualSeed(const std::vector<ParticleData>& particles,
-                                   float normalizedScale,
+StreamlineComputer::makeManualSeed(const std::vector<SimulationElement>& particles,
+                                   float worldToRenderScale,
                                    const std::array<float, 3>& seed) const
 {
   float nearestDist2 = std::numeric_limits<float>::max();
@@ -142,14 +142,14 @@ StreamlineComputer::makeManualSeed(const std::vector<ParticleData>& particles,
 
   for (const auto& p : particles) {
     if (p.type != 0) continue;
-    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
     const float dx = pos.x - seed[0];
     const float dy = pos.y - seed[1];
     const float dz = pos.z - seed[2];
     const float dist2 = dx * dx + dy * dy + dz * dz;
     if (dist2 < nearestDist2) {
       nearestDist2 = dist2;
-      hsml = std::max(1.0e-6f, normalizedParticleHsml(p, normalizedScale));
+      hsml = std::max(1.0e-6f, renderSupportRadius(p, worldToRenderScale));
     }
   }
 
@@ -157,13 +157,13 @@ StreamlineComputer::makeManualSeed(const std::vector<ParticleData>& particles,
 }
 
 StreamlineBuildOutput
-StreamlineComputer::build(const ParticleBlock& particles,
+StreamlineComputer::build(const SimulationBlock& particles,
                           const StreamlineBuildSpec& spec)
 {
   StreamlineBuildOutput output;
 
-  const float normalizedScale = particles.normalizedScale;
-  const Bounds gasBounds = makeGasBounds(particles.particles, normalizedScale);
+  const float worldToRenderScale = particles.worldToRenderScale;
+  const Bounds gasBounds = makeGasBounds(particles.particles, worldToRenderScale);
   if (!gasBounds.valid) {
     output.message = "No gas particles are available for streamline seeds.";
     return output;
@@ -178,10 +178,10 @@ StreamlineComputer::build(const ParticleBlock& particles,
   std::vector<SeedPoint> seeds;
   if (spec.useManualSeed) {
     for (const auto& seed : spec.manualSeeds) {
-      seeds.push_back(makeManualSeed(particles.particles, normalizedScale, seed));
+      seeds.push_back(makeManualSeed(particles.particles, worldToRenderScale, seed));
     }
   } else {
-    seeds = selectSeeds(particles.particles, normalizedScale, seedBounds, spec.nSeeds);
+    seeds = selectSeeds(particles.particles, worldToRenderScale, seedBounds, spec.nSeeds);
   }
   if (seeds.empty()) {
     output.message = "No seed particles were found in the selected seed region.";
@@ -250,20 +250,20 @@ StreamlineComputer::build(const ParticleBlock& particles,
   return output;
 }
 
-void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
+void StreamlineComputer::estimate_gradB(const SimulationBlock& simulationBlock,
                                         const Bounds& fieldBounds,
                                         StreamlineBuildSpec::FieldSource fieldSource) {
   fieldBounds_ = fieldBounds;
 
   std::vector<particle_stream> p_stream;
-  p_stream.reserve(particleBlock.particles.size());
+  p_stream.reserve(simulationBlock.particles.size());
 
   const bool useBfield = fieldSource == StreamlineBuildSpec::FieldSource::BField;
 
-  for (size_t i = 0; i < particleBlock.particles.size(); ++i) {
-    const ParticleData& p = particleBlock.particles[i];
+  for (size_t i = 0; i < simulationBlock.particles.size(); ++i) {
+    const SimulationElement& p = simulationBlock.particles[i];
     if (p.type != 0) continue;
-    const glm::vec3 pos = normalizedParticlePosition(p, particleBlock.normalizedScale);
+    const glm::vec3 pos = renderPosition(p, simulationBlock.worldToRenderScale);
     if (pos[0] < fieldBounds.min[0] || pos[0] > fieldBounds.max[0]) continue;
     if (pos[1] < fieldBounds.min[1] || pos[1] > fieldBounds.max[1]) continue;
     if (pos[2] < fieldBounds.min[2] || pos[2] > fieldBounds.max[2]) continue;
@@ -273,11 +273,11 @@ void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
     ps.pos[1] = pos.y;
     ps.pos[2] = pos.z;
     ps.cell_size =
-      std::max(1.0e-6f, normalizedParticleHsml(p, particleBlock.normalizedScale));
+      std::max(1.0e-6f, renderSupportRadius(p, simulationBlock.worldToRenderScale));
 
     if (useBfield) {
       float bf[3] = {0.0f, 0.0f, 0.0f};
-      if (particleBlock.readSoAAs(soa_views::Bfield, i, bf)) {
+      if (simulationBlock.readSoAAs(soa_views::Bfield, i, bf)) {
         ps.vect[0] = bf[0];
         ps.vect[1] = bf[1];
         ps.vect[2] = bf[2];

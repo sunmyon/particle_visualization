@@ -3,7 +3,7 @@
 #include "app/state/analysis_state.h"
 #include "app/state/runtime_state.h"
 
-class ParticleArray;
+class SimulationDataset;
 class HaloStore;
 class ClumpStore;
 class EllipseFitter;
@@ -40,14 +40,14 @@ class ConvexHullGenerator;
 #ifdef GEOMETRICAL_ANALYSIS
 class DiskRadiusFinder;
 
-void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
+void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
 				      NormalizationContext& normalization,
                                       DiskRadiusFinder& diskFinder,
                                       DiskAnalysisRequestState& request,
                                       DiskAnalysisResultState& result,
 				      const UnitSystem& units);
 
-void ExecuteDiskBatchRequest(ParticleArray& particles,
+void ExecuteDiskBatchRequest(SimulationDataset& particles,
 			     NormalizationContext& normalization,
                              FileNavigationRuntimeState& fileNav,
                              SnapshotLoadRuntimeState& snapshotLoad,
@@ -58,12 +58,12 @@ void ExecuteDiskBatchRequest(ParticleArray& particles,
 				     DiskAnalysisBatchResultState& result,
 			     const UnitSystem& units);
 
-void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
+void ExecuteSingleEllipsoidAnalysisRequest(SimulationDataset& particles,
                                            EllipseFitter& ellipsoidFitter,
                                            EllipsoidAnalysisRequestState& request,
                                            EllipsoidAnalysisResultState& result);
 
-void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
+void ExecuteEllipsoidBatchRequest(SimulationDataset& particles,
                                   FileNavigationRuntimeState& fileNav,
 	                                  SnapshotLoadRuntimeState& snapshotLoad,
 	                                  EllipseFitter& ellipsoidFitter,
@@ -74,25 +74,25 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
 
 
 #ifdef STREAM_LINE
-void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
+void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
                                      StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result);
 
-void ExecuteStreamlineBuildRequest(ParticleArray& particles,
+void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
                                    StreamlineComputer& streamLine,
                                    StreamlineBuildRequestState& request,
                                    StreamlineBuildResultState& result);
 #endif
 
 #ifdef ISO_CONTOUR
-void ExecuteIsoContourRequest(ParticleArray& particles,
+void ExecuteIsoContourRequest(SimulationDataset& particles,
                               IsoContourRequestState& request,
                               IsoContourGeometryState& geometry,
                               RenderLayerState& isoContourRenderState);
 #endif
 
 #ifdef VOLUME_RENDERING
-void ExecuteVolumeRenderingRequest(ParticleArray& particles,
+void ExecuteVolumeRenderingRequest(SimulationDataset& particles,
                                    VolumeRenderingRequestState& request,
                                    VolumeRenderingResultState& result,
                                    VolumeRenderState& volumeRenderState);
@@ -100,20 +100,20 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
 
 #ifdef USE_CONVEX_HULL
 struct ConvexHullRuntimeState;
-void ExecuteConvexHullRequests(ParticleArray& particles,
+void ExecuteConvexHullRequests(SimulationDataset& particles,
                                FindClump& clumpFind,
                                ConvexHullGenerator& convexHull,
                                ConvexHullRuntimeState& convexState,
                                RenderLayerState& polyhedraState);
 #endif
 
-void ExecuteStellarDensityRequest(ParticleArray& particles,
+void ExecuteStellarDensityRequest(SimulationDataset& particles,
 				  const UnitSystem& units,
 				  const NormalizationContext& normalization,
                                   StellarDensityRequestState& request,
 				  double time);
 
-void ExecuteSettingsActionRequests(ParticleArray& particles,
+void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    QuantityState& quantity,
                                    ParticleVisualConfig& particleVisual,
                                    RenderRuntimeState& render,
@@ -123,14 +123,14 @@ void ExecuteSettingsActionRequests(ParticleArray& particles,
 void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad);
 
-void ExecuteCameraPlacementRequests(ParticleArray& particles,
+void ExecuteCameraPlacementRequests(SimulationDataset& particles,
 				    const NormalizationContext& normalization,
 				    ViewFilterConfig& viewFilter,
 				    CameraContext& camCtx,
 				    SettingsRuntimeState& rt,
 				   SnapshotPostprocessState &post);
 
-void ExecutePostSnapshotLoadActions(ParticleArray& particles,
+void ExecutePostSnapshotLoadActions(SimulationDataset& particles,
 				    ClumpStore& clumpStore,
 				    NormalizationContext& normalization,
 				    TrackingTargetState& track,
@@ -139,7 +139,7 @@ void ExecutePostSnapshotLoadActions(ParticleArray& particles,
 				    int currentFileIndex);
 
 #ifdef PYTHON_BRIDGE
-void ExecutePythonBridgeRequests(ParticleArray& particles,
+void ExecutePythonBridgeRequests(SimulationDataset& particles,
                                  PythonBridgeState& service,
                                  PythonBridgeRequestState& request,
                                  PythonBridgeViewState& view);

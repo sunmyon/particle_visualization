@@ -208,7 +208,7 @@ inline constexpr FieldKey kAvailableFieldKeys[] = {
 inline constexpr int kNumAvailableFieldKeys =
   (int)(sizeof(kAvailableFieldKeys) / sizeof(kAvailableFieldKeys[0]));
 
-class ParticleData;
+class SimulationElement;
 struct FieldLayout{
   FieldSpec spec;
   int offset;
@@ -217,7 +217,7 @@ struct FieldLayout{
 
   size_t aosExtOffset = 0;
   const char* soaKey = nullptr;
-  void (*store)(ParticleData& p, const uint8_t* src) = nullptr;
+  void (*store)(SimulationElement& p, const uint8_t* src) = nullptr;
 
   bool present = false;
 };

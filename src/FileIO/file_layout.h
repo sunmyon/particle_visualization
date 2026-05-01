@@ -9,48 +9,48 @@ static inline double load_f64(const uint8_t* p) { double v; std::memcpy(&v, p, s
 static inline int64_t load_i64(const uint8_t* p) { int64_t v; std::memcpy(&v, p, sizeof(v)); return v; }
 
 // position
-static inline void store_pos_f32(ParticleData& p, const uint8_t* src){
+static inline void store_pos_f32(SimulationElement& p, const uint8_t* src){
   const float* v = reinterpret_cast<const float*>(src);
-  p.original_pos[0]=v[0]; p.original_pos[1]=v[1]; p.original_pos[2]=v[2];
+  p.position[0]=v[0]; p.position[1]=v[1]; p.position[2]=v[2];
 }
-static inline void store_pos_f64(ParticleData& p, const uint8_t* src){
+static inline void store_pos_f64(SimulationElement& p, const uint8_t* src){
   double v0 = load_f64(src + 0*sizeof(double));
   double v1 = load_f64(src + 1*sizeof(double));
   double v2 = load_f64(src + 2*sizeof(double));
-  p.original_pos[0]=v0; p.original_pos[1]=v1; p.original_pos[2]=v2;
+  p.position[0]=v0; p.position[1]=v1; p.position[2]=v2;
 }
 // velocity
-static inline void store_vel_f32(ParticleData& p, const uint8_t* src){
+static inline void store_vel_f32(SimulationElement& p, const uint8_t* src){
   const float* v = reinterpret_cast<const float*>(src);
   p.vel[0]=v[0]; p.vel[1]=v[1]; p.vel[2]=v[2];
 }
-static inline void store_vel_f64(ParticleData& p, const uint8_t* src){
+static inline void store_vel_f64(SimulationElement& p, const uint8_t* src){
   double v0 = load_f64(src + 0*sizeof(double));
   double v1 = load_f64(src + 1*sizeof(double));
   double v2 = load_f64(src + 2*sizeof(double));
   p.vel[0]=(float)v0; p.vel[1]=(float)v1; p.vel[2]=(float)v2;
 }
 // scalar float/double -> float
-static inline void store_mass_f32(ParticleData& p, const uint8_t* src){ p.mass = *reinterpret_cast<const float*>(src); }
-static inline void store_mass_f64(ParticleData& p, const uint8_t* src){ p.mass = (float)load_f64(src); }
-static inline void store_density_f32(ParticleData& p, const uint8_t* src){ p.density = *reinterpret_cast<const float*>(src); }
-static inline void store_density_f64(ParticleData& p, const uint8_t* src){ p.density = (float)load_f64(src); }
-static inline void store_temp_f32(ParticleData& p, const uint8_t* src){ p.temperature = *reinterpret_cast<const float*>(src); }
-static inline void store_temp_f64(ParticleData& p, const uint8_t* src){ p.temperature = (float)load_f64(src); }
-static inline void store_hsml_f32(ParticleData& p, const uint8_t* src){ p.original_hsml = *reinterpret_cast<const float*>(src); }
-static inline void store_hsml_f64(ParticleData& p, const uint8_t* src){ p.original_hsml = (float)load_f64(src); }
-static inline void store_volume_f32(ParticleData& p, const uint8_t* src)
+static inline void store_mass_f32(SimulationElement& p, const uint8_t* src){ p.mass = *reinterpret_cast<const float*>(src); }
+static inline void store_mass_f64(SimulationElement& p, const uint8_t* src){ p.mass = (float)load_f64(src); }
+static inline void store_density_f32(SimulationElement& p, const uint8_t* src){ p.density = *reinterpret_cast<const float*>(src); }
+static inline void store_density_f64(SimulationElement& p, const uint8_t* src){ p.density = (float)load_f64(src); }
+static inline void store_temp_f32(SimulationElement& p, const uint8_t* src){ p.temperature = *reinterpret_cast<const float*>(src); }
+static inline void store_temp_f64(SimulationElement& p, const uint8_t* src){ p.temperature = (float)load_f64(src); }
+static inline void store_hsml_f32(SimulationElement& p, const uint8_t* src){ p.supportRadius = *reinterpret_cast<const float*>(src); }
+static inline void store_hsml_f64(SimulationElement& p, const uint8_t* src){ p.supportRadius = (float)load_f64(src); }
+static inline void store_volume_f32(SimulationElement& p, const uint8_t* src)
 {
   const float vol = load_f32(src);
-  p.original_hsml = cbrtf(vol);
+  p.supportRadius = cbrtf(vol);
 }
-static inline void store_volume_f64(ParticleData& p, const uint8_t* src)
+static inline void store_volume_f64(SimulationElement& p, const uint8_t* src)
 {
   const double vol = load_f64(src);
-  p.original_hsml = (float)cbrt(vol);
+  p.supportRadius = (float)cbrt(vol);
 }
-static inline void store_type_i32(ParticleData& p, const uint8_t* src){ p.type = *reinterpret_cast<const int32_t*>(src); }
-static inline void store_type_i64(ParticleData& p, const uint8_t* src){ p.type = (int)load_i64(src); }
+static inline void store_type_i32(SimulationElement& p, const uint8_t* src){ p.type = *reinterpret_cast<const int32_t*>(src); }
+static inline void store_type_i64(SimulationElement& p, const uint8_t* src){ p.type = (int)load_i64(src); }
 
 static inline bool isAoSCoreFieldKey(FieldKey key) {
   switch (key) {
@@ -108,15 +108,15 @@ static inline const char* getSoAKey(FieldKey key) {
 }
 
 template<class T>
-static inline void assignCore(ParticleData& p, FieldKey ft, const T* v){
+static inline void assignCore(SimulationElement& p, FieldKey ft, const T* v){
   switch(ft){
-    case FieldKey::Position:  for(int k=0;k<3;k++){ p.original_pos[k]=float(v[k]); } break;
+    case FieldKey::Position:  for(int k=0;k<3;k++){ p.position[k]=float(v[k]); } break;
     case FieldKey::Velocity:  for(int k=0;k<3;k++){ p.vel[k]=float(v[k]); } break;
     case FieldKey::Mass:      p.mass=float(v[0]); break;
     case FieldKey::Density:   p.density=float(v[0]); break;
     case FieldKey::Temperature: p.temperature=float(v[0]); break;
-    case FieldKey::Hsml:      p.original_hsml=float(v[0]); break;
-    case FieldKey::Volume:    p.original_hsml=float(cbrtf(v[0])); break;
+    case FieldKey::Hsml:      p.supportRadius=float(v[0]); break;
+    case FieldKey::Volume:    p.supportRadius=float(cbrtf(v[0])); break;
     case FieldKey::Type:      p.type=int(v[0]); break;
     default: break;
   }
@@ -190,7 +190,7 @@ static inline BinaryReadLayout buildBinaryReadLayout(const std::vector<FieldSpec
 
 
 template<class T>
-static inline void writeFieldToParticleBlock(ParticleBlock& out, size_t i,
+static inline void writeFieldToSimulationBlock(SimulationBlock& out, size_t i,
 					     const FieldLayout& fl,
 					     const T* vals)
 {

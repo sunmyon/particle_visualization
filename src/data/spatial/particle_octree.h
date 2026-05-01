@@ -16,7 +16,7 @@
 class ParticleOctree {
 public:
   /// Move particles in and build a root node covering the full worldBox.
-  ParticleOctree(std::vector<ParticleDataForTree>&& allParticles,
+  ParticleOctree(std::vector<SimulationElementForTree>&& allParticles,
 		 const BoundingBox&             worldBox,
 		 size_t                         minParticles = 8,
 		 size_t                         maxDepth     = 20,
@@ -55,7 +55,7 @@ public:
      * @param depth        Current recursion depth.
      */
     void subdivide(ParticleOctree&           tree,  
-		   std::vector<ParticleDataForTree>& particles,
+		   std::vector<SimulationElementForTree>& particles,
 		   size_t                               minParticles,
 		   size_t                               maxDepth,
 		   size_t                               depth,
@@ -73,11 +73,11 @@ public:
     return leaves;
   }
 
-  const std::vector<ParticleDataForTree>& getParticles() const {
+  const std::vector<SimulationElementForTree>& getParticles() const {
     return particles_;
   }
 
-  static void computeValueRange(const ParticleDataForTree* particles,
+  static void computeValueRange(const SimulationElementForTree* particles,
 				std::size_t                 count,
 				float&                      outMin,
 				float&                      outMax)
@@ -98,7 +98,7 @@ public:
   void balanceTree(bool isIsoDensity);
   void querySphere(const glm::vec3& center,
 		   float            radius,
-		   std::vector<const ParticleDataForTree*>& out) const;
+		   std::vector<const SimulationElementForTree*>& out) const;
 
   std::vector<Node*> findAllNeighbors(const Node* leaf, int dir) const;
   const Node* findLeafContainingRoot(const glm::vec3 &p);
@@ -138,10 +138,10 @@ private:
   void querySphereRecursive(const Node*                     node,
 			    const glm::vec3&                center,
 			    float                           radius2,
-			    std::vector<const ParticleDataForTree*>& out) const;
+			    std::vector<const SimulationElementForTree*>& out) const;
 
   
-  std::vector<ParticleDataForTree> particles_;     ///< Centralized particle storage.
+  std::vector<SimulationElementForTree> particles_;     ///< Centralized particle storage.
   float                              isoLevel_;
   size_t                             minParticles_;  ///< Threshold for splitting internal nodes.
   size_t                             maxDepth_;      ///< Maximum recursion depth.

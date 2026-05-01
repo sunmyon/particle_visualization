@@ -1,7 +1,7 @@
 #pragma once
 
-class ParticleArray;
+class SimulationDataset;
 struct NormalizationContext;
 
-void NormalizeParticlePositions(ParticleArray& particles,
+void NormalizeParticlePositions(SimulationDataset& particles,
                                 NormalizationContext& normalization);

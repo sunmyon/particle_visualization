@@ -1,26 +1,26 @@
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "data/header_info.h"
 #include "core/PerfTimer.h"
 #include "core/units.h"
 #include "app/state/normalization_config.h"
 #include "data/quantity_catalog_builder.h"
 
-void ParticleArray::rescalePositions(NormalizationContext& ctx){
-  particleBlock.normalizedScale = ctx.toNormalizedScale();
+void SimulationDataset::rescalePositions(NormalizationContext& ctx){
+  simulationBlock.worldToRenderScale = ctx.toNormalizedScale();
   particlesDirty = true;  // Mark the global dirty flag.
 };
 
-bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity) {
+bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, SimulationBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity) {
   TIME_FUNCTION();
 
-  bool hadOld = !particleBlock.particles.empty();
+  bool hadOld = !simulationBlock.particles.empty();
   if (oldBlock && hadOld) {
-    *oldBlock = std::move(particleBlock);
+    *oldBlock = std::move(simulationBlock);
   }
-  particleBlock = std::move(newBlock);
+  simulationBlock = std::move(newBlock);
 
-  BuildQuantityCatalog(particleBlock, quantity.catalog);
-  auto stats = particleBlock.rebuild(ctx.desiredMax, quantity.catalog);
+  BuildQuantityCatalog(simulationBlock, quantity.catalog);
+  auto stats = simulationBlock.rebuild(ctx.desiredMax, quantity.catalog);
 
   for (int q = 0; q < kMaxQ; ++q) {
     for (int t = 0; t < kNumTypes; ++t) {
@@ -52,10 +52,10 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
     quantity.units.updateDerived();
   }
 
-  flag_mask.resize(particleBlock.particles.size(), 0);
-  flag_stress.assign(particleBlock.particles.size(), 0);
+  flag_mask.resize(simulationBlock.particles.size(), 0);
+  flag_stress.assign(simulationBlock.particles.size(), 0);
   
-  particleBlock_index = 0; // Or remove this later.
+  simulationBlock_index = 0; // Or remove this later.
   particlesDirty = true;
   flagParticleIndexDirty = true;
 
@@ -115,7 +115,7 @@ static inline double cubic_spline_W(double r, double h) {
 
 // For each star particle, sum all particle masses within the search radius
 // and divide by area, pi * searchRadius^2, to compute density in Msun/pc^2.
-void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
+void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
 					  bool flag_overwrite_hsml,
 					  const NormalizationContext& ctx,
 					  double time,
@@ -127,13 +127,13 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
   if(selType[3] == true || selType[4] == true || selType[5] == true)
     flag_star = true;
 
-  std::vector<ParticleData> & particles = particleBlock.particles;
+  std::vector<SimulationElement> & particles = simulationBlock.particles;
   
   // Extract only the selected particle types.
   std::vector<starParticle> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
-      const ParticleData& p = particles[i];
+      const SimulationElement& p = particles[i];
 
       const int t = (int)p.type;
       if (t < 0 || t >= 6) continue;
@@ -141,7 +141,7 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
 
       struct starParticle sp;
       sp.type = p.type;
-      normalizedParticlePosition(p, particleBlock.normalizedScale, sp.pos);
+      renderPosition(p, simulationBlock.worldToRenderScale, sp.pos);
       sp.mass = p.mass;
       sp.index = i;
 	
@@ -220,8 +220,8 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
       particles[original_index].density = density * units.mass_g / std::pow(scale * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
 
     if(flag_overwrite_hsml)
-      particles[original_index].original_hsml =
-        h / std::max(particleBlock.normalizedScale, 1.0e-30f);
+      particles[original_index].supportRadius =
+        h / std::max(simulationBlock.worldToRenderScale, 1.0e-30f);
     
     printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
 	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, scale * cosmofac * units.length_cm, units.hubble);

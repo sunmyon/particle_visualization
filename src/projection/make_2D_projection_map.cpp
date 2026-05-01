@@ -1,8 +1,8 @@
 #include "image/image_canvas.h"
 #include "image/image_io.h"
 
-#include "data/particle_array.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_dataset.h"
+#include "data/sample_coordinates.h"
 #include "render/scene_objects.h"
 
 #include <chrono>
@@ -61,7 +61,7 @@ namespace fs = std::filesystem;
 
 ProjectionMapGenerator::ProjectionMapGenerator() = default;
 
-RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
+RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particles,
 						     const UnitSystem& units,
 						     ProjectionMapParams& params,
 						     ProjectionMapContext& ctx)
@@ -72,7 +72,7 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(ParticleArray& particles,
   return makeSingleDensityMapImage(particles, units, params, ctx);
 }
 
-RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& particles,
+RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& particles,
 							   const UnitSystem& units,
 							   ProjectionMapParams& params,
 							   ProjectionMapContext& ctx)
@@ -81,7 +81,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
   ensureLuaInitialized();
 #endif
 
-  std::vector<ParticleData>& originalParticles = particles.particleBlock.particles;
+  std::vector<SimulationElement>& originalParticles = particles.simulationBlock.particles;
   
   if(params.flagSpecifyZoomRegionByMass){
     //construct xmin, xmax, center here
@@ -99,7 +99,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
 	continue;
       
       const glm::vec3 pos =
-        normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+        renderPosition(p, particles.simulationBlock.worldToRenderScale);
       for(int k=0;k<3;k++){
 	if(pos[k] < xmin_zoom[k])
 	  xmin_zoom[k] = pos[k];
@@ -160,7 +160,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
 
     bool inside = false;
     const glm::vec3 pos =
-      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+      renderPosition(p, particles.simulationBlock.worldToRenderScale);
     glm::vec4 localPos =
       glm::inverse(ctx.cuboidTransform)
       * glm::vec4(pos - ctx.center, 1.0f)
@@ -175,18 +175,18 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
 
     pos_val pp;
     pp.pos[0] = pos.x; pp.pos[1] = pos.y; pp.pos[2] = pos.z;
-    pp.hsml = normalizedParticleHsml(p, particles.particleBlock.normalizedScale);
+    pp.hsml = renderSupportRadius(p, particles.simulationBlock.worldToRenderScale);
     pp.mass = p.mass;
     
     if (params.dataSource == DataSource::Gas) {    
-      pp.val = getScalarValue(particles.particleBlock, p, idx, params.selectedVarGas);
+      pp.val = getScalarValue(particles.simulationBlock, p, idx, params.selectedVarGas);
       pp.density = p.density;
     }
     
     if (params.dataSource == DataSource::Stars) {
       if (params.starQuantity == StarQuantity::Metallicity) {
 	float zmet = 0.0f;
-	particles.particleBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);	
+	particles.simulationBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);
 	pp.val = zmet;
       } else if (params.starQuantity == StarQuantity::Mass) {
 	pp.val = p.mass;
@@ -210,7 +210,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
     }
     
   ProjectionMap map = buildProjectionMap(params, ctx);
-  map.sourceNormalizedScale = particles.particleBlock.normalizedScale;
+  map.sourceWorldToRenderScale = particles.simulationBlock.worldToRenderScale;
   for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
 
   using namespace std::chrono;
@@ -231,7 +231,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
   return composeProjectionMapImage(map, params, ctx, originalParticles);
 }
 
-RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(ParticleArray& particles,
+RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset& particles,
 							       const UnitSystem& units,
 							       ProjectionMapParams& params,
 							       ProjectionMapContext& ctx)
@@ -348,7 +348,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   ProjectionMap& map,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx,
-  const std::vector<ParticleData>& originalParticles)
+  const std::vector<SimulationElement>& originalParticles)
 {
   float minVal = FLT_MAX;
   for (auto val : map.values) {
@@ -778,7 +778,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
 						  const ProjectionMap& map,
 						  const ProjectionMapParams& params,
 						  const ProjectionMapContext& ctx,
-						  const std::vector<ParticleData>& particles)
+						  const std::vector<SimulationElement>& particles)
 {
 
 #ifdef USE_LUA
@@ -813,7 +813,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       lua_settop(gLua_, 0);
       lua_pushnumber(gLua_, p.mass);
       lua_setglobal(gLua_, "m");
-      lua_pushnumber(gLua_, normalizedParticleHsml(p, map.sourceNormalizedScale));
+      lua_pushnumber(gLua_, renderSupportRadius(p, map.sourceWorldToRenderScale));
       lua_setglobal(gLua_, "Hsml");
       lua_pushnumber(gLua_, p.type);
       lua_setglobal(gLua_, "ptype");
@@ -849,7 +849,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       
     // Project the 3D position to image coordinates using the same method as createProjectionMap().
     glm::vec3 rad =
-      normalizedParticlePosition(p, map.sourceNormalizedScale) - map.center;
+      renderPosition(p, map.sourceWorldToRenderScale) - map.center;
     float u = glm::dot(rad, map.uAxis);  // Component along the image X axis.
     float v = glm::dot(rad, map.vAxis);  // Component along the image Y axis.
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);

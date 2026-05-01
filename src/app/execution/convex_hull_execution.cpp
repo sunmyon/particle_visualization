@@ -23,8 +23,8 @@
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
-#include "data/particle_array.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_dataset.h"
+#include "data/sample_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -36,7 +36,7 @@
 #include "app/state/convex_hull_state.h"
 #endif
 #ifdef USE_CONVEX_HULL
-void ExecuteConvexHullRequests(ParticleArray& particles,
+void ExecuteConvexHullRequests(SimulationDataset& particles,
                                FindClump& clumpFind,
                                ConvexHullGenerator& convexHull,
                                ConvexHullRuntimeState& convexState,
@@ -57,14 +57,14 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
       continue;
     }
 
-    std::vector<ParticleData> pts =
-      clumpFind.get_particle_indices(i, particles.particleBlock.particles);
+    std::vector<SimulationElement> pts =
+      clumpFind.get_particle_indices(i, particles.simulationBlock.particles);
 
     std::vector<glm::vec3> points;
     points.reserve(pts.size());
     for (const auto& p : pts) {
       points.push_back(
-        normalizedParticlePosition(p, particles.particleBlock.normalizedScale));
+        renderPosition(p, particles.simulationBlock.worldToRenderScale));
     }
 
     ConvexHullEntry entry;

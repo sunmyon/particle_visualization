@@ -16,13 +16,13 @@
 #include "data/clump_store.h"
 #include "data/halo_store.h"
 
-class ParticleArray;
+class SimulationDataset;
 class WindowContext;
 
 #include "app/app_services.h"
 
 struct AppDataState {
-  ParticleArray* particles = nullptr;
+  SimulationDataset* particles = nullptr;
   ClumpStore clumpStore;
   HaloStore haloStore;
 };

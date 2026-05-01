@@ -10,11 +10,11 @@
 #include <cstdint>
 #include <string>
 
-#include "FileIO/particle_reader.h"
+#include "FileIO/element_reader.h"
 #include "FileIO/file_format_types.h"
 #include "FileIO/hdf5_utils.h"
 
-class HDF5Reader final : public IParticleReader {
+class HDF5Reader final : public IElementReader {
   H5::H5File file_;
 
   size_t npart_ = 0;
@@ -29,12 +29,12 @@ public:
   HDF5Reader() = default;
 
   bool is_binary() override { return false; }
-  size_t particleCount() const override { return npart_; }
+  size_t elementCount() const override { return npart_; }
 
   bool open(const std::string& path, HeaderInfo& header) override;
   void close() override;
 
-  bool readRange(ParticleBlock& out,
+  bool readRange(SimulationBlock& out,
 		 size_t begin, size_t count,
 		 const std::vector<FieldSpec>& fields,
 		 ParticleMask* mask = nullptr) override;
@@ -47,7 +47,7 @@ private:
   
   H5::DataSet openDataSetWithDAPL(const std::string& fullPath) const;  
   bool finalize_layout_from_hdf5_(BinaryReadLayout& layout);
-  void allocate_output_from_layout_(ParticleBlock& out,
+  void allocate_output_from_layout_(SimulationBlock& out,
 				    const BinaryReadLayout& layout,
 				    size_t totalCount);
   struct TempSynthRequest {
@@ -115,7 +115,7 @@ private:
 			      std::vector<uint32_t>& keep,
 			      size_t& outWriteCursor);
   
-  void dispatch_opened_field_chunk_(ParticleBlock& out,
+  void dispatch_opened_field_chunk_(SimulationBlock& out,
 				    const OpenedField& of,
 				    const ChunkContext& ctx);
 
@@ -124,14 +124,14 @@ private:
 				     const ChunkContext& ctx,
 				     TempSynthBuffers& tmp);
 
-  void synthesize_temperature_chunk_(ParticleBlock& out,
+  void synthesize_temperature_chunk_(SimulationBlock& out,
 				     const ChunkContext& ctx,
 				     const TempSynthAvailability& tempAvail,
 				     const TempSynthBuffers& tmp);
 
-  void apply_density_scale_(ParticleBlock& out);
-  void apply_bfield_scale_(ParticleBlock& out);
-  void initialize_particle_defaults_chunk_(ParticleBlock& out,
+  void apply_density_scale_(SimulationBlock& out);
+  void apply_bfield_scale_(SimulationBlock& out);
+  void initialize_particle_defaults_chunk_(SimulationBlock& out,
 					   int ptype,
 					   size_t outBase,
 					   size_t nwrite);

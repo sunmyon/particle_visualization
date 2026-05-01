@@ -17,7 +17,7 @@ static float cubicSplineKernel(float r, float h) {
     }
 }
 
-SPHInterpolator::SPHInterpolator(std::vector<ParticleDataForKdTree>&& pts)
+SPHInterpolator::SPHInterpolator(std::vector<SimulationElementForKdTree>&& pts)
   : cloud_{std::move(pts)},
     index_(3 /*dim*/, cloud_,
            nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */))

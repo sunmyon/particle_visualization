@@ -1,10 +1,10 @@
-#include "data/particle_data.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_element.h"
+#include "data/sample_coordinates.h"
 #include "data/halo_store.h"
 
 #include <unordered_map>
 
-void HaloStore::recomputeHaloPositionsFromParticles(const ParticleBlock& block,
+void HaloStore::recomputeHaloPositionsFromParticles(const SimulationBlock& block,
                                                     bool useMassWeight,
                                                     bool useOriginalPos)
 {
@@ -32,10 +32,10 @@ void HaloStore::recomputeHaloPositionsFromParticles(const ParticleBlock& block,
       auto it = idToIndex.find(pid);
       if (it == idToIndex.end()) continue;
 
-      const ParticleData& p = particles[it->second];
+      const SimulationElement& p = particles[it->second];
       float normalizedPos[3];
-      normalizedParticlePosition(p, block.normalizedScale, normalizedPos);
-      const float* x = useOriginalPos ? p.original_pos : normalizedPos;
+      renderPosition(p, block.worldToRenderScale, normalizedPos);
+      const float* x = useOriginalPos ? p.position : normalizedPos;
 
       double w = 1.0;
       if (useMassWeight) {

@@ -18,32 +18,32 @@
 #include "app/execution/profile_histogram_execution.h"
 #include "analysis/histogram2d.h"
 #include "analysis/radial_profile.h"
-#include "data/particle_array.h"
-#include "data/particle_block.h"
-#include "data/particle_coordinates.h"
-#include "data/particle_data.h"
+#include "data/simulation_dataset.h"
+#include "data/simulation_block.h"
+#include "data/sample_coordinates.h"
+#include "data/simulation_element.h"
 #include "data/halo_store.h"
 #include "interaction/camera.h"
 #include "projection/make_2D_projection_map.h"
 
 namespace {
 
-size_t FindParticleIndexById(ParticleArray& particles, int64_t particleId)
+size_t FindParticleIndexById(SimulationDataset& particles, int64_t particleId)
 {
   if (particleId < 0) {
     return static_cast<size_t>(-1);
   }
   return
-    particles.particleBlock.findIndexByID(static_cast<uint64_t>(particleId));
+    particles.simulationBlock.findIndexByID(static_cast<uint64_t>(particleId));
 }
 
-ParticleData* FindParticleById(ParticleArray& particles, int64_t particleId)
+SimulationElement* FindParticleById(SimulationDataset& particles, int64_t particleId)
 {
   const size_t index = FindParticleIndexById(particles, particleId);
   if (index == static_cast<size_t>(-1)) {
     return nullptr;
   }
-  return &particles.particleBlock.particles[index];
+  return &particles.simulationBlock.particles[index];
 }
 
 } // namespace
@@ -51,7 +51,7 @@ ParticleData* FindParticleById(ParticleArray& particles, int64_t particleId)
 void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
                                        TopParticlesRequestState& req,
                                        TopParticlesResultState& result,
-                                       ParticleArray& particles,
+                                       SimulationDataset& particles,
                                        CameraContext& camera,
                                        TrackingTargetState& tracking,
                                        SnapshotPostprocessState& post,
@@ -69,14 +69,14 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   auto centerCameraOnParticle = [&](int64_t particleId) {
-    const ParticleData* p = FindParticleById(particles, particleId);
+    const SimulationElement* p = FindParticleById(particles, particleId);
     if (!p) return;
 
     const float distance = glm::length(camera.cameraPos - camera.cameraTarget);
     const glm::vec3 direction =
       camera.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
     camera.cameraTarget =
-      normalizedParticlePosition(*p, particles.particleBlock.normalizedScale);
+      renderPosition(*p, particles.simulationBlock.worldToRenderScale);
     camera.cameraPos = camera.cameraTarget - direction * distance;
   };
 
@@ -84,7 +84,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     result.hasFound = false;
     result.queryFailed = false;
 
-    if (const ParticleData* p = FindParticleById(particles, req.queryParticleId)) {
+    if (const SimulationElement* p = FindParticleById(particles, req.queryParticleId)) {
       result.foundParticle = *p;
       result.foundParticleId = req.queryParticleId;
       result.hasFound = true;
@@ -109,7 +109,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
         ? result.historyIds[ui.historySel]
         : -1;
 
-    std::deque<ParticleData> newHistory;
+    std::deque<SimulationElement> newHistory;
     std::deque<int64_t> newHistoryIds;
     std::unordered_set<int64_t> seen;
 
@@ -118,7 +118,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
       const int64_t oldId = result.historyIds[i];
       if (seen.find(oldId) != seen.end()) continue;
 
-      if (const ParticleData* p = FindParticleById(particles, oldId)) {
+      if (const SimulationElement* p = FindParticleById(particles, oldId)) {
         newHistory.push_back(*p);
         newHistoryIds.push_back(oldId);
         seen.insert(oldId);
@@ -156,14 +156,14 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   if (req.refreshFilteredRequested) {
     result.filtered.clear();
     result.filteredIds.clear();
-    for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
-      const ParticleData& p = particles.particleBlock.particles[i];
+    for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+      const SimulationElement& p = particles.simulationBlock.particles[i];
       if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) {
         continue;
       }
       if (p.type >= 0 && p.type < 6 && req.selectedTypes[p.type]) {
         result.filtered.push_back(p);
-        result.filteredIds.push_back(particles.particleBlock.particleIdSigned(i));
+        result.filteredIds.push_back(particles.simulationBlock.particleIdSigned(i));
       }
     }
 
@@ -172,7 +172,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
       return result.filtered[a].mass > result.filtered[b].mass;
     });
-    std::vector<ParticleData> sorted;
+    std::vector<SimulationElement> sorted;
     std::vector<int64_t> sortedIds;
     sorted.reserve(result.filtered.size());
     sortedIds.reserve(result.filteredIds.size());
@@ -220,20 +220,20 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   const std::string var = kQuantities[selectedVar];
   const int bins = std::max(1, req.histogramBins);
 
-  std::function<bool(const ParticleData&)> includeParticle =
-    [](const ParticleData&) { return true; };
+  std::function<bool(const SimulationElement&)> includeParticle =
+    [](const SimulationElement&) { return true; };
 
   if (req.histogramUseCameraCenter) {
     const glm::vec3 camCenter = camera.cameraTarget;
     const float radius = req.histogramCameraRadius;
-    const float normalizedScale = particles.particleBlock.normalizedScale;
-    includeParticle = [camCenter, radius, normalizedScale](const ParticleData& p) {
-      const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const float worldToRenderScale = particles.simulationBlock.worldToRenderScale;
+    includeParticle = [camCenter, radius, worldToRenderScale](const SimulationElement& p) {
+      const glm::vec3 pos = renderPosition(p, worldToRenderScale);
       return glm::length(pos - camCenter) <= radius;
     };
   }
 
-  auto particleValue = [&](const ParticleData& p) {
+  auto particleValue = [&](const SimulationElement& p) {
     float value = p.getValue(var);
     if (var == "Mass") {
       value = static_cast<float>(quantity.toDisplay(QuantityId::Mass, value));
@@ -354,7 +354,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
                                         RadialProfileRequestState& request,
                                         RadialProfileResultState& result,
-                                        const ParticleBlock& partblock,
+                                        const SimulationBlock& partblock,
                                         const glm::vec3& camCenter,
                                         NormalizationContext& normalization,
                                         QuantityState& quantity)
@@ -378,7 +378,7 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
 void ExecuteHistogram2DWindowRequests(Histogram2DUIState& ui,
                                       Histogram2DRequestState& request,
                                       Histogram2DResultState& result,
-                                      const ParticleBlock& partblock,
+                                      const SimulationBlock& partblock,
                                       const Histogram2DContext& ctx)
 {
   if (!request.runRequested) {
@@ -451,7 +451,7 @@ void ExecuteMaskWindowRequests(MaskUIState& ui,
 void ExecuteHaloesWindowRequests(HaloesUIState& ui,
                                  HaloesRequestState& request,
                                  HaloStore& haloes,
-                                 ParticleArray& particles,
+                                 SimulationDataset& particles,
                                  CameraContext& camera,
                                  const NormalizationContext& normalization)
 {
@@ -506,7 +506,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
 
   if (request.recomputePositionsRequested) {
     haloes.recomputeHaloPositionsFromParticles(
-      particles.particleBlock,
+      particles.simulationBlock,
       request.recomputeUseMassWeight,
       request.recomputeUseOriginalPos
     );

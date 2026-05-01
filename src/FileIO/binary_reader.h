@@ -1,6 +1,6 @@
 #pragma once
 #pragma once
-#include "FileIO/particle_reader.h"
+#include "FileIO/element_reader.h"
 #include "FileIO/file_mask.h"
 #include "core/PerfTimer.h"
 #include "data/header_info.h"
@@ -83,7 +83,7 @@ inline bool isThinCandidate(const ParticleMask& mask, const CoreSample& sample)
          mask.typeThinOK(sample.type);
 }
 
-inline void initOutputBlock(ParticleBlock& out,
+inline void initOutputBlock(SimulationBlock& out,
                             size_t count,
                             const BinaryReadLayout& layout)
 {
@@ -100,12 +100,12 @@ inline void initOutputBlock(ParticleBlock& out,
   }
 }
 
-inline void dispatchRecord(ParticleBlock& out,
+inline void dispatchRecord(SimulationBlock& out,
                            size_t outIndex,
                            const BinaryReadLayout& layout,
                            const uint8_t* rec)
 {
-  ParticleData& p = out.particles[outIndex];
+  SimulationElement& p = out.particles[outIndex];
 
   for (const auto& fl : layout.fields) {
     const uint8_t* src = rec + fl.offset;
@@ -117,22 +117,22 @@ inline void dispatchRecord(ParticleBlock& out,
 
     switch (fl.spec.type) {
     case DataType::Float:
-      writeFieldToParticleBlock(out, outIndex, fl, reinterpret_cast<const float*>(src));
+      writeFieldToSimulationBlock(out, outIndex, fl, reinterpret_cast<const float*>(src));
       break;
     case DataType::Double:
-      writeFieldToParticleBlock(out, outIndex, fl, reinterpret_cast<const double*>(src));
+      writeFieldToSimulationBlock(out, outIndex, fl, reinterpret_cast<const double*>(src));
       break;
     case DataType::Int32:
-      writeFieldToParticleBlock(out, outIndex, fl, reinterpret_cast<const int32_t*>(src));
+      writeFieldToSimulationBlock(out, outIndex, fl, reinterpret_cast<const int32_t*>(src));
       break;
     case DataType::Int64:
-      writeFieldToParticleBlock(out, outIndex, fl, reinterpret_cast<const int64_t*>(src));
+      writeFieldToSimulationBlock(out, outIndex, fl, reinterpret_cast<const int64_t*>(src));
       break;
     }
   }
 }
 
-inline void copySoARecord(ParticleBlock& out,
+inline void copySoARecord(SimulationBlock& out,
                           size_t dst,
                           size_t src,
                           const BinaryReadLayout& layout)
@@ -152,7 +152,7 @@ inline void copySoARecord(ParticleBlock& out,
 
 } // namespace binary_reader_detail
 
-class BinaryReader final : public IParticleReader {
+class BinaryReader final : public IElementReader {
   std::ifstream file_;
   std::vector<char> ioBuf_;
   size_t npart_ = 0;
@@ -195,11 +195,11 @@ public:
     return true;
   }
   
-  size_t particleCount() const override {
+  size_t elementCount() const override {
     return npart_;
   }
 
-  bool readRange(ParticleBlock& out,
+  bool readRange(SimulationBlock& out,
 		 size_t begin, size_t count,
 		 const std::vector<FieldSpec>& fields,
 		 ParticleMask* mask = nullptr) override
@@ -307,7 +307,7 @@ public:
 
 #ifdef USE_MMAP
 #include <sys/mman.h>
-class MMapReader final : public IParticleReader {
+class MMapReader final : public IElementReader {
   int fd_ = -1;
   uint8_t* data_ = nullptr;
   size_t size_ = 0;
@@ -370,11 +370,11 @@ public:
     return true;
   }
   
-  size_t particleCount() const override {
+  size_t elementCount() const override {
     return npart_;
   }
 
-  bool readRange(ParticleBlock& out,
+  bool readRange(SimulationBlock& out,
 		 size_t begin, size_t count,
 		 const std::vector<FieldSpec>& fields,
 		 ParticleMask* mask = nullptr) override

@@ -16,8 +16,8 @@
 #include <vector>
 
 class ImageCanvas;
-class ParticleArray;
-class ParticleData;
+class SimulationDataset;
+class SimulationElement;
 struct ProjectionMapParams;
 struct ProjectionMapContext;
 struct RgbImage;
@@ -49,7 +49,7 @@ private:
     float xlen[3] = {0.f, 0.f, 0.f}, xmin[3] = {0.f, 0.f, 0.f};
     float dx = 0.f, dy = 0.f, dz = 0.f;
     float cell_size = 0.f;
-    float sourceNormalizedScale = 1.0f;
+    float sourceWorldToRenderScale = 1.0f;
     float minVal = 0.f, maxVal = 0.f;
     bool flagDensityWeight = false;
     bool flagLogScale = false;
@@ -89,25 +89,25 @@ private:
 			    const ProjectionMap& map,
 			    const ProjectionMapParams& params,
 			    const ProjectionMapContext& ctx,
-			    const std::vector<ParticleData>& particles);
+			    const std::vector<SimulationElement>& particles);
   float kernel(float u);
   ProjectionMap buildProjectionMap(const ProjectionMapParams& params,
                                    const ProjectionMapContext& ctx) const;
   RgbImage composeProjectionMapImage(ProjectionMap& map,
                                      const ProjectionMapParams& params,
                                      const ProjectionMapContext& ctx,
-                                     const std::vector<ParticleData>& originalParticles);
-  RgbImage makeSingleDensityMapImage(ParticleArray& particles,
+                                     const std::vector<SimulationElement>& originalParticles);
+  RgbImage makeSingleDensityMapImage(SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,
                                      ProjectionMapContext& ctx);
-  RgbImage makeMultiPanelDensityMapImage(ParticleArray& particles,
+  RgbImage makeMultiPanelDensityMapImage(SimulationDataset& particles,
                                          const UnitSystem& units,
                                          ProjectionMapParams& params,
                                          ProjectionMapContext& ctx);
   
 public:
-  RgbImage makeDensityMapImage(ParticleArray& particles,
+  RgbImage makeDensityMapImage(SimulationDataset& particles,
 			       const UnitSystem& units,
 			       ProjectionMapParams& params,
 			       ProjectionMapContext& ctx);

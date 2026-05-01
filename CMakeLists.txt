@@ -423,9 +423,9 @@ set(SOURCES_CPP
   ${SRC_DIR}/config/config_apply.cpp
   ${SRC_DIR}/config/config_extract.cpp
   ${SRC_DIR}/config/config_validation.cpp
-  ${SRC_DIR}/data/particle_block.cpp
-  ${SRC_DIR}/data/particle_block_validation.cpp
-  ${SRC_DIR}/data/particle_array.cpp
+  ${SRC_DIR}/data/simulation_block.cpp
+  ${SRC_DIR}/data/simulation_block_validation.cpp
+  ${SRC_DIR}/data/simulation_dataset.cpp
   ${SRC_DIR}/data/clump_loader.cpp
   ${SRC_DIR}/data/halo_store.cpp
   ${SRC_DIR}/data/quantity_catalog_builder.cpp
@@ -1429,9 +1429,9 @@ if(PARTICLE_VIS_BUILD_BATCH)
     ${SRC_DIR}/config/config_apply.cpp
     ${SRC_DIR}/config/config_io.cpp
     ${SRC_DIR}/config/config_validation.cpp
-    ${SRC_DIR}/data/particle_array.cpp
-    ${SRC_DIR}/data/particle_block.cpp
-    ${SRC_DIR}/data/particle_block_validation.cpp
+    ${SRC_DIR}/data/simulation_dataset.cpp
+    ${SRC_DIR}/data/simulation_block.cpp
+    ${SRC_DIR}/data/simulation_block_validation.cpp
     ${SRC_DIR}/data/quantity_catalog_builder.cpp
     ${SRC_DIR}/FileIO/hdf5_reader.cpp
     ${SRC_DIR}/FileIO/snapshot_io_service.cpp

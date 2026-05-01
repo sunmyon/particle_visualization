@@ -1,7 +1,7 @@
 #include <vector>
 
-#include "data/particle_block.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_block.h"
+#include "data/sample_coordinates.h"
 
 #include "core/quantity.h"
 #include "render/particle_visual_config.h"
@@ -22,7 +22,7 @@ void BuildRenderParticles(const ParticleRenderInput& input,
     return;
   }
 
-  const ParticleBlock& block = *input.block;
+  const SimulationBlock& block = *input.block;
   out.reserve(block.particles.size());
   if (stressOut) {
     stressOut->reserve(block.particles.size() / 32);
@@ -43,13 +43,13 @@ void BuildRenderParticles(const ParticleRenderInput& input,
     if (visualConfig.types[type].hideParticles) continue;
 
     RenderParticle rp;
-    normalizedParticlePosition(p, block.normalizedScale, rp.pos);
+    renderPosition(p, block.worldToRenderScale, rp.pos);
     rp.type = static_cast<uint8_t>(p.type);
     rp.flag_stress =
       (input.stressFlags && i < input.stressFlags->size())
         ? static_cast<uint8_t>((*input.stressFlags)[i])
         : 0;
-    rp.hsml = normalizedParticleHsml(p, block.normalizedScale);
+    rp.hsml = renderSupportRadius(p, block.worldToRenderScale);
     rp.val_show = getScalarValue(block,
                                  p,
                                  i,
@@ -62,8 +62,8 @@ void BuildRenderParticles(const ParticleRenderInput& input,
   }
 }
 
-std::vector<float> BuildVelocityInstanceData(const std::vector<ParticleData>& particles,
-                                             float normalizedScale,
+std::vector<float> BuildVelocityInstanceData(const std::vector<SimulationElement>& particles,
+                                             float worldToRenderScale,
 					     const int velocity_subtraction)
 {
   std::vector<float> instanceData;
@@ -76,7 +76,7 @@ std::vector<float> BuildVelocityInstanceData(const std::vector<ParticleData>& pa
     if (i % stride != 0) continue;
 
     const auto& p = particles[i];
-    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
 
     instanceData.push_back(pos.x);
     instanceData.push_back(pos.y);
@@ -101,7 +101,7 @@ void UpdateVelocityRenderData(const ParticleRenderInput& input,
   }
 
   velocityInstanceData = BuildVelocityInstanceData(input.block->particles,
-                                                   input.block->normalizedScale,
+                                                   input.block->worldToRenderScale,
                                                    velocity_subtraction);
 }
 

@@ -2,7 +2,7 @@
 
 #include <glm/vec3.hpp>
 
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 #include <vector>
 #include "core/quantity.h"
 #include "analysis/convex_hull/convex_hull_interface.h"
@@ -51,7 +51,7 @@ struct Histogram2DResult {
 
 struct Histogram2DContext {
   const glm::vec3* cameraCenter = nullptr;
-  float normalizedScale = 1.0f;
+  float worldToRenderScale = 1.0f;
 
 #ifdef USE_CONVEX_HULL
   const std::vector<std::shared_ptr<IConvexHull>>* convexHulls = nullptr;
@@ -60,7 +60,7 @@ struct Histogram2DContext {
 
 class Histogram2DComputer {
 public:
-  Histogram2DResult compute(const ParticleBlock& partblock,
+  Histogram2DResult compute(const SimulationBlock& partblock,
                             const Histogram2DParams& params,
                             const Histogram2DContext& ctx) const;
 };

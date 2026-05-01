@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "particle_block.h"
+#include "simulation_block.h"
 #include <vector>
 
 struct NormalizationContext;
@@ -11,12 +11,12 @@ struct QuantityState;
 struct UnitSystem;
 struct Header;
 
-class ParticleArray {
+class SimulationDataset {
 private:
-  int particleBlock_index; //current index in batch file list
+  int simulationBlock_index; //current index in batch file list
   
 public:
-  ParticleArray() = default;
+  SimulationDataset() = default;
 
   void rescalePositions(NormalizationContext& ctx);  
   
@@ -24,13 +24,13 @@ public:
   bool velocityDirty = true;
   bool flagParticleIndexDirty = true;
   
-  ParticleBlock particleBlock;
+  SimulationBlock simulationBlock;
   std::vector<uint8_t> flag_mask;
   std::vector<uint8_t> flag_stress;
 
   void ensureParticleFlagStorage()
   {
-    const size_t n = particleBlock.particles.size();
+    const size_t n = simulationBlock.particles.size();
     flag_mask.resize(n, 0);
     flag_stress.resize(n, 0);
   }
@@ -51,7 +51,7 @@ public:
         if (pid_raw < 0) continue;
       }
       const uint64_t pid = static_cast<uint64_t>(pid_raw);
-      const size_t ip = particleBlock.findIndexByID(pid);
+      const size_t ip = simulationBlock.findIndexByID(pid);
       if (ip == static_cast<size_t>(-1)) continue;
       flag_stress[ip] = 1;
     }
@@ -61,15 +61,15 @@ public:
   bool findParticleID(int64_t ID, float *pos)
   {
     if (ID < 0) return false;
-    size_t ip = particleBlock.findIndexByID(static_cast<uint64_t>(ID));
+    size_t ip = simulationBlock.findIndexByID(static_cast<uint64_t>(ID));
     if (ip == (size_t)-1) return false;
     
-    const auto &p = particleBlock.particles[ip];
-    normalizedParticlePosition(p, particleBlock.normalizedScale, pos);
+    const auto &p = simulationBlock.particles[ip];
+    renderPosition(p, simulationBlock.worldToRenderScale, pos);
     return true;
   }
     
-  bool setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity);
+  bool setSimulationBlock(SimulationBlock&& newBlock, SimulationBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity);
   void computeStellarDensity(const std::array<bool,6>& selType,
                              bool flag_overwirte_hsml,
                              const NormalizationContext& ctx,

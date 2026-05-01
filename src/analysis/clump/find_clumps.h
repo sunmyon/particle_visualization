@@ -5,9 +5,9 @@
 #include <nanoflann.hpp>
 
 #include <vector>
-#include "data/particle_block.h"
-#include "data/particle_coordinates.h"
-#include "data/particle_data.h"
+#include "data/simulation_block.h"
+#include "data/sample_coordinates.h"
+#include "data/simulation_element.h"
 #include "analysis/clump/structure_nodes.h"
 
 /**** needed for Im32U ****/
@@ -17,9 +17,9 @@ struct InputFilterConfig;
 
 class FindClump{
 public:
-  struct ParticleDataFiltered{
+  struct SimulationElementFiltered{
     float pos[3];
-    float normalized_hsml;
+    float renderSupportRadius;
     float density;
     float val;             // Physical quantity in [0,1].
     float mass;            // mass
@@ -28,21 +28,21 @@ public:
     int original_index;
   };
   
-  ParticleDataFiltered filter_particle_for_clump_find(const ParticleData p,
+  SimulationElementFiltered filter_particle_for_clump_find(const SimulationElement p,
                                                       size_t index,
-                                                      float normalizedScale,
+                                                      float worldToRenderScale,
                                                       const std::string &var) const{
-    ParticleDataFiltered p_f;
-    normalizedParticlePosition(p, normalizedScale, p_f.pos);
+    SimulationElementFiltered p_f;
+    renderPosition(p, worldToRenderScale, p_f.pos);
 
-    p_f.normalized_hsml = normalizedParticleHsml(p, normalizedScale);
+    p_f.renderSupportRadius = renderSupportRadius(p, worldToRenderScale);
     p_f.mass = p.mass;  
     p_f.density = p.density;  
     p_f.val = p.getValue(var);
 
     p_f.type = p.type;
-    p_f.ID = particleBlockForIds_
-      ? particleBlockForIds_->particleIdSigned(index)
+    p_f.ID = simulationBlockForIds_
+      ? simulationBlockForIds_->particleIdSigned(index)
       : static_cast<int64_t>(index);
 
     return p_f;
@@ -83,7 +83,7 @@ private:
   int snapshotIndex_prev;
 
   std::vector<StructureNode *> nodeList_next; //will be used for tracking clumps
-  const ParticleBlock* particleBlockForIds_ = nullptr;
+  const SimulationBlock* simulationBlockForIds_ = nullptr;
 
   void clearNodes(){
     if (findClumpComputed) {
@@ -104,7 +104,7 @@ private:
   };
 
   struct ParticleCloud {
-    std::vector<ParticleDataFiltered> pts;
+    std::vector<SimulationElementFiltered> pts;
 
     inline size_t kdtree_get_point_count() const {
       return pts.size();
@@ -125,18 +125,18 @@ private:
     3  // Dimension count.
     > KDTree_t;
   
-  void findClumps(std::vector<ParticleData>& cloud, float normalizedScale, const std::string &var);
+  void findClumps(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
   int find_parent(std::vector<int>& parent, int i);
   void union_sets(std::vector<int>& parent, int a, int b);
 
-  void findClumpsDendrogram(std::vector<ParticleData>& cloud, float normalizedScale, const std::string &var);
-  void calc_node_statistic(StructureNode *ns, const std::vector<ParticleDataFiltered>& p);
+  void findClumpsDendrogram(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
+  void calc_node_statistic(StructureNode *ns, const std::vector<SimulationElementFiltered>& p);
   void traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes);
-  std::vector<ParticleDataFiltered> filterParticles(const std::vector<ParticleData>& particles,
-                                                       float normalizedScale,
+  std::vector<SimulationElementFiltered> filterParticles(const std::vector<SimulationElement>& particles,
+                                                       float worldToRenderScale,
                                                        double threshold,
                                                        const std::string &var) const;
-  std::vector<ParticleData> getAllChildren(StructureNode* node, std::vector<ParticleData>& p) const;
+  std::vector<SimulationElement> getAllChildren(StructureNode* node, std::vector<SimulationElement>& p) const;
 
   void findClumpsInNextSnapshot(void);
   
@@ -188,19 +188,19 @@ public:
   void sortNodesByMass();
   void sortNodesByHierarchy();
   
-  void runFOF(ParticleBlock& block, const std::string &var){
-    particleBlockForIds_ = &block;
+  void runFOF(SimulationBlock& block, const std::string &var){
+    simulationBlockForIds_ = &block;
     clearNodes();
-    findClumps(block.particles, block.normalizedScale, var);
+    findClumps(block.particles, block.worldToRenderScale, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif
   }
 
-  void runDendrogram(ParticleBlock& block, const std::string &var){
-    particleBlockForIds_ = &block;
+  void runDendrogram(SimulationBlock& block, const std::string &var){
+    simulationBlockForIds_ = &block;
     clearNodes();
-    findClumpsDendrogram(block.particles, block.normalizedScale, var);
+    findClumpsDendrogram(block.particles, block.worldToRenderScale, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif
@@ -234,7 +234,7 @@ public:
   void buildMassHistogram(bool useLogScaleX, float& outMin, float& outMax);
   bool histogramComputed() const { return histogramComputed_; }
   
-  void writeFOFtoHDF5(const ParticleBlock& block,
+  void writeFOFtoHDF5(const SimulationBlock& block,
                       double snapshotTime,
                       const std::string &filename,
                       int snapshotIndex);
@@ -243,8 +243,8 @@ public:
     return nodeList.size();
   }
   
-  std::vector<ParticleData> get_particle_indices(int i, std::vector<ParticleData>& originalParticles) const{
-    std::vector<ParticleData> pts = getAllChildren(nodeList[i], originalParticles);
+  std::vector<SimulationElement> get_particle_indices(int i, std::vector<SimulationElement>& originalParticles) const{
+    std::vector<SimulationElement> pts = getAllChildren(nodeList[i], originalParticles);
     return pts;
   }
 
@@ -262,7 +262,7 @@ public:
   }
 
   void do_FOF_and_output_clump_data(int method,
-                                    ParticleBlock& block,
+                                    SimulationBlock& block,
                                     double snapshotTime,
                                     char *filename,
                                     int snpashotIndex);

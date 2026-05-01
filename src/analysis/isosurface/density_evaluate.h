@@ -6,13 +6,13 @@
 #include "analysis/isosurface/density_estimator.h"
 #include <vector>
 
-struct ParticleDataForKdTree {
+struct SimulationElementForKdTree {
     glm::vec3 pos;
     float     val;
 };
 
 struct PointCloud {
-  std::vector<ParticleDataForKdTree>  particles;
+  std::vector<SimulationElementForKdTree>  particles;
 
   inline size_t kdtree_get_point_count() const { return particles.size(); }
 
@@ -35,7 +35,7 @@ using KDTree3D = nanoflann::KDTreeSingleIndexAdaptor<
 
 
 struct SPHInterpolator : public IDensityEstimator {
-    SPHInterpolator(std::vector<ParticleDataForKdTree>&& pts);
+    SPHInterpolator(std::vector<SimulationElementForKdTree>&& pts);
 
     // Override the pure virtual function from IDensityEstimator.
     float sample(const glm::vec3& pos) const override;

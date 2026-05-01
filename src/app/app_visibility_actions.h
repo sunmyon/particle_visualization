@@ -1,10 +1,10 @@
 #pragma once
 
-class ParticleArray;
+class SimulationDataset;
 struct CameraContext;
 struct ViewFilterConfig;
 
-void ApplyCullingSphere(ParticleArray& particles,
+void ApplyCullingSphere(SimulationDataset& particles,
                         const ViewFilterConfig& viewFilter);
 
-void ClearVisibilityMask(ParticleArray& particles);
+void ClearVisibilityMask(SimulationDataset& particles);

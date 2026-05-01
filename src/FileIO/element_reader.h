@@ -2,20 +2,20 @@
 
 #include <vector>
 #include "FileIO/file_format_types.h"
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 
 class ParticleMask;
 
-class IParticleReader {
+class IElementReader {
 public:
-  virtual ~IParticleReader() = default;
+  virtual ~IElementReader() = default;
 
   virtual bool open(const std::string& path, HeaderInfo& header) = 0;
   virtual void close() = 0;
 
-  virtual size_t particleCount() const = 0;
+  virtual size_t elementCount() const = 0;
 
-  virtual bool readRange(ParticleBlock& out,
+  virtual bool readRange(SimulationBlock& out,
                          size_t begin, size_t count,
                          const std::vector<FieldSpec>& fields,
 			 ParticleMask* mask = nullptr) = 0;
@@ -23,10 +23,10 @@ public:
   virtual bool is_binary() { return false; };
   
   // Convenience function for reading the whole file.
-  bool readAll(ParticleBlock& out,
+  bool readAll(SimulationBlock& out,
                const std::vector<FieldSpec>& fields)
   {
-    return readRange(out, 0, particleCount(), fields, nullptr);
+    return readRange(out, 0, elementCount(), fields, nullptr);
   }
 
   bool tryFixAndCheckBinary(const std::string& fullPath, HeaderInfo& hdr, std::vector<FieldSpec>& formatTokens){
@@ -76,8 +76,8 @@ public:
   {
     if (!open(path, header)) return false;
 
-    const size_t n = std::min(ncheck, particleCount());
-    ParticleBlock blk;
+    const size_t n = std::min(ncheck, elementCount());
+    SimulationBlock blk;
     bool ok = readRange(blk, 0, n, fields);
 
     if (ok) {

@@ -6,14 +6,14 @@ class ClumpChain;
 class ClumpStore;
 class FindClump;
 class LoadedClumpTool;
-class ParticleArray;
+class SimulationDataset;
 class ProjectionMapGenerator;
 struct CameraContext;
 struct ClumpChainWindowState;
 struct ClumpFinderWindowState;
 struct LoadedClumpWindowState;
 struct NormalizationContext;
-class ParticleData;
+class SimulationElement;
 struct ProjectionMapParams;
 struct SnapshotCurrentState;
 struct SnapshotInputState;
@@ -23,7 +23,7 @@ struct UnitSystem;
 
 void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                       FindClump& clumpFind,
-                                      ParticleArray& particles,
+                                      SimulationDataset& particles,
                                       CameraContext& camera,
                                       double snapshotTime,
                                       const SnapshotInputState& input,
@@ -40,7 +40,7 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
 
 void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
                                      ClumpChain& chain,
-                                     ParticleArray& particles,
+                                     SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapGenerator& projectionMap,
                                      const ProjectionMapParams& baseParams,

@@ -6,11 +6,11 @@
 #include "app/state/tool_window_state.h"
 #include "analysis/histogram2d.h"
 #include "analysis/radial_profile.h"
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 
 void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
                                  RadialProfileResultState& result,
-                                 const ParticleBlock& partblock,
+                                 const SimulationBlock& partblock,
                                  const glm::vec3& camCenter,
                                  NormalizationContext& normalization,
                                  QuantityState& quantity)
@@ -21,14 +21,14 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
 
   static RadialProfileComputer computer;
   computer.setUnits(quantity.units);
-  const float normalizedToOriginal = normalization.toPhysicalScale();
+  const float renderToWorld = normalization.toPhysicalScale();
   glm::vec3 profileCenter = camCenter;
   if (request.params.useOriginal) {
-    profileCenter = camCenter * normalizedToOriginal;
+    profileCenter = camCenter * renderToWorld;
   }
 
   result.result = computer.compute(partblock,
-                                   normalizedToOriginal,
+                                   renderToWorld,
                                    request.params,
                                    profileCenter);
   result.computed = result.result.valid;
@@ -47,7 +47,7 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
 
 void ExecuteHistogram2DRequest(Histogram2DRequestState& request,
                                Histogram2DResultState& result,
-                               const ParticleBlock& partblock,
+                               const SimulationBlock& partblock,
                                const Histogram2DContext& ctx)
 {
   if (!request.runRequested) {

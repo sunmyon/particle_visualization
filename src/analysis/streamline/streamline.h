@@ -12,7 +12,7 @@
 #include <nanoflann.hpp>
 
 #include <vector>
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 
 struct Vec3 {
   float x, y, z;
@@ -104,7 +104,7 @@ struct StreamlineTrace {
 
 class StreamlineComputer {
  public:
-  StreamlineBuildOutput build(const ParticleBlock& particles,
+  StreamlineBuildOutput build(const SimulationBlock& particles,
                               const StreamlineBuildSpec& spec);
 
  private:
@@ -146,17 +146,17 @@ class StreamlineComputer {
 
   std::unique_ptr<KDTreeType> m_kdTree;
 
-  Bounds makeGasBounds(const std::vector<ParticleData>& particles,
-                       float normalizedScale) const;
+  Bounds makeGasBounds(const std::vector<SimulationElement>& particles,
+                       float worldToRenderScale) const;
   Bounds makeBoxBounds(const StreamlineBoxSpec& box) const;
-  std::vector<SeedPoint> selectSeeds(const std::vector<ParticleData>& particles,
-                                     float normalizedScale,
+  std::vector<SeedPoint> selectSeeds(const std::vector<SimulationElement>& particles,
+                                     float worldToRenderScale,
                                      const Bounds& bounds,
                                      int nSeeds) const;
-  SeedPoint makeManualSeed(const std::vector<ParticleData>& particles,
-                           float normalizedScale,
+  SeedPoint makeManualSeed(const std::vector<SimulationElement>& particles,
+                           float worldToRenderScale,
                            const std::array<float, 3>& seed) const;
-  void estimate_gradB(const ParticleBlock& particleBlock,
+  void estimate_gradB(const SimulationBlock& simulationBlock,
                       const Bounds& fieldBounds,
                       StreamlineBuildSpec::FieldSource fieldSource);
   bool evalFieldAt(const float x[3], float outB[3], float& hsml) const;

@@ -5,8 +5,8 @@
 #include <unordered_map>
 #include <array>
 
-#include "particle_data.h"
-#include "data/particle_coordinates.h"
+#include "simulation_element.h"
+#include "data/sample_coordinates.h"
 #include "core/physics_constants.h"
 #include "core/quantity.h"
 #include <vector>
@@ -14,9 +14,9 @@
 struct HeaderInfo;
 struct ParticleSelectionOption;
 
-struct ParticleBlock {
+struct SimulationBlock {
   // ---- AoS core ----
-  std::vector<ParticleData> particles;
+  std::vector<SimulationElement> particles;
 
   // ---- AoS extension (optional) ----
   AoSExtensionBuffer aosExt;
@@ -27,7 +27,7 @@ struct ParticleBlock {
 
   std::unordered_map<uint64_t, size_t> id2index;
   bool id2indexDirty = true;
-  float normalizedScale = 1.0f;
+  float worldToRenderScale = 1.0f;
   
   void resize(size_t n) {
     particles.resize(n);
@@ -51,7 +51,7 @@ struct ParticleBlock {
     soa.clear();
     id2index.clear();
     id2indexDirty = true;
-    normalizedScale = 1.0f;
+    worldToRenderScale = 1.0f;
   }
 
   bool hasParticleIds() const
@@ -281,20 +281,20 @@ public:
   };
   
   BuildResult rebuild(float desiredMax, const QuantityCatalogState& catalog);  
-  static ParticleBlock makeTestParticleBlock(HeaderInfo& header);
+  static SimulationBlock makeTestSimulationBlock(HeaderInfo& header);
 
   bool ComputeAngularMomentumAxis(const ParticleSelectionOption& op,
                                   glm::vec3& outAxis) const;
 };
 
 
-inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size_t ipart, VectorId v, float out[3]) {
+inline bool getVectorValue(const SimulationBlock& blk, const SimulationElement& p, size_t ipart, VectorId v, float out[3]) {
   switch (v) {
     case VectorId::OriginalPos: {
-      out[0]=p.original_pos[0]; out[1]=p.original_pos[1]; out[2]=p.original_pos[2]; return true;
+      out[0]=p.position[0]; out[1]=p.position[1]; out[2]=p.position[2]; return true;
     }
     case VectorId::Pos: {
-      normalizedParticlePosition(p, blk.normalizedScale, out);
+      renderPosition(p, blk.worldToRenderScale, out);
       return true;
     }
     case VectorId::Vel: {
@@ -312,18 +312,18 @@ inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size
   return false;
 }
 
-inline void setVectorValue(ParticleBlock& blk, ParticleData& p, size_t ipart, VectorId v, const float in[3]) {
+inline void setVectorValue(SimulationBlock& blk, SimulationElement& p, size_t ipart, VectorId v, const float in[3]) {
   switch (v) {
   case VectorId::OriginalPos:
-    p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2];
+    p.position[0]=in[0]; p.position[1]=in[1]; p.position[2]=in[2];
     return;
   case VectorId::Pos:
     {
       const float invScale =
-        (blk.normalizedScale != 0.0f) ? 1.0f / blk.normalizedScale : 1.0f;
-      p.original_pos[0]=in[0] * invScale;
-      p.original_pos[1]=in[1] * invScale;
-      p.original_pos[2]=in[2] * invScale;
+        (blk.worldToRenderScale != 0.0f) ? 1.0f / blk.worldToRenderScale : 1.0f;
+      p.position[0]=in[0] * invScale;
+      p.position[1]=in[1] * invScale;
+      p.position[2]=in[2] * invScale;
     }
     return;
   case VectorId::Vel:
@@ -337,28 +337,28 @@ inline void setVectorValue(ParticleBlock& blk, ParticleData& p, size_t ipart, Ve
   }
 }
 
-inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
+inline float getScalarValue(const SimulationBlock& blk, const SimulationElement& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
   switch (q) {
   case QuantityId::Density:     return p.density;
   case QuantityId::Temperature: return p.temperature;
   case QuantityId::Mass:
-    return p.mass;  // Adjust to match ParticleData if needed.
+    return p.mass;  // Adjust to match SimulationElement if needed.
 
   case QuantityId::Hsml:
-    return p.original_hsml;
+    return p.supportRadius;
 
-  case QuantityId::PosX:        return p.original_pos[0]; // or p.original_pos[0]
-  case QuantityId::PosY:        return p.original_pos[1];
-  case QuantityId::PosZ:        return p.original_pos[2];
+  case QuantityId::PosX:        return p.position[0]; // or p.position[0]
+  case QuantityId::PosY:        return p.position[1];
+  case QuantityId::PosZ:        return p.position[2];
 
   case QuantityId::Radius: {
     const float cx = center ? center[0] : 0.0f;
     const float cy = center ? center[1] : 0.0f;
     const float cz = center ? center[2] : 0.0f;
 
-    const float dx = p.original_pos[0] - cx;   // Use original_pos when needed.
-    const float dy = p.original_pos[1] - cy;
-    const float dz = p.original_pos[2] - cz;
+    const float dx = p.position[0] - cx;   // Use position when needed.
+    const float dy = p.position[1] - cy;
+    const float dz = p.position[2] - cz;
     return std::sqrt(dx*dx + dy*dy + dz*dz);
   }
 
@@ -371,13 +371,13 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
     const float vcy = vcenter ? vcenter[1] : 0.0f;
     const float vcz = vcenter ? vcenter[2] : 0.0f;
 
-    const float dx = p.original_pos[0] - cx;
-    const float dy = p.original_pos[1] - cy;
-    const float dz = p.original_pos[2] - cz;
+    const float dx = p.position[0] - cx;
+    const float dy = p.position[1] - cy;
+    const float dz = p.position[2] - cz;
       
-    const float dvx = (p.original_pos[0] - cx) * (p.vel[0] - vcx);
-    const float dvy = (p.original_pos[1] - cy) * (p.vel[1] - vcy);
-    const float dvz = (p.original_pos[2] - cz) * (p.vel[2] - vcz);
+    const float dvx = (p.position[0] - cx) * (p.vel[0] - vcx);
+    const float dvy = (p.position[1] - cy) * (p.vel[1] - vcy);
+    const float dvz = (p.position[2] - cz) * (p.vel[2] - vcz);
     return (dvx + dvy + dvz)/sqrt(dx*dx + dy*dy + dz*dz);
   }
 
@@ -445,7 +445,7 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
   return 0.0f;
 }
 
-inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, QuantityId q, float x) {
+inline void setScalarValue(SimulationBlock& blk, SimulationElement& p, size_t ipart, QuantityId q, float x) {
   switch (q) {
     case QuantityId::Density:
       p.density = x;
@@ -457,7 +457,7 @@ inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, Qu
       p.mass = x;
       return;
     case QuantityId::Hsml:
-      p.original_hsml = x;
+      p.supportRadius = x;
       return;
     case QuantityId::Val:
       blk.writeSoAAs(soa_views::Val1, ipart, x);

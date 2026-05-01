@@ -1,7 +1,7 @@
 // ==================================================================
 // DiskRadiusFinder (C++17)
 // enclosed-mass Kepler test
-// * float[3] position / velocity in ParticleData
+// * float[3] position / velocity in SimulationElement
 // * stateless finder: each compute() fills a DiskObject
 // ==================================================================
 #pragma once
@@ -16,7 +16,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "render/scene_objects.h"
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 
 #if defined(USE_TBB) && __has_include(<tbb/parallel_sort.h>)
 #define HAS_TBB 1
@@ -48,7 +48,7 @@ public:
 
   template<class VecT>
   bool compute(const VecT& particles,
-               float normalizedScale,
+               float worldToRenderScale,
                const Params& par,
                DiskObject& disk) const;
 
@@ -88,7 +88,7 @@ private:
 /*=================== Implementation =============================*/
 template<class VecT>
 inline bool DiskRadiusFinder::compute(const VecT& particles,
-                                      float normalizedScale,
+                                      float worldToRenderScale,
                                       const Params& par,
                                       DiskObject& disk) const
 {
@@ -101,7 +101,7 @@ inline bool DiskRadiusFinder::compute(const VecT& particles,
   P.reserve(particles.size());
 
   for (const auto& src : particles) {
-    const glm::vec3 pos = normalizedParticlePosition(src, normalizedScale);
+    const glm::vec3 pos = renderPosition(src, worldToRenderScale);
     PDisk d;
     d.m = src.mass;
     d.pos = {

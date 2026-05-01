@@ -7,8 +7,8 @@
 #include <imgui.h>
 #include <glm/glm.hpp>
 
-#include "data/particle_array.h"
-#include "data/particle_coordinates.h"
+#include "data/simulation_dataset.h"
+#include "data/sample_coordinates.h"
 #include "interaction/camera.h"
 #include "render/render_state.h"
 #include "render/render_viewport.h"
@@ -20,7 +20,7 @@ struct Hit {
   float dist2;
 };
 
-static std::vector<Hit> CollectHits(const ParticleArray& particles,
+static std::vector<Hit> CollectHits(const SimulationDataset& particles,
                                     const glm::vec3& queryPos,
                                     float queryRadius,
                                     bool sinkOnly)
@@ -28,14 +28,14 @@ static std::vector<Hit> CollectHits(const ParticleArray& particles,
   std::vector<Hit> hits;
   const float radius2 = queryRadius * queryRadius;
 
-  for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
-    const auto& p = particles.particleBlock.particles[i];
+  for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+    const auto& p = particles.simulationBlock.particles[i];
 
     if (sinkOnly && p.type <= 2)
       continue;
 
     const glm::vec3 pos =
-      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+      renderPosition(p, particles.simulationBlock.worldToRenderScale);
     const float dx = pos.x - queryPos.x;
     const float dy = pos.y - queryPos.y;
     const float dz = pos.z - queryPos.z;
@@ -60,7 +60,7 @@ static glm::vec3 ParticleLabelQueryCenter(const CameraContext& camCtx)
 
 } // namespace
 
-bool ParticleLabelOverlay::needsRebuild(const ParticleArray& particles,
+bool ParticleLabelOverlay::needsRebuild(const SimulationDataset& particles,
                                         const CameraContext& camCtx,
                                         const ParticleLabelRenderState& state) const
 {
@@ -84,7 +84,7 @@ bool ParticleLabelOverlay::needsRebuild(const ParticleArray& particles,
   return glm::distance(queryCenter, lastQueryCenter_) > kQueryCenterEpsilon;
 }
 
-void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
+void ParticleLabelOverlay::rebuild(const SimulationDataset& particles,
                                    const CameraContext& camCtx,
                                    const ParticleLabelRenderState& state)
 {
@@ -104,12 +104,12 @@ void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
   labels_.reserve(n);
 
   for (size_t k = 0; k < n; ++k) {
-    const auto& p = particles.particleBlock.particles[hits[k].idx];
+    const auto& p = particles.simulationBlock.particles[hits[k].idx];
 
     ParticleLabelItem item;
     item.worldPos =
-      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
-    item.id = particles.particleBlock.particleIdSigned(hits[k].idx);
+      renderPosition(p, particles.simulationBlock.worldToRenderScale);
+    item.id = particles.simulationBlock.particleIdSigned(hits[k].idx);
     labels_.push_back(item);
   }
 

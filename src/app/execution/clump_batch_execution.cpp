@@ -7,12 +7,12 @@
 #include "app/state/analysis_state.h"
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/state/runtime_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 
 #include <cstdio>
 #include <string>
 
-bool ExecuteClumpRequest(ParticleArray& particles,
+bool ExecuteClumpRequest(SimulationDataset& particles,
                          FindClump& clumpFind,
                          ClumpRequestState& request)
 {
@@ -22,14 +22,14 @@ bool ExecuteClumpRequest(ParticleArray& particles,
 
   request.runRequested = false;
 
-  if (particles.particleBlock.particles.empty() ||
+  if (particles.simulationBlock.particles.empty() ||
       request.outputPath[0] == '\0' ||
       request.snapshotIndex < 0) {
     return false;
   }
 
   clumpFind.do_FOF_and_output_clump_data(request.method,
-                                         particles.particleBlock,
+                                         particles.simulationBlock,
                                          request.snapshotTime,
                                          request.outputPath,
                                          request.snapshotIndex);
@@ -146,7 +146,7 @@ static void FinishClumpBatchExecution(FileNavigationRuntimeState& fileNav,
   }
 }
 
-void ExecuteClumpBatchRequest(ParticleArray& particles,
+void ExecuteClumpBatchRequest(SimulationDataset& particles,
                               FileNavigationRuntimeState& fileNav,
                               SnapshotLoadRuntimeState& snapshotLoad,
                               FindClump& clumpFind,

@@ -1,7 +1,7 @@
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 #include "core/quantity.h"
 
-void BuildQuantityCatalog(const ParticleBlock& block, QuantityCatalogState& out){
+void BuildQuantityCatalog(const SimulationBlock& block, QuantityCatalogState& out){
   out.nAllQ = 0; out.nUIQ = 0;
 
   auto pushAll = [&](QuantityId q){ out.allQ[out.nAllQ++] = q; };

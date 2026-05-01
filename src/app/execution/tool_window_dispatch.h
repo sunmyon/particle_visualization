@@ -17,13 +17,13 @@ struct ToolWindowUIState;
 class ClumpChain;
 class FindClump;
 class LoadedClumpTool;
-class ParticleArray;
+class SimulationDataset;
 class ProjectionMapGenerator;
 class ClumpStore;
 class HaloStore;
 
 struct ParticleToolExecutionInput {
-  ParticleArray& particles;
+  SimulationDataset& particles;
   CameraContext& camera;
   TrackingTargetState& tracking;
   SnapshotPostprocessState& snapshotPostprocess;
@@ -31,7 +31,7 @@ struct ParticleToolExecutionInput {
 };
 
 struct AnalysisToolExecutionInput {
-  ParticleArray& particles;
+  SimulationDataset& particles;
   QuantityState& quantity;
   NormalizationContext& normalization;
   AnalysisDerivedState& analysis;
@@ -41,7 +41,7 @@ struct AnalysisToolExecutionInput {
 struct ProjectionToolExecutionInput {
   ProjectionMapGenerator* projectionMap2D = nullptr;
   ClumpChain* clumpChain = nullptr;
-  ParticleArray& particles;
+  SimulationDataset& particles;
   const UnitSystem& units;
   ProjectionMapToolState& projectionMap;
   const SnapshotCurrentState& snapshotCurrent;
@@ -52,7 +52,7 @@ struct ProjectionToolExecutionInput {
 
 struct HaloToolExecutionInput {
   HaloStore& haloStore;
-  ParticleArray& particles;
+  SimulationDataset& particles;
   CameraContext& camera;
   const NormalizationContext& normalization;
 };
@@ -61,7 +61,7 @@ struct ClumpToolExecutionInput {
   FindClump* clumpFind = nullptr;
   LoadedClumpTool* clumpLoad = nullptr;
   ClumpStore& clumpStore;
-  ParticleArray& particles;
+  SimulationDataset& particles;
   TrackingTargetState& tracking;
   CameraContext& camera;
   const SnapshotInputState& snapshotInput;

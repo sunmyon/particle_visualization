@@ -1,6 +1,6 @@
 #include "analysis/isosurface/iso_contour_build.h"
 
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 
 #ifdef ISO_CONTOUR
 #include <cfloat>
@@ -14,7 +14,7 @@
 #include "analysis/isosurface/isosurface_generator.h"
 #include "analysis/isosurface/marching_cubes.h"
 #include "core/quantity.h"
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 #include "data/spatial/particle_octree.h"
 #include "volume/adaptive_volume_tree.h"
 
@@ -42,23 +42,23 @@ std::string FormatStats(const char* label, const IsoContourMeshStats& stats)
   return buffer;
 }
 
-std::vector<ParticleDataForTree> MakeIsoParticles(const ParticleBlock& block,
+std::vector<SimulationElementForTree> MakeIsoParticles(const SimulationBlock& block,
                                                      QuantityId quantity)
 {
-  std::vector<ParticleDataForTree> particles;
+  std::vector<SimulationElementForTree> particles;
   particles.reserve(block.particles.size());
 
   for (size_t ipart = 0; ipart < block.particles.size(); ++ipart) {
     const auto& pd = block.particles[ipart];
     float val = getScalarValue(block, pd, ipart, quantity);
     particles.push_back(
-      {normalizedParticlePosition(pd, block.normalizedScale), val});
+      {renderPosition(pd, block.worldToRenderScale), val});
   }
   return particles;
 }
 
 BoundingBox ComputeIsoParticleBounds(
-  const std::vector<ParticleDataForTree>& particles)
+  const std::vector<SimulationElementForTree>& particles)
 {
   BoundingBox worldBox;
   worldBox.min = glm::vec3(FLT_MAX);
@@ -70,7 +70,7 @@ BoundingBox ComputeIsoParticleBounds(
   return worldBox;
 }
 
-IsoSurfaceParams MakeIsoSurfaceParams(const ParticleBlock& block,
+IsoSurfaceParams MakeIsoSurfaceParams(const SimulationBlock& block,
                                       const IsoContourBuildParams& build)
 {
   IsoSurfaceParams params;
@@ -100,7 +100,7 @@ Mesh BuildTimed(Fn&& fn, IsoContourMeshStats& stats)
 } // namespace
 
 IsoContourBuildResult BuildIsoContourMeshDetailed(
-  const ParticleBlock& block,
+  const SimulationBlock& block,
   const IsoContourBuildParams& build)
 {
   IsoContourBuildResult result;
@@ -120,7 +120,7 @@ IsoContourBuildResult BuildIsoContourMeshDetailed(
 }
 
 IsoContourTreeBuildResult BuildAdaptiveIsoContourTree(
-  const ParticleBlock& block,
+  const SimulationBlock& block,
   const IsoContourBuildParams& build)
 {
   IsoContourTreeBuildResult result;
@@ -203,7 +203,7 @@ IsoContourBuildResult ExtractAdaptiveIsoContourMesh(
   return result;
 }
 
-Mesh BuildIsoContourMesh(const ParticleBlock& block,
+Mesh BuildIsoContourMesh(const SimulationBlock& block,
                          const IsoContourBuildParams& build)
 {
   return BuildIsoContourMeshDetailed(block, build).mesh;

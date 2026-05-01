@@ -11,7 +11,7 @@
 
 #include "core/quantity.h"
 
-struct ParticleBlock;
+struct SimulationBlock;
 class ParticleOctree;
 
 using VolumeSigmaMapper = std::function<float(float)>;
@@ -70,6 +70,6 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromOctree(
   const VolumeSigmaMapper& sigmaMapper);
 
 AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
-  const ParticleBlock& particles,
+  const SimulationBlock& particles,
   const AdaptiveVolumeTreeBuildParams& params,
   const VolumeSigmaMapper& sigmaMapper);

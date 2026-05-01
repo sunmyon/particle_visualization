@@ -3,43 +3,43 @@
 #include <cstring>
 
 namespace bridge {
-  bool loadInitialFromAoS(PythonBridge& bridge, const ParticleArray& P) {
+  bool loadInitialFromAoS(PythonBridge& bridge, const SimulationDataset& P) {
     auto& S = bridge.shared();
     
-    const size_t srcN = P.particleBlock.particles.size();
+    const size_t srcN = P.simulationBlock.particles.size();
     const size_t N    = std::min(static_cast<size_t>(S.N), srcN);
     if (N == 0 || !S.pos) return false;
 
     for (size_t i = 0; i < N; ++i)
       {
-	const ParticleData* src = &P.particleBlock.particles[i];
+	const SimulationElement* src = &P.simulationBlock.particles[i];
 
 	float v[3];
 	if (S.pos) {
-	  getVectorValue(P.particleBlock, *src, i, VectorId::Pos, v);
+	  getVectorValue(P.simulationBlock, *src, i, VectorId::Pos, v);
 	  S.pos[3*i+0]=v[0]; S.pos[3*i+1]=v[1]; S.pos[3*i+2]=v[2];
 	}
 	if (S.origpos) {
-	  getVectorValue(P.particleBlock, *src, i, VectorId::OriginalPos, v);
+	  getVectorValue(P.simulationBlock, *src, i, VectorId::OriginalPos, v);
 	  S.origpos[3*i+0]=v[0]; S.origpos[3*i+1]=v[1]; S.origpos[3*i+2]=v[2];
 	}
 	if (S.vel) {
-	  getVectorValue(P.particleBlock, *src, i, VectorId::Vel, v);
+	  getVectorValue(P.simulationBlock, *src, i, VectorId::Vel, v);
 	  S.vel[3*i+0]=v[0]; S.vel[3*i+1]=v[1]; S.vel[3*i+2]=v[2];
 	}
 	if (S.B) {
-	  getVectorValue(P.particleBlock, *src, i, VectorId::Bfield, v);
+	  getVectorValue(P.simulationBlock, *src, i, VectorId::Bfield, v);
 	  S.B[3*i+0]=v[0]; S.B[3*i+1]=v[1]; S.B[3*i+2]=v[2];
 	}
 
-	if (S.dens) S.dens[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Density);
-	if (S.temp) S.temp[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Temperature);
-	if (S.mass) S.mass[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Mass);
-	if (S.hsml) S.hsml[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Hsml);
-	if (S.val ) S.val[i]  = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Val);
-	if (S.val2) S.val2[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Val2);
+	if (S.dens) S.dens[i] = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Density);
+	if (S.temp) S.temp[i] = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Temperature);
+	if (S.mass) S.mass[i] = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Mass);
+	if (S.hsml) S.hsml[i] = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Hsml);
+	if (S.val ) S.val[i]  = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Val);
+	if (S.val2) S.val2[i] = getScalarValue(P.simulationBlock, *src, (int)i, QuantityId::Val2);
 		
-	if (S.id)   S.id[i]   = P.particleBlock.particleId(i);
+	if (S.id)   S.id[i]   = P.simulationBlock.particleId(i);
 	if (S.type) S.type[i] = static_cast<uint8_t>(src->type);
 	if (S.flag) {
 	  S.flag[i] = (i < P.flag_stress.size())
@@ -63,9 +63,9 @@ namespace bridge {
     return true;
   }
 
-  void applyFromSharedToAoS(const PythonBridge::Shared& S, ParticleArray& P,
+  void applyFromSharedToAoS(const PythonBridge::Shared& S, SimulationDataset& P,
 			    const std::vector<FieldId>& dirty) {
-    const size_t N = std::min<size_t>(S.N, P.particleBlock.particles.size());
+    const size_t N = std::min<size_t>(S.N, P.simulationBlock.particles.size());
     auto need = [&](FieldId id){
       if (dirty.empty()) return true;
       return std::find(dirty.begin(), dirty.end(), id) != dirty.end();
@@ -73,45 +73,45 @@ namespace bridge {
 
     if (need(F_POS) && S.pos) {
       for (size_t i=0; i<N; ++i) {
-	ParticleData& p = P.particleBlock.particles[i];
+	SimulationElement& p = P.simulationBlock.particles[i];
 	float in[3] = { S.pos[3*i+0], S.pos[3*i+1], S.pos[3*i+2] };
-	setVectorValue(P.particleBlock, p, i, VectorId::Pos, in);
+	setVectorValue(P.simulationBlock, p, i, VectorId::Pos, in);
       }
       P.particlesDirty = true;
     }
 
     if (need(F_ORIGPOS) && S.origpos) {
       for (size_t i=0; i<N; ++i) {
-	ParticleData& p = P.particleBlock.particles[i];
+	SimulationElement& p = P.simulationBlock.particles[i];
 	float in[3] = { S.origpos[3*i+0], S.origpos[3*i+1], S.origpos[3*i+2] };
-	setVectorValue(P.particleBlock, p, i, VectorId::OriginalPos, in);
+	setVectorValue(P.simulationBlock, p, i, VectorId::OriginalPos, in);
       }
       P.particlesDirty = true;
     }
 
     if (need(F_VEL) && S.vel) {
       for (size_t i=0; i<N; ++i) {
-	ParticleData& p = P.particleBlock.particles[i];
+	SimulationElement& p = P.simulationBlock.particles[i];
 	float in[3] = { S.vel[3*i+0], S.vel[3*i+1], S.vel[3*i+2] };
-	setVectorValue(P.particleBlock, p, i, VectorId::Vel, in);
+	setVectorValue(P.simulationBlock, p, i, VectorId::Vel, in);
       }
       P.velocityDirty = true;
     }
 
     if (need(F_B) && S.B) {
       for (size_t i=0; i<N; ++i) {
-	ParticleData& p = P.particleBlock.particles[i];
+	SimulationElement& p = P.simulationBlock.particles[i];
 	float in[3] = { S.B[3*i+0], S.B[3*i+1], S.B[3*i+2] };
-	setVectorValue(P.particleBlock, p, i, VectorId::Bfield, in);
+	setVectorValue(P.simulationBlock, p, i, VectorId::Bfield, in);
       }
     }
 
-    if (need(F_DENS) && S.dens) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Density, S.dens[i]);
-    if (need(F_TEMP) && S.temp) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Temperature, S.temp[i]);
-    if (need(F_MASS) && S.mass) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Mass, S.mass[i]);
-    if (need(F_HSML) && S.hsml) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Hsml, S.hsml[i]);
-    if (need(F_VAL ) && S.val ) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Val, S.val[i]);
-    if (need(F_VAL2) && S.val2) for (size_t i=0; i<N; ++i) setScalarValue(P.particleBlock, P.particleBlock.particles[i], i, QuantityId::Val2, S.val2[i]);
+    if (need(F_DENS) && S.dens) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Density, S.dens[i]);
+    if (need(F_TEMP) && S.temp) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Temperature, S.temp[i]);
+    if (need(F_MASS) && S.mass) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Mass, S.mass[i]);
+    if (need(F_HSML) && S.hsml) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Hsml, S.hsml[i]);
+    if (need(F_VAL ) && S.val ) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Val, S.val[i]);
+    if (need(F_VAL2) && S.val2) for (size_t i=0; i<N; ++i) setScalarValue(P.simulationBlock, P.simulationBlock.particles[i], i, QuantityId::Val2, S.val2[i]);
     if ((need(F_DENS) && S.dens) || (need(F_TEMP) && S.temp) ||
         (need(F_MASS) && S.mass) || (need(F_HSML) && S.hsml) ||
         (need(F_VAL) && S.val) || (need(F_VAL2) && S.val2)) {
@@ -119,12 +119,12 @@ namespace bridge {
     }
     
     if (need(F_ID) && S.id) {
-      P.particleBlock.ensureParticleIdStorage(DataType::Int64);
+      P.simulationBlock.ensureParticleIdStorage(DataType::Int64);
       for (size_t i=0; i<N; ++i) {
-        P.particleBlock.setParticleId(i, S.id[i]);
+        P.simulationBlock.setParticleId(i, S.id[i]);
       }
     }
-    if (need(F_TYPE) && S.type) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].type = static_cast<uint8_t>(S.type[i]);
+    if (need(F_TYPE) && S.type) for (size_t i=0; i<N; ++i) P.simulationBlock.particles[i].type = static_cast<uint8_t>(S.type[i]);
     if (need(F_FLAG) && S.flag) {
       if (P.flag_stress.size() < N) P.flag_stress.resize(N, 0);
       for (size_t i=0; i<N; ++i) P.flag_stress[i] = static_cast<uint8_t>(S.flag[i]);

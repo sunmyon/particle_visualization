@@ -2,8 +2,8 @@
 #include <cstdint>
 
 #include <vector>
-#include "data/particle_block.h"
-#include "data/particle_data.h"
+#include "data/simulation_block.h"
+#include "data/simulation_element.h"
 
 class StructureNode {
 public:
@@ -40,7 +40,7 @@ public:
     }
   }
   
-  void construct_ID_array(const ParticleBlock& block){
+  void construct_ID_array(const SimulationBlock& block){
     IDs={};
     
     for(size_t i=0; i<indices.size();i++){

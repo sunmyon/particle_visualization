@@ -27,7 +27,7 @@
 #include "app/state/normalization_config.h"
 #include "app/settings_analysis_requests.h"
 #include "app/state/tool_window_commands.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "render/render_system.h"
 
 #include "UI/common_ui.h"
@@ -139,10 +139,10 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.camera.target[1] = view.camera.cameraTarget.y;
   ctx.camera.target[2] = view.camera.cameraTarget.z;
   float toOriginal = runtime.settings.normalization.toPhysicalScale();
-  if (data.particles && data.particles->particleBlock.normalizedScale > 0.0f) {
-    toOriginal = 1.0f / data.particles->particleBlock.normalizedScale;
+  if (data.particles && data.particles->simulationBlock.worldToRenderScale > 0.0f) {
+    toOriginal = 1.0f / data.particles->simulationBlock.worldToRenderScale;
   }
-  ctx.camera.normalizedToOriginalScale = toOriginal;
+  ctx.camera.renderToWorldScale = toOriginal;
   for (int axis = 0; axis < 3; ++axis) {
     ctx.camera.originalPosition[axis] = ctx.camera.position[axis] * toOriginal;
     ctx.camera.originalTarget[axis] = ctx.camera.target[axis] * toOriginal;
@@ -154,9 +154,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
 
   if (data.particles) {
     ctx.memory.particleCount =
-      data.particles->particleBlock.particles.size();
+      data.particles->simulationBlock.particles.size();
     ctx.memory.cpuParticleBytes =
-      data.particles->particleBlock.particles.size() * sizeof(ParticleData) +
+      data.particles->simulationBlock.particles.size() * sizeof(SimulationElement) +
       data.particles->flag_mask.size() * sizeof(uint8_t) +
       data.particles->flag_stress.size() * sizeof(uint8_t);
   }
@@ -308,10 +308,10 @@ static void DrawToolWindows(AppRuntimeState& runtime,
   plotExportCtx.useHDF5 = runtime.settings.fileNavigation.input.useHDF5;
 #endif
   float toOriginal = runtime.settings.normalization.toPhysicalScale();
-  if (data.particles && data.particles->particleBlock.normalizedScale > 0.0f) {
-    toOriginal = 1.0f / data.particles->particleBlock.normalizedScale;
+  if (data.particles && data.particles->simulationBlock.worldToRenderScale > 0.0f) {
+    toOriginal = 1.0f / data.particles->simulationBlock.worldToRenderScale;
   }
-  plotExportCtx.normalizedToOriginalScale = toOriginal;
+  plotExportCtx.renderToWorldScale = toOriginal;
   plotExportCtx.cameraPosition[0] = view.camera.cameraPos.x * toOriginal;
   plotExportCtx.cameraPosition[1] = view.camera.cameraPos.y * toOriginal;
   plotExportCtx.cameraPosition[2] = view.camera.cameraPos.z * toOriginal;
@@ -381,7 +381,7 @@ static void DrawToolWindows(AppRuntimeState& runtime,
 }
 
 static void UpdateExternalInputs(AppServices& services,
-                                 ParticleArray& particles)
+                                 SimulationDataset& particles)
 {
 #ifdef PYTHON_BRIDGE
   if (services.py.ptr) {

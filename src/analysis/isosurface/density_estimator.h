@@ -1,6 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
-struct ParticleDataForKdTree;  // Include the definition or forward-declare it.
+struct SimulationElementForKdTree;  // Include the definition or forward-declare it.
 
 /// Density-estimator implementations should implement this interface.
 struct IDensityEstimator {

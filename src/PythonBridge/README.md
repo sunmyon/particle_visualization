@@ -11,14 +11,14 @@ It has two channels:
 2. A small ZeroMQ REP server receives edit notifications from Python.
 
 Python edits the shared memory arrays directly, then sends an `edit` RPC so the
-GUI knows which fields must be copied back into `ParticleArray`.
+GUI knows which fields must be copied back into `SimulationDataset`.
 
 ```text
 particle_vis
   PythonBridge
     PythonBridgeSharedMemory  -> /cppvis_pos by default
     PythonBridgeRpcServer     -> tcp://127.0.0.1:5557 by default
-    BridgeAdapter             -> ParticleArray <-> shared arrays
+    BridgeAdapter             -> SimulationDataset <-> shared arrays
 
 Python
   ShmParticles                -> numpy views into shared memory

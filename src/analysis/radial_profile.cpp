@@ -8,10 +8,10 @@
 #include <vector>
 
 #include "core/physics_constants.h"
-#include "data/particle_coordinates.h"
+#include "data/sample_coordinates.h"
 
 RadialProfileResult
-RadialProfileComputer::compute(const ParticleBlock& partblock,
+RadialProfileComputer::compute(const SimulationBlock& partblock,
 			       double scaleToPhysical,
                                const RadialProfileParams& params,
 			       const glm::vec3& cam_center)
@@ -39,12 +39,12 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
     normalizationFactor = 1.0f;
   }
   glm::vec3 center = cam_center;
-  const float normalizedScale = 1.0f / normalizationFactor;
+  const float worldToRenderScale = 1.0f / normalizationFactor;
 
-  auto getPos = [&](const ParticleData& p) -> glm::vec3 {
+  auto getPos = [&](const SimulationElement& p) -> glm::vec3 {
     return params.useOriginal
-      ? glm::vec3(p.original_pos[0], p.original_pos[1], p.original_pos[2])
-      : normalizedParticlePosition(p, normalizedScale);
+      ? glm::vec3(p.position[0], p.position[1], p.position[2])
+      : renderPosition(p, worldToRenderScale);
   };
 
   struct Item {
@@ -60,7 +60,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
   items.reserve(partblock.particles.size());
 
   for (int i = 0; i < (int)partblock.particles.size(); ++i) {
-    const ParticleData& p = partblock.particles[i];
+    const SimulationElement& p = partblock.particles[i];
     if (p.type != 0) continue;
 
     glm::vec3 pos  = getPos(p);
@@ -86,7 +86,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
     for (const auto& it : items) {
       if (it.r < dmin) {
         dmin = it.r;
-        const ParticleData& p = partblock.particles[it.idx];
+        const SimulationElement& p = partblock.particles[it.idx];
         v_center = glm::vec3(p.vel[0], p.vel[1], p.vel[2]);
       }
     }
@@ -205,7 +205,7 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
     if (bin >= bins) bin = bins - 1;
     if (bin < 0)     bin = 0;
 
-    const ParticleData& p = partblock.particles[it.idx];
+    const SimulationElement& p = partblock.particles[it.idx];
 
     if (flag_cumulativeY) {
       masses[bin] += p.mass;

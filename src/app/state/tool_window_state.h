@@ -12,7 +12,7 @@
 #include "analysis/radial_profile.h"
 #include "core/quantity.h"
 #include <vector>
-#include "data/particle_data.h"
+#include "data/simulation_element.h"
 #include "data/particle_mask_config.h"
 #include "projection/projection_map_params.h"
 #include "projection/projection_map_ui_state.h"
@@ -140,12 +140,12 @@ struct TopParticlesRequestState {
 struct TopParticlesResultState {
   bool hasFound = false;
   bool queryFailed = false;
-  ParticleData foundParticle{};
+  SimulationElement foundParticle{};
   int64_t foundParticleId = -1;
 
-  std::deque<ParticleData> historyData;
+  std::deque<SimulationElement> historyData;
   std::deque<int64_t> historyIds;
-  std::vector<ParticleData> filtered;
+  std::vector<SimulationElement> filtered;
   std::vector<int64_t> filteredIds;
 
   bool histogramComputed = false;

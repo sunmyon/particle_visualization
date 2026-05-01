@@ -2,7 +2,7 @@ enum class DataRefreshKind {
   SnapshotLoaded,
   HaloCatalogReloaded,
   ClumpCatalogReloaded,
-  ParticleDataModified
+  SimulationElementModified
 };
 
 void HandleDataRefresh(DataRefreshKind kind,

@@ -3,7 +3,7 @@
 #include "app/execution/clump_window_execution.h"
 #include "app/state/runtime_state.h"
 #include "app/state/tool_window_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 
 void ExecuteClumpToolRequests(ToolWindowUIState& tools,
                               ClumpToolExecutionInput& input)

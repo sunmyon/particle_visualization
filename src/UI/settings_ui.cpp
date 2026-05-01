@@ -697,13 +697,13 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
   bool changed = false;
 
   float queryRadiusOriginal =
-    labels.queryRadius * camera.normalizedToOriginalScale;
+    labels.queryRadius * camera.renderToWorldScale;
   if (ImGui::InputFloat("radius (original)", &queryRadiusOriginal, 0.f, 0.f, "%g")) {
-    const float originalToNormalized =
-      (camera.normalizedToOriginalScale > 0.0f)
-      ? 1.0f / camera.normalizedToOriginalScale
+    const float worldToRender =
+      (camera.renderToWorldScale > 0.0f)
+      ? 1.0f / camera.renderToWorldScale
       : 1.0f;
-    labels.queryRadius = queryRadiusOriginal * originalToNormalized;
+    labels.queryRadius = queryRadiusOriginal * worldToRender;
     changed = true;
   }
   changed |= ImGui::InputInt("number of particles", &labels.maxLabels);
@@ -1441,7 +1441,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
           const int reason = (seed.stopReason >= 0 && seed.stopReason < 7)
             ? seed.stopReason
             : 0;
-          ImGui::Text("#%d stop=%s points=%d length=%.6g original_pos=(%.3f, %.3f, %.3f)",
+          ImGui::Text("#%d stop=%s points=%d length=%.6g position=(%.3f, %.3f, %.3f)",
                       seed.seedIndex,
                       stopLabels[reason],
                       seed.pointCount,

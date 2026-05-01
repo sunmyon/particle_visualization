@@ -2,7 +2,7 @@
 
 #include "render/render_resources.h"
 
-class ParticleArray;
+class SimulationDataset;
 struct AppDerivedState;
 struct ParticleVisualConfig;
 struct ProjectionPreviewDerivedState;
@@ -15,7 +15,7 @@ struct ParticleRenderBuildResult {
   bool velocityBuilt = false;
 };
 
-ParticleRenderInput MakeParticleRenderInput(const ParticleArray& particles);
+ParticleRenderInput MakeParticleRenderInput(const SimulationDataset& particles);
 
 ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& particleInput,
                                                 const ParticleVisualConfig& particleVisual,
@@ -26,7 +26,7 @@ ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& parti
                                                 const AppDerivedState& derived,
                                                 RenderSystem& rs);
 
-void AcknowledgeParticleRenderBuild(ParticleArray& particles,
+void AcknowledgeParticleRenderBuild(SimulationDataset& particles,
                                     const ParticleRenderBuildResult& result);
 
 void UpdateProjectionPreviewTexture(ProjectionPreviewDerivedState& source,

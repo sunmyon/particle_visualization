@@ -18,4 +18,4 @@ struct SpatialTreePoint {
   float val = 0.0f;
 };
 
-using ParticleDataForTree = SpatialTreePoint;
+using SimulationElementForTree = SpatialTreePoint;

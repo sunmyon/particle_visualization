@@ -2,7 +2,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-class ParticleData;
+class SimulationElement;
 
 struct ProjectionAngularMomentumFrame {
   glm::vec3 center{0.0f};
@@ -11,8 +11,8 @@ struct ProjectionAngularMomentumFrame {
 };
 
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
-    const std::vector<ParticleData>& particles,
-    float normalizedScale,
+    const std::vector<SimulationElement>& particles,
+    float worldToRenderScale,
     const glm::vec3& initialCenter,
     const float xlen[3]);
 

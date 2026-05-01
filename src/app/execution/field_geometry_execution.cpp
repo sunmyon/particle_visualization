@@ -24,7 +24,7 @@
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -57,7 +57,7 @@ std::array<LineObject, 3> MakeManualSeedMarker(const std::array<float, 3>& seed)
 }
 }
 
-void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
+void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
                                      StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result)
 {
@@ -75,16 +75,16 @@ void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
 
   result = StreamlinePreviewResultState{};
 
-  const float originalToNormalized =
-    particles.particleBlock.normalizedScale > 0.0f
-      ? particles.particleBlock.normalizedScale
+  const float worldToRender =
+    particles.simulationBlock.worldToRenderScale > 0.0f
+      ? particles.simulationBlock.worldToRenderScale
       : 1.0f;
 
   CubeObject cube;
-  cube.center  = originalToNormalized * glm::vec3(request.seedCenter[0],
+  cube.center  = worldToRender * glm::vec3(request.seedCenter[0],
                                                   request.seedCenter[1],
                                                   request.seedCenter[2]);
-  cube.halfSize = 0.5f * originalToNormalized * glm::vec3(request.seedSize[0],
+  cube.halfSize = 0.5f * worldToRender * glm::vec3(request.seedSize[0],
                                                           request.seedSize[1],
                                                           request.seedSize[2]);
   
@@ -98,7 +98,7 @@ void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
   result.cpuUpdated = true;
 }
 
-void ExecuteStreamlineBuildRequest(ParticleArray& particles,
+void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
                                    StreamlineComputer& streamLine,
                                    StreamlineBuildRequestState& request,
                                    StreamlineBuildResultState& result)
@@ -127,19 +127,19 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
   spec.stepScale = request.stepScale;
   spec.thetaMaxDegrees = request.thetaMaxDegrees;
   spec.useManualSeed = request.useManualSeed;
-  const float originalToNormalized =
-    particles.particleBlock.normalizedScale > 0.0f
-      ? particles.particleBlock.normalizedScale
+  const float worldToRender =
+    particles.simulationBlock.worldToRenderScale > 0.0f
+      ? particles.simulationBlock.worldToRenderScale
       : 1.0f;
-  const float normalizedToOriginal =
-    particles.particleBlock.normalizedScale > 0.0f
-      ? 1.0f / particles.particleBlock.normalizedScale
+  const float renderToWorld =
+    particles.simulationBlock.worldToRenderScale > 0.0f
+      ? 1.0f / particles.simulationBlock.worldToRenderScale
       : 1.0f;
 
   spec.manualSeeds = request.manualSeeds;
   for (auto& seed : spec.manualSeeds) {
     for (float& v : seed) {
-      v *= originalToNormalized;
+      v *= worldToRender;
     }
   }
 
@@ -148,8 +148,8 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
       request.seedSize[2] > 0.f) {
     spec.seedRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.seedRegion.center[i] = request.seedCenter[i] * originalToNormalized;
-      spec.seedRegion.size[i] = request.seedSize[i] * originalToNormalized;
+      spec.seedRegion.center[i] = request.seedCenter[i] * worldToRender;
+      spec.seedRegion.size[i] = request.seedSize[i] * worldToRender;
     }
   }
 
@@ -159,12 +159,12 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
       request.regionSize[2] > 0.f) {
     spec.fieldRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.fieldRegion.center[i] = request.regionCenter[i] * originalToNormalized;
-      spec.fieldRegion.size[i] = request.regionSize[i] * originalToNormalized;
+      spec.fieldRegion.center[i] = request.regionCenter[i] * worldToRender;
+      spec.fieldRegion.size[i] = request.regionSize[i] * worldToRender;
     }
   }
 
-  auto built = streamLine.build(particles.particleBlock, spec);
+  auto built = streamLine.build(particles.simulationBlock, spec);
 
   result.lines.clear();
   result.success = built.ok;
@@ -177,12 +177,12 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
   for (const auto& src : built.seedReports) {
     StreamlineBuildResultState::SeedReport dst;
     dst.seedIndex = src.seedIndex;
-    dst.position[0] = src.position[0] * normalizedToOriginal;
-    dst.position[1] = src.position[1] * normalizedToOriginal;
-    dst.position[2] = src.position[2] * normalizedToOriginal;
+    dst.position[0] = src.position[0] * renderToWorld;
+    dst.position[1] = src.position[1] * renderToWorld;
+    dst.position[2] = src.position[2] * renderToWorld;
     dst.stopReason = static_cast<int>(src.stopReason);
     dst.pointCount = src.pointCount;
-    dst.length = src.length * normalizedToOriginal;
+    dst.length = src.length * renderToWorld;
     result.seedReports.push_back(dst);
   }
 
@@ -213,7 +213,7 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
 }
 #endif
 
-void ExecuteStellarDensityRequest(ParticleArray& particles,
+void ExecuteStellarDensityRequest(SimulationDataset& particles,
 				  const UnitSystem& units,
 				  const NormalizationContext& normalization,
                                   StellarDensityRequestState& request,
@@ -241,7 +241,7 @@ void ExecuteStellarDensityRequest(ParticleArray& particles,
 #ifdef ISO_CONTOUR
 #include "analysis/isosurface/iso_contour_build.h"
 #include "analysis/isosurface/mesh_data.h"
-void ExecuteIsoContourRequest(ParticleArray& particles,
+void ExecuteIsoContourRequest(SimulationDataset& particles,
                               IsoContourRequestState& request,
                               IsoContourGeometryState& geometry,
                               RenderLayerState& isoContourRenderState)
@@ -280,7 +280,7 @@ void ExecuteIsoContourRequest(ParticleArray& particles,
                           params.cornerReconstructionMode);
   if (rebuildTreeRequested || !cacheMatches) {
     IsoContourTreeBuildResult tree =
-      BuildAdaptiveIsoContourTree(particles.particleBlock, params);
+      BuildAdaptiveIsoContourTree(particles.simulationBlock, params);
     geometry.adaptiveTree = std::move(tree.tree);
     geometry.adaptiveTreeValid = geometry.adaptiveTree.valid();
     geometry.cachedQuantity = params.selectedQuantity;

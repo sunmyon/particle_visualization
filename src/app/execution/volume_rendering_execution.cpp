@@ -10,7 +10,7 @@
 #include "app/state/analysis_state.h"
 #include "app/state/render_runtime_state.h"
 #include "app/state/runtime_state.h"
-#include "data/particle_array.h"
+#include "data/simulation_dataset.h"
 #include "volume/adaptive_volume_tree.h"
 
 namespace {
@@ -20,7 +20,7 @@ struct VolumeValueRange {
   bool valid = false;
 };
 
-VolumeValueRange ComputeVolumeValueRange(const ParticleBlock& block,
+VolumeValueRange ComputeVolumeValueRange(const SimulationBlock& block,
                                          QuantityId quantity,
                                          bool positiveOnly)
 {
@@ -29,7 +29,7 @@ VolumeValueRange ComputeVolumeValueRange(const ParticleBlock& block,
   range.max = -std::numeric_limits<float>::max();
 
   for (std::size_t i = 0; i < block.particles.size(); ++i) {
-    const ParticleData& p = block.particles[i];
+    const SimulationElement& p = block.particles[i];
     const float value = getScalarValue(block, p, static_cast<int>(i), quantity);
     if (!std::isfinite(value)) continue;
     if (positiveOnly && value <= 0.0f) continue;
@@ -54,7 +54,7 @@ VolumeValueRange ComputeVolumeValueRange(const ParticleBlock& block,
 
 }
 
-void ExecuteVolumeRenderingRequest(ParticleArray& particles,
+void ExecuteVolumeRenderingRequest(SimulationDataset& particles,
                                    VolumeRenderingRequestState& request,
                                    VolumeRenderingResultState& result,
                                    VolumeRenderState& volumeRenderState)
@@ -78,7 +78,7 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
 
   request.buildRequested = false;
 
-  if (particles.particleBlock.particles.empty()) {
+  if (particles.simulationBlock.particles.empty()) {
     result.tree.clear();
     result.stats = AdaptiveVolumeTreeStats{};
     result.valid = false;
@@ -95,7 +95,7 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
 
   if (request.autoRange) {
     const VolumeValueRange range =
-      ComputeVolumeValueRange(particles.particleBlock,
+      ComputeVolumeValueRange(particles.simulationBlock,
                               request.selectedQuantity,
                               request.logScale);
     request.valueMin = range.min;
@@ -106,7 +106,7 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
                             request.valueMax > request.valueMin;
     if (!validRange) {
       const VolumeValueRange range =
-        ComputeVolumeValueRange(particles.particleBlock,
+        ComputeVolumeValueRange(particles.simulationBlock,
                                 request.selectedQuantity,
                                 request.logScale);
       request.valueMin = range.min;
@@ -126,7 +126,7 @@ void ExecuteVolumeRenderingRequest(ParticleArray& particles,
   params.expandBoundsByHsml = true;
 
   AdaptiveVolumeTreeBuildResult built =
-    BuildAdaptiveVolumeTreeFromParticles(particles.particleBlock,
+    BuildAdaptiveVolumeTreeFromParticles(particles.simulationBlock,
                                          params,
                                          [](float value) {
                                            return std::isfinite(value)

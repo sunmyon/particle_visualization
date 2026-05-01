@@ -19,8 +19,8 @@
 #include "core/quantity.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
-#include "data/particle_array.h"
-#include "data/particle_data.h"
+#include "data/simulation_dataset.h"
+#include "data/simulation_element.h"
 #include "image/image_io.h"
 #include "image/rgb_image.h"
 #include "interaction/camera.h"
@@ -31,29 +31,29 @@
 static void RecenterCameraPreservingDistance(CameraContext& cam,
                                              const glm::vec3& newTarget);
 
-static float OriginalToNormalizedScale(float normalizedScale)
+static float WorldToRenderScaleOrOne(float worldToRenderScale)
 {
-  return normalizedScale > 0.0f ? normalizedScale : 1.0f;
+  return worldToRenderScale > 0.0f ? worldToRenderScale : 1.0f;
 }
 
-static float NormalizedToOriginalScale(float normalizedScale)
+static float RenderToWorldScaleOrOne(float worldToRenderScale)
 {
-  return normalizedScale > 0.0f ? 1.0f / normalizedScale : 1.0f;
+  return worldToRenderScale > 0.0f ? 1.0f / worldToRenderScale : 1.0f;
 }
 
-static glm::vec3 OriginalToNormalized(const glm::vec3& p, float normalizedScale)
+static glm::vec3 WorldToRender(const glm::vec3& p, float worldToRenderScale)
 {
-  return p * OriginalToNormalizedScale(normalizedScale);
+  return p * WorldToRenderScaleOrOne(worldToRenderScale);
 }
 
-static glm::vec3 NormalizedToOriginal(const glm::vec3& p, float normalizedScale)
+static glm::vec3 RenderToWorld(const glm::vec3& p, float worldToRenderScale)
 {
-  return p * NormalizedToOriginalScale(normalizedScale);
+  return p * RenderToWorldScaleOrOne(worldToRenderScale);
 }
 
 void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                              FindClump& clumpFind,
-                                             ParticleArray& particleArray,
+                                             SimulationDataset& simulationData,
                                              CameraContext& camera,
                                              double snapshotTime,
                                              const SnapshotInputState& input,
@@ -87,10 +87,10 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       row.count = node->count;
       row.mass = node->totalMass;
       const glm::vec3 originalPos =
-        NormalizedToOriginal(glm::vec3(static_cast<float>(node->pos_cm[0]),
+        RenderToWorld(glm::vec3(static_cast<float>(node->pos_cm[0]),
                                        static_cast<float>(node->pos_cm[1]),
                                        static_cast<float>(node->pos_cm[2])),
-                             particleArray.particleBlock.normalizedScale);
+                             simulationData.simulationBlock.worldToRenderScale);
       row.pos[0] = originalPos.x;
       row.pos[1] = originalPos.y;
       row.pos[2] = originalPos.z;
@@ -116,7 +116,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;
-    clumpFind.runFOF(particleArray.particleBlock, var);
+    clumpFind.runFOF(simulationData.simulationBlock, var);
     ui.requestRunFOF = false;
     syncViewFromService();
   }
@@ -129,7 +129,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;
-    clumpFind.runDendrogram(particleArray.particleBlock, var);
+    clumpFind.runDendrogram(simulationData.simulationBlock, var);
     ui.requestRunDendrogram = false;
     syncViewFromService();
   }
@@ -158,7 +158,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     if (snapshotIndex < 0) {
       snapshotIndex = 0;
     }
-    clumpFind.writeFOFtoHDF5(particleArray.particleBlock,
+    clumpFind.writeFOFtoHDF5(simulationData.simulationBlock,
                              snapshotTime,
                              fullPath,
                              snapshotIndex);
@@ -186,10 +186,10 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
         ui.focusRowIndex < static_cast<int>(ui.rows.size())) {
       const auto& row = ui.rows[static_cast<size_t>(ui.focusRowIndex)];
       RecenterCameraPreservingDistance(camera,
-                                       OriginalToNormalized(glm::vec3(row.pos[0],
+                                       WorldToRender(glm::vec3(row.pos[0],
                                                                       row.pos[1],
                                                                       row.pos[2]),
-                                                            particleArray.particleBlock.normalizedScale));
+                                                            simulationData.simulationBlock.worldToRenderScale));
     }
     ui.requestFocusRow = false;
     ui.focusRowIndex = -1;
@@ -201,9 +201,9 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       clumpFind.setShowHull(static_cast<int>(i), ui.showHull[i]);
     }
     clumpFind.applyHullSelectionToStressFlags(
-      particleArray.flag_stress,
-      particleArray.particleBlock.particles.size());
-    particleArray.particlesDirty = true;
+      simulationData.flag_stress,
+      simulationData.simulationBlock.particles.size());
+    simulationData.particlesDirty = true;
     ui.requestApplyHullSelection = false;
     syncViewFromService();
   }
@@ -368,7 +368,7 @@ static void RecenterCameraPreservingDistance(CameraContext& cam,
 
 void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
                                             ClumpChain& chain,
-                                            ParticleArray& particles,
+                                            SimulationDataset& particles,
                                             const UnitSystem& units,
                                             ProjectionMapGenerator& projectionMap,
                                             const ProjectionMapParams& baseParams,
@@ -606,8 +606,8 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
                               current.loadedTime);
 
   if (useAngularMomentumAxis) {
-    auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
-                                             particles.particleBlock.normalizedScale,
+    auto frame = ComputeAngularMomentumFrame(particles.simulationBlock.particles,
+                                             particles.simulationBlock.worldToRenderScale,
                                              context.center,
                                              frameParams.xlen);
     if (frame.valid) {

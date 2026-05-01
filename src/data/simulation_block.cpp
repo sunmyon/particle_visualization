@@ -1,5 +1,5 @@
 #include "data/particle_selection.h"
-#include "data/particle_block.h"
+#include "data/simulation_block.h"
 #include "data/header_info.h"
 #include "data/quantity_catalog_builder.h"
 
@@ -8,9 +8,9 @@
 #include <limits>
 #include <random>
 
-ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
+SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
   BuildResult result;
-  normalizedScale = 1.0f;
+  worldToRenderScale = 1.0f;
   
   if (!particles.empty()) {
     result.originalMax = 0.;
@@ -39,7 +39,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
 
 #pragma omp for
       for (int i = 0; i < (int)particles.size(); ++i) {
-        ParticleData& p = particles[i];
+        SimulationElement& p = particles[i];
         int type = p.type;
         const bool validType = (type >= 0 && type < kNumTypes);
         if (!validType) {
@@ -50,8 +50,8 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
         }
 
         // maxVal
-        float m = std::max(std::fabs(p.original_pos[0]),
-			   std::max(std::fabs(p.original_pos[1]), std::fabs(p.original_pos[2])));
+        float m = std::max(std::fabs(p.position[0]),
+			   std::max(std::fabs(p.position[1]), std::fabs(p.position[2])));
         if (m > localMax) localMax = m;
 
         // renew min/max
@@ -80,7 +80,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
 
     // scaling (after maxVal is determined)
     if (result.originalMax > 0.0f) {
-      normalizedScale = desiredMax / result.originalMax;
+      worldToRenderScale = desiredMax / result.originalMax;
     }
 
     // 4) set 0 to max/min values if no particle for each particle type
@@ -96,7 +96,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
   return result;
 }
 
-bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op,
+bool SimulationBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op,
                                                glm::vec3& outAxis) const
 {
   const float r2max = (op.radius > 0.0f) ? (op.radius * op.radius) : -1.0f;
@@ -110,7 +110,7 @@ bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op
       if (t < 0 || t >= 6) continue;
       if (!op.useType[t]) continue;
 
-      glm::dvec3 r = glm::dvec3(normalizedParticlePosition(p, normalizedScale)) -
+      glm::dvec3 r = glm::dvec3(renderPosition(p, worldToRenderScale)) -
                      glm::dvec3(op.center);
       if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
 
@@ -126,7 +126,7 @@ bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op
     if (t < 0 || t >= 6) continue;
     if (!op.useType[t]) continue;
 
-    glm::dvec3 r = glm::dvec3(normalizedParticlePosition(p, normalizedScale)) -
+    glm::dvec3 r = glm::dvec3(renderPosition(p, worldToRenderScale)) -
                    glm::dvec3(op.center);
     if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
 
@@ -142,7 +142,7 @@ bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op
 }
 
 
-ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
+SimulationBlock SimulationBlock::makeTestSimulationBlock(HeaderInfo& header)
 {
   std::mt19937_64 rng(12345);
   std::uniform_real_distribution<double> ud(-1.0, 1.0);
@@ -156,7 +156,7 @@ ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
   const double amp   = 0.001;
   const double Omega = 100.0;
 
-  ParticleBlock block;
+  SimulationBlock block;
 
   header.npart = n_side * n_side * n_side;
 
@@ -183,14 +183,14 @@ ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
         const double y_out = y + amp * ry;
         const double z_out = z + amp * rz;
 
-        ParticleData p;
-        p.original_pos[0] = x_out; p.original_pos[1] = y_out; p.original_pos[2] = z_out;
+        SimulationElement p;
+        p.position[0] = x_out; p.position[1] = y_out; p.position[2] = z_out;
 
         p.vel[0] = x_out - Omega * y_out;
         p.vel[1] = y_out + Omega * x_out;
         p.vel[2] = z_out;
 
-        p.original_hsml = dx;
+        p.supportRadius = dx;
         p.mass = 1.0f;
         p.density = 1.0f;
         p.temperature = 1.0f;
