@@ -6,6 +6,9 @@
 #endif
 #include "platform/imgui_context.h"
 #include "render/render_backend.h"
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+#include "platform/metal_context.h"
+#endif
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
 #include "platform/vulkan_context.h"
 #endif
@@ -29,6 +32,13 @@ bool WantsVulkanPlatform()
          (std::string(backend) == "vulkan" || std::string(backend) == "vk");
 }
 
+bool WantsMetalPlatform()
+{
+  const char* backend = std::getenv("PARTICLE_VIS_RENDER_BACKEND");
+  return backend &&
+         (std::string(backend) == "metal" || std::string(backend) == "mtl");
+}
+
 int EnvInt(const char* name, int fallback)
 {
   const char* value = std::getenv(name);
@@ -44,6 +54,16 @@ int EnvInt(const char* name, int fallback)
 
 std::unique_ptr<GraphicsContext> CreateSelectedGraphicsContext()
 {
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+  if (WantsMetalPlatform()) {
+    return CreateMetalGraphicsContext();
+  }
+#else
+  if (WantsMetalPlatform()) {
+    std::cerr << "Metal platform is not linked; using OpenGL platform."
+              << std::endl;
+  }
+#endif
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
   if (WantsVulkanPlatform()) {
     return CreateVulkanGraphicsContext();
@@ -134,6 +154,12 @@ bool PlatformSession::init(AppState& app, CallbackContext& callbackCtx)
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
   if (window_.hasWindow()) {
     AttachAppCallbacks(window_, callbackCtx);
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+    if (auto* metal = dynamic_cast<MetalContext*>(graphics_.get())) {
+      imguiBackend =
+        CreateGlfwMetalImGuiBackend(window_.nativeWindowHandle(), *metal);
+    } else
+#endif
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
     if (auto* vulkan = dynamic_cast<VulkanContext*>(graphics_.get())) {
       imguiBackend =
@@ -208,6 +234,11 @@ IFramePresenter& PlatformSession::presenter()
 
 std::unique_ptr<RenderBackend> PlatformSession::createRenderBackend()
 {
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+  if (auto* metal = dynamic_cast<MetalContext*>(graphics_.get())) {
+    return CreateMetalRenderBackend(*metal);
+  }
+#endif
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
   if (auto* vulkan = dynamic_cast<VulkanContext*>(graphics_.get())) {
     return CreateVulkanRenderBackend(*vulkan);

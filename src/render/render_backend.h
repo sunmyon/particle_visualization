@@ -8,6 +8,7 @@ struct ProjectionPreviewUIState;
 struct RenderFrameState;
 struct RenderSceneData;
 struct RgbImage;
+class MetalContext;
 class VulkanContext;
 
 struct RenderBackendMemoryInfo {
@@ -82,7 +83,8 @@ public:
 enum class RenderBackendKind {
   OpenGL,
   Null,
-  Vulkan
+  Vulkan,
+  Metal
 };
 
 RenderBackendKind ParseRenderBackendKind(std::string_view name,
@@ -94,3 +96,4 @@ std::unique_ptr<RenderBackend> CreateOpenGLRenderBackend();
 std::unique_ptr<RenderBackend> CreateNullRenderBackend();
 std::unique_ptr<RenderBackend> CreateVulkanRenderBackend();
 std::unique_ptr<RenderBackend> CreateVulkanRenderBackend(VulkanContext& context);
+std::unique_ptr<RenderBackend> CreateMetalRenderBackend(MetalContext& context);

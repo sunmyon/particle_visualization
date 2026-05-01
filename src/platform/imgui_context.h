@@ -3,6 +3,7 @@
 #include <memory>
 
 struct NativeWindowHandle;
+class MetalContext;
 class VulkanContext;
 
 class ImGuiBackend {
@@ -25,6 +26,9 @@ std::unique_ptr<ImGuiBackend> CreateHeadlessVulkanImGuiBackend(
 std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
   NativeWindowHandle window,
   VulkanContext& context);
+std::unique_ptr<ImGuiBackend> CreateGlfwMetalImGuiBackend(
+  NativeWindowHandle window,
+  MetalContext& context);
 
 void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend);
 void BeginImGuiFrame(int width, int height);

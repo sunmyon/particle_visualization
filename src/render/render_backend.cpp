@@ -32,6 +32,9 @@ RenderBackendKind ParseRenderBackendKind(std::string_view name,
   if (lower == "vulkan" || lower == "vk") {
     return RenderBackendKind::Vulkan;
   }
+  if (lower == "metal" || lower == "mtl") {
+    return RenderBackendKind::Metal;
+  }
   return fallback;
 }
 
@@ -72,6 +75,11 @@ std::unique_ptr<RenderBackend> CreateRenderBackend(RenderBackendKind kind)
                 << std::endl;
       return CreateNullRenderBackend();
     #endif
+    case RenderBackendKind::Metal:
+      std::cerr << "Metal render backend needs a Metal platform context; "
+                   "using null backend."
+                << std::endl;
+      return CreateNullRenderBackend();
   }
 
   #ifdef PARTICLE_VIS_ENABLE_OPENGL_BACKEND

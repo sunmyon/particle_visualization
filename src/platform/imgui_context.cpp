@@ -10,6 +10,9 @@
 #include "platform/vulkan_context.h"
 #include <imgui_impl_vulkan.h>
 #endif
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+#include "platform/metal_context.h"
+#endif
 
 #ifndef PARTICLE_VIS_HEADLESS_ONLY
 #include <GLFW/glfw3.h>
@@ -307,6 +310,86 @@ private:
   bool initialized_ = false;
 };
 #endif
+
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+class GlfwMetalImGuiBackend final : public ImGuiBackend {
+public:
+  GlfwMetalImGuiBackend(GLFWwindow* window, MetalContext& context)
+    : window_(window)
+    , context_(&context)
+  {
+  }
+
+  bool init() override
+  {
+    if (!window_ || !context_) {
+      return false;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
+    ImGui_ImplGlfw_InitForOpenGL(window_, true);
+    if (!context_->initImGuiRenderer()) {
+      ImGui_ImplGlfw_Shutdown();
+      ImGui::DestroyContext();
+      ImPlot::DestroyContext();
+      return false;
+    }
+
+    initialized_ = true;
+    return true;
+  }
+
+  void newFrame(int width, int height) override
+  {
+    if (!context_->beginFrame(width, height)) {
+      frameReady_ = false;
+      return;
+    }
+    frameReady_ = true;
+    context_->newImGuiFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+  }
+
+  void render() override
+  {
+    if (!frameReady_) {
+      return;
+    }
+    ImGui::Render();
+    context_->renderImGuiDrawData(ImGui::GetDrawData());
+    frameReady_ = false;
+  }
+
+  void shutdown() override
+  {
+    if (!initialized_) {
+      return;
+    }
+    if (context_) {
+      context_->shutdownImGuiRenderer();
+    }
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    ImPlot::DestroyContext();
+    initialized_ = false;
+    frameReady_ = false;
+  }
+
+private:
+  GLFWwindow* window_ = nullptr;
+  MetalContext* context_ = nullptr;
+  bool initialized_ = false;
+  bool frameReady_ = false;
+};
+#endif
 #endif
 
 std::unique_ptr<ImGuiBackend> g_backend;
@@ -358,6 +441,24 @@ std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
     return nullptr;
   }
   return std::make_unique<GlfwVulkanImGuiBackend>(
+    static_cast<GLFWwindow*>(window.handle),
+    context);
+#else
+  (void)window;
+  (void)context;
+  return nullptr;
+#endif
+}
+
+std::unique_ptr<ImGuiBackend> CreateGlfwMetalImGuiBackend(
+  NativeWindowHandle window,
+  MetalContext& context)
+{
+#if !defined(PARTICLE_VIS_HEADLESS_ONLY) && defined(PARTICLE_VIS_ENABLE_METAL_BACKEND)
+  if (window.backend != NativeWindowBackend::GLFW || !window.handle) {
+    return nullptr;
+  }
+  return std::make_unique<GlfwMetalImGuiBackend>(
     static_cast<GLFWwindow*>(window.handle),
     context);
 #else

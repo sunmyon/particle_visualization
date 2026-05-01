@@ -71,6 +71,9 @@ option(BUILD_EGL_PROBE_ONLY "Build only the standalone EGL probe tool" OFF)
 option(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND
   "Build the experimental Vulkan render backend when Vulkan is available"
   ON)
+option(PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND
+  "Build the experimental Metal render backend on macOS"
+  ON)
 option(PARTICLE_VIS_BUILD_VULKAN_PROBE
   "Build the standalone GLFW/Vulkan swapchain probe when Vulkan is available"
   ON)
@@ -624,6 +627,28 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
     message(STATUS "Vulkan render backend: ON")
   else()
     message(STATUS "Vulkan render backend: OFF (Vulkan package not found)")
+  endif()
+endif()
+
+if(PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
+  if(APPLE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
+    enable_language(OBJCXX)
+    target_sources(${PROJECT_NAME} PRIVATE
+      ${SRC_DIR}/platform/metal_context.mm
+      ${SRC_DIR}/render/metal/metal_render_backend.cpp
+      ${EXTERNAL_DIR}/imgui/backends/imgui_impl_metal.mm)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+      ${METAL_FRAMEWORK}
+      ${QUARTZCORE_FRAMEWORK}
+      ${APPKIT_FRAMEWORK})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+      PARTICLE_VIS_ENABLE_METAL_BACKEND)
+    message(STATUS "Metal render backend: ON")
+  else()
+    message(STATUS "Metal render backend: OFF (requires macOS window build)")
   endif()
 endif()
 
