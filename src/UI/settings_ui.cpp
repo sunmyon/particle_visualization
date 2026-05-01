@@ -155,10 +155,14 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
 }
 
 static void DrawCameraInfoSection(const SettingsCameraView& camera) {
-  ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)",
-              camera.position[0], camera.position[1], camera.position[2]);
-  ImGui::Text("Camera Target:   (%.2f, %.2f, %.2f)",
-              camera.target[0], camera.target[1], camera.target[2]);
+  ImGui::Text("Camera Position (original):   (%.4g, %.4g, %.4g)",
+              camera.originalPosition[0],
+              camera.originalPosition[1],
+              camera.originalPosition[2]);
+  ImGui::Text("Camera Target   (original):   (%.4g, %.4g, %.4g)",
+              camera.originalTarget[0],
+              camera.originalTarget[1],
+              camera.originalTarget[2]);
 }
 
 static const char* FormatBytes(size_t bytes)
@@ -692,19 +696,30 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
   auto& labels = req.renderDraft.particleLabels;
   bool changed = false;
 
-  changed |= ImGui::InputFloat("radius", &labels.queryRadius, 0.f, 0.f, "%g");
+  float queryRadiusOriginal =
+    labels.queryRadius * camera.normalizedToOriginalScale;
+  if (ImGui::InputFloat("radius (original)", &queryRadiusOriginal, 0.f, 0.f, "%g")) {
+    const float originalToNormalized =
+      (camera.normalizedToOriginalScale > 0.0f)
+      ? 1.0f / camera.normalizedToOriginalScale
+      : 1.0f;
+    labels.queryRadius = queryRadiusOriginal * originalToNormalized;
+    changed = true;
+  }
   changed |= ImGui::InputInt("number of particles", &labels.maxLabels);
   changed |= ImGui::Checkbox("sink particles only", &labels.sinkOnly);
 
-  ImGui::TextDisabled("Particle IDs are searched around camera target (%.3g, %.3g, %.3g).",
-                      camera.target[0],
-                      camera.target[1],
-                      camera.target[2]);
+  ImGui::TextDisabled("Search center: (%.3g, %.3g, %.3g) original",
+                      camera.originalTarget[0],
+                      camera.originalTarget[1],
+                      camera.originalTarget[2]);
 
   if (ImGui::Button("show particle IDs")) {
     labels.show = true;
     changed = true;
   }
+
+  ImGui::SameLine();
 
   if (ImGui::Button("disable particle IDs")) {
     labels.show = false;
@@ -720,13 +735,17 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
 				       const SettingsCameraView& camera)
 {
-  if (!ImGui::CollapsingHeader("Set camera pos"))
+  if (!ImGui::CollapsingHeader("Set camera center"))
     return;
 
   auto& req = rt.cameraPlacement;
 
-  ImGui::InputFloat3("Center Coordinates", req.centerInput, "%.3f");
-  ImGui::Checkbox("Input in Original Coordinates", &req.inputIsOriginal);
+  ImGui::InputFloat3("Center Coordinates (original)", req.centerInput, "%.3f");
+  if (ImGui::Button("Fill with Current Target")) {
+    req.centerInput[0] = camera.originalTarget[0];
+    req.centerInput[1] = camera.originalTarget[1];
+    req.centerInput[2] = camera.originalTarget[2];
+  }
 
   if (ImGui::Button("Set Center")) {
     req.setCenterRequested = true;
@@ -746,17 +765,13 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   }
 
   ImGui::SeparatorText("View Culling");    
-  ImGui::InputFloat("Culling radius", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
-  ImGui::InputFloat3("Culling center", &rt.viewFilter.center.x, "%.3f");
-
-  ImGui::Checkbox("Culling Center in Original Coordinates", &rt.viewFilter.centerIsOriginal);
-  ImGui::Checkbox("Culling Radius in Original Coordinates", &rt.viewFilter.radiusIsOriginal);
+  ImGui::InputFloat("Culling radius (original)", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
+  ImGui::InputFloat3("Culling center (original)", &rt.viewFilter.center.x, "%.3f");
 
   if (ImGui::Button("Use Camera Target")) {
-    rt.viewFilter.center = glm::vec3(camera.target[0],
-                                     camera.target[1],
-                                     camera.target[2]);
-    rt.viewFilter.centerIsOriginal = false;
+    rt.viewFilter.center = glm::vec3(camera.originalTarget[0],
+                                     camera.originalTarget[1],
+                                     camera.originalTarget[2]);
   }
 
   if (ImGui::Button("Apply Culling")) {
@@ -1006,7 +1021,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     
     ImGui::SeparatorText("Single disk analysis");
 
-    if (ImGui::InputInt("Particle ID1##disk", &singleReq.targetParticleId)) {
+    if (ImGui::InputScalar("Particle ID1##disk",
+                           ImGuiDataType_S64,
+                           &singleReq.targetParticleId)) {
       edit.diskDirty = true;
     }
     if (ImGui::SliderFloat("Opacity##disk",
@@ -1078,10 +1095,14 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
 
     ImGui::SeparatorText("Single ellipsoid analysis");
 
-    if (ImGui::InputInt("Particle ID1", &singleReq.particleId1)) {
+    if (ImGui::InputScalar("Particle ID1",
+                           ImGuiDataType_S64,
+                           &singleReq.particleId1)) {
       edit.ellipsoidDirty = true;
     }
-    if (ImGui::InputInt("Particle ID2", &singleReq.particleId2)) {
+    if (ImGui::InputScalar("Particle ID2",
+                           ImGuiDataType_S64,
+                           &singleReq.particleId2)) {
       edit.ellipsoidDirty = true;
     }
     if (ImGui::SliderFloat("Opacity##contour_ellipse",
@@ -1234,7 +1255,9 @@ static void DrawRenderingSection(const QuantityState& quantity,
     if (movieReq.followSinkCenter) {
       movieDirty |= ImGui::Checkbox("the most massive sink particle", &movieReq.followMostMassiveSink);
       if (!movieReq.followMostMassiveSink) {
-	movieDirty |= ImGui::InputInt("particle ID", &movieReq.particleIdCenter);
+	movieDirty |= ImGui::InputScalar("particle ID",
+	                                 ImGuiDataType_S64,
+	                                 &movieReq.particleIdCenter);
       }
 
       movieDirty |= ImGui::Checkbox("mass center around the particle", &movieReq.useMassCenter);
@@ -1328,7 +1351,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
       int removeSeed = -1;
       for (int i = 0; i < static_cast<int>(buildReq.manualSeeds.size()); ++i) {
         ImGui::PushID(i);
-        if (ImGui::InputFloat3("manual seed position",
+        if (ImGui::InputFloat3("manual seed position (original)",
                                buildReq.manualSeeds[i].data(), "%.3f")) {
           buildDirty = true;
           buildReq.buildClicked = true;
@@ -1354,12 +1377,12 @@ static void DrawRenderingSection(const QuantityState& quantity,
 
     bool previewDirty = false;
 
-    if (ImGui::InputFloat3("Center of the region to place seed points",
+    if (ImGui::InputFloat3("seed region center (original)",
 			   previewReq.seedCenter, "%.3f")) {
       previewDirty = true;
     }
 
-    if (ImGui::InputFloat3("side len",
+    if (ImGui::InputFloat3("seed region side length (original)",
 			   previewReq.seedSize, "%.3f")) {
       previewDirty = true;
     }
@@ -1381,9 +1404,9 @@ static void DrawRenderingSection(const QuantityState& quantity,
     }
 
     if (buildReq.limitRegion) {
-      buildDirty |= ImGui::InputFloat3("center of stream line region",
+      buildDirty |= ImGui::InputFloat3("stream line region center (original)",
                                        buildReq.regionCenter, "%.3f");
-      buildDirty |= ImGui::InputFloat3("side len##stream line",
+      buildDirty |= ImGui::InputFloat3("stream line region side length (original)",
                                        buildReq.regionSize, "%.3f");
     }
 
@@ -1418,7 +1441,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
           const int reason = (seed.stopReason >= 0 && seed.stopReason < 7)
             ? seed.stopReason
             : 0;
-          ImGui::Text("#%d stop=%s points=%d length=%.6g pos=(%.3f, %.3f, %.3f)",
+          ImGui::Text("#%d stop=%s points=%d length=%.6g original_pos=(%.3f, %.3f, %.3f)",
                       seed.seedIndex,
                       stopLabels[reason],
                       seed.pointCount,

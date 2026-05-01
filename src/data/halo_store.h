@@ -5,7 +5,8 @@
 #include <utility>
 #include <vector>
 
-#include "core/tracking_vector.h"
+#include <vector>
+#include "data/particle_block.h"
 #include "data/particle_data.h"
 #include "data/halo_data.h"
 
@@ -22,8 +23,8 @@ public:
 
   bool idsLoaded() const { return haloIDsLoaded_; }
 
-  const TrackingVector<HaloData>& allHaloes() const { return haloes_; }
-  TrackingVector<HaloData>& allHaloes() { return haloes_; }
+  const std::vector<HaloData>& allHaloes() const { return haloes_; }
+  std::vector<HaloData>& allHaloes() { return haloes_; }
 
   const HaloData& halo(std::size_t i) const { return haloes_[i]; }
   HaloData& halo(std::size_t i) { return haloes_[i]; }
@@ -31,11 +32,11 @@ public:
   const std::vector<std::vector<uint64_t>>& allHaloIDs() const { return haloIDs_; }
   const std::vector<uint64_t>& ids(std::size_t i) const { return haloIDs_[i]; }
 
-  void setHaloes(const TrackingVector<HaloData>& input) {
+  void setHaloes(const std::vector<HaloData>& input) {
     haloes_ = input;
   }
 
-  void setHaloes(TrackingVector<HaloData>&& input) {
+  void setHaloes(std::vector<HaloData>&& input) {
     haloes_ = std::move(input);
   }
 
@@ -60,12 +61,12 @@ public:
   
   bool loadFromHDF5(const char* fname, bool loadIDs = true);
   
-  void recomputeHaloPositionsFromParticles(const TrackingVector<ParticleData>& particles,
+  void recomputeHaloPositionsFromParticles(const ParticleBlock& block,
                                            bool useMassWeight,
                                            bool useOriginalPos);
 
 private:
-  TrackingVector<HaloData> haloes_;
+  std::vector<HaloData> haloes_;
   std::vector<std::vector<uint64_t>> haloIDs_;
   bool haloIDsLoaded_ = false;
 };

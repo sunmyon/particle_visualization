@@ -5,7 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "render/particle_lod.h"
 #include "render/scene_objects.h"
 #include "render_types.h"
@@ -59,9 +59,9 @@ struct PolyhedronRenderItem {
 
 #ifdef ISO_CONTOUR
 struct IsoContourRenderData {
-  TrackingVector<float> verts;
-  TrackingVector<float> normals;
-  TrackingVector<unsigned> inds;
+  std::vector<float> verts;
+  std::vector<float> normals;
+  std::vector<unsigned> inds;
 };
 #endif
 
@@ -137,7 +137,8 @@ class ParticleData;
 
 struct ParticleRenderInput {
   const ParticleBlock* block = nullptr;
-  const TrackingVector<uint8_t>* visibilityMask = nullptr;
+  const std::vector<uint8_t>* visibilityMask = nullptr;
+  const std::vector<uint8_t>* stressFlags = nullptr;
   bool particlesDirty = false;
   bool velocityDirty = false;
 
@@ -149,7 +150,8 @@ void BuildRenderParticles(const ParticleRenderInput& input,
                           std::vector<RenderParticle>& out,
                           std::vector<RenderParticle>* stressOut = nullptr);
 
-std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>& particles,
+std::vector<float> BuildVelocityInstanceData(const std::vector<ParticleData>& particles,
+                                             float normalizedScale,
                                              const int velocity_subtraction);
 
 void UpdateVelocityRenderData(const ParticleRenderInput& input,
@@ -169,8 +171,8 @@ void BuildLineRenderData(const LineManager& manager,
                          std::vector<LineRenderItem>& out);
 
 #ifdef ISO_CONTOUR
-void BuildIsoContourRenderData(const TrackingVector<float>& verts,
-                               const TrackingVector<unsigned>& inds,
+void BuildIsoContourRenderData(const std::vector<float>& verts,
+                               const std::vector<unsigned>& inds,
                                IsoContourRenderData& out);
 #endif
 

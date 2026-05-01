@@ -37,22 +37,20 @@ static inline void store_density_f32(ParticleData& p, const uint8_t* src){ p.den
 static inline void store_density_f64(ParticleData& p, const uint8_t* src){ p.density = (float)load_f64(src); }
 static inline void store_temp_f32(ParticleData& p, const uint8_t* src){ p.temperature = *reinterpret_cast<const float*>(src); }
 static inline void store_temp_f64(ParticleData& p, const uint8_t* src){ p.temperature = (float)load_f64(src); }
-static inline void store_hsml_f32(ParticleData& p, const uint8_t* src){ p.originalHsml = *reinterpret_cast<const float*>(src); }
-static inline void store_hsml_f64(ParticleData& p, const uint8_t* src){ p.originalHsml = (float)load_f64(src); }
+static inline void store_hsml_f32(ParticleData& p, const uint8_t* src){ p.original_hsml = *reinterpret_cast<const float*>(src); }
+static inline void store_hsml_f64(ParticleData& p, const uint8_t* src){ p.original_hsml = (float)load_f64(src); }
 static inline void store_volume_f32(ParticleData& p, const uint8_t* src)
 {
   const float vol = load_f32(src);
-  p.originalHsml = cbrtf(vol);
+  p.original_hsml = cbrtf(vol);
 }
 static inline void store_volume_f64(ParticleData& p, const uint8_t* src)
 {
   const double vol = load_f64(src);
-  p.originalHsml = (float)cbrt(vol);
+  p.original_hsml = (float)cbrt(vol);
 }
 static inline void store_type_i32(ParticleData& p, const uint8_t* src){ p.type = *reinterpret_cast<const int32_t*>(src); }
 static inline void store_type_i64(ParticleData& p, const uint8_t* src){ p.type = (int)load_i64(src); }
-static inline void store_id_i32(ParticleData& p, const uint8_t* src){ p.ID = *reinterpret_cast<const int32_t*>(src); }
-static inline void store_id_i64(ParticleData& p, const uint8_t* src){ p.ID = (int)load_i64(src); }
 
 static inline bool isAoSCoreFieldKey(FieldKey key) {
   switch (key) {
@@ -64,7 +62,6 @@ static inline bool isAoSCoreFieldKey(FieldKey key) {
     case FieldKey::Hsml:
     case FieldKey::Volume:
     case FieldKey::Type:
-    case FieldKey::ID:
       return true;
     default:
       return false;
@@ -87,6 +84,7 @@ static inline DestKind getDestKind(FieldKey key, bool flag_hdf5 = false) {
     case FieldKey::J21:
     case FieldKey::Value:
     case FieldKey::Value2:
+    case FieldKey::ID:
       return DestKind::SoA;
 
     default:
@@ -104,6 +102,7 @@ static inline const char* getSoAKey(FieldKey key) {
     case FieldKey::J21:               return "J21";
     case FieldKey::Value:             return "Val1";
     case FieldKey::Value2:            return "Val2";
+    case FieldKey::ID:                return kParticleIdKey;
     default:                          return nullptr;
   }
 }
@@ -116,10 +115,9 @@ static inline void assignCore(ParticleData& p, FieldKey ft, const T* v){
     case FieldKey::Mass:      p.mass=float(v[0]); break;
     case FieldKey::Density:   p.density=float(v[0]); break;
     case FieldKey::Temperature: p.temperature=float(v[0]); break;
-    case FieldKey::Hsml:      p.originalHsml=float(v[0]); break;
-    case FieldKey::Volume:    p.originalHsml=float(cbrtf(v[0])); break;
+    case FieldKey::Hsml:      p.original_hsml=float(v[0]); break;
+    case FieldKey::Volume:    p.original_hsml=float(cbrtf(v[0])); break;
     case FieldKey::Type:      p.type=int(v[0]); break;
-    case FieldKey::ID:        p.ID=int(v[0]); break;
     default: break;
   }
 }
@@ -174,9 +172,6 @@ static inline BinaryReadLayout buildBinaryReadLayout(const std::vector<FieldSpec
           break;
         case FieldKey::Type:
           fl.store = isI32 ? &store_type_i32 : (isI64 ? &store_type_i64 : nullptr);
-          break;
-        case FieldKey::ID:
-          fl.store = isI32 ? &store_id_i32 : (isI64 ? &store_id_i64 : nullptr);
           break;
         default:
           fl.store = nullptr;

@@ -16,6 +16,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "render/scene_objects.h"
+#include "data/particle_coordinates.h"
 
 #if defined(USE_TBB) && __has_include(<tbb/parallel_sort.h>)
 #define HAS_TBB 1
@@ -46,7 +47,10 @@ public:
   DiskRadiusFinder() = default;
 
   template<class VecT>
-  bool compute(const VecT& particles, const Params& par, DiskObject& disk) const;
+  bool compute(const VecT& particles,
+               float normalizedScale,
+               const Params& par,
+               DiskObject& disk) const;
 
 private:
   struct PDisk {
@@ -84,6 +88,7 @@ private:
 /*=================== Implementation =============================*/
 template<class VecT>
 inline bool DiskRadiusFinder::compute(const VecT& particles,
+                                      float normalizedScale,
                                       const Params& par,
                                       DiskObject& disk) const
 {
@@ -96,12 +101,13 @@ inline bool DiskRadiusFinder::compute(const VecT& particles,
   P.reserve(particles.size());
 
   for (const auto& src : particles) {
+    const glm::vec3 pos = normalizedParticlePosition(src, normalizedScale);
     PDisk d;
     d.m = src.mass;
     d.pos = {
-      double(src.pos[0] - par.center[0]),
-      double(src.pos[1] - par.center[1]),
-      double(src.pos[2] - par.center[2])
+      double(pos.x - par.center[0]),
+      double(pos.y - par.center[1]),
+      double(pos.z - par.center[2])
     };
     d.vel = {
       double(src.vel[0] - par.v_center[0]),

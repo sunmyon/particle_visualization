@@ -138,6 +138,15 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.camera.target[0] = view.camera.cameraTarget.x;
   ctx.camera.target[1] = view.camera.cameraTarget.y;
   ctx.camera.target[2] = view.camera.cameraTarget.z;
+  float toOriginal = runtime.settings.normalization.toPhysicalScale();
+  if (data.particles && data.particles->particleBlock.normalizedScale > 0.0f) {
+    toOriginal = 1.0f / data.particles->particleBlock.normalizedScale;
+  }
+  ctx.camera.normalizedToOriginalScale = toOriginal;
+  for (int axis = 0; axis < 3; ++axis) {
+    ctx.camera.originalPosition[axis] = ctx.camera.position[axis] * toOriginal;
+    ctx.camera.originalTarget[axis] = ctx.camera.target[axis] * toOriginal;
+  }
   ctx.snapshotLoading = runtime.snapshotLoad.busy;
   if (renderSystem.backend) {
     ctx.backend = renderSystem.backend->capabilities();
@@ -148,7 +157,8 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       data.particles->particleBlock.particles.size();
     ctx.memory.cpuParticleBytes =
       data.particles->particleBlock.particles.size() * sizeof(ParticleData) +
-      data.particles->flag_mask.size() * sizeof(uint8_t);
+      data.particles->flag_mask.size() * sizeof(uint8_t) +
+      data.particles->flag_stress.size() * sizeof(uint8_t);
   }
   ctx.memory.renderParticleCount = renderSystem.scene.particles.size();
   ctx.memory.particleLodProxyCount =
@@ -276,6 +286,7 @@ static void DrawMainUI(AppViewState& view,
 
 static void DrawToolWindows(AppRuntimeState& runtime,
 			    const AppViewState& view,
+                            const AppDataState& data,
 			    ToolWindowUIState& tools,
                             WindowCommandQueue& windowCommands,
                             const RadialProfileResultState& radialProfileResult,
@@ -296,12 +307,17 @@ static void DrawToolWindows(AppRuntimeState& runtime,
 #ifdef HAVE_HDF5
   plotExportCtx.useHDF5 = runtime.settings.fileNavigation.input.useHDF5;
 #endif
-  plotExportCtx.cameraPosition[0] = view.camera.cameraPos.x;
-  plotExportCtx.cameraPosition[1] = view.camera.cameraPos.y;
-  plotExportCtx.cameraPosition[2] = view.camera.cameraPos.z;
-  plotExportCtx.cameraTarget[0] = view.camera.cameraTarget.x;
-  plotExportCtx.cameraTarget[1] = view.camera.cameraTarget.y;
-  plotExportCtx.cameraTarget[2] = view.camera.cameraTarget.z;
+  float toOriginal = runtime.settings.normalization.toPhysicalScale();
+  if (data.particles && data.particles->particleBlock.normalizedScale > 0.0f) {
+    toOriginal = 1.0f / data.particles->particleBlock.normalizedScale;
+  }
+  plotExportCtx.normalizedToOriginalScale = toOriginal;
+  plotExportCtx.cameraPosition[0] = view.camera.cameraPos.x * toOriginal;
+  plotExportCtx.cameraPosition[1] = view.camera.cameraPos.y * toOriginal;
+  plotExportCtx.cameraPosition[2] = view.camera.cameraPos.z * toOriginal;
+  plotExportCtx.cameraTarget[0] = view.camera.cameraTarget.x * toOriginal;
+  plotExportCtx.cameraTarget[1] = view.camera.cameraTarget.y * toOriginal;
+  plotExportCtx.cameraTarget[2] = view.camera.cameraTarget.z * toOriginal;
 
   TopParticlesViewContext topParticlesCtx;
   topParticlesCtx.quantity = &runtime.quantity;
@@ -618,6 +634,7 @@ void RunFrame(AppState& app,
 
   DrawToolWindows(app.runtime,
                   app.view,
+                  app.data,
                   app.ui.toolWindows,
                   app.ui.windowCommands,
                   app.derived.analysis.radial,
@@ -628,7 +645,7 @@ void RunFrame(AppState& app,
 
   UpdateExternalInputs(app.services, *app.data.particles);
 
-  ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
+  ProcessSnapshotLoadQueue(app.data, app.runtime, app.services, &app.view.camera);
   ExecutePostSnapshotLoadPhase(app.data,
                                app.runtime,
                                app.view.camera);

@@ -13,6 +13,23 @@
 #include <cstdio>
 #include <cstring>
 
+static void RescaleCameraForNormalizationChange(CameraContext* camera,
+                                                bool hadPreviousParticles,
+                                                float oldNormalizedScale,
+                                                float newNormalizedScale)
+{
+  if (!camera || !hadPreviousParticles) return;
+  if (!std::isfinite(oldNormalizedScale) || oldNormalizedScale <= 0.0f) return;
+  if (!std::isfinite(newNormalizedScale) || newNormalizedScale <= 0.0f) return;
+
+  const float ratio = newNormalizedScale / oldNormalizedScale;
+  if (!std::isfinite(ratio) || ratio <= 0.0f || ratio == 1.0f) return;
+
+  camera->cameraPos *= ratio;
+  camera->cameraTarget *= ratio;
+  camera->distance *= ratio;
+}
+
 static void MarkPostSnapshotLoad(SnapshotPostprocessState& post)
 {
   post.refreshTree = true;
@@ -207,7 +224,8 @@ static void UpdateSnapshotCurrentState(const HeaderInfo& header,
 
 void ProcessSnapshotLoadQueue(AppDataState& data,
                               AppRuntimeState& runtime,
-                              AppServices& services)
+                              AppServices& services,
+                              CameraContext* camera)
 {
   runtime.snapshotLoad.result = SnapshotLoadResultState{};
 
@@ -219,6 +237,10 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
   auto& fileNav = runtime.settings.fileNavigation;
   auto& nav = fileNav.navigation;
   const SnapshotNavigationState previousNavigation = nav;
+  const bool hadPreviousParticles =
+    data.particles && !data.particles->particleBlock.particles.empty();
+  const float oldNormalizedScale =
+    data.particles ? data.particles->particleBlock.normalizedScale : 1.0f;
   nav.currentStep = req.targetStep;
   RecomputeCurrentFileIndex(fileNav);
   const int newFileIndex = nav.currentFileIndex;
@@ -260,6 +282,13 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
                                      runtime.settings.normalization,
 				     runtime.quantity);
     UpdateSnapshotCurrentState(loaded.header, runtime.quantity.units, fileNav.current);
+  }
+
+  if (data.particles) {
+    RescaleCameraForNormalizationChange(camera,
+                                        hadPreviousParticles,
+                                        oldNormalizedScale,
+                                        data.particles->particleBlock.normalizedScale);
   }
 
   fileNav.current.loadedFileIndex = nav.currentFileIndex;

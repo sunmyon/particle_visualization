@@ -52,13 +52,13 @@ void FindClump::buildMassHistogram(bool useLogScaleX, float& outMin, float& outM
   histogramComputed_ = true;
 }
 
-int FindClump::find_parent(TrackingVector<int>& parent, int i) {
+int FindClump::find_parent(std::vector<int>& parent, int i) {
     if (parent[i] != i)
         parent[i] = find_parent(parent, parent[i]);
     return parent[i];
 }
 
-void FindClump::union_sets(TrackingVector<int>& parent, int a, int b) {
+void FindClump::union_sets(std::vector<int>& parent, int a, int b) {
     int pa = find_parent(parent, a);
     int pb = find_parent(parent, b);
     if (pa != pb)
@@ -66,11 +66,13 @@ void FindClump::union_sets(TrackingVector<int>& parent, int a, int b) {
 }
 
 // Clump detection routine.
-void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
+void FindClump::findClumps(std::vector<ParticleData>& originalParticles,
+                           float normalizedScale,
 			   const std::string &var
 			   )
 {
-  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, params_.densityThreshold, var);
+  std::vector<ParticleDataFiltered> filteredParticles =
+    filterParticles(originalParticles, normalizedScale, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -79,7 +81,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
   
   size_t numParticles = cloud.pts.size();
   // Initialize union-find: each particle starts as its own representative.
-  TrackingVector<int> parent(numParticles);
+  std::vector<int> parent(numParticles);
   for (size_t i = 0; i < numParticles; i++) {
     parent[i] = i;
   }
@@ -113,7 +115,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     std::vector<MyResultItem> ret_matches;
 
     if(params_.useHsml)
-      searchRadius = cloud.pts[i].Hsml * cloud.pts[i].Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+      searchRadius = cloud.pts[i].normalized_hsml * cloud.pts[i].normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 		
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 	
@@ -123,7 +125,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 	continue;
 	    
       if(params_.useHsml){
-	double LinkingLength_j = cloud.pts[neighbor_index].Hsml * cloud.pts[neighbor_index].Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+	double LinkingLength_j = cloud.pts[neighbor_index].normalized_hsml * cloud.pts[neighbor_index].normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 	if(LinkingLength_j > match.second)
 	  continue;
       }
@@ -177,7 +179,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
   }
 
   // Exclude clumps below the minimum particle count.
-  TrackingVector<ClumpInfo> clumpList;
+  std::vector<ClumpInfo> clumpList;
   for (auto &kv : clumpMap) {
     if (kv.second.count >= params_.minParticles)
       clumpList.push_back(kv.second);
@@ -198,7 +200,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
     newClumpMap[oldGroup] = clumpList[i]; // Save the mapping.
   }
 
-  TrackingVector<std::pair<int, size_t>> groupIndex;
+  std::vector<std::pair<int, size_t>> groupIndex;
   for (size_t i = 0; i < numParticles; i++) {
     int oldGroup = find_parent(parent, i);
     // Only target clumps.
@@ -213,7 +215,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
   });
  
   // Create sortedParticles from the sort result.
-  TrackingVector<ParticleDataFiltered> sortedParticles;
+  std::vector<ParticleDataFiltered> sortedParticles;
   sortedParticles.resize(groupIndex.size());
   for (size_t i = 0; i < groupIndex.size(); i++)
     sortedParticles[i] = cloud.pts[groupIndex[i].second];  
@@ -224,7 +226,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 
   nodeList.resize(clumpList.size());
   for(size_t i=0;i<clumpList.size();i++){
-    TrackingVector<int> indices;
+    std::vector<int> indices;
     
     int index_start = clumpList[i].startIndex;
     int count = clumpList[i].count;
@@ -242,7 +244,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 	vpeak = value;
     }
 
-    TrackingVector<StructureNode*> children={};
+    std::vector<StructureNode*> children={};
     StructureNode* node = new StructureNode(indices, params_.densityThreshold, children);
 
     node->pos_cm[0] = clumpList[i].pos_cm[0];
@@ -272,7 +274,7 @@ void FindClump::findClumps(TrackingVector<ParticleData>& originalParticles,
 //────────────────────────────────────────────────────────────
 namespace pruning {
   // all_true: combine multiple is_independent predicates and return true only if all pass.
-  std::function<bool(StructureNode*)> all_true(const TrackingVector<std::function<bool(StructureNode*)>>& funcs) {
+  std::function<bool(StructureNode*)> all_true(const std::vector<std::function<bool(StructureNode*)>>& funcs) {
     return [=](StructureNode* s) -> bool {
       for (const auto& f : funcs)
         if (!f(s))
@@ -305,8 +307,8 @@ namespace pruning {
   }
 
   // _to_prune: find leaves that should be pruned.
-  TrackingVector<StructureNode*> _to_prune(TrackingVector<StructureNode*>& keep_structures, double min_delta, int npix) {
-    TrackingVector<StructureNode*> toPrune;
+  std::vector<StructureNode*> _to_prune(std::vector<StructureNode*>& keep_structures, double min_delta, int npix) {
+    std::vector<StructureNode*> toPrune;
 
     for (const auto& s : keep_structures) {
       if (!s->isLeaf())
@@ -334,9 +336,9 @@ namespace pruning {
   }
 
   // _make_trunk: build the trunk and remove orphan leaves that fail independence.
-  TrackingVector<StructureNode*> _make_trunk(TrackingVector<StructureNode*>& keep_structures, double min_delta, int npix) {
+  std::vector<StructureNode*> _make_trunk(std::vector<StructureNode*>& keep_structures, double min_delta, int npix) {
     // Extract structures without parents as the trunk.
-    TrackingVector<StructureNode*> trunk;
+    std::vector<StructureNode*> trunk;
     for (auto& s : keep_structures) {
       s->flag_trunk = false;
       if (s->parent == nullptr)
@@ -344,7 +346,7 @@ namespace pruning {
     }
     
     // Remove orphan leaves in the trunk that do not satisfy independence.
-    TrackingVector<StructureNode*> leavesInTrunk;
+    std::vector<StructureNode*> leavesInTrunk;
     for (StructureNode* s : trunk) {
       if (s->isLeaf())
         leavesInTrunk.push_back(s);
@@ -393,9 +395,12 @@ namespace pruning {
 }
 
 
-void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParticles, const std::string &var)
+void FindClump::findClumpsDendrogram(std::vector<ParticleData>& originalParticles,
+                                     float normalizedScale,
+                                     const std::string &var)
 {
-  TrackingVector<ParticleDataFiltered> filteredParticles = filterParticles(originalParticles, params_.densityThreshold, var);
+  std::vector<ParticleDataFiltered> filteredParticles =
+    filterParticles(originalParticles, normalizedScale, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -419,7 +424,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   size_t numParticles = cloud.pts.size();
 
   // Sort particles by descending density.
-  TrackingVector<int> sortedIndices(numParticles);
+  std::vector<int> sortedIndices(numParticles);
   for (size_t i = 0; i < numParticles; ++i)
     sortedIndices[i] = i;
 
@@ -427,7 +432,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     return cloud.pts[a].density > cloud.pts[b].density;
   });
 
-  TrackingVector<int> rank(numParticles, -1);
+  std::vector<int> rank(numParticles, -1);
   for (size_t i = 0; i < sortedIndices.size(); ++i) 
     rank[sortedIndices[i]] = i;  
   
@@ -437,8 +442,8 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
 
   nanoflann::SearchParameters params(10);
 
-  TrackingVector<StructureNode*>& nodes = nodeList;
-  TrackingVector<StructureNode*> leafindex(numParticles);
+  std::vector<StructureNode*>& nodes = nodeList;
+  std::vector<StructureNode*> leafindex(numParticles);
 
   //int currentClusterID = 0;  
   
@@ -454,12 +459,12 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     // Declare ret_matches with the correct result type.
     std::vector<MyResultItem> ret_matches;
     
-    double searchRadius = p.Hsml * p.Hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+    double searchRadius = p.normalized_hsml * p.normalized_hsml * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
     
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 
-    TrackingVector<int> neighborClusters;
-    TrackingVector<int> smallestIndices;
+    std::vector<int> neighborClusters;
+    std::vector<int> smallestIndices;
     for (const auto& match : ret_matches) {
       size_t neighbor_index = match.first;
       if (neighbor_index == static_cast<size_t>(idx))
@@ -477,7 +482,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
       }
     }
 
-    TrackingVector<StructureNode *> neighborNodes;
+    std::vector<StructureNode *> neighborNodes;
     for (auto i : neighborClusters){
       StructureNode *p = leafindex[i];
       neighborNodes.push_back(p->ancestor());
@@ -491,7 +496,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
     
     // Find representative cluster IDs connected to this particle.
     if (neighborNodes.empty()) {
-      StructureNode* newLeaf = new StructureNode(TrackingVector<int>{idx}, p.density);
+      StructureNode* newLeaf = new StructureNode(std::vector<int>{idx}, p.density);
       nodes.push_back(newLeaf);
       leafindex[idx] = newLeaf;
       
@@ -521,7 +526,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
       pLeaf->add_particle(idx, p.density);
     } else {
       int count = 0;
-      TrackingVector<StructureNode*> merger;
+      std::vector<StructureNode*> merger;
       for(size_t i=0;i <  neighborNodes.size();i++){
 	StructureNode* adjacent = neighborNodes[i];
 	if (adjacent->isLeaf()) {
@@ -554,7 +559,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
 	pLeaf_rep->add_particle(idx, p.density);
       } else {
 	// create a new branch	
-	StructureNode* mergeNode = new StructureNode(TrackingVector<int>{idx}, p.density, neighborNodes);
+	StructureNode* mergeNode = new StructureNode(std::vector<int>{idx}, p.density, neighborNodes);
 	leafindex[idx] = pLeaf_rep = mergeNode;
 	
 	nodes.push_back(mergeNode);
@@ -591,7 +596,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
       if (!parent)
 	continue;
       auto& siblings = parent->children;
-      TrackingVector<StructureNode*> merge;
+      std::vector<StructureNode*> merge;
       if (siblings.size() == 2) {
 	merge = siblings;
       } else if (siblings.size() > 2) {
@@ -606,7 +611,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   }
 
   // Rebuild the trunk from structures without parents.
-  TrackingVector<StructureNode*>trunk = pruning::_make_trunk(nodes, params_.minDepth, params_.minParticles);
+  std::vector<StructureNode*>trunk = pruning::_make_trunk(nodes, params_.minDepth, params_.minParticles);
   
   for (size_t i = 0; i < nodes.size(); i++) {    
     StructureNode *sn = nodes[i];
@@ -616,7 +621,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   sortNodesByMass();    
 
   for(StructureNode* node : nodes){
-    TrackingVector<int> indices_new;
+    std::vector<int> indices_new;
     
     for(size_t i = 0; i < node->indices.size() ; i++){
       int idx = node -> indices[i];
@@ -633,7 +638,7 @@ void FindClump::findClumpsDendrogram(TrackingVector<ParticleData>& originalParti
   flagDirty = true;
 }
 
-void FindClump::calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleDataFiltered>& p){
+void FindClump::calc_node_statistic(StructureNode *ns, const std::vector<ParticleDataFiltered>& p){
   if(ns->_done_statistics == true)
     return;
 
@@ -705,7 +710,7 @@ void FindClump::sortNodesByMass() {
 
 //------------------------------------------------------------
 // 2) Helper for hierarchy sorting using pre-order traversal.
-void FindClump::traverseHierarchy(StructureNode* node, TrackingVector<StructureNode*>& sortedNodes) {
+void FindClump::traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes) {
   if (!node) return;
   sortedNodes.push_back(node);
   // Visit child nodes in order. The order depends on children.
@@ -720,7 +725,7 @@ void FindClump::sortNodesByHierarchy() {
   if(!flagDendrogramComputed)
     return;
     
-  TrackingVector<StructureNode*> sortedNodes;
+  std::vector<StructureNode*> sortedNodes;
   // Traverse trunk nodes, which are nodes whose parent is nullptr.
   for (StructureNode* node : nodeList) {
     if (node->parent == nullptr) {
@@ -734,18 +739,21 @@ void FindClump::sortNodesByHierarchy() {
 
 
 // Example filtering operation.
-TrackingVector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const{
-  TrackingVector<ParticleDataFiltered> filtered;  
+std::vector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const std::vector<ParticleData>& particles,
+                                                                           float normalizedScale,
+                                                                           double threshold,
+                                                                           const std::string &var) const{
+  std::vector<ParticleDataFiltered> filtered;
   for (size_t i = 0; i < particles.size(); ++i) {
       const ParticleData &p = particles[i];
       if(p.type >= 3){
-	ParticleDataFiltered copy = filter_particle_for_clump_find(p, var);
+	ParticleDataFiltered copy = filter_particle_for_clump_find(p, i, normalizedScale, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
       
       if (p.getValue(var) >= threshold) {
-	ParticleDataFiltered copy = filter_particle_for_clump_find(p, var);
+	ParticleDataFiltered copy = filter_particle_for_clump_find(p, i, normalizedScale, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
@@ -753,8 +761,8 @@ TrackingVector<FindClump::ParticleDataFiltered> FindClump::filterParticles(const
   return filtered;
 }
 
-TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, TrackingVector<ParticleData>& original_p) const{
-  TrackingVector<ParticleData> pts;
+std::vector<ParticleData> FindClump::getAllChildren(StructureNode* node, std::vector<ParticleData>& original_p) const{
+  std::vector<ParticleData> pts;
   if (!node)
     return pts;
 
@@ -765,7 +773,7 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
   // Recursively process child nodes and merge their indices.
   for (StructureNode* child : node->children) {
-    TrackingVector<ParticleData> childIndices = getAllChildren(child, original_p);
+    std::vector<ParticleData> childIndices = getAllChildren(child, original_p);
     pts.insert(pts.end(), childIndices.begin(), childIndices.end());
   }
 
@@ -777,7 +785,7 @@ TrackingVector<ParticleData> FindClump::getAllChildren(StructureNode* node, Trac
 
 #ifdef CLUMP_DATA_READ
 void FindClump::do_FOF_and_output_clump_data(int method,
-                                             TrackingVector<ParticleData>&particles,
+                                             ParticleBlock& block,
                                              double snapshotTime,
                                              char *filename,
                                              int snapshotIndex){
@@ -785,15 +793,15 @@ void FindClump::do_FOF_and_output_clump_data(int method,
   std::string var(var_name);
   
   if(method == 0)
-    findClumps(particles, var);
+    runFOF(block, var);
   else
-    findClumpsDendrogram(particles, var);
+    runDendrogram(block, var);
 
   for(auto& node : nodeList)
-    node->construct_ID_array(particles);
+    node->construct_ID_array(block);
 
   std::string fname(filename);
-  writeFOFtoHDF5(particles, snapshotTime, fname, snapshotIndex);  
+  writeFOFtoHDF5(block, snapshotTime, fname, snapshotIndex);
 
   if(nodeList_prev.size() > 0){
     if(nodeList_prev.size())
@@ -809,11 +817,11 @@ void FindClump::do_FOF_and_output_clump_data(int method,
 
 void FindClump::findClumpsInNextSnapshot(void){
   struct ParticleInfo {
-    int ID;
+    int64_t ID;
     int clumpID;
   };
 
-  TrackingVector<struct ParticleInfo> particleIDs;
+  std::vector<struct ParticleInfo> particleIDs;
 
   size_t count = 0;
   for(size_t ic=0;ic< nodeList.size();ic++){
@@ -844,7 +852,7 @@ void FindClump::findClumpsInNextSnapshot(void){
     if(!node->isLeaf())
       continue;
 
-    TrackingVector<int> counts(nClump, 0);
+    std::vector<int> counts(nClump, 0);
     
     size_t i1=0, i2=0;
     while(i1 < node->IDs.size() && i2 < particleIDs.size()){
@@ -880,11 +888,12 @@ void FindClump::findClumpsInNextSnapshot(void){
 
 
 
-void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
+void FindClump::writeFOFtoHDF5(const ParticleBlock& block,
 			       double snapshotTime,
 			       const std::string &filename,
 			       int snapshotIndex)
 {
+  const auto& particles = block.particles;
   size_t count = 0;
   size_t totalParticles = 0;
   
@@ -932,7 +941,7 @@ void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
     double gas_mass=0., stellar_mass = 0.;
     double stellar_mass_maximum = 0.;
     for (int idx : node->indices) {
-      int pid = particles[idx].ID;
+      int64_t pid = block.particleIdSigned(static_cast<size_t>(idx));
       out.particle_ids[offset] = pid;
       out.particle_type[offset] = static_cast<char>(particles[idx].type);
       offset++;
@@ -1005,10 +1014,10 @@ void FindClump::writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
 
 void FindClump::readFOFtoHDF5(const std::string &filename,
 			      int snapshotIndex,
-			      TrackingVector<int> &sorted_particle_id,
-			      TrackingVector<int> &clump_id,
-			      TrackingVector<int> &clump_offset,
-			      TrackingVector<int> &clump_size
+			      std::vector<int64_t> &sorted_particle_id,
+			      std::vector<int> &clump_id,
+			      std::vector<int> &clump_offset,
+			      std::vector<int> &clump_size
 			      ){
   uint32_t mask = (L_CLUMP_ID | L_CLUMP_SIZE  | L_CLUMP_OFFSET
 		   | L_CLUMP_POSITION | L_CLUMP_VELOCITY

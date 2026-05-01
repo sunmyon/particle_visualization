@@ -118,7 +118,7 @@ inline bool IsSnapshotLoadFailedFor(const SnapshotLoadRuntimeState& load,
 
 
 struct DiskAnalysisRequestState {
-  int targetParticleId = 0;
+  int64_t targetParticleId = 0;
   bool rejectTypeZeroTarget = false;
   float diskOpacity = 1.0f;
   char diskTag[64] = "main_disk";
@@ -128,8 +128,8 @@ struct DiskAnalysisRequestState {
 
 struct DiskAnalysisBatchTargetRow {
   int idx = 0;
-  int idA = 0;
-  int idB = 0;
+  int64_t idA = 0;
+  int64_t idB = 0;
   int snap = -1;
 };
 
@@ -159,16 +159,16 @@ struct DiskAnalysisBatchRuntimeState {
 };
 
 struct EllipsoidAnalysisRequestState {
-  int particleId1 = 0;
-  int particleId2 = 0;
+  int64_t particleId1 = 0;
+  int64_t particleId2 = 0;
   bool runRequested = false;
   bool clearRequested = false;
 };
 
 struct EllipsoidAnalysisBatchTargetRow {
   int idx = 0;
-  int idA = 0;
-  int idB = 0;
+  int64_t idA = 0;
+  int64_t idB = 0;
   int snap = -1;
 };
 
@@ -292,7 +292,7 @@ struct ProjectionMovieRequestState {
 
   bool followSinkCenter = false;
   bool followMostMassiveSink = false;
-  int particleIdCenter = 0;
+  int64_t particleIdCenter = 0;
   bool useMassCenter = false;
   float massCenterRadius = 0.0f;
   float massCenterMinDensity = 0.0f;
@@ -388,7 +388,6 @@ struct CameraPlacementRequestState {
   bool clearCullingRequested = false;
 
   float centerInput[3] = {0.0f, 0.0f, 0.0f};
-  bool inputIsOriginal = true;
 
   int currentView = 0;
   float rollAngle = 0.0f;

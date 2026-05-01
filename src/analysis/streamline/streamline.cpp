@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "analysis/streamline/streamline.h"
+#include "data/particle_coordinates.h"
 
 
 namespace {
@@ -51,7 +52,8 @@ float polylineLength(const std::vector<Vec3>& points) {
 }  // namespace
 
 StreamlineComputer::Bounds
-StreamlineComputer::makeGasBounds(const TrackingVector<ParticleData>& particles) const
+StreamlineComputer::makeGasBounds(const std::vector<ParticleData>& particles,
+                                  float normalizedScale) const
 {
   Bounds bounds;
   for (int k = 0; k < 3; ++k) {
@@ -61,9 +63,10 @@ StreamlineComputer::makeGasBounds(const TrackingVector<ParticleData>& particles)
 
   for (const auto& p : particles) {
     if (p.type != 0) continue;
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
     for (int k = 0; k < 3; ++k) {
-      bounds.min[k] = std::min(bounds.min[k], p.pos[k]);
-      bounds.max[k] = std::max(bounds.max[k], p.pos[k]);
+      bounds.min[k] = std::min(bounds.min[k], pos[k]);
+      bounds.max[k] = std::max(bounds.max[k], pos[k]);
     }
     bounds.valid = true;
   }
@@ -90,7 +93,8 @@ StreamlineComputer::makeBoxBounds(const StreamlineBoxSpec& box) const
 }
 
 std::vector<StreamlineComputer::SeedPoint>
-StreamlineComputer::selectSeeds(const TrackingVector<ParticleData>& particles,
+StreamlineComputer::selectSeeds(const std::vector<ParticleData>& particles,
+                                float normalizedScale,
                                 const Bounds& bounds,
                                 int nSeeds) const
 {
@@ -103,9 +107,10 @@ StreamlineComputer::selectSeeds(const TrackingVector<ParticleData>& particles,
   for (size_t i = 0; i < particles.size(); ++i) {
     const auto& p = particles[i];
     if (p.type != 0) continue;
-    if (p.pos[0] < bounds.min[0] || p.pos[0] > bounds.max[0]) continue;
-    if (p.pos[1] < bounds.min[1] || p.pos[1] > bounds.max[1]) continue;
-    if (p.pos[2] < bounds.min[2] || p.pos[2] > bounds.max[2]) continue;
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    if (pos[0] < bounds.min[0] || pos[0] > bounds.max[0]) continue;
+    if (pos[1] < bounds.min[1] || pos[1] > bounds.max[1]) continue;
+    if (pos[2] < bounds.min[2] || pos[2] > bounds.max[2]) continue;
     selected_indices.push_back(i);
   }
 
@@ -118,15 +123,18 @@ StreamlineComputer::selectSeeds(const TrackingVector<ParticleData>& particles,
   for (int i = 0; i < n_actual; ++i) {
     const size_t idx = static_cast<size_t>((double)i * selected_indices.size() / n_actual);
     const auto& p = particles[selected_indices[idx]];
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
 
-    seeds.push_back({{p.pos[0], p.pos[1], p.pos[2]},
-                     std::max(1.0e-6f, p.Hsml)});
+    seeds.push_back({{pos.x, pos.y, pos.z},
+                     std::max(1.0e-6f,
+                              normalizedParticleHsml(p, normalizedScale))});
   }
   return seeds;
 }
 
 StreamlineComputer::SeedPoint
-StreamlineComputer::makeManualSeed(const TrackingVector<ParticleData>& particles,
+StreamlineComputer::makeManualSeed(const std::vector<ParticleData>& particles,
+                                   float normalizedScale,
                                    const std::array<float, 3>& seed) const
 {
   float nearestDist2 = std::numeric_limits<float>::max();
@@ -134,13 +142,14 @@ StreamlineComputer::makeManualSeed(const TrackingVector<ParticleData>& particles
 
   for (const auto& p : particles) {
     if (p.type != 0) continue;
-    const float dx = p.pos[0] - seed[0];
-    const float dy = p.pos[1] - seed[1];
-    const float dz = p.pos[2] - seed[2];
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const float dx = pos.x - seed[0];
+    const float dy = pos.y - seed[1];
+    const float dz = pos.z - seed[2];
     const float dist2 = dx * dx + dy * dy + dz * dz;
     if (dist2 < nearestDist2) {
       nearestDist2 = dist2;
-      hsml = std::max(1.0e-6f, p.Hsml);
+      hsml = std::max(1.0e-6f, normalizedParticleHsml(p, normalizedScale));
     }
   }
 
@@ -153,7 +162,8 @@ StreamlineComputer::build(const ParticleBlock& particles,
 {
   StreamlineBuildOutput output;
 
-  const Bounds gasBounds = makeGasBounds(particles.particles);
+  const float normalizedScale = particles.normalizedScale;
+  const Bounds gasBounds = makeGasBounds(particles.particles, normalizedScale);
   if (!gasBounds.valid) {
     output.message = "No gas particles are available for streamline seeds.";
     return output;
@@ -168,10 +178,10 @@ StreamlineComputer::build(const ParticleBlock& particles,
   std::vector<SeedPoint> seeds;
   if (spec.useManualSeed) {
     for (const auto& seed : spec.manualSeeds) {
-      seeds.push_back(makeManualSeed(particles.particles, seed));
+      seeds.push_back(makeManualSeed(particles.particles, normalizedScale, seed));
     }
   } else {
-    seeds = selectSeeds(particles.particles, seedBounds, spec.nSeeds);
+    seeds = selectSeeds(particles.particles, normalizedScale, seedBounds, spec.nSeeds);
   }
   if (seeds.empty()) {
     output.message = "No seed particles were found in the selected seed region.";
@@ -245,7 +255,7 @@ void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
                                         StreamlineBuildSpec::FieldSource fieldSource) {
   fieldBounds_ = fieldBounds;
 
-  TrackingVector<particle_stream> p_stream;
+  std::vector<particle_stream> p_stream;
   p_stream.reserve(particleBlock.particles.size());
 
   const bool useBfield = fieldSource == StreamlineBuildSpec::FieldSource::BField;
@@ -253,15 +263,17 @@ void StreamlineComputer::estimate_gradB(const ParticleBlock& particleBlock,
   for (size_t i = 0; i < particleBlock.particles.size(); ++i) {
     const ParticleData& p = particleBlock.particles[i];
     if (p.type != 0) continue;
-    if (p.pos[0] < fieldBounds.min[0] || p.pos[0] > fieldBounds.max[0]) continue;
-    if (p.pos[1] < fieldBounds.min[1] || p.pos[1] > fieldBounds.max[1]) continue;
-    if (p.pos[2] < fieldBounds.min[2] || p.pos[2] > fieldBounds.max[2]) continue;
+    const glm::vec3 pos = normalizedParticlePosition(p, particleBlock.normalizedScale);
+    if (pos[0] < fieldBounds.min[0] || pos[0] > fieldBounds.max[0]) continue;
+    if (pos[1] < fieldBounds.min[1] || pos[1] > fieldBounds.max[1]) continue;
+    if (pos[2] < fieldBounds.min[2] || pos[2] > fieldBounds.max[2]) continue;
 
     particle_stream ps{};
-    ps.pos[0] = p.pos[0];
-    ps.pos[1] = p.pos[1];
-    ps.pos[2] = p.pos[2];
-    ps.cell_size = std::max(1.0e-6f, p.Hsml);
+    ps.pos[0] = pos.x;
+    ps.pos[1] = pos.y;
+    ps.pos[2] = pos.z;
+    ps.cell_size =
+      std::max(1.0e-6f, normalizedParticleHsml(p, particleBlock.normalizedScale));
 
     if (useBfield) {
       float bf[3] = {0.0f, 0.0f, 0.0f};

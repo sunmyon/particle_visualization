@@ -28,8 +28,10 @@ std::vector<int> EllipseFitter::extractComponent(double thr, int seedIndex) cons
 	
 	std::vector<MyResultItem> ret;	
         nanoflann::SearchParameters sp;
-	float q[3] = {(*dataPtr_)[i].pos[0],(*dataPtr_)[i].pos[1],(*dataPtr_)[i].pos[2]};
-        kdtree_->radiusSearch(q, (*dataPtr_)[i].Hsml * (*dataPtr_)[i].Hsml, ret, sp);
+	float q[3];
+        normalizedParticlePosition((*dataPtr_)[i], normalizedScale_, q);
+        const float h = normalizedParticleHsml((*dataPtr_)[i], normalizedScale_);
+        kdtree_->radiusSearch(q, h * h, ret, sp);
         for (auto& r : ret) {
             int j = r.first;
             if (!visited[j] && (*dataPtr_)[j].density >= thr) {
@@ -67,19 +69,25 @@ int EllipseFitter::find_nearest_gas_particle(const float pos[3]) const {
 }
 
 
-bool EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B, EllipsoidObject& out) 
+bool EllipseFitter::computeEllipse(const ParticleBlock& block,
+                                   int64_t ID_A,
+                                   int64_t ID_B,
+                                   EllipsoidObject& out)
 {
+  const std::vector<ParticleData>& data = block.particles;
   dataPtr_ = &data;
+  normalizedScale_ = block.normalizedScale;
 
   int index_a, index_b;  
   size_t count = 0;
   for(size_t i=0;i<data.size();i++){
-    if((*dataPtr_)[i].ID == ID_A){
+    const int64_t particleId = block.particleIdSigned(i);
+    if(particleId == ID_A){
       index_a = i;
       count++;	
     }
 
-    if((*dataPtr_)[i].ID == ID_B){
+    if(particleId == ID_B){
       index_b = i;
       count++;
     }
@@ -89,17 +97,24 @@ bool EllipseFitter::computeEllipse(const TrackingVector<ParticleData>& data, int
   }
 
   if(count != 2){
-    printf("Could not find two specified particles with ID=%d and %d (count_found=%zu < 2)\n", ID_A, ID_B, count );
+    printf("Could not find two specified particles with ID=%lld and %lld (count_found=%zu < 2)\n",
+           static_cast<long long>(ID_A),
+           static_cast<long long>(ID_B),
+           count);
     return false;
   }
 
   // 2) Build the KD-tree dynamically.
-  PointCloud<ParticleData> cloud{ &data };
+  PointCloud<ParticleData> cloud{ &data, normalizedScale_ };
   kdtree_.reset(new KDTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams()));
   kdtree_->buildIndex();
   
-  int indexA = find_nearest_gas_particle((*dataPtr_)[index_a].pos);
-  int indexB = find_nearest_gas_particle((*dataPtr_)[index_b].pos);
+  float posA[3];
+  float posB[3];
+  normalizedParticlePosition((*dataPtr_)[index_a], normalizedScale_, posA);
+  normalizedParticlePosition((*dataPtr_)[index_b], normalizedScale_, posB);
+  int indexA = find_nearest_gas_particle(posA);
+  int indexB = find_nearest_gas_particle(posB);
 
   double rhoA = (*dataPtr_)[indexA].density;
   double rhoB = (*dataPtr_)[indexB].density;
@@ -191,18 +206,22 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
 {
     centroid.setZero();
     for (int idx: comp){
-        centroid.x() += (*dataPtr_)[idx].pos[0];
-        centroid.y() += (*dataPtr_)[idx].pos[1];
-        centroid.z() += (*dataPtr_)[idx].pos[2];
+        const glm::vec3 pos =
+          normalizedParticlePosition((*dataPtr_)[idx], normalizedScale_);
+        centroid.x() += pos.x;
+        centroid.y() += pos.y;
+        centroid.z() += pos.z;
     }
     centroid /= static_cast<double>(comp.size());
 
     Eigen::Matrix3d C = Eigen::Matrix3d::Zero();
     for (int idx: comp){
+        const glm::vec3 pos =
+          normalizedParticlePosition((*dataPtr_)[idx], normalizedScale_);
         Eigen::Vector3d d;
-        d.x() = (*dataPtr_)[idx].pos[0] - centroid.x();
-        d.y() = (*dataPtr_)[idx].pos[1] - centroid.y();
-        d.z() = (*dataPtr_)[idx].pos[2] - centroid.z();
+        d.x() = pos.x - centroid.x();
+        d.y() = pos.y - centroid.y();
+        d.z() = pos.z - centroid.z();
         C += d * d.transpose();
     }
     C /= static_cast<double>(comp.size());

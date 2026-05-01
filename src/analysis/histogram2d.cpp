@@ -6,6 +6,8 @@
 #include <functional>
 #include <glm/glm.hpp>
 
+#include "data/particle_coordinates.h"
+
 Histogram2DResult
 Histogram2DComputer::compute(const ParticleBlock& partblock,
                              const Histogram2DParams& params,
@@ -28,7 +30,8 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
         return false;
       }
 
-      const std::array<double, 3> pt = { p.pos[0], p.pos[1], p.pos[2] };
+      const glm::vec3 pos = normalizedParticlePosition(p, ctx.normalizedScale);
+      const std::array<double, 3> pt = { pos.x, pos.y, pos.z };
 
       for (const auto& hull : *ctx.convexHulls) {
         if (hull && hull->isInside(pt)) {
@@ -46,7 +49,7 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
         return false;
       }
 
-      glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
+      glm::vec3 pos = normalizedParticlePosition(p, ctx.normalizedScale);
       return glm::length(pos - *ctx.cameraCenter) <= params.cameraRadius;
     };
 
@@ -122,8 +125,8 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
     max2 = params.range2_max;
   }
 
-  TrackingVector<TrackingVector<float>> histogram(
-    params.bins1, TrackingVector<float>(params.bins2, 0.0f));
+  std::vector<std::vector<float>> histogram(
+    params.bins1, std::vector<float>(params.bins2, 0.0f));
 
   const float binSize1 = (max1 - min1) / params.bins1;
   const float binSize2 = (max2 - min2) / params.bins2;
@@ -163,14 +166,14 @@ Histogram2DComputer::compute(const ParticleBlock& partblock,
     histogram[binIndex1][binIndex2] += p.mass;
   }
 
-  TrackingVector<float> centers1(params.bins1, 0.0f);
+  std::vector<float> centers1(params.bins1, 0.0f);
   for (int i = 0; i < params.bins1; i++) {
     centers1[i] = min1 + (i + 0.5f) * binSize1;
     if (params.logScaleX)
       centers1[i] = std::pow(10.0f, min1 + (i + 0.5f) * binSize1);
   }
 
-  TrackingVector<float> centers2(params.bins2, 0.0f);
+  std::vector<float> centers2(params.bins2, 0.0f);
   for (int j = 0; j < params.bins2; j++) {
     centers2[j] = min2 + (j + 0.5f) * binSize2;
     if (params.logScaleY)

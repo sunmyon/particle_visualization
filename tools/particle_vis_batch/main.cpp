@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <glm/geometric.hpp>
+
 #include "FileIO/snapshot_io_service.h"
 #include "app/app_snapshot_load.h"
 #include "app/execution/analysis_execution.h"
@@ -151,12 +153,78 @@ void ApplyProjectionJson(const json& obj, ProjectionMapParams& params)
   if (obj.contains("showStarParticles")) {
     params.flagShowStarParticles = obj.at("showStarParticles").get<bool>();
   }
+  if (obj.contains("showCuboid")) params.flagShowCuboid = obj.at("showCuboid").get<bool>();
+  if (obj.contains("specifyZoomRegionByMass")) {
+    params.flagSpecifyZoomRegionByMass =
+      obj.at("specifyZoomRegionByMass").get<bool>();
+  }
+  if (obj.contains("criticalGasMassForZoomRegion")) {
+    params.criticalGasMassForZoomRegion =
+      obj.at("criticalGasMassForZoomRegion").get<float>();
+  }
+  if (obj.contains("lenZoomRegion")) {
+    params.lenZoomRegion = obj.at("lenZoomRegion").get<float>();
+  }
+  if (obj.contains("showSpatialScale")) {
+    params.flagPlaceScale = obj.at("showSpatialScale").get<bool>();
+  }
+  if (obj.contains("arrowLenX")) {
+    params.arrowLenX = obj.at("arrowLenX").get<float>();
+  }
+  if (obj.contains("arrowLabel")) {
+    CopyCStr(params.arrowLabelStr,
+             sizeof(params.arrowLabelStr),
+             obj.at("arrowLabel").get<std::string>());
+  }
   if (obj.contains("showTimeLabel")) params.flagTimeLabel = obj.at("showTimeLabel").get<bool>();
+  if (obj.contains("useRedshift")) params.flagUseRedshift = obj.at("useRedshift").get<bool>();
   if (obj.contains("timeFormat")) {
     CopyCStr(params.timeFormatBuf, sizeof(params.timeFormatBuf), obj.at("timeFormat").get<std::string>());
   }
   if (obj.contains("timeFactor")) {
     params.factorShownTimeInUnitTime = obj.at("timeFactor").get<float>();
+  }
+  if (obj.contains("colormap")) params.colormapindex = obj.at("colormap").get<int>();
+  if (obj.contains("gasQuantity")) {
+    params.selectedVarGas = ParseQuantity(obj.at("gasQuantity"));
+  }
+  if (obj.contains("multiPanelEnabled")) {
+    params.multiPanelEnabled = obj.at("multiPanelEnabled").get<bool>();
+  }
+  if (obj.contains("multiPanelRows")) params.multiPanelRows = obj.at("multiPanelRows").get<int>();
+  if (obj.contains("multiPanelCols")) params.multiPanelCols = obj.at("multiPanelCols").get<int>();
+  if (obj.contains("multiPanelCount")) params.multiPanelCount = obj.at("multiPanelCount").get<int>();
+  if (obj.contains("multiPanelVars")) {
+    const auto& vars = obj.at("multiPanelVars");
+    if (!vars.is_array()) {
+      throw std::runtime_error("multiPanelVars must be an array");
+    }
+    const int n = std::min<int>(static_cast<int>(vars.size()), 6);
+    for (int i = 0; i < n; ++i) {
+      params.multiPanelVars[i] = ParseQuantity(vars.at(static_cast<size_t>(i)));
+    }
+  }
+  if (obj.contains("multiPanelShowTimeLabel")) {
+    const auto& flags = obj.at("multiPanelShowTimeLabel");
+    if (!flags.is_array()) {
+      throw std::runtime_error("multiPanelShowTimeLabel must be an array");
+    }
+    const int n = std::min<int>(static_cast<int>(flags.size()), 6);
+    for (int i = 0; i < n; ++i) {
+      params.multiPanelShowTimeLabel[i] =
+        flags.at(static_cast<size_t>(i)).get<bool>();
+    }
+  }
+  if (obj.contains("multiPanelShowScale")) {
+    const auto& flags = obj.at("multiPanelShowScale");
+    if (!flags.is_array()) {
+      throw std::runtime_error("multiPanelShowScale must be an array");
+    }
+    const int n = std::min<int>(static_cast<int>(flags.size()), 6);
+    for (int i = 0; i < n; ++i) {
+      params.multiPanelShowScale[i] =
+        flags.at(static_cast<size_t>(i)).get<bool>();
+    }
   }
 }
 
@@ -240,7 +308,7 @@ void ApplyHistogram2DJson(const json& obj, Histogram2DParams& params)
 void ApplyDiskJson(const json& obj, DiskAnalysisRequestState& request)
 {
   if (obj.contains("targetParticleId")) {
-    request.targetParticleId = obj.at("targetParticleId").get<int>();
+    request.targetParticleId = obj.at("targetParticleId").get<int64_t>();
   }
   if (obj.contains("rejectTypeZeroTarget")) {
     request.rejectTypeZeroTarget = obj.at("rejectTypeZeroTarget").get<bool>();
@@ -375,12 +443,74 @@ bool LoadSnapshotStep(AppState& app, int step, SnapshotLoadOwner owner)
   return false;
 }
 
-bool RunProjectionMapJob(AppState& app, CameraContext& camera)
+bool BatchInputsUseOriginalCoordinates(const json& root)
+{
+  const std::string space = root.value("coordinateSpace", "original");
+  if (space == "original" || space == "snapshot") return true;
+  if (space == "normalized" || space == "internal" || space == "render") return false;
+  throw std::runtime_error("coordinateSpace must be 'original' or 'normalized'");
+}
+
+float LoadedSnapshotNormalizedScale(const AppState& app)
+{
+  if (app.data.particles &&
+      app.data.particles->particleBlock.normalizedScale > 0.0f) {
+    return app.data.particles->particleBlock.normalizedScale;
+  }
+  return 1.0f;
+}
+
+void RefreshCameraDistance(CameraContext& camera)
+{
+  camera.distance = glm::length(camera.cameraPos - camera.cameraTarget);
+}
+
+void ConvertCameraBatchInputToInternal(CameraContext& camera,
+                                       float normalizedScale,
+                                       bool inputIsOriginal)
+{
+  if (inputIsOriginal) {
+    camera.cameraPos *= normalizedScale;
+    camera.cameraTarget *= normalizedScale;
+  }
+  RefreshCameraDistance(camera);
+}
+
+void ConvertProjectionBatchInputToInternal(ProjectionMapParams& params,
+                                           float normalizedScale,
+                                           bool inputIsOriginal)
+{
+  if (!inputIsOriginal) return;
+  for (int axis = 0; axis < 3; ++axis) {
+    params.xlen[axis] *= normalizedScale;
+    params.xoffset[axis] *= normalizedScale;
+  }
+}
+
+void ConvertHistogramBatchInputToInternal(Histogram2DParams& params,
+                                          float normalizedScale,
+                                          bool inputIsOriginal)
+{
+  if (inputIsOriginal) {
+    params.cameraRadius *= normalizedScale;
+  }
+}
+
+bool RunProjectionMapJob(AppState& app,
+                         CameraContext& camera,
+                         bool coordinateInputsAreOriginal)
 {
   const auto& nav = app.runtime.settings.fileNavigation.navigation;
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
+  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  ConvertCameraBatchInputToInternal(camera,
+                                    normalizedScale,
+                                    coordinateInputsAreOriginal);
+  ConvertProjectionBatchInputToInternal(app.runtime.analysisTools.projectionMap.params,
+                                        normalizedScale,
+                                        coordinateInputsAreOriginal);
 
   ProjectionFrameExecutionContext frameCtx{
     *app.data.particles,
@@ -413,8 +543,23 @@ bool RunProjectionMapJob(AppState& app, CameraContext& camera)
   return true;
 }
 
-bool RunProjectionMovieJob(AppState& app, CameraContext& camera, const json& job)
+bool RunProjectionMovieJob(AppState& app,
+                           CameraContext& camera,
+                           const json& job,
+                           bool coordinateInputsAreOriginal)
 {
+  const auto& nav = app.runtime.settings.fileNavigation.navigation;
+  if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
+    return false;
+  }
+  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  ConvertCameraBatchInputToInternal(camera,
+                                    normalizedScale,
+                                    coordinateInputsAreOriginal);
+  ConvertProjectionBatchInputToInternal(app.runtime.analysisTools.projectionMap.params,
+                                        normalizedScale,
+                                        coordinateInputsAreOriginal);
+
   auto& request = app.runtime.analysisRequests.projectionMovie;
   if (job.contains("nSnapshots")) request.nSnapshots = job.at("nSnapshots").get<int>();
   if (job.contains("outputFileFormat")) {
@@ -430,7 +575,9 @@ bool RunProjectionMovieJob(AppState& app, CameraContext& camera, const json& job
   if (job.contains("followMostMassiveSink")) {
     request.followMostMassiveSink = job.at("followMostMassiveSink").get<bool>();
   }
-  if (job.contains("particleIdCenter")) request.particleIdCenter = job.at("particleIdCenter").get<int>();
+  if (job.contains("particleIdCenter")) {
+    request.particleIdCenter = job.at("particleIdCenter").get<int64_t>();
+  }
   if (job.contains("restoreCameraOnFinish")) {
     request.restoreCameraOnFinish = job.at("restoreCameraOnFinish").get<bool>();
   }
@@ -478,15 +625,24 @@ bool RunProjectionMovieJob(AppState& app, CameraContext& camera, const json& job
   return false;
 }
 
-bool RunRadialProfileJob(AppState& app, CameraContext& camera, const json& job)
+bool RunRadialProfileJob(AppState& app,
+                         CameraContext& camera,
+                         const json& job,
+                         bool coordinateInputsAreOriginal)
 {
   const auto& nav = app.runtime.settings.fileNavigation.navigation;
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
+  ConvertCameraBatchInputToInternal(camera,
+                                    LoadedSnapshotNormalizedScale(app),
+                                    coordinateInputsAreOriginal);
 
   RadialProfileRequestState request;
   ApplyRadialProfileJson(job, request.params);
+  if (coordinateInputsAreOriginal) {
+    request.params.useOriginal = true;
+  }
   request.runRequested = true;
 
   RadialProfileResultState result;
@@ -511,15 +667,25 @@ bool RunRadialProfileJob(AppState& app, CameraContext& camera, const json& job)
   return true;
 }
 
-bool RunHistogram2DJob(AppState& app, CameraContext& camera, const json& job)
+bool RunHistogram2DJob(AppState& app,
+                       CameraContext& camera,
+                       const json& job,
+                       bool coordinateInputsAreOriginal)
 {
   const auto& nav = app.runtime.settings.fileNavigation.navigation;
   if (!LoadSnapshotStep(app, nav.currentStep, SnapshotLoadOwner::UserNavigation)) {
     return false;
   }
+  const float normalizedScale = LoadedSnapshotNormalizedScale(app);
+  ConvertCameraBatchInputToInternal(camera,
+                                    normalizedScale,
+                                    coordinateInputsAreOriginal);
 
   Histogram2DRequestState request;
   ApplyHistogram2DJson(job, request.params);
+  ConvertHistogramBatchInputToInternal(request.params,
+                                       normalizedScale,
+                                       coordinateInputsAreOriginal);
   request.runRequested = true;
 
   Histogram2DContext ctx;
@@ -698,15 +864,26 @@ bool RunJob(const json& root)
     }
 
     const std::string type = root.value("type", "projection_map");
+    const bool coordinateInputsAreOriginal =
+      BatchInputsUseOriginalCoordinates(root);
     bool ok = false;
     if (type == "projection_map") {
-      ok = RunProjectionMapJob(app, camera);
+      ok = RunProjectionMapJob(app, camera, coordinateInputsAreOriginal);
     } else if (type == "projection_movie") {
-      ok = RunProjectionMovieJob(app, camera, root.value("movie", json::object()));
+      ok = RunProjectionMovieJob(app,
+                                 camera,
+                                 root.value("movie", json::object()),
+                                 coordinateInputsAreOriginal);
     } else if (type == "radial_profile") {
-      ok = RunRadialProfileJob(app, camera, root.value("radial", json::object()));
+      ok = RunRadialProfileJob(app,
+                               camera,
+                               root.value("radial", json::object()),
+                               coordinateInputsAreOriginal);
     } else if (type == "histogram2d") {
-      ok = RunHistogram2DJob(app, camera, root.value("histogram", json::object()));
+      ok = RunHistogram2DJob(app,
+                             camera,
+                             root.value("histogram", json::object()),
+                             coordinateInputsAreOriginal);
     } else if (type == "disk") {
 #ifdef GEOMETRICAL_ANALYSIS
       ok = RunDiskJob(app, root.value("disk", json::object()));

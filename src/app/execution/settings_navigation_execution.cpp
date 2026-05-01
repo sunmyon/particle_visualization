@@ -24,6 +24,7 @@
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/particle_array.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -200,14 +201,12 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
     float distance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
     glm::vec3 direction = camCtx.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
 
-    if (req.inputIsOriginal) {
-      float scale = normalization.toPhysicalScale();
-      camCtx.cameraTarget =
-        glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]) * scale;
-    } else {
-      camCtx.cameraTarget =
-        glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]);
+    float scale = normalization.toNormalizedScale();
+    if (particles.particleBlock.normalizedScale > 0.0f) {
+      scale = particles.particleBlock.normalizedScale;
     }
+    camCtx.cameraTarget =
+      glm::vec3(req.centerInput[0], req.centerInput[1], req.centerInput[2]) * scale;
 
     camCtx.cameraPos = camCtx.cameraTarget - direction * distance;
     req.setCenterRequested = false;
@@ -254,7 +253,7 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
   }
 
   if (req.applyCullingRequested) {
-    ApplyCullingSphere(particles, normalization, viewFilter);
+    ApplyCullingSphere(particles, viewFilter);
     viewFilter.enabled = true;
     req.applyCullingRequested = false;
   }
@@ -267,7 +266,7 @@ void ExecuteCameraPlacementRequests(ParticleArray& particles,
 
   if(post.refreshCulling){
     if(viewFilter.enabled)
-      ApplyCullingSphere(particles, normalization, viewFilter);
+      ApplyCullingSphere(particles, viewFilter);
     post.refreshCulling = false;
   }
 }
@@ -402,7 +401,7 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
       } else {
         ClumpData targetClump = clumpStore.clump(idx);
 
-        TrackingVector<ClumpData> newClumps =
+        std::vector<ClumpData> newClumps =
           loadClumpData(clumpStore.filePath().c_str(),
                         currentFileIndex,
                         normalization.toNormalizedScale());
@@ -445,9 +444,7 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
       for (const auto& p : particles.particleBlock.particles) {
         if (p.type < 3) continue;
         if (p.mass > massMax) {
-          targetPos[0] = p.pos[0];
-          targetPos[1] = p.pos[1];
-          targetPos[2] = p.pos[2];
+          normalizedParticlePosition(p, particles.particleBlock.normalizedScale, targetPos);
           massMax = p.mass;
           found = true;
         }
@@ -467,10 +464,12 @@ static bool ResolveTrackingCenter(ParticleArray& particles,
         for (const auto& p : particles.particleBlock.particles) {
           if (p.type == 1 || p.type == 2) continue;
           if (p.type == 0 && p.density < track.massCenterMinDensity) continue;
+          const glm::vec3 pos =
+            normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
 
-          const double dx = static_cast<double>(targetPos[0]) - static_cast<double>(p.pos[0]);
-          const double dy = static_cast<double>(targetPos[1]) - static_cast<double>(p.pos[1]);
-          const double dz = static_cast<double>(targetPos[2]) - static_cast<double>(p.pos[2]);
+          const double dx = static_cast<double>(targetPos[0]) - static_cast<double>(pos.x);
+          const double dy = static_cast<double>(targetPos[1]) - static_cast<double>(pos.y);
+          const double dz = static_cast<double>(targetPos[2]) - static_cast<double>(pos.z);
           const double dist2 = dx * dx + dy * dy + dz * dz;
           if (r2max > 0.0 && dist2 > r2max) continue;
 

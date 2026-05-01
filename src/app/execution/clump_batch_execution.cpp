@@ -29,7 +29,7 @@ bool ExecuteClumpRequest(ParticleArray& particles,
   }
 
   clumpFind.do_FOF_and_output_clump_data(request.method,
-                                         particles.particleBlock.particles,
+                                         particles.particleBlock,
                                          request.snapshotTime,
                                          request.outputPath,
                                          request.snapshotIndex);

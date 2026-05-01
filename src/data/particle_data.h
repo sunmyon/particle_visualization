@@ -2,7 +2,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
-#include <glm/glm.hpp>
+#include <cmath>
 
 #include "data/data_type.h"
 
@@ -10,36 +10,33 @@ class ParticleData {
 public:
   ParticleData() noexcept {}
   
-  float pos[3];          // Normalized coordinates for rendering.
-  float original_pos[3]; // Original coordinates read from the file, used as normalization input.
+  float original_pos[3]; // Coordinates read from the file.
   float vel[3];
-  float originalHsml;
-  float Hsml;
+  float original_hsml;
   float density;
   float temperature;
-  float val_show;
   float mass;            // mass
-  uint8_t   type;            // Particle type, 0 through 5.
-  uint8_t   flag_stress;
-  int   ID;
+  uint8_t type;              // Particle type, 0 through 5.
 
   float getValue(const std::string &var) const{
     if (var == "x")
-      return pos[0];
+      return original_pos[0];
     else if (var == "y")
-      return pos[1];
+      return original_pos[1];
     else if (var == "z")
-      return pos[2];
+      return original_pos[2];
     else if (var == "r") {
-      // Compute r as distance from the origin; this can use another center if needed.
-      return glm::length(glm::vec3(pos[0], pos[1], pos[2]));
+      const float r2 = original_pos[0] * original_pos[0] +
+                       original_pos[1] * original_pos[1] +
+                       original_pos[2] * original_pos[2];
+      return std::sqrt(r2);
     }
     else if (var == "Density")
       return density;
     else if (var == "Temperature")
       return temperature;
     else if (var == "Hsml")
-      return Hsml;
+      return original_hsml;
     else if (var == "Mass")
       return mass;
     else {
@@ -92,6 +89,7 @@ static constexpr const char* kHDAbundanceKey = "HDAbundance";
 static constexpr const char* kJ21Key = "J21";
 static constexpr const char* kVal1Key = "Val1";
 static constexpr const char* kVal2Key = "Val2";
+static constexpr const char* kParticleIdKey = "ParticleID";
 
 template<typename T, int N>
 struct SoAView {
@@ -107,4 +105,5 @@ namespace soa_views {
   inline constexpr SoAView<float,1> J21{ kJ21Key };
   inline constexpr SoAView<float,1> Val1{ kVal1Key };
   inline constexpr SoAView<float,1> Val2{ kVal2Key };
+  inline constexpr SoAView<int64_t,1> ParticleID{ kParticleIdKey };
 }

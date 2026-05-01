@@ -139,19 +139,20 @@ bool SnapshotLoader::readFile(int fileNumber,
   return true;
 }
 
-TrackingVector<int> SnapshotLoader::getStarParticleID(int indexFile,
-                                                      const SnapshotLoadParams& params,
-                                                      const InputFilterConfig& filter) {
+std::vector<int64_t> SnapshotLoader::getStarParticleID(int indexFile,
+                                                       const SnapshotLoadParams& params,
+                                                       const InputFilterConfig& filter) {
   SnapshotReadResult result;
   if (!readFile(indexFile, params, result, filter)) {
     return {};
   }
 
-  TrackingVector<int> IDs;
-  for (auto& p : result.block.particles) {
+  std::vector<int64_t> IDs;
+  for (size_t i = 0; i < result.block.particles.size(); ++i) {
+    const auto& p = result.block.particles[i];
     if (p.type < 3)
       continue;
-    IDs.push_back(p.ID);
+    IDs.push_back(result.block.particleIdSigned(i));
   }
 
   return IDs;

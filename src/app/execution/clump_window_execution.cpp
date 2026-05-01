@@ -31,9 +31,29 @@
 static void RecenterCameraPreservingDistance(CameraContext& cam,
                                              const glm::vec3& newTarget);
 
+static float OriginalToNormalizedScale(float normalizedScale)
+{
+  return normalizedScale > 0.0f ? normalizedScale : 1.0f;
+}
+
+static float NormalizedToOriginalScale(float normalizedScale)
+{
+  return normalizedScale > 0.0f ? 1.0f / normalizedScale : 1.0f;
+}
+
+static glm::vec3 OriginalToNormalized(const glm::vec3& p, float normalizedScale)
+{
+  return p * OriginalToNormalizedScale(normalizedScale);
+}
+
+static glm::vec3 NormalizedToOriginal(const glm::vec3& p, float normalizedScale)
+{
+  return p * NormalizedToOriginalScale(normalizedScale);
+}
+
 void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                              FindClump& clumpFind,
-                                             TrackingVector<ParticleData>& particles,
+                                             ParticleArray& particleArray,
                                              CameraContext& camera,
                                              double snapshotTime,
                                              const SnapshotInputState& input,
@@ -66,9 +86,14 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       row.sourceIndex = static_cast<int>(i);
       row.count = node->count;
       row.mass = node->totalMass;
-      row.pos[0] = static_cast<float>(node->pos_cm[0]);
-      row.pos[1] = static_cast<float>(node->pos_cm[1]);
-      row.pos[2] = static_cast<float>(node->pos_cm[2]);
+      const glm::vec3 originalPos =
+        NormalizedToOriginal(glm::vec3(static_cast<float>(node->pos_cm[0]),
+                                       static_cast<float>(node->pos_cm[1]),
+                                       static_cast<float>(node->pos_cm[2])),
+                             particleArray.particleBlock.normalizedScale);
+      row.pos[0] = originalPos.x;
+      row.pos[1] = originalPos.y;
+      row.pos[2] = originalPos.z;
       row.vpeak = static_cast<float>(node->vpeak);
       row.isLeaf = node->isLeaf();
       ui.rows.push_back(row);
@@ -91,7 +116,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;
-    clumpFind.runFOF(particles, var);
+    clumpFind.runFOF(particleArray.particleBlock, var);
     ui.requestRunFOF = false;
     syncViewFromService();
   }
@@ -104,7 +129,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;
-    clumpFind.runDendrogram(particles, var);
+    clumpFind.runDendrogram(particleArray.particleBlock, var);
     ui.requestRunDendrogram = false;
     syncViewFromService();
   }
@@ -133,7 +158,10 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     if (snapshotIndex < 0) {
       snapshotIndex = 0;
     }
-    clumpFind.writeFOFtoHDF5(particles, snapshotTime, fullPath, snapshotIndex);
+    clumpFind.writeFOFtoHDF5(particleArray.particleBlock,
+                             snapshotTime,
+                             fullPath,
+                             snapshotIndex);
     ui.requestOutputHdf5 = false;
   }
 #endif
@@ -158,7 +186,10 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
         ui.focusRowIndex < static_cast<int>(ui.rows.size())) {
       const auto& row = ui.rows[static_cast<size_t>(ui.focusRowIndex)];
       RecenterCameraPreservingDistance(camera,
-                                       glm::vec3(row.pos[0], row.pos[1], row.pos[2]));
+                                       OriginalToNormalized(glm::vec3(row.pos[0],
+                                                                      row.pos[1],
+                                                                      row.pos[2]),
+                                                            particleArray.particleBlock.normalizedScale));
     }
     ui.requestFocusRow = false;
     ui.focusRowIndex = -1;
@@ -169,7 +200,10 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     for (size_t i = 0; i < ui.showHull.size(); ++i) {
       clumpFind.setShowHull(static_cast<int>(i), ui.showHull[i]);
     }
-    clumpFind.applyHullSelectionToParticles(particles);
+    clumpFind.applyHullSelectionToStressFlags(
+      particleArray.flag_stress,
+      particleArray.particleBlock.particles.size());
+    particleArray.particlesDirty = true;
     ui.requestApplyHullSelection = false;
     syncViewFromService();
   }
@@ -208,9 +242,9 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
       row.count = cp.count;
       row.mass = static_cast<float>(cp.mass);
       row.density = static_cast<float>(cp.density);
-      row.pos[0] = cp.Pos[0];
-      row.pos[1] = cp.Pos[1];
-      row.pos[2] = cp.Pos[2];
+      row.pos[0] = cp.originalPos[0];
+      row.pos[1] = cp.originalPos[1];
+      row.pos[2] = cp.originalPos[2];
       row.stellarCount = cp.stellar_count;
       row.stellarMass = static_cast<float>(cp.stellar_mass);
       row.stellarID = cp.stellar_id;
@@ -271,8 +305,11 @@ void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
     if (ui.focusClumpIndex >= 0 &&
         ui.focusClumpIndex < static_cast<int>(ui.rows.size())) {
       const auto& row = ui.rows[static_cast<size_t>(ui.focusClumpIndex)];
+      const float scale = normalization.toNormalizedScale();
       RecenterCameraPreservingDistance(camera,
-                                       glm::vec3(row.pos[0], row.pos[1], row.pos[2]));
+                                       glm::vec3(row.pos[0] * scale,
+                                                 row.pos[1] * scale,
+                                                 row.pos[2] * scale));
     }
     ui.requestFocusSelected = false;
     ui.focusClumpIndex = -1;
@@ -553,9 +590,9 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
   frameParams.xoffset[0] = pos_center[0];
   frameParams.xoffset[1] = pos_center[1];
   frameParams.xoffset[2] = pos_center[2];
-  frameParams.xlen[0] = ui.mapLen;
-  frameParams.xlen[1] = ui.mapLen;
-  frameParams.xlen[2] = ui.mapLen;
+  frameParams.xlen[0] = ui.mapLen * scale_from_phys;
+  frameParams.xlen[1] = ui.mapLen * scale_from_phys;
+  frameParams.xlen[2] = ui.mapLen * scale_from_phys;
   frameParams.range_min = ui.mapValMin;
   frameParams.range_max = ui.mapValMax;
   frameParams.autoRange = false;
@@ -570,6 +607,7 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
 
   if (useAngularMomentumAxis) {
     auto frame = ComputeAngularMomentumFrame(particles.particleBlock.particles,
+                                             particles.particleBlock.normalizedScale,
                                              context.center,
                                              frameParams.xlen);
     if (frame.valid) {

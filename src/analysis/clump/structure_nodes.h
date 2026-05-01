@@ -1,16 +1,19 @@
 #pragma once
-#include "core/tracking_vector.h"
+#include <cstdint>
+
+#include <vector>
+#include "data/particle_block.h"
 #include "data/particle_data.h"
 
 class StructureNode {
 public:
-  TrackingVector<int> indices;
-  TrackingVector<int> IDs;
+  std::vector<int> indices;
+  std::vector<int64_t> IDs;
   int smallest_index;
   double vmax, vmin, vpeak;
   StructureNode* parent;
   StructureNode* _ancestor;
-  TrackingVector<StructureNode*> children;
+  std::vector<StructureNode*> children;
 
   int count;
   double totalMass, pos_cm[3];
@@ -24,7 +27,7 @@ public:
   int clumpID_in_next_snapshot;
   float partfrac_in_next_snapshot;
   
-  StructureNode(const TrackingVector<int>& idx, double density = 0.0, TrackingVector<StructureNode*> ch = {}, StructureNode* par = nullptr)
+  StructureNode(const std::vector<int>& idx, double density = 0.0, std::vector<StructureNode*> ch = {}, StructureNode* par = nullptr)
     : indices(idx), vmax(density), vmin(density), parent(par) {
     smallest_index = idx[0];
     _ancestor = par;
@@ -37,12 +40,12 @@ public:
     }
   }
   
-  void construct_ID_array(TrackingVector<ParticleData>& particles){
+  void construct_ID_array(const ParticleBlock& block){
     IDs={};
     
     for(size_t i=0; i<indices.size();i++){
       int idx = indices[i];
-      int ID = particles[idx].ID;
+      int64_t ID = block.particleIdSigned(static_cast<size_t>(idx));
       IDs.push_back(ID);
     }
     

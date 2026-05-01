@@ -24,6 +24,7 @@
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/particle_array.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -56,13 +57,14 @@ void ExecuteConvexHullRequests(ParticleArray& particles,
       continue;
     }
 
-    TrackingVector<ParticleData> pts =
+    std::vector<ParticleData> pts =
       clumpFind.get_particle_indices(i, particles.particleBlock.particles);
 
     std::vector<glm::vec3> points;
     points.reserve(pts.size());
     for (const auto& p : pts) {
-      points.emplace_back(p.pos[0], p.pos[1], p.pos[2]);
+      points.push_back(
+        normalizedParticlePosition(p, particles.particleBlock.normalizedScale));
     }
 
     ConvexHullEntry entry;

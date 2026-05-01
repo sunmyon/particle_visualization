@@ -45,8 +45,8 @@ ParticleBlockValidationResult ValidateParticleBlock(const ParticleBlock& block)
       return Invalid(i, "vel contains non-finite value");
     }
 
-    if (!std::isfinite(p.originalHsml) || p.originalHsml < 0.0f) {
-      return Invalid(i, "originalHsml is non-finite or negative");
+    if (!std::isfinite(p.original_hsml) || p.original_hsml < 0.0f) {
+      return Invalid(i, "original_hsml is non-finite or negative");
     }
 
     if (!std::isfinite(p.mass)) {

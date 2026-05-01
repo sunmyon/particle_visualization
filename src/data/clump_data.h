@@ -1,7 +1,8 @@
 #pragma once
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ClumpData {
 public:
@@ -18,20 +19,20 @@ public:
   float mass = 0.;
 
   int stellar_count = 0;
-  int stellar_id = -1;
+  int64_t stellar_id = -1;
   float stellar_mass = 0.;
   
-  TrackingVector<int> IDs;
+  std::vector<int64_t> IDs;
   
   float getClumpValue(const std::string &var) const;
 
-  void get_next_clump_position(const TrackingVector<ClumpData>& clump_in_next_snapshot, float *next_pos){
+  void get_next_clump_position(const std::vector<ClumpData>& clump_in_next_snapshot, float *next_pos){
     struct ParticleInfo {
-      int ID;
+      int64_t ID;
       int clumpID;
     };
 
-    TrackingVector<struct ParticleInfo> particleIDs;
+    std::vector<struct ParticleInfo> particleIDs;
 
     for(size_t ic=0;ic< clump_in_next_snapshot.size();ic++){
       for(auto id : clump_in_next_snapshot[ic].IDs){
@@ -48,7 +49,7 @@ public:
 		return a.ID < b.ID;
 	      });
     
-    TrackingVector<int> counts(clump_in_next_snapshot.size(), 0);    
+    std::vector<int> counts(clump_in_next_snapshot.size(), 0);
     size_t i1=0, i2=0;
     while(i1 < IDs.size() && i2 < particleIDs.size()){
       if(IDs[i1] < particleIDs[i2].ID){

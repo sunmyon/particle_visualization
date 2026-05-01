@@ -57,7 +57,8 @@ std::array<LineObject, 3> MakeManualSeedMarker(const std::array<float, 3>& seed)
 }
 }
 
-void ExecuteStreamlinePreviewRequest(StreamlinePreviewRequestState& request,
+void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
+                                     StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result)
 {
   if (request.clearRequested) {
@@ -74,13 +75,18 @@ void ExecuteStreamlinePreviewRequest(StreamlinePreviewRequestState& request,
 
   result = StreamlinePreviewResultState{};
 
+  const float originalToNormalized =
+    particles.particleBlock.normalizedScale > 0.0f
+      ? particles.particleBlock.normalizedScale
+      : 1.0f;
+
   CubeObject cube;
-  cube.center  = glm::vec3(request.seedCenter[0],
-                           request.seedCenter[1],
-                           request.seedCenter[2]);
-  cube.halfSize = 0.5f * glm::vec3(request.seedSize[0],
-                                   request.seedSize[1],
-                                   request.seedSize[2]);
+  cube.center  = originalToNormalized * glm::vec3(request.seedCenter[0],
+                                                  request.seedCenter[1],
+                                                  request.seedCenter[2]);
+  cube.halfSize = 0.5f * originalToNormalized * glm::vec3(request.seedSize[0],
+                                                          request.seedSize[1],
+                                                          request.seedSize[2]);
   
   cube.orientation = glm::quat{1, 0, 0, 0};
   cube.color   = glm::vec3(1.0f);
@@ -121,15 +127,29 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
   spec.stepScale = request.stepScale;
   spec.thetaMaxDegrees = request.thetaMaxDegrees;
   spec.useManualSeed = request.useManualSeed;
+  const float originalToNormalized =
+    particles.particleBlock.normalizedScale > 0.0f
+      ? particles.particleBlock.normalizedScale
+      : 1.0f;
+  const float normalizedToOriginal =
+    particles.particleBlock.normalizedScale > 0.0f
+      ? 1.0f / particles.particleBlock.normalizedScale
+      : 1.0f;
+
   spec.manualSeeds = request.manualSeeds;
+  for (auto& seed : spec.manualSeeds) {
+    for (float& v : seed) {
+      v *= originalToNormalized;
+    }
+  }
 
   if (request.seedSize[0] > 0.f &&
       request.seedSize[1] > 0.f &&
       request.seedSize[2] > 0.f) {
     spec.seedRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.seedRegion.center[i] = request.seedCenter[i];
-      spec.seedRegion.size[i] = request.seedSize[i];
+      spec.seedRegion.center[i] = request.seedCenter[i] * originalToNormalized;
+      spec.seedRegion.size[i] = request.seedSize[i] * originalToNormalized;
     }
   }
 
@@ -139,8 +159,8 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
       request.regionSize[2] > 0.f) {
     spec.fieldRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.fieldRegion.center[i] = request.regionCenter[i];
-      spec.fieldRegion.size[i] = request.regionSize[i];
+      spec.fieldRegion.center[i] = request.regionCenter[i] * originalToNormalized;
+      spec.fieldRegion.size[i] = request.regionSize[i] * originalToNormalized;
     }
   }
 
@@ -157,17 +177,17 @@ void ExecuteStreamlineBuildRequest(ParticleArray& particles,
   for (const auto& src : built.seedReports) {
     StreamlineBuildResultState::SeedReport dst;
     dst.seedIndex = src.seedIndex;
-    dst.position[0] = src.position[0];
-    dst.position[1] = src.position[1];
-    dst.position[2] = src.position[2];
+    dst.position[0] = src.position[0] * normalizedToOriginal;
+    dst.position[1] = src.position[1] * normalizedToOriginal;
+    dst.position[2] = src.position[2] * normalizedToOriginal;
     dst.stopReason = static_cast<int>(src.stopReason);
     dst.pointCount = src.pointCount;
-    dst.length = src.length;
+    dst.length = src.length * normalizedToOriginal;
     result.seedReports.push_back(dst);
   }
 
   if (request.useManualSeed) {
-    for (const auto& seed : request.manualSeeds) {
+    for (const auto& seed : spec.manualSeeds) {
       for (auto& marker : MakeManualSeedMarker(seed)) {
         result.lines.push_back(std::move(marker));
       }

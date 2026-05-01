@@ -4,7 +4,7 @@
 #include "analysis/isosurface/mesh_data.h"
 
 struct IsoSurfaceParams {
-  TrackingVector<ParticleDataForTree> particles;   ///< Input particle data, moved into the generator.
+  std::vector<ParticleDataForTree> particles;   ///< Input particle data, moved into the generator.
   BoundingBox           worldBox;    ///< Bounds of the full spatial domain.
   float                 isoLevel;    ///< Isosurface level.
   size_t                minParticles = 8;   ///< Minimum particle count threshold for octree subdivision.

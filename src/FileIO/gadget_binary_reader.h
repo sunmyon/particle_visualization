@@ -84,7 +84,7 @@ public:
         c.pos[0] = p.original_pos[0];
         c.pos[1] = p.original_pos[1];
         c.pos[2] = p.original_pos[2];
-        c.id = static_cast<uint64_t>(static_cast<int64_t>(p.ID));
+        c.id = all.particleId(i);
         c.type = p.type;
         if (!mask->pass(c)) continue;
       }
@@ -333,12 +333,18 @@ private:
     if (!readBlock_(block)) return false;
     if (block.size() == npart_ * sizeof(uint32_t)) {
       const uint32_t* ids = reinterpret_cast<const uint32_t*>(block.data());
-      for (size_t i = 0; i < npart_; ++i) out.particles[i].ID = static_cast<int>(ids[i]);
+      out.ensureParticleIdStorage(DataType::Int32);
+      for (size_t i = 0; i < npart_; ++i) {
+        out.setParticleId(i, static_cast<uint64_t>(ids[i]));
+      }
       return true;
     }
     if (block.size() == npart_ * sizeof(uint64_t)) {
       const uint64_t* ids = reinterpret_cast<const uint64_t*>(block.data());
-      for (size_t i = 0; i < npart_; ++i) out.particles[i].ID = static_cast<int>(ids[i]);
+      out.ensureParticleIdStorage(DataType::Int64);
+      for (size_t i = 0; i < npart_; ++i) {
+        out.setParticleId(i, ids[i]);
+      }
       return true;
     }
     return false;

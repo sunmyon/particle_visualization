@@ -9,14 +9,14 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/spatial/spatial_tree_types.h"
 
 /// Own all particles centrally; octree nodes store only index ranges.
 class ParticleOctree {
 public:
   /// Move particles in and build a root node covering the full worldBox.
-  ParticleOctree(TrackingVector<ParticleDataForTree>&& allParticles,
+  ParticleOctree(std::vector<ParticleDataForTree>&& allParticles,
 		 const BoundingBox&             worldBox,
 		 size_t                         minParticles = 8,
 		 size_t                         maxDepth     = 20,
@@ -55,7 +55,7 @@ public:
      * @param depth        Current recursion depth.
      */
     void subdivide(ParticleOctree&           tree,  
-		   TrackingVector<ParticleDataForTree>& particles,
+		   std::vector<ParticleDataForTree>& particles,
 		   size_t                               minParticles,
 		   size_t                               maxDepth,
 		   size_t                               depth,
@@ -67,13 +67,13 @@ public:
   /// Return a reference to the root node.
   const Node& root() const { return *root_; }
 
-  TrackingVector<Node*> getAllLeafNodes() const {
-    TrackingVector<Node*> leaves;
+  std::vector<Node*> getAllLeafNodes() const {
+    std::vector<Node*> leaves;
     collectLeaves(root_.get(), leaves);
     return leaves;
   }
 
-  const TrackingVector<ParticleDataForTree>& getParticles() const {
+  const std::vector<ParticleDataForTree>& getParticles() const {
     return particles_;
   }
 
@@ -98,9 +98,9 @@ public:
   void balanceTree(bool isIsoDensity);
   void querySphere(const glm::vec3& center,
 		   float            radius,
-		   TrackingVector<const ParticleDataForTree*>& out) const;
+		   std::vector<const ParticleDataForTree*>& out) const;
 
-  TrackingVector<Node*> findAllNeighbors(const Node* leaf, int dir) const;
+  std::vector<Node*> findAllNeighbors(const Node* leaf, int dir) const;
   const Node* findLeafContainingRoot(const glm::vec3 &p);
 
   // Recursively traverse nodes and print debug information.
@@ -123,7 +123,7 @@ private:
 				  size_t             depth,
 				  bool               isIsoDensity = false);
 
-  static void collectLeaves(Node* node, TrackingVector<Node*>& out) {
+  static void collectLeaves(Node* node, std::vector<Node*>& out) {
     if (!node) return;
     if (node->isLeaf) {
       out.push_back(node);
@@ -138,16 +138,16 @@ private:
   void querySphereRecursive(const Node*                     node,
 			    const glm::vec3&                center,
 			    float                           radius2,
-			    TrackingVector<const ParticleDataForTree*>& out) const;
+			    std::vector<const ParticleDataForTree*>& out) const;
 
   
-  TrackingVector<ParticleDataForTree> particles_;     ///< Centralized particle storage.
+  std::vector<ParticleDataForTree> particles_;     ///< Centralized particle storage.
   float                              isoLevel_;
   size_t                             minParticles_;  ///< Threshold for splitting internal nodes.
   size_t                             maxDepth_;      ///< Maximum recursion depth.
   std::unique_ptr<Node>              root_;          ///< Root node.
 
-  void collectFaceLeaves(Node* sib, int dir, const BoundingBox& origBox, TrackingVector<Node*>& out) const;
+  void collectFaceLeaves(Node* sib, int dir, const BoundingBox& origBox, std::vector<Node*>& out) const;
   
   struct NodeKey {
     uint32_t level;

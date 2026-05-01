@@ -21,11 +21,16 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
 
   static RadialProfileComputer computer;
   computer.setUnits(quantity.units);
+  const float normalizedToOriginal = normalization.toPhysicalScale();
+  glm::vec3 profileCenter = camCenter;
+  if (request.params.useOriginal) {
+    profileCenter = camCenter * normalizedToOriginal;
+  }
 
   result.result = computer.compute(partblock,
-                                   normalization.toPhysicalScale(),
+                                   normalizedToOriginal,
                                    request.params,
-                                   camCenter);
+                                   profileCenter);
   result.computed = result.result.valid;
 
   if (request.params.autorange && result.result.valid) {

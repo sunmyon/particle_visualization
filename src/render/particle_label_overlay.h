@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
@@ -13,7 +14,7 @@ struct ParticleLabelRenderState;
 
 struct ParticleLabelItem {
   glm::vec3 worldPos{0.0f};
-  int id = -1;
+  int64_t id = -1;
 };
 
 class ParticleLabelOverlay {

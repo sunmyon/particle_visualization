@@ -1,19 +1,22 @@
 #pragma once
 
+#include <cstdint>
+#include <cstring>
 #include <unordered_map>
 #include <array>
 
 #include "particle_data.h"
+#include "data/particle_coordinates.h"
 #include "core/physics_constants.h"
 #include "core/quantity.h"
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct HeaderInfo;
 struct ParticleSelectionOption;
 
 struct ParticleBlock {
   // ---- AoS core ----
-  TrackingVector<ParticleData> particles;
+  std::vector<ParticleData> particles;
 
   // ---- AoS extension (optional) ----
   AoSExtensionBuffer aosExt;
@@ -24,6 +27,7 @@ struct ParticleBlock {
 
   std::unordered_map<uint64_t, size_t> id2index;
   bool id2indexDirty = true;
+  float normalizedScale = 1.0f;
   
   void resize(size_t n) {
     particles.resize(n);
@@ -47,6 +51,76 @@ struct ParticleBlock {
     soa.clear();
     id2index.clear();
     id2indexDirty = true;
+    normalizedScale = 1.0f;
+  }
+
+  bool hasParticleIds() const
+  {
+    auto it = soa.find(kParticleIdKey);
+    return it != soa.end() &&
+           it->second.comps == 1 &&
+           (it->second.type == DataType::Int32 ||
+            it->second.type == DataType::Int64) &&
+           it->second.bytes.size() ==
+             particles.size() * dataTypeSize(it->second.type);
+  }
+
+  void ensureParticleIdStorage(DataType type = DataType::Int64)
+  {
+    if (type != DataType::Int32 && type != DataType::Int64) {
+      type = DataType::Int64;
+    }
+    auto& f = soa[kParticleIdKey];
+    if (f.type != type || f.comps != 1 ||
+        f.bytes.size() != particles.size() * dataTypeSize(type)) {
+      f.type = type;
+      f.comps = 1;
+      f.resize(particles.size());
+      id2indexDirty = true;
+    }
+  }
+
+  void setParticleId(size_t i, uint64_t id)
+  {
+    if (!hasParticleIds()) {
+      ensureParticleIdStorage(DataType::Int64);
+    }
+    SoAField& f = soa[kParticleIdKey];
+    if (i >= particles.size()) return;
+    if (f.type == DataType::Int32) {
+      int32_t v = static_cast<int32_t>(id);
+      std::memcpy(f.ptr(i), &v, sizeof(v));
+    } else {
+      int64_t v = static_cast<int64_t>(id);
+      std::memcpy(f.ptr(i), &v, sizeof(v));
+    }
+    id2indexDirty = true;
+  }
+
+  int64_t particleIdSigned(size_t i) const
+  {
+    auto it = soa.find(kParticleIdKey);
+    if (it == soa.end() || i >= particles.size()) {
+      return static_cast<int64_t>(i);
+    }
+    const SoAField& f = it->second;
+    if (f.comps != 1) return static_cast<int64_t>(i);
+    if (f.type == DataType::Int32) {
+      int32_t v = 0;
+      std::memcpy(&v, f.ptr(i), sizeof(v));
+      return static_cast<int64_t>(v);
+    }
+    if (f.type == DataType::Int64) {
+      int64_t v = 0;
+      std::memcpy(&v, f.ptr(i), sizeof(v));
+      return v;
+    }
+    return static_cast<int64_t>(i);
+  }
+
+  uint64_t particleId(size_t i) const
+  {
+    return static_cast<uint64_t>(particleIdSigned(i));
   }
 
   void rebuildIdIndex()
@@ -54,8 +128,7 @@ struct ParticleBlock {
     id2index.clear();
     id2index.reserve(particles.size() * 13 / 10);
     for (size_t i=0;i<particles.size();++i) {
-      // ParticleData::ID is int, so normalize it to uint64_t.
-      id2index[(uint64_t)(int64_t)particles[i].ID] = i;
+      id2index[particleId(i)] = i;
     }
     id2indexDirty = false;
   }
@@ -221,7 +294,8 @@ inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size
       out[0]=p.original_pos[0]; out[1]=p.original_pos[1]; out[2]=p.original_pos[2]; return true;
     }
     case VectorId::Pos: {
-      out[0]=p.pos[0]; out[1]=p.pos[1]; out[2]=p.pos[2]; return true;
+      normalizedParticlePosition(p, blk.normalizedScale, out);
+      return true;
     }
     case VectorId::Vel: {
       out[0]=p.vel[0]; out[1]=p.vel[1]; out[2]=p.vel[2]; return true;
@@ -241,10 +315,16 @@ inline bool getVectorValue(const ParticleBlock& blk, const ParticleData& p, size
 inline void setVectorValue(ParticleBlock& blk, ParticleData& p, size_t ipart, VectorId v, const float in[3]) {
   switch (v) {
   case VectorId::OriginalPos:
-    p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2]; 
+    p.original_pos[0]=in[0]; p.original_pos[1]=in[1]; p.original_pos[2]=in[2];
     return;
   case VectorId::Pos:
-    p.pos[0]=in[0]; p.pos[1]=in[1]; p.pos[2]=in[2]; 
+    {
+      const float invScale =
+        (blk.normalizedScale != 0.0f) ? 1.0f / blk.normalizedScale : 1.0f;
+      p.original_pos[0]=in[0] * invScale;
+      p.original_pos[1]=in[1] * invScale;
+      p.original_pos[2]=in[2] * invScale;
+    }
     return;
   case VectorId::Vel:
     p.vel[0]=in[0]; p.vel[1]=in[1]; p.vel[2]=in[2];
@@ -265,7 +345,7 @@ inline float getScalarValue(const ParticleBlock& blk, const ParticleData& p, int
     return p.mass;  // Adjust to match ParticleData if needed.
 
   case QuantityId::Hsml:
-    return p.Hsml;
+    return p.original_hsml;
 
   case QuantityId::PosX:        return p.original_pos[0]; // or p.original_pos[0]
   case QuantityId::PosY:        return p.original_pos[1];
@@ -377,7 +457,7 @@ inline void setScalarValue(ParticleBlock& blk, ParticleData& p, size_t ipart, Qu
       p.mass = x;
       return;
     case QuantityId::Hsml:
-      p.Hsml = x;
+      p.original_hsml = x;
       return;
     case QuantityId::Val:
       blk.writeSoAAs(soa_views::Val1, ipart, x);

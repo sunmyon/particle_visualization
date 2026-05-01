@@ -1,14 +1,14 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "core/quantity.h"
 #include "volume/adaptive_volume_tree.h"
 
 #include <string>
 
 struct IsoContourGeometryState {
-  TrackingVector<float> verts;
-  TrackingVector<unsigned> inds;
+  std::vector<float> verts;
+  std::vector<unsigned> inds;
   std::string message;
   AdaptiveVolumeTree adaptiveTree;
   bool adaptiveTreeValid = false;

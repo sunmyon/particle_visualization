@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct ClumpFinderRowView {
   int sourceIndex = -1;
@@ -54,9 +54,9 @@ struct ClumpFinderWindowState {
 
   bool histogramComputed = false;
   uint64_t histogramVersion = 0;
-  TrackingVector<float> massHistogramValues;
-  TrackingVector<ClumpFinderRowView> rows;
-  TrackingVector<bool> showHull;
+  std::vector<float> massHistogramValues;
+  std::vector<ClumpFinderRowView> rows;
+  std::vector<bool> showHull;
   bool exportHistogramPackage = true;
   uint64_t lastExportedHistogramVersion = 0;
   char exportFolder[512] = "";
@@ -64,8 +64,8 @@ struct ClumpFinderWindowState {
 };
 
 struct LoadedClumpEvolutionCacheView {
-  TrackingVector<float> timeFloats;
-  TrackingVector<float> valueFloats;
+  std::vector<float> timeFloats;
+  std::vector<float> valueFloats;
   int index = -1;
   int clumpID = -1;
 };
@@ -115,9 +115,9 @@ struct LoadedClumpWindowState {
   bool requestFocusSelected = false;
   int focusClumpIndex = -1;
 
-  TrackingVector<bool> showEvolve;
-  TrackingVector<LoadedClumpRowView> rows;
-  TrackingVector<LoadedClumpEvolutionCacheView> evolutionCache;
+  std::vector<bool> showEvolve;
+  std::vector<LoadedClumpRowView> rows;
+  std::vector<LoadedClumpEvolutionCacheView> evolutionCache;
 };
 
 struct ClumpChainSnapshotView {
@@ -140,13 +140,13 @@ struct ClumpChainSeriesView {
   float massMaximum = 0.0f;
   float temperature_d = 0.0f;
   bool plot = false;
-  TrackingVector<ClumpChainSnapshotView> snapshots;
+  std::vector<ClumpChainSnapshotView> snapshots;
 };
 
 struct ClumpChainWindowState {
   bool open = false;
   bool computed = false;
-  TrackingVector<ClumpChainSeriesView> series;
+  std::vector<ClumpChainSeriesView> series;
 
   int selectedChainIndex = -1;
   int currentSnapshotIndex = 0;

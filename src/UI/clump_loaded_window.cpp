@@ -198,7 +198,7 @@ static void DrawLoadedClumpTable(LoadedClumpWindowState& ui)
 
       char label[256];
       std::snprintf(label, sizeof(label),
-                    "%4zu   %4d    %g  %g  (%.3f, %.3f, %.3f)  %d  %.3g %d",
+                    "%4zu   %4d    %g  %g  original_pos=(%.3f, %.3f, %.3f)  %d  %.3g %d",
                     i, cp.count, cp.mass, cp.density,
                     cp.pos[0], cp.pos[1], cp.pos[2],
                     cp.stellarCount, cp.stellarMass, cp.stellarID);

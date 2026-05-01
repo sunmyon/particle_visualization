@@ -3,7 +3,7 @@
 #include <glm/vec3.hpp>
 
 #include "data/particle_block.h"
-#include "core/tracking_vector.h"
+#include <vector>
 #include "core/quantity.h"
 #include "analysis/convex_hull/convex_hull_interface.h"
 
@@ -37,9 +37,9 @@ struct Histogram2DParams {
 };
 
 struct Histogram2DResult {
-  TrackingVector<float> centers1;
-  TrackingVector<float> centers2;
-  TrackingVector<TrackingVector<float>> values;
+  std::vector<float> centers1;
+  std::vector<float> centers2;
+  std::vector<std::vector<float>> values;
 
   float range1_min = 0.0f;
   float range1_max = 1.0f;
@@ -51,9 +51,10 @@ struct Histogram2DResult {
 
 struct Histogram2DContext {
   const glm::vec3* cameraCenter = nullptr;
+  float normalizedScale = 1.0f;
 
 #ifdef USE_CONVEX_HULL
-  const TrackingVector<std::shared_ptr<IConvexHull>>* convexHulls = nullptr;
+  const std::vector<std::shared_ptr<IConvexHull>>* convexHulls = nullptr;
 #endif
 };
 

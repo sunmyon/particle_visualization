@@ -1,6 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ParticleData;
 
@@ -11,7 +11,8 @@ struct ProjectionAngularMomentumFrame {
 };
 
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
-    const TrackingVector<ParticleData>& particles,
+    const std::vector<ParticleData>& particles,
+    float normalizedScale,
     const glm::vec3& initialCenter,
     const float xlen[3]);
 

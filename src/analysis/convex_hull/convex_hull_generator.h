@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "analysis/convex_hull/convex_hull_interface.h"
 
 class ConvexHullGenerator {
@@ -15,7 +15,7 @@ public:
   std::shared_ptr<IConvexHull>
   buildHull(const std::vector<glm::vec3>& points);
 
-  TrackingVector<float>
+  std::vector<float>
   buildLineVertices(const std::vector<glm::vec3>& points);
 
 private:

@@ -8,7 +8,7 @@
 
 #include "analysis/histogram2d.h"
 #include "analysis/radial_profile.h"
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct AnalysisBatchSnapshotSpec {
   std::string folderPath;
@@ -70,8 +70,8 @@ struct LineSeriesPlotExportParams {
 
 struct PlotLineSeries {
   std::string label;
-  TrackingVector<float> x;
-  TrackingVector<float> y;
+  std::vector<float> x;
+  std::vector<float> y;
 };
 
 bool WriteRadialProfileData(const std::filesystem::path& path,
@@ -105,8 +105,8 @@ AnalysisPlotExportResult ExportHistogram2DPlotPackage(
 AnalysisPlotExportResult ExportBarHistogramPlotPackage(
   const AnalysisPlotExportSpec& spec,
   const BarHistogramPlotExportParams& params,
-  const TrackingVector<float>& centers,
-  const TrackingVector<float>& values);
+  const std::vector<float>& centers,
+  const std::vector<float>& values);
 
 AnalysisPlotExportResult ExportLineSeriesPlotPackage(
   const AnalysisPlotExportSpec& spec,

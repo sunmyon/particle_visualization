@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/clump_data.h"
 
 struct ClumpFinderUIState {
@@ -19,12 +19,12 @@ struct ClumpFinderUIState {
   int histogramBins = 50;
   bool histogramBinsAuto = false;
 
-  TrackingVector<float> massHistogramValues;
+  std::vector<float> massHistogramValues;
 };
 
 struct ClumpEvolutionCache {
-  TrackingVector<float> timeFloats;
-  TrackingVector<float> valueFloats;
+  std::vector<float> timeFloats;
+  std::vector<float> valueFloats;
   int index = -1;
 };
 
@@ -32,7 +32,7 @@ struct LoadedClumpToolState {
   bool flagReadClumpFile = false;
 
   int selectedClumpID = -1;
-  TrackingVector<bool> showEvolve;
+  std::vector<bool> showEvolve;
 
   int finalFileIndex = 1000;
   int dsnapshot = 10;
@@ -56,7 +56,7 @@ struct LoadedClumpToolState {
   float val_min = 1.0f;
   float val_max = 1.0e10f;
 
-  TrackingVector<ClumpEvolutionCache> evolutionCache;
+  std::vector<ClumpEvolutionCache> evolutionCache;
 };
 
 struct ClumpChainToolState {
@@ -67,10 +67,10 @@ struct ClumpChainToolState {
   int clumpChainDFileIndex = 1;
   char clumpChainFileName[256] = "";
 
-  TrackingVector<ClumpChainProps> clumpChainProps;
-  TrackingVector<TrackingVector<ClumpSnapshot*>> clumpChain;
+  std::vector<ClumpChainProps> clumpChainProps;
+  std::vector<std::vector<ClumpSnapshot*>> clumpChain;
 
-  TrackingVector<bool> plotClumps;
+  std::vector<bool> plotClumps;
   int selectedChainIndex = -1;
 
   int currentChainSnapshot = 0;

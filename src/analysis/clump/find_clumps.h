@@ -1,7 +1,12 @@
 #pragma once
+#include <algorithm>
+#include <cstdint>
+
 #include <nanoflann.hpp>
 
-#include "core/tracking_vector.h"
+#include <vector>
+#include "data/particle_block.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_data.h"
 #include "analysis/clump/structure_nodes.h"
 
@@ -14,28 +19,31 @@ class FindClump{
 public:
   struct ParticleDataFiltered{
     float pos[3];
-    float Hsml;
+    float normalized_hsml;
     float density;
     float val;             // Physical quantity in [0,1].
     float mass;            // mass
     uint8_t type;          // Particle type, 0 through 5.
-    int ID;
+    int64_t ID;
     int original_index;
   };
   
-  ParticleDataFiltered filter_particle_for_clump_find(const ParticleData p, const std::string &var) const{
+  ParticleDataFiltered filter_particle_for_clump_find(const ParticleData p,
+                                                      size_t index,
+                                                      float normalizedScale,
+                                                      const std::string &var) const{
     ParticleDataFiltered p_f;
-    p_f.pos[0] = p.pos[0];
-    p_f.pos[1] = p.pos[1];
-    p_f.pos[2] = p.pos[2];
+    normalizedParticlePosition(p, normalizedScale, p_f.pos);
 
-    p_f.Hsml = p.Hsml;
+    p_f.normalized_hsml = normalizedParticleHsml(p, normalizedScale);
     p_f.mass = p.mass;  
     p_f.density = p.density;  
     p_f.val = p.getValue(var);
 
     p_f.type = p.type;
-    p_f.ID = p.ID;
+    p_f.ID = particleBlockForIds_
+      ? particleBlockForIds_->particleIdSigned(index)
+      : static_cast<int64_t>(index);
 
     return p_f;
   }
@@ -52,10 +60,10 @@ public:
   };
   
 private:
-  TrackingVector<StructureNode *> nodeList;
+  std::vector<StructureNode *> nodeList;
 
 #ifdef USE_CONVEX_HULL
-  TrackingVector<bool> showHull_;          // Per-clump convex-hull visibility checkbox state.
+  std::vector<bool> showHull_;          // Per-clump convex-hull visibility checkbox state.
 #endif
   
   bool findClumpComputed = false;              // Whether FOF results are available.
@@ -68,13 +76,14 @@ private:
   struct Params params_;
    
   bool histogramComputed_ = false;
-  TrackingVector<float> massHistogramValues_;
+  std::vector<float> massHistogramValues_;
   /************************************/
   
-  TrackingVector<StructureNode *> nodeList_prev; //will be used for tracking clumps
+  std::vector<StructureNode *> nodeList_prev; //will be used for tracking clumps
   int snapshotIndex_prev;
 
-  TrackingVector<StructureNode *> nodeList_next; //will be used for tracking clumps
+  std::vector<StructureNode *> nodeList_next; //will be used for tracking clumps
+  const ParticleBlock* particleBlockForIds_ = nullptr;
 
   void clearNodes(){
     if (findClumpComputed) {
@@ -95,7 +104,7 @@ private:
   };
 
   struct ParticleCloud {
-    TrackingVector<ParticleDataFiltered> pts;
+    std::vector<ParticleDataFiltered> pts;
 
     inline size_t kdtree_get_point_count() const {
       return pts.size();
@@ -116,38 +125,43 @@ private:
     3  // Dimension count.
     > KDTree_t;
   
-  void findClumps(TrackingVector<ParticleData>& cloud, const std::string &var);
-  int find_parent(TrackingVector<int>& parent, int i);
-  void union_sets(TrackingVector<int>& parent, int a, int b);
+  void findClumps(std::vector<ParticleData>& cloud, float normalizedScale, const std::string &var);
+  int find_parent(std::vector<int>& parent, int i);
+  void union_sets(std::vector<int>& parent, int a, int b);
 
-  void findClumpsDendrogram(TrackingVector<ParticleData>& cloud, const std::string &var);
-  void calc_node_statistic(StructureNode *ns, const TrackingVector<ParticleDataFiltered>& p);
-  void traverseHierarchy(StructureNode* node, TrackingVector<StructureNode*>& sortedNodes);
-  TrackingVector<ParticleDataFiltered> filterParticles(const TrackingVector<ParticleData>& particles, double threshold, const std::string &var) const;
-  TrackingVector<ParticleData> getAllChildren(StructureNode* node, TrackingVector<ParticleData>& p) const;
+  void findClumpsDendrogram(std::vector<ParticleData>& cloud, float normalizedScale, const std::string &var);
+  void calc_node_statistic(StructureNode *ns, const std::vector<ParticleDataFiltered>& p);
+  void traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes);
+  std::vector<ParticleDataFiltered> filterParticles(const std::vector<ParticleData>& particles,
+                                                       float normalizedScale,
+                                                       double threshold,
+                                                       const std::string &var) const;
+  std::vector<ParticleData> getAllChildren(StructureNode* node, std::vector<ParticleData>& p) const;
 
   void findClumpsInNextSnapshot(void);
   
   void readFOFtoHDF5(    const std::string &filename,
 			 int snapshotIndex,
-			 TrackingVector<int> &sorted_particle_id,
-			 TrackingVector<int> &clump_id,
-			 TrackingVector<int> &clump_offset,
-			 TrackingVector<int> &clump_size);
+			 std::vector<int64_t> &sorted_particle_id,
+			 std::vector<int> &clump_id,
+			 std::vector<int> &clump_offset,
+			 std::vector<int> &clump_size);
 
   // Recursively process indices for this node and its descendants.
-  void setFlagsRecursively(StructureNode* node, TrackingVector<ParticleData>& particles) {
+  void setFlagsRecursively(StructureNode* node, std::vector<uint8_t>& stressFlags) {
     if (!node)
       return;
     
     // Process indices on the current node.
     for (auto idx : node->indices) {
-      particles[idx].flag_stress = 1;
+      if (idx >= 0 && static_cast<size_t>(idx) < stressFlags.size()) {
+        stressFlags[static_cast<size_t>(idx)] = 1;
+      }
     }
     
     // Recursively apply the same processing to child nodes.
     for (auto child : node->children) {
-      setFlagsRecursively(child, particles);
+      setFlagsRecursively(child, stressFlags);
     }
   }
   
@@ -160,8 +174,8 @@ public:
   void clearDirtyFlag(){ flagDirty = false; }
   void setDirtyFlag(){ flagDirty = true; }
      
-  const TrackingVector<StructureNode *>& nodes() const { return nodeList; }
-  TrackingVector<StructureNode *>& nodes() { return nodeList; }
+  const std::vector<StructureNode *>& nodes() const { return nodeList; }
+  std::vector<StructureNode *>& nodes() { return nodeList; }
 
   const StructureNode* node(int i) const { return nodeList[i]; }
   StructureNode * node(int i) { return nodeList[i]; }
@@ -169,22 +183,24 @@ public:
   Params& params() { return params_; }
   const Params& params() const { return params_; }
 
-  const TrackingVector<float>& massHistogramValues() const { return massHistogramValues_; }    
+  const std::vector<float>& massHistogramValues() const { return massHistogramValues_; }
 
   void sortNodesByMass();
   void sortNodesByHierarchy();
   
-  void runFOF(TrackingVector<ParticleData>& cloud, const std::string &var){
+  void runFOF(ParticleBlock& block, const std::string &var){
+    particleBlockForIds_ = &block;
     clearNodes();
-    findClumps(cloud, var);
+    findClumps(block.particles, block.normalizedScale, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif
   }
 
-  void runDendrogram(TrackingVector<ParticleData>& cloud, const std::string &var){
+  void runDendrogram(ParticleBlock& block, const std::string &var){
+    particleBlockForIds_ = &block;
     clearNodes();
-    findClumpsDendrogram(cloud, var);
+    findClumpsDendrogram(block.particles, block.normalizedScale, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif
@@ -201,14 +217,14 @@ public:
     showHull_.assign(nodeList.size(), false);
   }
 
-  void applyHullSelectionToParticles(TrackingVector<ParticleData>& particles) {
-    for (auto& p : particles) {
-      p.flag_stress = 0;
-    }
+  void applyHullSelectionToStressFlags(std::vector<uint8_t>& stressFlags,
+                                       size_t particleCount) {
+    stressFlags.resize(particleCount, 0);
+    std::fill(stressFlags.begin(), stressFlags.end(), 0);
 
     for (size_t i = 0; i < showHull_.size(); ++i) {
       if (!showHull_[i]) continue;
-      setFlagsRecursively(nodeList[i], particles);
+      setFlagsRecursively(nodeList[i], stressFlags);
     }
 
     setDirtyFlag();
@@ -218,7 +234,7 @@ public:
   void buildMassHistogram(bool useLogScaleX, float& outMin, float& outMax);
   bool histogramComputed() const { return histogramComputed_; }
   
-  void writeFOFtoHDF5(const TrackingVector<ParticleData>& particles,
+  void writeFOFtoHDF5(const ParticleBlock& block,
                       double snapshotTime,
                       const std::string &filename,
                       int snapshotIndex);
@@ -227,8 +243,8 @@ public:
     return nodeList.size();
   }
   
-  TrackingVector<ParticleData> get_particle_indices(int i, TrackingVector<ParticleData>& originalParticles) const{
-    TrackingVector<ParticleData> pts = getAllChildren(nodeList[i], originalParticles);
+  std::vector<ParticleData> get_particle_indices(int i, std::vector<ParticleData>& originalParticles) const{
+    std::vector<ParticleData> pts = getAllChildren(nodeList[i], originalParticles);
     return pts;
   }
 
@@ -246,7 +262,7 @@ public:
   }
 
   void do_FOF_and_output_clump_data(int method,
-                                    TrackingVector<ParticleData>&particle,
+                                    ParticleBlock& block,
                                     double snapshotTime,
                                     char *filename,
                                     int snpashotIndex);

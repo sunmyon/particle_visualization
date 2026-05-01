@@ -133,7 +133,7 @@ void SnapshotPrefetchController::asyncLoadRemainingFiles(int targetFile,
                                                          std::size_t signature,
                                                          SnapshotLoadParams params,
                                                          InputFilterConfig filter) {
-  TrackingVector<SnapshotReadResult> loaded;
+  std::vector<SnapshotReadResult> loaded;
 
   for (int i = 1; i < batchSize; ++i) {
     int fileNumber = targetFile + i * skipStep;

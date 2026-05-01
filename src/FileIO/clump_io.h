@@ -1,6 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <string>
-#include "core/tracking_vector.h"
+#include <vector>
 
 #ifdef CLUMP_DATA_READ
 enum LoadMask : uint32_t {
@@ -50,23 +51,23 @@ struct ClumpInfoIO {
   float   density_threshold = 0.0f;
   
   // Cluster information. Vector length equals the number of clusters.
-  TrackingVector<float>         clump_position;    // 3×nClumps
-  TrackingVector<float>         clump_velocity;    // 3×nClumps
-  TrackingVector<float>         clump_density;
-  TrackingVector<float>         clump_max_density;
-  TrackingVector<float>         clump_temperature;
-  TrackingVector<float>         clump_temperature_density_weighted;
-  TrackingVector<float>         clump_mass;
-  TrackingVector<float>         clump_stellar_mass;
-  TrackingVector<float>         clump_stellar_mass_maximum;
-  TrackingVector<int>           clump_id;
-  TrackingVector<int>           clump_next_id;
-  TrackingVector<int>           clump_offset;
-  TrackingVector<int>           clump_size;
-  TrackingVector<int>           clump_stellar_count;
-  TrackingVector<int>           clump_stellar_id;
-  TrackingVector<int>           particle_ids;
-  TrackingVector<char>           particle_type;
+  std::vector<float>         clump_position;    // 3×nClumps
+  std::vector<float>         clump_velocity;    // 3×nClumps
+  std::vector<float>         clump_density;
+  std::vector<float>         clump_max_density;
+  std::vector<float>         clump_temperature;
+  std::vector<float>         clump_temperature_density_weighted;
+  std::vector<float>         clump_mass;
+  std::vector<float>         clump_stellar_mass;
+  std::vector<float>         clump_stellar_mass_maximum;
+  std::vector<int>           clump_id;
+  std::vector<int>           clump_next_id;
+  std::vector<int>           clump_offset;
+  std::vector<int>           clump_size;
+  std::vector<int>           clump_stellar_count;
+  std::vector<int>           clump_stellar_id;
+  std::vector<int64_t>       particle_ids;
+  std::vector<char>           particle_type;
   
   ClumpInfoIO() = default;
 };
@@ -90,8 +91,8 @@ class ClumpData;
 float readClumpTime(std::string fname, int snapshotIndex);
 
 void readClumpEvolution(const std::string& fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
-			TrackingVector<float>& times, TrackingVector<ClumpData>& clumps);
+			std::vector<float>& times, std::vector<ClumpData>& clumps);
 
-void addNextClumpIDtoHDF5(const TrackingVector<StructureNode *>& nodes,
+void addNextClumpIDtoHDF5(const std::vector<StructureNode *>& nodes,
 			  const std::string &filename, int snapshotIndex);
 #endif

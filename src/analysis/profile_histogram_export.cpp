@@ -8,7 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "image/image_io.h"
 #include "render/colormap_defs.h"
 
@@ -22,7 +22,7 @@ struct Rgb {
   unsigned char b = 0;
 };
 
-void SetPixel(TrackingVector<unsigned char>& rgb,
+void SetPixel(std::vector<unsigned char>& rgb,
               int width,
               int height,
               int x,
@@ -39,7 +39,7 @@ void SetPixel(TrackingVector<unsigned char>& rgb,
   rgb[idx + 2] = c.b;
 }
 
-void FillRect(TrackingVector<unsigned char>& rgb,
+void FillRect(std::vector<unsigned char>& rgb,
               int width,
               int height,
               int x0,
@@ -61,7 +61,7 @@ void FillRect(TrackingVector<unsigned char>& rgb,
   }
 }
 
-void DrawLine(TrackingVector<unsigned char>& rgb,
+void DrawLine(std::vector<unsigned char>& rgb,
               int width,
               int height,
               int x0,
@@ -242,8 +242,8 @@ bool WriteJsonFile(const std::filesystem::path& path, const json& value)
 }
 
 bool WriteBarHistogramData(const std::filesystem::path& path,
-                           const TrackingVector<float>& centers,
-                           const TrackingVector<float>& values)
+                           const std::vector<float>& centers,
+                           const std::vector<float>& values)
 {
   std::ofstream out(path);
   if (!out) return false;
@@ -272,14 +272,14 @@ bool WriteLineSeriesData(const std::filesystem::path& path,
 
 bool WriteBarHistogramPlotPng(const std::filesystem::path& path,
                               const BarHistogramPlotExportParams& params,
-                              const TrackingVector<float>& centers,
-                              const TrackingVector<float>& values,
+                              const std::vector<float>& centers,
+                              const std::vector<float>& values,
                               int width,
                               int height)
 {
   if (width <= 64 || height <= 64 || centers.empty() || values.empty()) return false;
 
-  TrackingVector<unsigned char> rgb(static_cast<size_t>(width) *
+  std::vector<unsigned char> rgb(static_cast<size_t>(width) *
                                     static_cast<size_t>(height) * 3,
                                     255);
   const int x0 = 72;
@@ -336,7 +336,7 @@ bool WriteLineSeriesPlotPng(const std::filesystem::path& path,
 {
   if (width <= 64 || height <= 64 || series.empty()) return false;
 
-  TrackingVector<unsigned char> rgb(static_cast<size_t>(width) *
+  std::vector<unsigned char> rgb(static_cast<size_t>(width) *
                                     static_cast<size_t>(height) * 3,
                                     255);
   const int x0 = 72;
@@ -496,7 +496,7 @@ bool WriteRadialProfilePlotPng(const std::filesystem::path& path,
 {
   if (!result.valid || width <= 64 || height <= 64) return false;
 
-  TrackingVector<unsigned char> rgb(static_cast<size_t>(width) *
+  std::vector<unsigned char> rgb(static_cast<size_t>(width) *
                                     static_cast<size_t>(height) * 3,
                                     255);
   const int x0 = 72;
@@ -555,7 +555,7 @@ bool WriteHistogram2DPlotPng(const std::filesystem::path& path,
 {
   if (!result.valid || width <= 64 || height <= 64) return false;
 
-  TrackingVector<unsigned char> rgb(static_cast<size_t>(width) *
+  std::vector<unsigned char> rgb(static_cast<size_t>(width) *
                                     static_cast<size_t>(height) * 3,
                                     255);
   const int x0 = 72;
@@ -633,6 +633,7 @@ AnalysisPlotExportResult ExportRadialProfilePlotPackage(
 
   json job;
   job["type"] = "radial_profile";
+  job["coordinateSpace"] = "original";
   job["snapshot"] = SnapshotToJson(spec.snapshot);
   job["camera"] = CameraToJson(spec.camera);
   job["radial"] = RadialParamsToJson(params, out.dataPath, out.imagePath);
@@ -668,6 +669,7 @@ AnalysisPlotExportResult ExportHistogram2DPlotPackage(
 
   json job;
   job["type"] = "histogram2d";
+  job["coordinateSpace"] = "original";
   job["snapshot"] = SnapshotToJson(spec.snapshot);
   job["camera"] = CameraToJson(spec.camera);
   job["histogram"] = HistogramParamsToJson(params, out.dataPath, out.imagePath);
@@ -682,8 +684,8 @@ AnalysisPlotExportResult ExportHistogram2DPlotPackage(
 AnalysisPlotExportResult ExportBarHistogramPlotPackage(
   const AnalysisPlotExportSpec& spec,
   const BarHistogramPlotExportParams& params,
-  const TrackingVector<float>& centers,
-  const TrackingVector<float>& values)
+  const std::vector<float>& centers,
+  const std::vector<float>& values)
 {
   std::string error;
   if (!EnsureDirectory(spec.directory, error)) {
@@ -709,6 +711,7 @@ AnalysisPlotExportResult ExportBarHistogramPlotPackage(
 
   json job;
   job["type"] = "plot_bar_histogram";
+  job["coordinateSpace"] = "original";
   job["snapshot"] = SnapshotToJson(spec.snapshot);
   job["camera"] = CameraToJson(spec.camera);
   job["plot"] = BarHistogramParamsToJson(params, out.dataPath, out.imagePath);
@@ -748,6 +751,7 @@ AnalysisPlotExportResult ExportLineSeriesPlotPackage(
 
   json job;
   job["type"] = "plot_line_series";
+  job["coordinateSpace"] = "original";
   job["snapshot"] = SnapshotToJson(spec.snapshot);
   job["camera"] = CameraToJson(spec.camera);
   job["plot"] = LineSeriesParamsToJson(params, series, out.dataPath, out.imagePath);

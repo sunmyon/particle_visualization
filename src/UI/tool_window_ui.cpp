@@ -12,7 +12,7 @@
 #include "app/state/render_runtime_state.h"
 #include "app/state/normalization_config.h"
 #include "app/state/window_commands.h"
-#include "core/tracking_vector.h"
+#include <vector>
 #include "interaction/camera.h"
 #include "render/scene_objects.h"
 #include "render/colormap_defs.h"
@@ -40,6 +40,7 @@ void SubmitRadialProfileRequest(const RadialProfileUIState& state,
                                 RadialProfileRequestState& request)
 {
   request.params = state.draftParams;
+  request.params.useOriginal = true;
   request.runRequested = true;
 }
 
@@ -242,8 +243,10 @@ void ExportHistogram2DIfNeeded(Histogram2DUIState& state,
   const std::string stem =
     "histogram2d_" + std::to_string(static_cast<unsigned long long>(result.version));
   AnalysisPlotExportSpec spec = MakePlotExportSpec(ctx, dir, stem);
+  Histogram2DParams paramsForBatch = result.paramsUsed;
+  paramsForBatch.cameraRadius *= ctx.normalizedToOriginalScale;
   AnalysisPlotExportResult exportResult =
-    ExportHistogram2DPlotPackage(spec, result.paramsUsed, result.result);
+    ExportHistogram2DPlotPackage(spec, paramsForBatch, result.result);
   StoreExportStatus(state.lastExportStatus, sizeof(state.lastExportStatus), exportResult);
   if (exportResult.ok) {
     state.lastExportedVersion = result.version;
@@ -388,7 +391,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
   }
 
   ImGui::InputInt("Number of Bins", &params.bins);
-  ImGui::Checkbox("Use Original Coordinates", &params.useOriginal);
+  params.useOriginal = true;
   ImGui::Checkbox("Log X Axis", &params.plotXAxisLog);
   ImGui::Checkbox("Log Y Axis", &params.plotYAxisLog);
   ImGui::Checkbox("Auto Range", &params.autorange);
@@ -513,7 +516,7 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
     size_t computedBins1 = result.result.values.size();
     size_t computedBins2 = (computedBins1 > 0) ? result.result.values[0].size() : 0;
 
-    TrackingVector<float> heatmapData;
+    std::vector<float> heatmapData;
     heatmapData.reserve(computedBins1 * computedBins2);
 
     for (size_t j = 0; j < computedBins2; j++) {
@@ -616,15 +619,16 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   }
 
   WindowCommandQueue& windowCommands = ctx.windowCommands;
-  const float sideLengthInputScale =
-    state.useOriginalCoordinate ? ctx.normalization.toPhysicalScale() : 1.0f;
+  const float normalizedToOriginal = ctx.normalization.toPhysicalScale();
+  const float originalToNormalized = ctx.normalization.toNormalizedScale();
 
   if (!state.paramsInitialized ||
       state.observedToolRevision != ctx.tool.revision) {
     state.draftParams = ctx.tool.params;
-    state.xlen_input[0] = state.draftParams.xlen[0] * sideLengthInputScale;
-    state.xlen_input[1] = state.draftParams.xlen[1] * sideLengthInputScale;
-    state.xlen_input[2] = state.draftParams.xlen[2] * sideLengthInputScale;
+    for (int i = 0; i < 3; ++i) {
+      state.xlen_input[i] = state.draftParams.xlen[i] * normalizedToOriginal;
+      state.xoffset_input[i] = state.draftParams.xoffset[i] * normalizedToOriginal;
+    }
     state.paramsInitialized = true;
     state.observedToolRevision = ctx.tool.revision;
   }
@@ -635,31 +639,24 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("make projectoin map", &state.open, ImGuiWindowFlags_None);
 
-  // -----------------------------
-  // side length
-  // -----------------------------
-  if (ImGui::Checkbox("use original coordinate for side length",
-                      &state.useOriginalCoordinate)) {
-    const float newInputScale =
-      state.useOriginalCoordinate ? ctx.normalization.toPhysicalScale() : 1.0f;
-    state.xlen_input[0] = params.xlen[0] * newInputScale;
-    state.xlen_input[1] = params.xlen[1] * newInputScale;
-    state.xlen_input[2] = params.xlen[2] * newInputScale;
+  if (ImGui::InputFloat3("side length (original)", state.xlen_input)) {
+    params.xlen[0] = state.xlen_input[0] * originalToNormalized;
+    params.xlen[1] = state.xlen_input[1] * originalToNormalized;
+    params.xlen[2] = state.xlen_input[2] * originalToNormalized;
+    paramsDirty = true;
   }
-  if (ImGui::InputFloat3("side lenght", state.xlen_input)) {
-    const float sideLengthParamScale =
-      state.useOriginalCoordinate ? ctx.normalization.toNormalizedScale() : 1.0f;
-    params.xlen[0] = state.xlen_input[0] * sideLengthParamScale;
-    params.xlen[1] = state.xlen_input[1] * sideLengthParamScale;
-    params.xlen[2] = state.xlen_input[2] * sideLengthParamScale;
+
+  if (ImGui::InputFloat3("offset center (original)", state.xoffset_input)) {
+    params.xoffset[0] = state.xoffset_input[0] * originalToNormalized;
+    params.xoffset[1] = state.xoffset_input[1] * originalToNormalized;
+    params.xoffset[2] = state.xoffset_input[2] * originalToNormalized;
     paramsDirty = true;
   }
   
-  paramsDirty |= ImGui::InputFloat3("offset center", params.xoffset);
   paramsDirty |= ImGui::InputInt("npixel", &params.npixel, 10, 1000);
   paramsDirty |= ImGui::InputFloat3("Plane Tilt (deg) x", params.tilt);
 
-  if (ImGui::Button("move center to camera pos")) {
+  if (ImGui::Button("move center to camera target")) {
     request.moveCenterToCameraRequested = true;
   }
 
@@ -975,21 +972,17 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // -----------------------------
   // scale bar
   // -----------------------------
-  paramsDirty |= ImGui::Checkbox("Show Spacial scale", &params.flagPlaceScale);
+  paramsDirty |= ImGui::Checkbox("Show spatial scale", &params.flagPlaceScale);
   if (params.flagPlaceScale) {
     ImGui::Indent();
     ImGui::SetNextItemWidth(80);
-    paramsDirty |= ImGui::InputFloat("arrow size", &params.arrowLenX);
+    paramsDirty |= ImGui::InputFloat("arrow size (original)", &params.arrowLenX);
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
     paramsDirty |= ImGui::InputText("arrow label",
                                     params.arrowLabelStr,
                                     sizeof(params.arrowLabelStr));
-
-    ImGui::SameLine();
-    paramsDirty |= ImGui::Checkbox("Use original coordinate",
-                                   &params.flagScaleOriginalCoordinate);
 
     ImGui::Unindent();
   }
@@ -1008,13 +1001,9 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
-    paramsDirty |= ImGui::InputFloat("size of zoom-in region",
+    paramsDirty |= ImGui::InputFloat("size of zoom-in region (original)",
                                      &params.lenZoomRegion,
                                      0.0f, 0.0f, "%g");
-
-    ImGui::SameLine();
-    paramsDirty |= ImGui::Checkbox("Use original coordinate",
-                                   &params.flagScaleOriginalCoordinateZoomRegion);
     ImGui::Unindent();
   }
 
@@ -1083,7 +1072,9 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
 
   ImGui::Begin("Particles Info", &state.open);
 
-  ImGui::InputInt("Particle ID", &state.queryID);
+  ImGui::InputScalar("Particle ID",
+                     ImGuiDataType_S64,
+                     &state.queryID);
   ImGui::SameLine();
 
   if (ImGui::Button("Show Info")) {
@@ -1092,7 +1083,9 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
 
   if (result.queryFailed && state.queryID >= 0) {
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(1, 0, 0, 1), "Particle ID %d not found", state.queryID);
+    ImGui::TextColored(ImVec4(1, 0, 0, 1),
+                       "Particle ID %lld not found",
+                       static_cast<long long>(state.queryID));
   }
 
   if (ImGui::Button("Refresh History")) {
@@ -1107,26 +1100,29 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
 
   for (size_t i = 0; i < result.historyData.size(); i++) {
     const auto& p = result.historyData[i];
+    const int64_t particleId =
+      (i < result.historyIds.size()) ? result.historyIds[i] : -1;
 
     char label[512];
     std::snprintf(label, sizeof(label),
-                  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g",
-                  p.ID, quantity.toDisplay(QuantityId::Mass, p.mass),
-                  p.pos[0], p.pos[1], p.pos[2],
+                  "ID %lld: mass = %.3g, pos = (%.2g, %.2g, %.2g), vel = (%.2g, %.2g, %.2g), r=%g rho=%g T=%g",
+                  static_cast<long long>(particleId),
+                  quantity.toDisplay(QuantityId::Mass, p.mass),
+                  p.original_pos[0], p.original_pos[1], p.original_pos[2],
                   p.vel[0], p.vel[1], p.vel[2],
-                  p.originalHsml, p.density, p.temperature);
+                  p.original_hsml, p.density, p.temperature);
 
     if (ImGui::Selectable(label, state.historySel == (int)i)) {
       state.historySel = (int)i;
-      request.centerParticleId = p.ID;
+      request.centerParticleId = particleId;
       request.centerParticleRequested = true;
     }
   }
 
   if (ImGui::Button("Center this paritcle")) {
     if (state.historySel >= 0 &&
-        state.historySel < static_cast<int>(result.historyData.size())) {
-      request.centerParticleId = result.historyData[state.historySel].ID;
+        state.historySel < static_cast<int>(result.historyIds.size())) {
+      request.centerParticleId = result.historyIds[state.historySel];
       request.followParticleRequested = true;
     }
   }
@@ -1163,17 +1159,20 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
 
   ImGui::Text("Type %d : Showing top %d particles sorted by mass", state.particleType, count);
   for (int i = 0; i < count; i++) {
+    const int64_t particleId =
+      (static_cast<size_t>(i) < result.filteredIds.size()) ? result.filteredIds[i] : -1;
     char label[512];
     std::snprintf(label, sizeof(label),
-                  "ID %d: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
-                  result.filtered[i].ID, quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass),
-                  result.filtered[i].pos[0], result.filtered[i].pos[1], result.filtered[i].pos[2],
+                  "ID %lld: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
+                  static_cast<long long>(particleId),
+                  quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass),
+                  result.filtered[i].original_pos[0], result.filtered[i].original_pos[1], result.filtered[i].original_pos[2],
                   result.filtered[i].vel[0], result.filtered[i].vel[1], result.filtered[i].vel[2],
-                  result.filtered[i].originalHsml,
+                  result.filtered[i].original_hsml,
                   result.filtered[i].density, result.filtered[i].temperature);
 
     if (ImGui::Selectable(label)) {
-      request.centerParticleId = result.filtered[i].ID;
+      request.centerParticleId = particleId;
       request.centerParticleRequested = true;
     }
   }

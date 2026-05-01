@@ -82,12 +82,12 @@ void StoreStatus(char* status, size_t statusSize, const AnalysisPlotExportResult
   }
 }
 
-void BuildHistogramBins(const TrackingVector<float>& samples,
+void BuildHistogramBins(const std::vector<float>& samples,
                         int bins,
                         float xmin,
                         float xmax,
-                        TrackingVector<float>& centers,
-                        TrackingVector<float>& counts,
+                        std::vector<float>& centers,
+                        std::vector<float>& counts,
                         float& binSize)
 {
   bins = std::max(1, bins);
@@ -115,8 +115,8 @@ void ExportClumpFinderHistogramIfNeeded(ClumpFinderWindowState& ui,
     return;
   }
 
-  TrackingVector<float> centers;
-  TrackingVector<float> counts;
+  std::vector<float> centers;
+  std::vector<float> counts;
   float binSize = 1.0f;
   BuildHistogramBins(ui.massHistogramValues,
                      ui.histogramBinsAuto ? std::max(1, ui.histogramBins) : ui.histogramBins,
@@ -250,7 +250,7 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
 
       ImGui::TableSetColumnIndex(0);
       char label[256];
-      std::snprintf(label, sizeof(label), "%4d   %4d    %g    (%.3f, %.3f, %.3f) %g",
+      std::snprintf(label, sizeof(label), "%4d   %4d    %g    original_pos=(%.3f, %.3f, %.3f) %g",
                     row.sourceIndex, row.count, row.mass,
                     row.pos[0], row.pos[1], row.pos[2], 0.0);
 

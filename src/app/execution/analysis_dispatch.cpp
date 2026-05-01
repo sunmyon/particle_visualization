@@ -47,7 +47,8 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
 #endif
 
 #ifdef STREAM_LINE
-  ExecuteStreamlinePreviewRequest(runtime.analysisRequests.streamlinePreview,
+  ExecuteStreamlinePreviewRequest(*data.particles,
+                                  runtime.analysisRequests.streamlinePreview,
 				  analysis.streamlinePreview);
 
   ExecuteStreamlineBuildRequest(*data.particles,

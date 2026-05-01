@@ -20,6 +20,7 @@
 #include "analysis/radial_profile.h"
 #include "data/particle_array.h"
 #include "data/particle_block.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_data.h"
 #include "data/halo_store.h"
 #include "interaction/camera.h"
@@ -27,10 +28,18 @@
 
 namespace {
 
-ParticleData* FindParticleById(ParticleArray& particles, int particleId)
+size_t FindParticleIndexById(ParticleArray& particles, int64_t particleId)
 {
-  const size_t index =
-    particles.particleBlock.findIndexByID(static_cast<uint64_t>(static_cast<int64_t>(particleId)));
+  if (particleId < 0) {
+    return static_cast<size_t>(-1);
+  }
+  return
+    particles.particleBlock.findIndexByID(static_cast<uint64_t>(particleId));
+}
+
+ParticleData* FindParticleById(ParticleArray& particles, int64_t particleId)
+{
+  const size_t index = FindParticleIndexById(particles, particleId);
   if (index == static_cast<size_t>(-1)) {
     return nullptr;
   }
@@ -59,14 +68,15 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     post.refreshTopParticles = false;
   }
 
-  auto centerCameraOnParticle = [&](int particleId) {
+  auto centerCameraOnParticle = [&](int64_t particleId) {
     const ParticleData* p = FindParticleById(particles, particleId);
     if (!p) return;
 
     const float distance = glm::length(camera.cameraPos - camera.cameraTarget);
     const glm::vec3 direction =
       camera.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
-    camera.cameraTarget = glm::vec3(p->pos[0], p->pos[1], p->pos[2]);
+    camera.cameraTarget =
+      normalizedParticlePosition(*p, particles.particleBlock.normalizedScale);
     camera.cameraPos = camera.cameraTarget - direction * distance;
   };
 
@@ -76,10 +86,13 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 
     if (const ParticleData* p = FindParticleById(particles, req.queryParticleId)) {
       result.foundParticle = *p;
+      result.foundParticleId = req.queryParticleId;
       result.hasFound = true;
       result.historyData.push_front(*p);
+      result.historyIds.push_front(req.queryParticleId);
       if (static_cast<int>(result.historyData.size()) > kHistorySizeMax) {
         result.historyData.pop_back();
+        result.historyIds.pop_back();
       }
       ui.historySel = 0;
     } else {
@@ -90,29 +103,34 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   if (req.refreshHistoryRequested) {
-    const int prevID =
+    const int64_t prevID =
       (ui.historySel >= 0 &&
-       ui.historySel < static_cast<int>(result.historyData.size()))
-        ? result.historyData[ui.historySel].ID
+       ui.historySel < static_cast<int>(result.historyIds.size()))
+        ? result.historyIds[ui.historySel]
         : -1;
 
     std::deque<ParticleData> newHistory;
-    std::unordered_set<int> seen;
+    std::deque<int64_t> newHistoryIds;
+    std::unordered_set<int64_t> seen;
 
-    for (const auto& oldP : result.historyData) {
-      if (seen.find(oldP.ID) != seen.end()) continue;
+    for (size_t i = 0; i < result.historyData.size(); ++i) {
+      if (i >= result.historyIds.size()) continue;
+      const int64_t oldId = result.historyIds[i];
+      if (seen.find(oldId) != seen.end()) continue;
 
-      if (const ParticleData* p = FindParticleById(particles, oldP.ID)) {
+      if (const ParticleData* p = FindParticleById(particles, oldId)) {
         newHistory.push_back(*p);
-        seen.insert(oldP.ID);
+        newHistoryIds.push_back(oldId);
+        seen.insert(oldId);
       }
     }
 
     result.historyData.swap(newHistory);
+    result.historyIds.swap(newHistoryIds);
     ui.historySel = -1;
     if (prevID >= 0) {
-      for (int i = 0; i < static_cast<int>(result.historyData.size()); ++i) {
-        if (result.historyData[i].ID == prevID) {
+      for (int i = 0; i < static_cast<int>(result.historyIds.size()); ++i) {
+        if (result.historyIds[i] == prevID) {
           ui.historySel = i;
           break;
         }
@@ -127,14 +145,17 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
 
   if (req.clearHistoryRequested) {
     result.historyData.clear();
+    result.historyIds.clear();
     result.hasFound = false;
     result.queryFailed = false;
+    result.foundParticleId = -1;
     ui.historySel = -1;
     req.clearHistoryRequested = false;
   }
 
   if (req.refreshFilteredRequested) {
     result.filtered.clear();
+    result.filteredIds.clear();
     for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
       const ParticleData& p = particles.particleBlock.particles[i];
       if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) {
@@ -142,13 +163,25 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
       }
       if (p.type >= 0 && p.type < 6 && req.selectedTypes[p.type]) {
         result.filtered.push_back(p);
+        result.filteredIds.push_back(particles.particleBlock.particleIdSigned(i));
       }
     }
 
-    std::sort(result.filtered.begin(), result.filtered.end(),
-              [](const ParticleData& a, const ParticleData& b) {
-                return a.mass > b.mass;
-              });
+    std::vector<size_t> order(result.filtered.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+      return result.filtered[a].mass > result.filtered[b].mass;
+    });
+    std::vector<ParticleData> sorted;
+    std::vector<int64_t> sortedIds;
+    sorted.reserve(result.filtered.size());
+    sortedIds.reserve(result.filteredIds.size());
+    for (size_t idx : order) {
+      sorted.push_back(result.filtered[idx]);
+      sortedIds.push_back(result.filteredIds[idx]);
+    }
+    result.filtered.swap(sorted);
+    result.filteredIds.swap(sortedIds);
 
     req.refreshFilteredRequested = false;
   }
@@ -160,10 +193,10 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   if (req.followParticleRequested) {
-    if (const ParticleData* p = FindParticleById(particles, req.centerParticleId)) {
-      centerCameraOnParticle(p->ID);
+    if (FindParticleById(particles, req.centerParticleId)) {
+      centerCameraOnParticle(req.centerParticleId);
       tracking.followParticle = true;
-      tracking.targetParticleID = p->ID;
+      tracking.targetParticleID = req.centerParticleId;
       tracking.followClump = false;
     }
     req.followParticleRequested = false;
@@ -193,8 +226,9 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   if (req.histogramUseCameraCenter) {
     const glm::vec3 camCenter = camera.cameraTarget;
     const float radius = req.histogramCameraRadius;
-    includeParticle = [camCenter, radius](const ParticleData& p) {
-      glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
+    const float normalizedScale = particles.particleBlock.normalizedScale;
+    includeParticle = [camCenter, radius, normalizedScale](const ParticleData& p) {
+      const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
       return glm::length(pos - camCenter) <= radius;
     };
   }
@@ -243,7 +277,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     req.histogramRange1Max = valueMax;
   }
 
-  TrackingVector<int> binCounts(bins, 0);
+  std::vector<int> binCounts(bins, 0);
   result.binSize = (req.histogramRange1Max - req.histogramRange1Min) / bins;
   if (result.binSize <= 0.0f) {
     result.binSize = 1.0f;
@@ -472,7 +506,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
 
   if (request.recomputePositionsRequested) {
     haloes.recomputeHaloPositionsFromParticles(
-      particles.particleBlock.particles,
+      particles.particleBlock,
       request.recomputeUseMassWeight,
       request.recomputeUseOriginalPos
     );
@@ -481,9 +515,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
   }
 
   if (request.stressSelectionChanged) {
-    for (auto& p : particles.particleBlock.particles) {
-      p.flag_stress = 0;
-    }
+    particles.clearStressFlags();
 
     if (haloes.idsLoaded()) {
       const int n = static_cast<int>(std::min(haloes.size(), request.selectedForStress.size()));
@@ -494,7 +526,6 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
     }
 
     ui.selectedForStress = request.selectedForStress;
-    particles.particlesDirty = true;
     request.stressSelectionChanged = false;
   }
 
@@ -570,7 +601,7 @@ void ExecuteHaloesWindowRequests(HaloesUIState& ui,
     request.histogramRange1Max = valueMax;
   }
 
-  TrackingVector<int> binCounts(bins, 0);
+  std::vector<int> binCounts(bins, 0);
   ui.binSize = (request.histogramRange1Max - request.histogramRange1Min) / bins;
   if (ui.binSize <= 0.0f) {
     ui.binSize = 1.0f;

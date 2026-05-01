@@ -48,6 +48,9 @@ struct SettingsMemoryView {
 struct SettingsCameraView {
   float position[3] = {0.f, 0.f, 0.f};
   float target[3] = {0.f, 0.f, 0.f};
+  float originalPosition[3] = {0.f, 0.f, 0.f};
+  float originalTarget[3] = {0.f, 0.f, 0.f};
+  float normalizedToOriginalScale = 1.0f;
 };
 
 struct SettingsAnalysisResultView {

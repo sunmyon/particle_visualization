@@ -251,14 +251,14 @@ struct BitmapFontRenderer::Impl {
     }
   }
 
-  TrackingVector<unsigned char> renderLayoutToAlphaMask(const TextLayout& layout,
+  std::vector<unsigned char> renderLayoutToAlphaMask(const TextLayout& layout,
                                                         int& outWidth,
                                                         int& outHeight) const
   {
     outWidth = layout.bbox.width;
     outHeight = layout.bbox.height;
 
-    TrackingVector<unsigned char> mask;
+    std::vector<unsigned char> mask;
     if (outWidth <= 0 || outHeight <= 0) return mask;
 
     mask.resize(static_cast<size_t>(outWidth * outHeight), 0);
@@ -306,8 +306,8 @@ struct BitmapFontRenderer::Impl {
     return mask;
   }
 
-  static TrackingVector<unsigned char> rotateMask90Clockwise(
-      const TrackingVector<unsigned char>& src,
+  static std::vector<unsigned char> rotateMask90Clockwise(
+      const std::vector<unsigned char>& src,
       int srcWidth,
       int srcHeight,
       int& outWidth,
@@ -316,7 +316,7 @@ struct BitmapFontRenderer::Impl {
     outWidth = srcHeight;
     outHeight = srcWidth;
 
-    TrackingVector<unsigned char> dst;
+    std::vector<unsigned char> dst;
     dst.resize(static_cast<size_t>(outWidth * outHeight), 0);
 
     for (int y = 0; y < srcHeight; ++y) {

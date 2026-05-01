@@ -11,7 +11,7 @@
 #include <Eigen/Dense>
 #include <nanoflann.hpp>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/particle_block.h"
 
 struct Vec3 {
@@ -126,7 +126,7 @@ class StreamlineComputer {
   };
 
   struct StreamParticleCloud {
-    TrackingVector<particle_stream> particles;
+    std::vector<particle_stream> particles;
 
     inline size_t kdtree_get_point_count() const { return particles.size(); }
     inline float kdtree_get_pt(const size_t idx, const size_t dim) const {
@@ -146,12 +146,15 @@ class StreamlineComputer {
 
   std::unique_ptr<KDTreeType> m_kdTree;
 
-  Bounds makeGasBounds(const TrackingVector<ParticleData>& particles) const;
+  Bounds makeGasBounds(const std::vector<ParticleData>& particles,
+                       float normalizedScale) const;
   Bounds makeBoxBounds(const StreamlineBoxSpec& box) const;
-  std::vector<SeedPoint> selectSeeds(const TrackingVector<ParticleData>& particles,
+  std::vector<SeedPoint> selectSeeds(const std::vector<ParticleData>& particles,
+                                     float normalizedScale,
                                      const Bounds& bounds,
                                      int nSeeds) const;
-  SeedPoint makeManualSeed(const TrackingVector<ParticleData>& particles,
+  SeedPoint makeManualSeed(const std::vector<ParticleData>& particles,
+                           float normalizedScale,
                            const std::array<float, 3>& seed) const;
   void estimate_gradB(const ParticleBlock& particleBlock,
                       const Bounds& fieldBounds,
@@ -184,9 +187,9 @@ class StreamlineComputer {
   static constexpr float GradRegFraction = 1.0e-4f;
   static constexpr float LimiterEps = 1.0e-12f;
 
-  TrackingVector<std::array<Eigen::Vector3f, 3>> gradB;
-  TrackingVector<Eigen::Vector3f> gradLimiter;
-  TrackingVector<float> r_neighbours;
+  std::vector<std::array<Eigen::Vector3f, 3>> gradB;
+  std::vector<Eigen::Vector3f> gradLimiter;
+  std::vector<float> r_neighbours;
 
   Bounds fieldBounds_;
 };

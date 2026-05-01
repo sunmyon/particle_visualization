@@ -5,7 +5,7 @@
 #include <glm/glm.hpp>
 
 #include "data/particle_block.h"
-#include "core/tracking_vector.h"
+#include <vector>
 #include "core/quantity.h"
 #include "core/units.h"
 
@@ -41,8 +41,8 @@ struct RadialProfileParams {
 };
 
 struct RadialProfileResult {
-  TrackingVector<float> x;
-  TrackingVector<float> y;
+  std::vector<float> x;
+  std::vector<float> y;
   float xmin = 0.0f;
   float xmax = 1.0f;
   float ymin = 0.0f;

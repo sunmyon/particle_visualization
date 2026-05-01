@@ -1,6 +1,7 @@
 #include <vector>
 
 #include "data/particle_block.h"
+#include "data/particle_coordinates.h"
 
 #include "core/quantity.h"
 #include "render/particle_visual_config.h"
@@ -42,12 +43,13 @@ void BuildRenderParticles(const ParticleRenderInput& input,
     if (visualConfig.types[type].hideParticles) continue;
 
     RenderParticle rp;
-    rp.pos[0] = p.pos[0];
-    rp.pos[1] = p.pos[1];
-    rp.pos[2] = p.pos[2];
+    normalizedParticlePosition(p, block.normalizedScale, rp.pos);
     rp.type = static_cast<uint8_t>(p.type);
-    rp.flag_stress = static_cast<uint8_t>(p.flag_stress);
-    rp.hsml = p.Hsml;
+    rp.flag_stress =
+      (input.stressFlags && i < input.stressFlags->size())
+        ? static_cast<uint8_t>((*input.stressFlags)[i])
+        : 0;
+    rp.hsml = normalizedParticleHsml(p, block.normalizedScale);
     rp.val_show = getScalarValue(block,
                                  p,
                                  i,
@@ -60,7 +62,8 @@ void BuildRenderParticles(const ParticleRenderInput& input,
   }
 }
 
-std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>& particles,
+std::vector<float> BuildVelocityInstanceData(const std::vector<ParticleData>& particles,
+                                             float normalizedScale,
 					     const int velocity_subtraction)
 {
   std::vector<float> instanceData;
@@ -73,10 +76,11 @@ std::vector<float> BuildVelocityInstanceData(const TrackingVector<ParticleData>&
     if (i % stride != 0) continue;
 
     const auto& p = particles[i];
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
 
-    instanceData.push_back(p.pos[0]);
-    instanceData.push_back(p.pos[1]);
-    instanceData.push_back(p.pos[2]);
+    instanceData.push_back(pos.x);
+    instanceData.push_back(pos.y);
+    instanceData.push_back(pos.z);
 
     instanceData.push_back(p.vel[0]);
     instanceData.push_back(p.vel[1]);
@@ -97,6 +101,7 @@ void UpdateVelocityRenderData(const ParticleRenderInput& input,
   }
 
   velocityInstanceData = BuildVelocityInstanceData(input.block->particles,
+                                                   input.block->normalizedScale,
                                                    velocity_subtraction);
 }
 
@@ -295,9 +300,9 @@ void BuildLineRenderData(const LineManager& manager,
 
 #ifdef ISO_CONTOUR
 namespace {
-  void computeIsoContourNormals(const TrackingVector<float>& verts,
-				const TrackingVector<unsigned>& inds,
-				TrackingVector<float>& out_normals)
+  void computeIsoContourNormals(const std::vector<float>& verts,
+				const std::vector<unsigned>& inds,
+				std::vector<float>& out_normals)
   {
     const size_t vcount = verts.size() / 3;
     std::vector<glm::vec3> normals(vcount, glm::vec3(0.0f));
@@ -335,8 +340,8 @@ namespace {
   }
 }
 
-void BuildIsoContourRenderData(const TrackingVector<float>& verts,
-                               const TrackingVector<unsigned>& inds,
+void BuildIsoContourRenderData(const std::vector<float>& verts,
+                               const std::vector<unsigned>& inds,
                                IsoContourRenderData& out)
 {
   out.verts = verts;

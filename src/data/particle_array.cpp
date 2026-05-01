@@ -6,15 +6,7 @@
 #include "data/quantity_catalog_builder.h"
 
 void ParticleArray::rescalePositions(NormalizationContext& ctx){
-  float scale = ctx.toNormalizedScale();
-
-  for (ParticleData &p : particleBlock.particles) {
-    p.pos[0] = p.original_pos[0] * scale;
-    p.pos[1] = p.original_pos[1] * scale;
-    p.pos[2] = p.original_pos[2] * scale;
-    p.Hsml = p.originalHsml * scale;
-  }
-      
+  particleBlock.normalizedScale = ctx.toNormalizedScale();
   particlesDirty = true;  // Mark the global dirty flag.
 };
 
@@ -61,6 +53,7 @@ bool ParticleArray::setParticleBlock(ParticleBlock&& newBlock, ParticleBlock* ol
   }
 
   flag_mask.resize(particleBlock.particles.size(), 0);
+  flag_stress.assign(particleBlock.particles.size(), 0);
   
   particleBlock_index = 0; // Or remove this later.
   particlesDirty = true;
@@ -84,7 +77,7 @@ namespace{
 
   // Data container for nanoflann.
   struct StarParticleCloud {
-    TrackingVector<starParticle> particles;
+    std::vector<starParticle> particles;
 
     // kd-tree interface.
     inline size_t kdtree_get_point_count() const { return particles.size(); }
@@ -134,10 +127,10 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
   if(selType[3] == true || selType[4] == true || selType[5] == true)
     flag_star = true;
 
-  TrackingVector<ParticleData> & particles = particleBlock.particles;
+  std::vector<ParticleData> & particles = particleBlock.particles;
   
   // Extract only the selected particle types.
-  TrackingVector<starParticle> filtered;
+  std::vector<starParticle> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
       const ParticleData& p = particles[i];
@@ -148,16 +141,14 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
 
       struct starParticle sp;
       sp.type = p.type;
-      sp.pos[0] = p.pos[0];
-      sp.pos[1] = p.pos[1];
-      sp.pos[2] = p.pos[2];
+      normalizedParticlePosition(p, particleBlock.normalizedScale, sp.pos);
       sp.mass = p.mass;
       sp.index = i;
 	
       filtered.push_back(sp);      
     }
   
-  TrackingVector<double> densities(filtered.size(), 0.0);
+  std::vector<double> densities(filtered.size(), 0.0);
 
   // Copy into the data container. References or pointers can be used later if needed.
   StarParticleCloud cloud;
@@ -168,8 +159,8 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
   kdTree.buildIndex();
 
   // Containers for knnSearch results.
-  TrackingVector<KDTreeType::IndexType> ret_indexes(N_neighbours);
-  TrackingVector<float> out_dists_sqr(N_neighbours);
+  std::vector<KDTreeType::IndexType> ret_indexes(N_neighbours);
+  std::vector<float> out_dists_sqr(N_neighbours);
 
   double cosmofac = 1.;
   if(units.useComovingCoordinate)
@@ -229,7 +220,8 @@ void ParticleArray::computeStellarDensity(const std::array<bool,6>& selType,
       particles[original_index].density = density * units.mass_g / std::pow(scale * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
 
     if(flag_overwrite_hsml)
-      particles[original_index].Hsml = h;
+      particles[original_index].original_hsml =
+        h / std::max(particleBlock.normalizedScale, 1.0e-30f);
     
     printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
 	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, scale * cosmofac * units.length_cm, units.hubble);

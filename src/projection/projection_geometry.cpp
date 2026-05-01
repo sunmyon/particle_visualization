@@ -2,8 +2,9 @@
 #include <vector>
 #include <glm/gtc/quaternion.hpp>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "projection/projection_geometry.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_data.h"
 
 glm::quat UpdateTransformFromEuler(float *eulerAngles)
@@ -16,7 +17,8 @@ glm::quat UpdateTransformFromEuler(float *eulerAngles)
 }  
 
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
-    const TrackingVector<ParticleData>& particles,
+    const std::vector<ParticleData>& particles,
+    float normalizedScale,
     const glm::vec3& initialCenter,
     const float xlen[3])
 {
@@ -41,10 +43,8 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
            xlen[2] * xlen[2]);
 
   for (const auto& p : particles) {
-    const glm::vec3 localPos(
-      p.pos[0] - initialCenter.x,
-      p.pos[1] - initialCenter.y,
-      p.pos[2] - initialCenter.z);
+    const glm::vec3 pos = normalizedParticlePosition(p, normalizedScale);
+    const glm::vec3 localPos = pos - initialCenter;
 
     const double r2 =
       static_cast<double>(localPos.x) * localPos.x +
@@ -58,9 +58,9 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
     const double mass = p.mass;
     const double weight = p.density;
 
-    weightedPos[0] += p.pos[0] * weight;
-    weightedPos[1] += p.pos[1] * weight;
-    weightedPos[2] += p.pos[2] * weight;
+    weightedPos[0] += pos.x * weight;
+    weightedPos[1] += pos.y * weight;
+    weightedPos[2] += pos.z * weight;
 
     weightedVel[0] += mass * p.vel[0];
     weightedVel[1] += mass * p.vel[1];
@@ -88,10 +88,8 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
   double angularMomentumMass = 0.0;
 
   for (const auto& p : particles) {
-    const glm::vec3 localPos(
-      p.pos[0] - center.x,
-      p.pos[1] - center.y,
-      p.pos[2] - center.z);
+    const glm::vec3 localPos =
+      normalizedParticlePosition(p, normalizedScale) - center;
 
     if (localPos.x < xmin[0] || localPos.x > xmax[0] ||
         localPos.y < xmin[1] || localPos.y > xmax[1] ||

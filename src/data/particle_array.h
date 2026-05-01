@@ -1,6 +1,10 @@
 #pragma once
+#include <algorithm>
+#include <cstdint>
+#include <type_traits>
+
 #include "particle_block.h"
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct NormalizationContext;
 struct QuantityState;
@@ -21,27 +25,47 @@ public:
   bool flagParticleIndexDirty = true;
   
   ParticleBlock particleBlock;
-  TrackingVector<uint8_t> flag_mask;
+  std::vector<uint8_t> flag_mask;
+  std::vector<uint8_t> flag_stress;
+
+  void ensureParticleFlagStorage()
+  {
+    const size_t n = particleBlock.particles.size();
+    flag_mask.resize(n, 0);
+    flag_stress.resize(n, 0);
+  }
+
+  void clearStressFlags()
+  {
+    ensureParticleFlagStorage();
+    std::fill(flag_stress.begin(), flag_stress.end(), 0);
+    particlesDirty = true;
+  }
 
   template <class IdContainer>
   void ApplyIDStress(const IdContainer& ids)
   {
+    ensureParticleFlagStorage();
     for (const auto& pid_raw : ids) {
+      if constexpr (std::is_signed_v<std::decay_t<decltype(pid_raw)>>) {
+        if (pid_raw < 0) continue;
+      }
       const uint64_t pid = static_cast<uint64_t>(pid_raw);
       const size_t ip = particleBlock.findIndexByID(pid);
       if (ip == static_cast<size_t>(-1)) continue;
-      particleBlock.particles[ip].flag_stress = 1;
+      flag_stress[ip] = 1;
     }
     particlesDirty = true;
   }
   
-  bool findParticleID(int ID, float *pos)
+  bool findParticleID(int64_t ID, float *pos)
   {
-    size_t ip = particleBlock.findIndexByID((uint64_t)(int64_t)ID);
+    if (ID < 0) return false;
+    size_t ip = particleBlock.findIndexByID(static_cast<uint64_t>(ID));
     if (ip == (size_t)-1) return false;
     
     const auto &p = particleBlock.particles[ip];
-    pos[0] = p.pos[0]; pos[1] = p.pos[1]; pos[2] = p.pos[2];
+    normalizedParticlePosition(p, particleBlock.normalizedScale, pos);
     return true;
   }
     

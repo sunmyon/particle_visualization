@@ -2,12 +2,15 @@
 #define ELLIPSE_FITTER_H
 
 #include <vector>
+#include <cstdint>
 #include <Eigen/Dense>
 #include <memory>
 
 #include <nanoflann.hpp>
 
 #include "render/scene_objects.h"
+#include "data/particle_coordinates.h"
+#include "data/particle_block.h"
 #include "data/particle_data.h"
 #include <glm/glm.hpp>
 
@@ -20,16 +23,20 @@ class EllipseFitter {
    * - data is passed by reference and does not need copying.
    * - A KD-tree is built internally on each call.
    */
-  bool computeEllipse(const TrackingVector<ParticleData>& data, int ID_A, int ID_B, EllipsoidObject& out);
+  bool computeEllipse(const ParticleBlock& block,
+                      int64_t ID_A,
+                      int64_t ID_B,
+                      EllipsoidObject& out);
   double getDensityThreshold() {return density_threshold_;};
   
  private:
   template<typename T>
   struct PointCloud {
-    const TrackingVector<T>* pts;
+    const std::vector<T>* pts;
+    float normalizedScale = 1.0f;
     inline size_t kdtree_get_point_count() const { return pts->size(); }
     inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
-      return (*pts)[idx].pos[dim];
+      return normalizedParticlePosition((*pts)[idx], normalizedScale)[dim];
     }
     template <class BBOX> bool kdtree_get_bbox(BBOX&) const { return false; }
   };
@@ -43,7 +50,8 @@ class EllipseFitter {
   
   // Recreated for each run.
   std::unique_ptr<KDTree> kdtree_;
-  const TrackingVector<ParticleData>* dataPtr_{nullptr};
+  const std::vector<ParticleData>* dataPtr_{nullptr};
+  float normalizedScale_ = 1.0f;
   
   std::vector<int> extractComponent(double thr, int seedIndex) const;
   void computePCA3D(const std::vector<int>& comp,

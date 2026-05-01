@@ -4,7 +4,7 @@
 
 class ClumpData;
 #ifdef CLUMP_DATA_READ
-TrackingVector<ClumpData>
+std::vector<ClumpData>
 loadClumpData(const char* fname_clump_file,
               int snapshotIndex,
               float scale_from_phys);

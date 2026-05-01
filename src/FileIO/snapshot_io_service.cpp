@@ -16,9 +16,9 @@ bool SnapshotIOService::loadNewSnapshot(int newFileIndex,
   return prefetch_.loadNewSnapshot(newFileIndex, params, outResult, filter);
 }
 
-TrackingVector<int> SnapshotIOService::getStarParticleID(int indexFile,
-                                                         const SnapshotLoadParams& params,
-                                                         const InputFilterConfig& filter)
+std::vector<int64_t> SnapshotIOService::getStarParticleID(int indexFile,
+                                                          const SnapshotLoadParams& params,
+                                                          const InputFilterConfig& filter)
 {
   return loader_.getStarParticleID(indexFile, params, filter);
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ClumpStore;
 struct LoadedClumpWindowState;
@@ -8,8 +8,8 @@ struct LoadedClumpWindowState;
 class LoadedClumpTool {
 public:
   struct ClumpEvolutionCache {
-    TrackingVector<float> timeFloats;
-    TrackingVector<float> valueFloats;
+    std::vector<float> timeFloats;
+    std::vector<float> valueFloats;
     int index = -1;
   };
 
@@ -31,7 +31,7 @@ public:
                              float& outValMin,
                              float& outValMax);
 
-  const TrackingVector<ClumpEvolutionCache>& evolutionCache() const {
+  const std::vector<ClumpEvolutionCache>& evolutionCache() const {
     return evolutionCache_;
   }
 
@@ -39,5 +39,5 @@ private:
   bool showEvolution_ = false;
   bool needCacheUpdate_ = false;
 
-  TrackingVector<ClumpEvolutionCache> evolutionCache_;
+  std::vector<ClumpEvolutionCache> evolutionCache_;
 };

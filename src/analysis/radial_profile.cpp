@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/physics_constants.h"
+#include "data/particle_coordinates.h"
 
 RadialProfileResult
 RadialProfileComputer::compute(const ParticleBlock& partblock,
@@ -21,10 +22,10 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
   const int bins = params.bins;
   if (bins <= 0) return result;
 
-  TrackingVector<float> profile(bins, 0.0f);
-  TrackingVector<float> x_coord(bins, 0.0f);
-  TrackingVector<int>   counts(bins, 0);
-  TrackingVector<float> masses(bins, 0.0f);
+  std::vector<float> profile(bins, 0.0f);
+  std::vector<float> x_coord(bins, 0.0f);
+  std::vector<int>   counts(bins, 0);
+  std::vector<float> masses(bins, 0.0f);
 
   float xmin = params.xmin;
   float xmax = params.xmax;
@@ -37,12 +38,13 @@ RadialProfileComputer::compute(const ParticleBlock& partblock,
   if (!std::isfinite(normalizationFactor) || normalizationFactor <= 0.0f) {
     normalizationFactor = 1.0f;
   }
-  glm::vec3 center = params.useOriginal ? (cam_center / normalizationFactor) : cam_center;
+  glm::vec3 center = cam_center;
+  const float normalizedScale = 1.0f / normalizationFactor;
 
   auto getPos = [&](const ParticleData& p) -> glm::vec3 {
     return params.useOriginal
       ? glm::vec3(p.original_pos[0], p.original_pos[1], p.original_pos[2])
-      : glm::vec3(p.pos[0], p.pos[1], p.pos[2]);
+      : normalizedParticlePosition(p, normalizedScale);
   };
 
   struct Item {

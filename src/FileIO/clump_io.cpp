@@ -1,4 +1,4 @@
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/clump_data.h"
 
 #include "FileIO/clump_io.h"
@@ -14,7 +14,7 @@ namespace ClumpIO {
 			    uint32_t mask,
 			    H5::Group& group,
 			    const char* dsetName,
-			    TrackingVector<T>& container)
+			    std::vector<T>& container)
   {
     if ((mask & maskFlag) == 0) {
       return;
@@ -28,7 +28,7 @@ namespace ClumpIO {
 			     uint32_t mask,
 			     H5::Group& group,
 			     const char* dsetName,
-			     const TrackingVector<T>& container)
+			     const std::vector<T>& container)
   {
     if ((mask & maskFlag) == 0) {
       return;
@@ -81,7 +81,7 @@ namespace ClumpIO {
       if ((mask & L_PARTICLE_IDS) || (mask & L_PARTICLE_TYPE)) {
 	if (HDF5Utils::datasetExists(snapGroup, "particles")) {
 	  H5::Group partsGroup = snapGroup.openGroup("particles");
-	  readDatasetIf<int>  (L_PARTICLE_IDS,  mask, partsGroup, "sorted_particle_id", out.particle_ids);
+	  readDatasetIf<int64_t>(L_PARTICLE_IDS, mask, partsGroup, "sorted_particle_id", out.particle_ids);
 	  readDatasetIf<char> (L_PARTICLE_TYPE, mask, partsGroup, "type",               out.particle_type);
 	  partsGroup.close();
 	}
@@ -183,7 +183,7 @@ namespace ClumpIO {
 	  partsGroup = snapGroup.createGroup("particles");
 	}
 	
-        writeDatasetIf<int>  (L_PARTICLE_IDS,  mask, partsGroup, "sorted_particle_id", data.particle_ids);
+        writeDatasetIf<int64_t>(L_PARTICLE_IDS, mask, partsGroup, "sorted_particle_id", data.particle_ids);
         writeDatasetIf<char> (L_PARTICLE_TYPE, mask, partsGroup, "type",               data.particle_type);
 	
 	partsGroup.close();
@@ -218,7 +218,7 @@ float readClumpTime(const std::string& fname, int snapshotIndex){
 
 
 void readClumpEvolution(const std::string& fname, int snapshotInit, int snapshotEnd, int dsnapshot, int clumpID_init,
-			TrackingVector<float>& times, TrackingVector<ClumpData>& clumps){
+			std::vector<float>& times, std::vector<ClumpData>& clumps){
   clumps = {};
   times = {};
   
@@ -260,7 +260,7 @@ void readClumpEvolution(const std::string& fname, int snapshotInit, int snapshot
   }
 }
 
-void addNextClumpIDtoHDF5(const TrackingVector<StructureNode *>& nodes,
+void addNextClumpIDtoHDF5(const std::vector<StructureNode *>& nodes,
 			  const std::string &filename, int snapshotIndex)
 {
   size_t count = 0;
@@ -270,7 +270,7 @@ void addNextClumpIDtoHDF5(const TrackingVector<StructureNode *>& nodes,
   }
 
   size_t nClumps = count;
-  TrackingVector<int> clump_next_id(nClumps);
+  std::vector<int> clump_next_id(nClumps);
 
   for(size_t i=0, count=0;i<nodes.size();i++){
     StructureNode *node = nodes[i];

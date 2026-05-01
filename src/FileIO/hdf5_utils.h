@@ -11,7 +11,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct H5SilenceErrors {
   H5E_auto2_t old_func = nullptr;
@@ -170,7 +170,7 @@ bool readAttributeArray(H5::Group& grp, const std::string& attrName, T (&arr)[N]
 template<typename T>
 inline void writeDataset1D(H5::Group& group,
                            const std::string& dsetName,
-                           const TrackingVector<T>& data)
+                           const std::vector<T>& data)
 {
   removeIfExists(group, dsetName);
 
@@ -183,7 +183,7 @@ inline void writeDataset1D(H5::Group& group,
 template<typename T>
 inline void readDataset1D(const H5::Group& grp,
                           const std::string& dname,
-                          TrackingVector<T>& dst)
+                          std::vector<T>& dst)
 {
   if (!datasetExists(grp, dname)) {
     dst.clear();
@@ -212,7 +212,7 @@ inline void readDataset1D(const H5::Group& grp,
 template<typename TObject, typename TValue, size_t NCOMP, typename Setter>
 inline void readDatasetToObjects(H5::Group& group,
                                  const std::string& name,
-                                 TrackingVector<TObject>& objects,
+                                 std::vector<TObject>& objects,
                                  Setter setter,
                                  H5::PredType memType = H5MemType<TValue>::type())
 {
@@ -241,7 +241,7 @@ inline void readDatasetToObjects(H5::Group& group,
     throw std::runtime_error("Dataset " + name + " has unsupported rank: " + std::to_string(ndims));
   }
 
-  TrackingVector<TValue> buf(static_cast<size_t>(dims[0]) * NCOMP);
+  std::vector<TValue> buf(static_cast<size_t>(dims[0]) * NCOMP);
   ds.read(buf.data(), memType);
 
   for (size_t i = 0; i < static_cast<size_t>(dims[0]); ++i) {

@@ -1,13 +1,13 @@
 #pragma once
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ImageCanvas {
 public:
-  ImageCanvas(TrackingVector<unsigned char>& rgb, int width, int height);
+  ImageCanvas(std::vector<unsigned char>& rgb, int width, int height);
 
   int width() const;
   int height() const;
-  TrackingVector<unsigned char>& pixels() const;
+  std::vector<unsigned char>& pixels() const;
   
   void resizeKeepContent(int newWidth, int newHeight, unsigned char value);
   
@@ -70,14 +70,14 @@ public:
 		    unsigned char b,
 		    float alpha = 1.0f);
   
-  void copyRgbImage(const TrackingVector<unsigned char>& src,
+  void copyRgbImage(const std::vector<unsigned char>& src,
                     int srcWidth,
                     int srcHeight,
                     int dstX,
                     int dstY);
 
 private:
-  TrackingVector<unsigned char>& rgb_;
+  std::vector<unsigned char>& rgb_;
   int width_ = 0;
   int height_ = 0;
 };

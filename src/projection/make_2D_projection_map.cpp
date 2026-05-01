@@ -2,6 +2,7 @@
 #include "image/image_io.h"
 
 #include "data/particle_array.h"
+#include "data/particle_coordinates.h"
 #include "render/scene_objects.h"
 
 #include <chrono>
@@ -33,7 +34,7 @@
 namespace{
   // Data container used by nanoflann.
   struct VoronoiParticleCloud {
-    TrackingVector<pos_val> particles;
+    std::vector<pos_val> particles;
   
     // kd-tree interface.
     inline size_t kdtree_get_point_count() const { return particles.size(); }
@@ -80,7 +81,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
   ensureLuaInitialized();
 #endif
 
-  TrackingVector<ParticleData>& originalParticles = particles.particleBlock.particles;
+  std::vector<ParticleData>& originalParticles = particles.particleBlock.particles;
   
   if(params.flagSpecifyZoomRegionByMass){
     //construct xmin, xmax, center here
@@ -97,14 +98,16 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
       if(p.mass > params.criticalGasMassForZoomRegion)
 	continue;
       
+      const glm::vec3 pos =
+        normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
       for(int k=0;k<3;k++){
-	if(p.pos[k] < xmin_zoom[k])
-	  xmin_zoom[k] = p.pos[k];
+	if(pos[k] < xmin_zoom[k])
+	  xmin_zoom[k] = pos[k];
 
-	if(p.pos[k] > xmax_zoom[k])
-	  xmax_zoom[k] = p.pos[k];
+	if(pos[k] > xmax_zoom[k])
+	  xmax_zoom[k] = pos[k];
 
-	xsum_zoom[k] += p.mass * p.pos[k];
+	xsum_zoom[k] += p.mass * pos[k];
       }
 
       weight += p.mass;
@@ -124,6 +127,13 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
       ctx.center.x = xsum_zoom[0];
       ctx.center.y = xsum_zoom[1];
       ctx.center.z = xsum_zoom[2];
+      if (params.lenZoomRegion > 0.0f && ctx.scaleToPhysical > 0.0) {
+        const float lenNormalized =
+          params.lenZoomRegion / static_cast<float>(ctx.scaleToPhysical);
+        params.xlen[0] = lenNormalized;
+        params.xlen[1] = lenNormalized;
+        params.xlen[2] = lenNormalized;
+      }
     }else
       printf("no particles have been found...\n");
   }
@@ -142,16 +152,18 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
   xmax_cut[1] = ctx.center.y + params.xlen[1];
   xmax_cut[2] = ctx.center.z + params.xlen[2];  
   
-  TrackingVector<pos_val> insideParticles;
+  std::vector<pos_val> insideParticles;
 
   for (int idx = 0; idx < (int)originalParticles.size(); ++idx) {
     const auto& p = originalParticles[idx];
     if (p.type != ctx.selectedType) continue;
 
     bool inside = false;
+    const glm::vec3 pos =
+      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
     glm::vec4 localPos =
       glm::inverse(ctx.cuboidTransform)
-      * glm::vec4(glm::vec3(p.pos[0] - ctx.center.x, p.pos[1] - ctx.center.y, p.pos[2] - ctx.center.z), 1.0f)
+      * glm::vec4(pos - ctx.center, 1.0f)
       + glm::vec4(ctx.center.x, ctx.center.y, ctx.center.z, 0.);
 
     if (localPos.x >= xmin_cut[0] && localPos.x <= xmax_cut[0] &&
@@ -162,8 +174,8 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
     if (!inside) continue;
 
     pos_val pp;
-    pp.pos[0] = p.pos[0]; pp.pos[1] = p.pos[1]; pp.pos[2] = p.pos[2];
-    pp.hsml = p.Hsml;
+    pp.pos[0] = pos.x; pp.pos[1] = pos.y; pp.pos[2] = pos.z;
+    pp.hsml = normalizedParticleHsml(p, particles.particleBlock.normalizedScale);
     pp.mass = p.mass;
     
     if (params.dataSource == DataSource::Gas) {    
@@ -198,6 +210,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(ParticleArray& partic
     }
     
   ProjectionMap map = buildProjectionMap(params, ctx);
+  map.sourceNormalizedScale = particles.particleBlock.normalizedScale;
   for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
 
   using namespace std::chrono;
@@ -228,7 +241,7 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(ParticleArray& pa
   const int maxPanels = std::min(rows * cols, 6);
   const int panelCount = std::clamp(params.multiPanelCount, 1, maxPanels);
 
-  TrackingVector<RgbImage> panelImages;
+  std::vector<RgbImage> panelImages;
   panelImages.reserve(static_cast<size_t>(panelCount));
 
   int panelWidth = 0;
@@ -253,7 +266,7 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(ParticleArray& pa
     panelImages.push_back(std::move(panel));
   }
 
-  TrackingVector<unsigned char> tiledRgb;
+  std::vector<unsigned char> tiledRgb;
   tiledRgb.resize(static_cast<size_t>(panelWidth) * panelHeight * rows * cols * 3,
                   0);
   ImageCanvas canvas{tiledRgb, panelWidth * cols, panelHeight * rows};
@@ -335,7 +348,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   ProjectionMap& map,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx,
-  const TrackingVector<ParticleData>& originalParticles)
+  const std::vector<ParticleData>& originalParticles)
 {
   float minVal = FLT_MAX;
   for (auto val : map.values) {
@@ -395,14 +408,14 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 }
 
   // Compute the eight cuboid vertices in local coordinates and transform them to world coordinates.
-TrackingVector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform)
+std::vector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform)
 {
   // Compute the local AABB center and half extents.
   float hx = (xmax[0] - xmin[0]) * 0.5f;
   float hy = (xmax[1] - xmin[1]) * 0.5f;
   float hz = (xmax[2] - xmin[2]) * 0.5f;
     
-  TrackingVector<glm::vec3> local = {
+  std::vector<glm::vec3> local = {
     {  - hx, - hy, - hz },
     {  + hx, - hy, - hz },
     {  + hx, + hy, - hz },
@@ -416,7 +429,7 @@ TrackingVector<glm::vec3> ProjectionMapGenerator::computeCuboidVertices(float *x
   glm::mat4 modelMat = glm::translate(glm::mat4(1.f), center)
     * glm::mat4_cast(cuboidTransform);
     
-  TrackingVector<glm::vec3> world;
+  std::vector<glm::vec3> world;
   for (const auto &v : local) {
     glm::vec4 wpos = modelMat * glm::vec4(v, 1.0f);
     world.push_back(glm::vec3(wpos));
@@ -433,7 +446,7 @@ float ProjectionMapGenerator::kernel(float u) {
     return 0.;
 }
   
-void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const TrackingVector<pos_val>& particles)
+void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles)
 {
   float xmin_local[3];
   xmin_local[0] = map.xmin[0] - map.center.x;
@@ -499,9 +512,9 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const Track
 }
 
 
-void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles)
+void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles)
 {  
-  TrackingVector<pos_val> filtered;
+  std::vector<pos_val> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
       const pos_val& p = particles[i];
@@ -591,7 +604,7 @@ static inline double gaussian2d_weight(double r2, double sigma2, double pixel_ar
 }
 
 void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
-                                           const TrackingVector<pos_val>& particles,
+                                           const std::vector<pos_val>& particles,
                                            float sigma_pix,
                                            bool normalize)
 {
@@ -765,7 +778,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
 						  const ProjectionMap& map,
 						  const ProjectionMapParams& params,
 						  const ProjectionMapContext& ctx,
-						  const TrackingVector<ParticleData>& particles)
+						  const std::vector<ParticleData>& particles)
 {
 
 #ifdef USE_LUA
@@ -800,7 +813,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       lua_settop(gLua_, 0);
       lua_pushnumber(gLua_, p.mass);
       lua_setglobal(gLua_, "m");
-      lua_pushnumber(gLua_, p.Hsml);
+      lua_pushnumber(gLua_, normalizedParticleHsml(p, map.sourceNormalizedScale));
       lua_setglobal(gLua_, "Hsml");
       lua_pushnumber(gLua_, p.type);
       lua_setglobal(gLua_, "ptype");
@@ -835,7 +848,8 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     unsigned char ub = static_cast<unsigned char>(b * 255);
       
     // Project the 3D position to image coordinates using the same method as createProjectionMap().
-    glm::vec3 rad = glm::vec3(p.pos[0],p.pos[1],p.pos[2]) - map.center;
+    glm::vec3 rad =
+      normalizedParticlePosition(p, map.sourceNormalizedScale) - map.center;
     float u = glm::dot(rad, map.uAxis);  // Component along the image X axis.
     float v = glm::dot(rad, map.vAxis);  // Component along the image Y axis.
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
@@ -1054,7 +1068,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   if(params.flagPlaceScale)
     {
       double arrowLenX_scaled = params.arrowLenX;
-      if(params.flagScaleOriginalCoordinate && ctx.scaleToPhysical > 0.0)
+      if(ctx.scaleToPhysical > 0.0)
 	arrowLenX_scaled /= ctx.scaleToPhysical;
 
       int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / cell_size);

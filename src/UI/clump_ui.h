@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 struct SnapshotNavigationState;
 struct SnapshotCurrentState;
 struct PlotBatchExportViewContext;

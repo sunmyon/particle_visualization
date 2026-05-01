@@ -1,5 +1,7 @@
 #include "analysis/isosurface/iso_contour_build.h"
 
+#include "data/particle_coordinates.h"
+
 #ifdef ISO_CONTOUR
 #include <cfloat>
 #include <algorithm>
@@ -40,22 +42,23 @@ std::string FormatStats(const char* label, const IsoContourMeshStats& stats)
   return buffer;
 }
 
-TrackingVector<ParticleDataForTree> MakeIsoParticles(const ParticleBlock& block,
+std::vector<ParticleDataForTree> MakeIsoParticles(const ParticleBlock& block,
                                                      QuantityId quantity)
 {
-  TrackingVector<ParticleDataForTree> particles;
+  std::vector<ParticleDataForTree> particles;
   particles.reserve(block.particles.size());
 
   for (size_t ipart = 0; ipart < block.particles.size(); ++ipart) {
     const auto& pd = block.particles[ipart];
     float val = getScalarValue(block, pd, ipart, quantity);
-    particles.push_back({glm::vec3(pd.pos[0], pd.pos[1], pd.pos[2]), val});
+    particles.push_back(
+      {normalizedParticlePosition(pd, block.normalizedScale), val});
   }
   return particles;
 }
 
 BoundingBox ComputeIsoParticleBounds(
-  const TrackingVector<ParticleDataForTree>& particles)
+  const std::vector<ParticleDataForTree>& particles)
 {
   BoundingBox worldBox;
   worldBox.min = glm::vec3(FLT_MAX);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,7 @@ struct CameraConfig {
 
 struct ParticleFollowConfig {
   bool followParticleID = false;
-  int  targetParticleID = -1;
+  int64_t targetParticleID = -1;
 
   bool followClumpCenter = false;
 };
@@ -62,12 +63,12 @@ struct MaskConfig {
 
   // Extension points for halo stress, clumps, explicit selections, and similar filters.
   std::vector<int> stressedHaloIndices;
-  std::vector<int> selectedParticleIDs;
+  std::vector<int64_t> selectedParticleIDs;
 
   // Minimal form for saving per-particle flag_mask directly.
   // This can become large, so keep it optional.
   bool saveExplicitMask = false;
-  std::vector<int> explicitMaskedParticleIDs;
+  std::vector<int64_t> explicitMaskedParticleIDs;
 };
 
 struct AppConfig {

@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstdint>
 #include <vector>
 
 #include "app/state/tracking_view_state.h"
@@ -23,7 +24,7 @@ struct SettingsClumpBatchEdit {
 #endif
 
 struct SettingsDiskAnalysisEdit {
-  int targetParticleId = 0;
+  int64_t targetParticleId = 0;
   bool findClicked = false;
   bool clearClicked = false;
 };
@@ -36,8 +37,8 @@ struct SettingsDiskBatchEdit {
 };
 
 struct SettingsEllipsoidAnalysisEdit {
-  int particleId1 = 0;
-  int particleId2 = 0;
+  int64_t particleId1 = 0;
+  int64_t particleId2 = 0;
   bool fitClicked = false;
   bool clearClicked = false;
 };
@@ -128,7 +129,7 @@ struct SettingsProjectionMovieEdit {
 
   bool followSinkCenter = false;
   bool followMostMassiveSink = false;
-  int particleIdCenter = 0;
+  int64_t particleIdCenter = 0;
   bool useMassCenter = false;
   float massCenterRadius = 0.0f;
   float massCenterMinDensity = 0.0f;

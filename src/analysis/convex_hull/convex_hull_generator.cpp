@@ -20,12 +20,12 @@ public:
     return (tester_(pt) != CGAL::ON_UNBOUNDED_SIDE);
   }
 
-  TrackingVector<float> extractLineVertices() const {
-    TrackingVector<float> vertices;
+  std::vector<float> extractLineVertices() const {
+    std::vector<float> vertices;
 
     for (auto facet = polyhedron_.facets_begin();
          facet != polyhedron_.facets_end(); ++facet) {
-      TrackingVector<Point_3> facetPoints;
+      std::vector<Point_3> facetPoints;
       auto h = facet->facet_begin();
       auto start = h;
       do {
@@ -57,7 +57,7 @@ private:
 
 struct ConvexHullGenerator::Impl {
   Polyhedron_3 computePolyhedron(const std::vector<glm::vec3>& points) {
-    TrackingVector<Point_3> cgalPoints;
+    std::vector<Point_3> cgalPoints;
     cgalPoints.reserve(points.size());
 
     for (const auto& p : points) {
@@ -85,7 +85,7 @@ ConvexHullGenerator::buildHull(const std::vector<glm::vec3>& points)
   return std::make_shared<CGALConvexHull>(poly);
 }
 
-TrackingVector<float>
+std::vector<float>
 ConvexHullGenerator::buildLineVertices(const std::vector<glm::vec3>& points)
 {
   auto poly = impl->computePolyhedron(points);

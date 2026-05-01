@@ -1,8 +1,8 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 bool WritePngRgb(const char* filename,
                  int width,
                  int height,
-                 const TrackingVector<unsigned char>& rgb);
+                 const std::vector<unsigned char>& rgb);

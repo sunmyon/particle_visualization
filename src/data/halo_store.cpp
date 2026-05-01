@@ -1,20 +1,22 @@
 #include "data/particle_data.h"
+#include "data/particle_coordinates.h"
 #include "data/halo_store.h"
 
 #include <unordered_map>
 
-void HaloStore::recomputeHaloPositionsFromParticles(const TrackingVector<ParticleData>& particles,
+void HaloStore::recomputeHaloPositionsFromParticles(const ParticleBlock& block,
                                                     bool useMassWeight,
                                                     bool useOriginalPos)
 {
   if (!haloIDsLoaded_) return;
   if (haloIDs_.size() != haloes_.size()) return;
 
+  const auto& particles = block.particles;
   std::unordered_map<uint64_t, size_t> idToIndex;
   idToIndex.reserve(particles.size());
 
   for (size_t i = 0; i < particles.size(); ++i) {
-    idToIndex[static_cast<uint64_t>(particles[i].ID)] = i;
+    idToIndex[block.particleId(i)] = i;
   }
 
   const size_t nHalos = haloes_.size();
@@ -31,7 +33,9 @@ void HaloStore::recomputeHaloPositionsFromParticles(const TrackingVector<Particl
       if (it == idToIndex.end()) continue;
 
       const ParticleData& p = particles[it->second];
-      const float* x = useOriginalPos ? p.original_pos : p.pos;
+      float normalizedPos[3];
+      normalizedParticlePosition(p, block.normalizedScale, normalizedPos);
+      const float* x = useOriginalPos ? p.original_pos : normalizedPos;
 
       double w = 1.0;
       if (useMassWeight) {
@@ -78,9 +82,9 @@ bool HaloStore::loadFromHDF5(const char* fname, bool loadIDs)
     }
     
     const size_t nHalos = static_cast<size_t>(posMeta.dims[0]);
-    haloes_ = TrackingVector<HaloData>(nHalos);
+    haloes_ = std::vector<HaloData>(nHalos);
 
-    TrackingVector<int> groupLen;
+    std::vector<int> groupLen;
     HDF5Utils::readDataset1D(grp, "GroupLen", groupLen);
     
     if (groupLen.size() != nHalos) {

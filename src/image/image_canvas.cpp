@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-ImageCanvas::ImageCanvas(TrackingVector<unsigned char>& rgb,
+ImageCanvas::ImageCanvas(std::vector<unsigned char>& rgb,
                          int width,
                          int height)
   : rgb_(rgb),
@@ -23,13 +23,13 @@ int ImageCanvas::height() const
   return height_;
 }
 
-TrackingVector<unsigned char>& ImageCanvas::pixels() const{
+std::vector<unsigned char>& ImageCanvas::pixels() const{
   return rgb_;
 }
 
 void ImageCanvas::resizeKeepContent(int newWidth, int newHeight, unsigned char value)
 {
-  TrackingVector<unsigned char> newRgb;
+  std::vector<unsigned char> newRgb;
   newRgb.resize(static_cast<size_t>(newWidth) * newHeight * 3, value);
 
   const int copyWidth = std::min(width_, newWidth);
@@ -275,7 +275,7 @@ void ImageCanvas::drawAsterisk(int centerX,
 }
 
 
-void ImageCanvas::copyRgbImage(const TrackingVector<unsigned char>& src,
+void ImageCanvas::copyRgbImage(const std::vector<unsigned char>& src,
                                int srcWidth,
                                int srcHeight,
                                int dstX,

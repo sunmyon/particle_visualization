@@ -1,6 +1,6 @@
 #pragma once
 #include "FileIO/snapshot_read_result.h"
-#include "core/tracking_vector.h"
+#include <vector>
 
 class PrefetchCache {
 public:
@@ -30,5 +30,5 @@ public:
   }
 
 private:
-  TrackingVector<Entry> entries_;
+  std::vector<Entry> entries_;
 };

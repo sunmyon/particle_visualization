@@ -5,7 +5,7 @@
 #include "data/clump_data.h"
 #include <stdexcept>
 
-TrackingVector<ClumpData>
+std::vector<ClumpData>
 loadClumpData(const char* fname_clump_file,
               int snapshotIndex,
               const float scale_from_phys)
@@ -21,7 +21,7 @@ loadClumpData(const char* fname_clump_file,
     return {};
   }
 
-  TrackingVector<ClumpData> clumps;
+  std::vector<ClumpData> clumps;
   clumps.reserve(in.clump_id.size());
 
   for (size_t i = 0; i < in.clump_id.size(); i++) {

@@ -19,10 +19,10 @@ public:
     uint64_t N=0;
     // Raw SoA pointers. nullptr is allowed. Types are fixed:
     // POS/VEL/B/ORIGPOS are float[3*N], scalars are float[N],
-    // ID is uint32[N], TYPE is uint8[N].
+    // ID is uint64[N], TYPE is uint8[N].
     float   *pos=nullptr, *vel=nullptr, *B=nullptr, *dens=nullptr, *temp=nullptr,
             *mass=nullptr, *hsml=nullptr, *val=nullptr, *val2=nullptr, *origpos=nullptr;
-    uint32_t* id=nullptr;
+    uint64_t* id=nullptr;
     uint8_t* type=nullptr, *flag=nullptr, *mask=nullptr;    
   };
 

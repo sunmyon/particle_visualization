@@ -3,7 +3,7 @@
 #include <string>
 #include <iostream>
 
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/clump_data.h"
 
 struct UnitSystem;
@@ -80,20 +80,20 @@ public:
 
   bool computed() const { return chainComputed_ && propsComputed_; }
 
-  const TrackingVector<TrackingVector<ClumpEvolutionInfo*>>& chains() const { return chains_; }
-  TrackingVector<TrackingVector<ClumpEvolutionInfo*>>& chains() { return chains_; }
+  const std::vector<std::vector<ClumpEvolutionInfo*>>& chains() const { return chains_; }
+  std::vector<std::vector<ClumpEvolutionInfo*>>& chains() { return chains_; }
 
-  const TrackingVector<ClumpChainProperties>& props() const { return props_; }
-  TrackingVector<ClumpChainProperties>& props() { return props_; }
+  const std::vector<ClumpChainProperties>& props() const { return props_; }
+  std::vector<ClumpChainProperties>& props() { return props_; }
 
-  const TrackingVector<ClumpEvolutionInfo*>& chain(int i) const { return chains_[i]; }
-  TrackingVector<ClumpEvolutionInfo*>& chain(int i) { return chains_[i]; }
+  const std::vector<ClumpEvolutionInfo*>& chain(int i) const { return chains_[i]; }
+  std::vector<ClumpEvolutionInfo*>& chain(int i) { return chains_[i]; }
 
   const ClumpChainProperties& prop(int i) const { return props_[i]; }
   ClumpChainProperties& prop(int i) { return props_[i]; }
 
-  const TrackingVector<bool>& plot() const {return plotClumps_; }
-  TrackingVector<bool>& plot() {return plotClumps_; }
+  const std::vector<bool>& plot() const {return plotClumps_; }
+  std::vector<bool>& plot() {return plotClumps_; }
 
   void ensurePlotSize() {
     if (plotClumps_.size() != props_.size()) {
@@ -109,13 +109,13 @@ public:
 	     double scaleFactor = 1.0);
 
 private:
-  TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumpLists_;
-  TrackingVector<TrackingVector<ClumpEvolutionInfo*>> chains_;
-  TrackingVector<ClumpChainProperties> props_;
+  std::vector<std::vector<ClumpEvolutionInfo>> clumpLists_;
+  std::vector<std::vector<ClumpEvolutionInfo*>> chains_;
+  std::vector<ClumpChainProperties> props_;
   bool chainComputed_ = false;
   bool propsComputed_ = false;
 
-  TrackingVector<bool> plotClumps_;
+  std::vector<bool> plotClumps_;
   
   void makeEvolutionChains(int initstep,
 			   int nsnapshots,

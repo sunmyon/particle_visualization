@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "data/particle_block.h"
+#include "data/particle_coordinates.h"
 #include "data/spatial/particle_octree.h"
 
 namespace {
@@ -666,9 +667,9 @@ BoundingBox ComputeParticleBounds(const ParticleBlock& block,
 
   for (const ParticleData& p : block.particles) {
     const float h = params.expandBoundsByHsml
-      ? std::max(p.Hsml, 0.0f)
+      ? std::max(normalizedParticleHsml(p, block.normalizedScale), 0.0f)
       : 0.0f;
-    const glm::vec3 pos(p.pos[0], p.pos[1], p.pos[2]);
+    const glm::vec3 pos = normalizedParticlePosition(p, block.normalizedScale);
     bounds.min = glm::min(bounds.min, pos - glm::vec3(h));
     bounds.max = glm::max(bounds.max, pos + glm::vec3(h));
   }
@@ -740,13 +741,13 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
   const AdaptiveVolumeTreeBuildParams& params,
   const VolumeSigmaMapper& sigmaMapper)
 {
-  TrackingVector<ParticleDataForTree> treeParticles;
+  std::vector<ParticleDataForTree> treeParticles;
   treeParticles.reserve(particles.particles.size());
 
   for (std::size_t i = 0; i < particles.particles.size(); ++i) {
     const ParticleData& p = particles.particles[i];
     ParticleDataForTree out;
-    out.pos = glm::vec3(p.pos[0], p.pos[1], p.pos[2]);
+    out.pos = normalizedParticlePosition(p, particles.normalizedScale);
     out.val = getScalarValue(particles,
                              p,
                              static_cast<int>(i),

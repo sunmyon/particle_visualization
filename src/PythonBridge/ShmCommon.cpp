@@ -15,7 +15,7 @@ static std::vector<LayoutSpec> make_specs(bool withB){
     {F_DENS, DT_FLOAT32, 1}, {F_TEMP, DT_FLOAT32, 1},
     {F_MASS, DT_FLOAT32, 1}, {F_HSML, DT_FLOAT32, 1},
     {F_VAL, DT_FLOAT32, 1},  {F_VAL2, DT_FLOAT32, 1},
-    {F_ID,  DT_UINT32,  1},  {F_TYPE, DT_UINT8,   1},
+    {F_ID,  DT_UINT64,  1},  {F_TYPE, DT_UINT8,   1},
     {F_ORIGPOS, DT_FLOAT32, 3},
     {F_MASK, DT_UINT8, 1},
     {F_FLAG, DT_UINT8, 1} 

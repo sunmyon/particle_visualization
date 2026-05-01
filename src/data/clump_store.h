@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/clump_data.h"
 
 class ClumpStore {
@@ -22,8 +22,8 @@ public:
   const std::string& filePath() const { return filePath_; }
   void setFilePath(const std::string& path) { filePath_ = path; }
 
-  const TrackingVector<ClumpData>& clumps() const { return clumps_; }
-  TrackingVector<ClumpData>& clumps() { return clumps_; }
+  const std::vector<ClumpData>& clumps() const { return clumps_; }
+  std::vector<ClumpData>& clumps() { return clumps_; }
 
   const ClumpData& clump(int i) const { return clumps_[i]; }
   ClumpData& clump(int i) { return clumps_[i]; }
@@ -31,7 +31,7 @@ public:
   int selectedIndex() const { return selectedIndex_; }
   void setSelectedIndex(int i) { selectedIndex_ = i; }
 
-  void setClumps(TrackingVector<ClumpData>&& clumps) {
+  void setClumps(std::vector<ClumpData>&& clumps) {
     clumps_ = std::move(clumps);
     loaded_ = !clumps_.empty();
   }
@@ -46,6 +46,6 @@ public:
 private:
   bool loaded_ = false;
   std::string filePath_;
-  TrackingVector<ClumpData> clumps_;
+  std::vector<ClumpData> clumps_;
   int selectedIndex_ = -1;
 };

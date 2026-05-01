@@ -1,6 +1,6 @@
 #pragma once
 #include <iostream>
-#include "core/tracking_vector.h"
+#include <vector>
 
 class HaloData {
 public:
@@ -36,6 +36,6 @@ public:
 };
 
 struct HaloCatalog {
-  TrackingVector<HaloData> haloes;
+  std::vector<HaloData> haloes;
   std::vector<std::vector<uint64_t>> haloIDs;   // Same length as haloes.
 };

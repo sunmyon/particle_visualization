@@ -39,9 +39,13 @@ namespace bridge {
 	if (S.val ) S.val[i]  = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Val);
 	if (S.val2) S.val2[i] = getScalarValue(P.particleBlock, *src, (int)i, QuantityId::Val2);
 		
-	if (S.id)   S.id[i]   = static_cast<uint32_t>(src->ID);
+	if (S.id)   S.id[i]   = P.particleBlock.particleId(i);
 	if (S.type) S.type[i] = static_cast<uint8_t>(src->type);
-	if (S.flag) S.flag[i] = static_cast<uint8_t>(src->flag_stress);
+	if (S.flag) {
+	  S.flag[i] = (i < P.flag_stress.size())
+	    ? static_cast<uint8_t>(P.flag_stress[i])
+	    : 0;
+	}
       }
 
     // Visibility mask: 1 = hidden, 0 = visible.
@@ -114,9 +118,17 @@ namespace bridge {
       P.particlesDirty = true;
     }
     
-    if (need(F_ID)   && S.id)   for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].ID   = static_cast<uint32_t>(S.id[i]);
+    if (need(F_ID) && S.id) {
+      P.particleBlock.ensureParticleIdStorage(DataType::Int64);
+      for (size_t i=0; i<N; ++i) {
+        P.particleBlock.setParticleId(i, S.id[i]);
+      }
+    }
     if (need(F_TYPE) && S.type) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].type = static_cast<uint8_t>(S.type[i]);
-    if (need(F_FLAG) && S.flag) for (size_t i=0; i<N; ++i) P.particleBlock.particles[i].flag_stress = static_cast<uint8_t>(S.flag[i]);
+    if (need(F_FLAG) && S.flag) {
+      if (P.flag_stress.size() < N) P.flag_stress.resize(N, 0);
+      for (size_t i=0; i<N; ++i) P.flag_stress[i] = static_cast<uint8_t>(S.flag[i]);
+    }
     if ((need(F_ID) && S.id) || (need(F_TYPE) && S.type) ||
         (need(F_FLAG) && S.flag)) {
       P.particlesDirty = true;

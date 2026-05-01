@@ -11,7 +11,7 @@ void ExecuteClumpToolRequests(ToolWindowUIState& tools,
   if (input.clumpFind) {
     ExecuteClumpFinderWindowRequests(tools.clumpFind,
                                      *input.clumpFind,
-                                     input.particles.particleBlock.particles,
+                                     input.particles,
                                      input.camera,
                                      input.snapshotCurrent.loadedTime,
                                      input.snapshotInput,

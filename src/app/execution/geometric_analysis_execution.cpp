@@ -24,6 +24,7 @@
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/particle_array.h"
+#include "data/particle_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -56,8 +57,9 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 
   DiskRadiusFinder::Params param{};
   bool found = false;
-  for (const auto& p : particles.particleBlock.particles) {
-    if (p.ID != request.targetParticleId) {
+  for (size_t i = 0; i < particles.particleBlock.particles.size(); ++i) {
+    const auto& p = particles.particleBlock.particles[i];
+    if (particles.particleBlock.particleIdSigned(i) != request.targetParticleId) {
       continue;
     }
     if (request.rejectTypeZeroTarget && p.type == 0) {
@@ -68,7 +70,9 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
 
     param.mass = p.mass;
     for (int k = 0; k < 3; ++k) {
-      param.center[k] = p.pos[k];
+      const glm::vec3 pos =
+        normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+      param.center[k] = pos[k];
       param.v_center[k] = p.vel[k];
     }
     found = true;
@@ -90,7 +94,10 @@ void ExecuteSingleDiskAnalysisRequest(ParticleArray& particles,
   disk.opacity = request.diskOpacity;
   disk.tag = request.diskTag;
 
-  if (diskFinder.compute(particles.particleBlock.particles, param, disk)) {
+  if (diskFinder.compute(particles.particleBlock.particles,
+                         particles.particleBlock.normalizedScale,
+                         param,
+                         disk)) {
     result.valid  = true;
     result.radius = disk.radius;
     result.disk   = std::move(disk);
@@ -151,8 +158,10 @@ static bool AppendDiskBatchSummary(const DiskAnalysisBatchRequestState& params,
     runtime.firstOutput = false;
   }
 
-  std::fprintf(fp, "%d %d %d %g %d %g %g %g %g %d\n",
-	               row.idx, row.idA, row.idB,
+  std::fprintf(fp, "%d %lld %lld %g %d %g %g %g %g %d\n",
+	               row.idx,
+                   static_cast<long long>(row.idA),
+                   static_cast<long long>(row.idB),
 	               runtime.timeDisk,
 	               runtime.snapDisk,
 	               runtime.distDisk,
@@ -472,7 +481,7 @@ void ExecuteSingleEllipsoidAnalysisRequest(ParticleArray& particles,
   result = EllipsoidAnalysisResultState{};
 
   EllipsoidObject obj;
-  if (ellipsoidFitter.computeEllipse(particles.particleBlock.particles,
+  if (ellipsoidFitter.computeEllipse(particles.particleBlock,
                                      request.particleId1,
                                      request.particleId2,
                                      obj)) {
@@ -504,10 +513,10 @@ static bool AppendEllipsoidBatchResult(const char* outputFile,
     std::fprintf(fp, "index ID1 ID2 snap n a b c\n");
     firstOutput = false;
   }
-  std::fprintf(fp, "%d %d %d %d %g %g %g %g\n",
+  std::fprintf(fp, "%d %lld %lld %d %g %g %g %g\n",
                row.idx,
-               row.idA,
-               row.idB,
+               static_cast<long long>(row.idA),
+               static_cast<long long>(row.idB),
                row.snap,
                densityThreshold,
                ellipsoid.radii.x,

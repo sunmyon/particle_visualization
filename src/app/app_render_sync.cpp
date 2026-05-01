@@ -20,6 +20,7 @@ ParticleRenderInput MakeParticleRenderInput(const ParticleArray& particles)
   return ParticleRenderInput{
     &particles.particleBlock,
     &particles.flag_mask,
+    &particles.flag_stress,
     particles.particlesDirty,
     particles.velocityDirty
   };

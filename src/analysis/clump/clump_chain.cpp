@@ -7,7 +7,7 @@
 #ifdef CLUMP_DATA_READ
 
 void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::string fname){
-  TrackingVector<TrackingVector<ClumpEvolutionInfo>> clumps_all(nsnapshots);
+  std::vector<std::vector<ClumpEvolutionInfo>> clumps_all(nsnapshots);
   
   for(int isnap=0;isnap<nsnapshots;isnap++){
     int fileindex = initstep + isnap * dstep;
@@ -49,7 +49,7 @@ void give_stellar_id_to_clumps(int initstep, int nsnapshots, int dstep, std::str
 	if(in.clump_stellar_count[i] == 0)
 	  continue;
 
-	int ID_min = -1;
+	int64_t ID_min = -1;
 	bool flag_first = true;
 
 	int index_init = in.clump_offset[i];
@@ -192,7 +192,7 @@ void ClumpChain::makeEvolutionChains(int initstep, int nsnapshots, int dstep, co
 
       chains_[global_id].clear();
       
-      TrackingVector<ClumpEvolutionInfo *> clump_chain;
+      std::vector<ClumpEvolutionInfo *> clump_chain;
       clump_chain.push_back(&clump);
       clump.flag_star = true;
       

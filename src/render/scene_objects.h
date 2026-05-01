@@ -9,7 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>   // for translate, scale
 #include <glm/gtc/quaternion.hpp>         // for mat4_cast
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 struct CubeObject {
   glm::vec3 center;       // Center position of the cube

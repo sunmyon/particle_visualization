@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 #include <cstdint>
 
@@ -8,7 +8,7 @@ struct RgbImage {
   int width = 0;
   int height = 0;
   uint64_t version = 0;
-  TrackingVector<unsigned char> rgb;
+  std::vector<unsigned char> rgb;
 
   bool valid() const {
     return width > 0 &&

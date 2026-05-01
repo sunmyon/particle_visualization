@@ -10,6 +10,7 @@
 
 ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
   BuildResult result;
+  normalizedScale = 1.0f;
   
   if (!particles.empty()) {
     result.originalMax = 0.;
@@ -53,11 +54,6 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
 			   std::max(std::fabs(p.original_pos[1]), std::fabs(p.original_pos[2])));
         if (m > localMax) localMax = m;
 
-        // initialize pos/Hsml
-        for (int k = 0; k < 3; ++k) p.pos[k] = p.original_pos[k];
-        p.Hsml = p.originalHsml;
-        p.flag_stress = 0;
-
         // renew min/max
         if (validType) {
           for (int q = 0; q < catalog.nUIQ; ++q) {
@@ -84,13 +80,7 @@ ParticleBlock::BuildResult ParticleBlock::rebuild(float desiredMax, const Quanti
 
     // scaling (after maxVal is determined)
     if (result.originalMax > 0.0f) {
-      float invMaxVal = desiredMax / result.originalMax;
-#pragma omp parallel for
-      for (int i = 0; i < (int)particles.size(); ++i) {
-        ParticleData& p = particles[i];
-        for (int k = 0; k < 3; ++k) p.pos[k] *= invMaxVal;
-        p.Hsml *= invMaxVal;
-      }
+      normalizedScale = desiredMax / result.originalMax;
     }
 
     // 4) set 0 to max/min values if no particle for each particle type
@@ -120,7 +110,8 @@ bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op
       if (t < 0 || t >= 6) continue;
       if (!op.useType[t]) continue;
 
-      glm::dvec3 r = glm::dvec3(p.pos[0], p.pos[1], p.pos[2]) - glm::dvec3(op.center);
+      glm::dvec3 r = glm::dvec3(normalizedParticlePosition(p, normalizedScale)) -
+                     glm::dvec3(op.center);
       if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
 
       vcm += static_cast<double>(p.mass) * glm::dvec3(p.vel[0], p.vel[1], p.vel[2]);
@@ -135,7 +126,8 @@ bool ParticleBlock::ComputeAngularMomentumAxis(const ParticleSelectionOption& op
     if (t < 0 || t >= 6) continue;
     if (!op.useType[t]) continue;
 
-    glm::dvec3 r = glm::dvec3(p.pos[0], p.pos[1], p.pos[2]) - glm::dvec3(op.center);
+    glm::dvec3 r = glm::dvec3(normalizedParticlePosition(p, normalizedScale)) -
+                   glm::dvec3(op.center);
     if (r2max > 0.0f && glm::dot(r, r) > r2max) continue;
 
     glm::dvec3 v = glm::dvec3(p.vel[0], p.vel[1], p.vel[2]) - vcm;
@@ -192,24 +184,26 @@ ParticleBlock ParticleBlock::makeTestParticleBlock(HeaderInfo& header)
         const double z_out = z + amp * rz;
 
         ParticleData p;
-        p.pos[0] = x_out; p.pos[1] = y_out; p.pos[2] = z_out;
         p.original_pos[0] = x_out; p.original_pos[1] = y_out; p.original_pos[2] = z_out;
 
         p.vel[0] = x_out - Omega * y_out;
         p.vel[1] = y_out + Omega * x_out;
         p.vel[2] = z_out;
 
-        p.Hsml = dx;
-        p.originalHsml = dx;
+        p.original_hsml = dx;
         p.mass = 1.0f;
         p.density = 1.0f;
         p.temperature = 1.0f;
         p.type = 0;
-        p.ID = (int)block.particles.size();
 
         block.particles.push_back(p);
       }
     }
+  }
+
+  block.ensureParticleIdStorage(DataType::Int64);
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    block.setParticleId(i, static_cast<uint64_t>(i));
   }
 
   return block;

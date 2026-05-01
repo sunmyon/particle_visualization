@@ -11,7 +11,7 @@
 struct DiskAnalysisResultState {
   bool valid = false;
   bool cpuUpdated = false;
-  int targetParticleId = -1;
+  int64_t targetParticleId = -1;
   float radius = 0.0f;
   DiskObject disk;
 };
@@ -61,7 +61,7 @@ struct StreamlineBuildResultState {
   int lineCount = 0;
   std::array<int, 7> stopCounts{};
   std::vector<SeedReport> seedReports;
-  TrackingVector<LineObject> lines;
+  std::vector<LineObject> lines;
 };
 
 #ifdef ISO_CONTOUR

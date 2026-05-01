@@ -11,7 +11,7 @@
 #include "analysis/histogram2d.h"
 #include "analysis/radial_profile.h"
 #include "core/quantity.h"
-#include "core/tracking_vector.h"
+#include <vector>
 #include "data/particle_data.h"
 #include "data/particle_mask_config.h"
 #include "projection/projection_map_params.h"
@@ -55,7 +55,6 @@ struct ProjectionMapUIState {
   bool paramsInitialized = false;
   uint64_t observedToolRevision = 0;
   ProjectionMapParams draftParams;
-  bool useOriginalCoordinate = true;
   bool selectMode = false;
   bool dragInitialized = false;
   float dragLastX = 0.0f;
@@ -69,7 +68,8 @@ struct ProjectionMapUIState {
   int appliedFontIndex = -1;
 
   float xlen_input[3] = {2.0f, 2.0f, 1.0f};
-  TrackingVector<QuantityId> gasQuantityOptions;
+  float xoffset_input[3] = {0.0f, 0.0f, 0.0f};
+  std::vector<QuantityId> gasQuantityOptions;
   std::vector<std::string> availableFontPaths;
   std::vector<ImFont*> previewFonts;
 };
@@ -80,7 +80,7 @@ struct ProjectionFontSelectionRequestState {
 
 struct TopParticlesUIState {
   bool open = true;
-  int queryID = -1;
+  int64_t queryID = -1;
 
   int particleType = 3;
   int m = 10;
@@ -119,8 +119,8 @@ struct TopParticlesRequestState {
   bool followParticleRequested = false;
   bool disableFollowParticleRequested = false;
 
-  int queryParticleId = -1;
-  int centerParticleId = -1;
+  int64_t queryParticleId = -1;
+  int64_t centerParticleId = -1;
 
   bool selectedTypes[6] = {false, false, false, false, false, false};
 
@@ -141,14 +141,17 @@ struct TopParticlesResultState {
   bool hasFound = false;
   bool queryFailed = false;
   ParticleData foundParticle{};
+  int64_t foundParticleId = -1;
 
   std::deque<ParticleData> historyData;
-  TrackingVector<ParticleData> filtered;
+  std::deque<int64_t> historyIds;
+  std::vector<ParticleData> filtered;
+  std::vector<int64_t> filteredIds;
 
   bool histogramComputed = false;
   uint64_t histogramVersion = 0;
-  TrackingVector<float> histBins;
-  TrackingVector<float> binCenters;
+  std::vector<float> histBins;
+  std::vector<float> binCenters;
 
   float vmin = 0.0f;
   float vmax = 1.0f;
@@ -176,7 +179,7 @@ struct HaloesUIState {
 
   bool loaded = false;
   bool idsLoaded = false;
-  TrackingVector<HaloRowView> rows;
+  std::vector<HaloRowView> rows;
   std::vector<uint8_t> selectedForStress;
 
   int m = 50;
@@ -199,8 +202,8 @@ struct HaloesUIState {
 
   bool histogramComputed = false;
   uint64_t histogramVersion = 0;
-  TrackingVector<float> histBins;
-  TrackingVector<float> binCenters;
+  std::vector<float> histBins;
+  std::vector<float> binCenters;
   float vmin = 0.0f;
   float vmax = 1.0f;
   float binSize = 1.0f;

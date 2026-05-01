@@ -4,7 +4,7 @@
 #include <unordered_set>
 
 // ParticleOctree constructor.
-ParticleOctree::ParticleOctree(TrackingVector<ParticleDataForTree>&& all,
+ParticleOctree::ParticleOctree(std::vector<ParticleDataForTree>&& all,
                                const BoundingBox&                    worldBox,
                                size_t                                minParticles,
                                size_t                                maxDepth,
@@ -38,7 +38,7 @@ ParticleOctree::buildNode(const BoundingBox& box,
 
 
 void ParticleOctree::Node::subdivide(ParticleOctree&           tree,  
-				     TrackingVector<ParticleDataForTree>& particles,
+				     std::vector<ParticleDataForTree>& particles,
                                      size_t                               minParticles,
                                      size_t                               maxDepth,
                                      size_t                               depth,
@@ -142,7 +142,7 @@ void ParticleOctree::Node::subdivide(ParticleOctree&           tree,
 void ParticleOctree::balanceTree(bool isIsoDensity)
 {
   while (true) {
-    TrackingVector<Node*> leaves;
+    std::vector<Node*> leaves;
     collectLeaves(root_.get(), leaves);
 
     std::vector<Node*> toRefine;
@@ -225,7 +225,7 @@ ParticleOctree::findNeighbor(Node* /*unused*/,
                              int dir)
 {
     // 1. Collect the current leaves.
-    TrackingVector<Node*> leaves;
+    std::vector<Node*> leaves;
     collectLeaves(root_.get(), leaves);
 
     Node* best = nullptr;
@@ -245,9 +245,9 @@ inline int siblingIndex(int dir, int myIdx) {
     return myIdx ^ mask;                  // Flipping that bit gives the sibling index.
 }
 
-TrackingVector<ParticleOctree::Node*>
+std::vector<ParticleOctree::Node*>
 ParticleOctree::findAllNeighbors(const Node* leaf, int dir) const {
-  TrackingVector<Node*> result;
+  std::vector<Node*> result;
   const Node* cur = leaf;
 
   // Walk up the parent chain and inspect sibling subtrees at each level.
@@ -269,7 +269,7 @@ ParticleOctree::findAllNeighbors(const Node* leaf, int dir) const {
 void ParticleOctree::collectFaceLeaves(Node* sib,
 				       int          dir,
 				       const BoundingBox& origBox,
-				       TrackingVector<Node*>& out) const
+				       std::vector<Node*>& out) const
 {
   if (sib->isLeaf) {
     if (touchesFace(sib->box, origBox, dir)) 
@@ -305,7 +305,7 @@ namespace {
 // ------------- public -------------
 void ParticleOctree::querySphere(const glm::vec3& center,
                                  float            radius,
-                                 TrackingVector<const ParticleDataForTree*>& out) const
+                                 std::vector<const ParticleDataForTree*>& out) const
 {
     out.clear();
     querySphereRecursive(root_.get(), center, radius*radius, out);
@@ -317,7 +317,7 @@ void ParticleOctree::querySphereRecursive(
         const Node*                     node,
         const glm::vec3&                center,
         float                           radius2,
-        TrackingVector<const ParticleDataForTree*>& out) const
+        std::vector<const ParticleDataForTree*>& out) const
 {
   if (!node) return;
 

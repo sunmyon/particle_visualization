@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ClumpChain;
 class ClumpStore;
@@ -23,7 +23,7 @@ struct UnitSystem;
 
 void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                       FindClump& clumpFind,
-                                      TrackingVector<ParticleData>& particles,
+                                      ParticleArray& particles,
                                       CameraContext& camera,
                                       double snapshotTime,
                                       const SnapshotInputState& input,

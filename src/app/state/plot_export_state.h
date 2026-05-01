@@ -8,6 +8,7 @@ struct PlotBatchExportViewContext {
   int skipStep = 1;
   int batchSize = 1;
   bool useHDF5 = false;
+  float normalizedToOriginalScale = 1.0f;
   float cameraPosition[3] = {0.0f, 0.0f, 5.0f};
   float cameraTarget[3] = {0.0f, 0.0f, 0.0f};
 };

@@ -16,9 +16,9 @@ public:
                        SnapshotReadResult& outResult,
                        const InputFilterConfig& filter);
 
-  TrackingVector<int> getStarParticleID(int indexFile,
-                                        const SnapshotLoadParams& params,
-                                        const InputFilterConfig& filter);
+  std::vector<int64_t> getStarParticleID(int indexFile,
+                                         const SnapshotLoadParams& params,
+                                         const InputFilterConfig& filter);
 
   bool isLoading() const;
 

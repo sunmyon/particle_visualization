@@ -23,6 +23,7 @@
 #include "app/state/snapshot_state_sync.h"
 #include "config/config_apply.h"
 #include "config/config_data.h"
+#include "data/particle_coordinates.h"
 #include "config/config_io.h"
 #include "config/config_validation.h"
 #include "core/quantity.h"
@@ -228,7 +229,7 @@ bool FindMostMassiveParticleTarget(const ParticleBlock& block,
     }
     if (!found || p.mass > bestMass) {
       bestMass = p.mass;
-      outTarget = glm::vec3(p.pos[0], p.pos[1], p.pos[2]);
+      outTarget = normalizedParticlePosition(p, block.normalizedScale);
       found = true;
     }
   }

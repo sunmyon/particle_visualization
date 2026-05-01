@@ -6,6 +6,4 @@ struct ViewFilterConfig {
 
   glm::vec3 center{0.0f};
   float radiusCullingSphere = 1.0f;
-  bool centerIsOriginal = false;
-  bool radiusIsOriginal = false;
 };

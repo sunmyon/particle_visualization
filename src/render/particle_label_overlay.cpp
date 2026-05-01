@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include "data/particle_array.h"
+#include "data/particle_coordinates.h"
 #include "interaction/camera.h"
 #include "render/render_state.h"
 #include "render/render_viewport.h"
@@ -33,9 +34,11 @@ static std::vector<Hit> CollectHits(const ParticleArray& particles,
     if (sinkOnly && p.type <= 2)
       continue;
 
-    const float dx = p.pos[0] - queryPos.x;
-    const float dy = p.pos[1] - queryPos.y;
-    const float dz = p.pos[2] - queryPos.z;
+    const glm::vec3 pos =
+      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+    const float dx = pos.x - queryPos.x;
+    const float dy = pos.y - queryPos.y;
+    const float dz = pos.z - queryPos.z;
     const float dist2 = dx * dx + dy * dy + dz * dz;
 
     if (dist2 > radius2)
@@ -104,8 +107,9 @@ void ParticleLabelOverlay::rebuild(const ParticleArray& particles,
     const auto& p = particles.particleBlock.particles[hits[k].idx];
 
     ParticleLabelItem item;
-    item.worldPos = glm::vec3(p.pos[0], p.pos[1], p.pos[2]);
-    item.id = p.ID;
+    item.worldPos =
+      normalizedParticlePosition(p, particles.particleBlock.normalizedScale);
+    item.id = particles.particleBlock.particleIdSigned(hits[k].idx);
     labels_.push_back(item);
   }
 
@@ -137,7 +141,10 @@ void ParticleLabelOverlay::draw(const glm::mat4& view,
     const glm::vec2 screen = NdcToImGui(viewport, ndc);
 
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%d", item.id);
+    std::snprintf(buf,
+                  sizeof(buf),
+                  "%lld",
+                  static_cast<long long>(item.id));
 
     const ImVec2 textSize = ImGui::CalcTextSize(buf);
     draw->AddRectFilled(ImVec2(screen.x - 2, screen.y - 2),

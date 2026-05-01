@@ -82,7 +82,6 @@ namespace {
     case FieldKey::Hsml:        fl.store = isF32 ? &store_hsml_f32 : (isF64 ? &store_hsml_f64 : nullptr); break;
     case FieldKey::Volume:      fl.store = isF32 ? &store_volume_f32 : (isF64 ? &store_volume_f64 : nullptr); break;
     case FieldKey::Type:        fl.store = isI32 ? &store_type_i32 : (isI64 ? &store_type_i64 : nullptr); break;
-    case FieldKey::ID:          fl.store = isI32 ? &store_id_i32 : (isI64 ? &store_id_i64 : nullptr); break;
     default: break;
     }
   }

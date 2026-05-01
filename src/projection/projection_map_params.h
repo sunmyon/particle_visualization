@@ -30,12 +30,10 @@ struct ProjectionMapParams {
   bool flagShowCuboid = false;
 
   bool flagSpecifyZoomRegionByMass = false;
-  bool flagScaleOriginalCoordinateZoomRegion = true;
   float criticalGasMassForZoomRegion = 0.0f;
   float lenZoomRegion = 0.0f;
 
   bool flagPlaceScale = false;
-  bool flagScaleOriginalCoordinate = true;
   float arrowLenX = 100.0f;
   char arrowLabelStr[255] = "100 au";
 

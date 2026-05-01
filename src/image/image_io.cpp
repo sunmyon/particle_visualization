@@ -6,7 +6,7 @@
 bool WritePngRgb(const char* filename,
                  int width,
                  int height,
-                 const TrackingVector<unsigned char>& rgb)
+                 const std::vector<unsigned char>& rgb)
 {
   if (!filename || width <= 0 || height <= 0) return false;
 

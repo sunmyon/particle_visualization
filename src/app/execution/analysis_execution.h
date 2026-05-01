@@ -74,7 +74,8 @@ void ExecuteEllipsoidBatchRequest(ParticleArray& particles,
 
 
 #ifdef STREAM_LINE
-void ExecuteStreamlinePreviewRequest(StreamlinePreviewRequestState& request,
+void ExecuteStreamlinePreviewRequest(const ParticleArray& particles,
+                                     StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result);
 
 void ExecuteStreamlineBuildRequest(ParticleArray& particles,

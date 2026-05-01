@@ -118,6 +118,7 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
   if (request.setAxisFromAngularMomentumRequested) {
     ProjectionAngularMomentumFrame frame =
       ComputeAngularMomentumFrame(ctx.projection.particles.particleBlock.particles,
+                                  ctx.projection.particles.particleBlock.normalizedScale,
                                   glm::vec3(params.xoffset[0],
                                             params.xoffset[1],
                                             params.xoffset[2]),

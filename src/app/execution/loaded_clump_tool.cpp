@@ -63,8 +63,8 @@ void LoadedClumpTool::rebuildEvolutionCache(const LoadedClumpWindowState& ui,
 
     const auto& ch = clumpStore.clump(static_cast<int>(i));
 
-    TrackingVector<float> times;
-    TrackingVector<ClumpData> clumps;
+    std::vector<float> times;
+    std::vector<ClumpData> clumps;
 
     readClumpEvolution(clumpStore.filePath(),
                        currentFileIndex,

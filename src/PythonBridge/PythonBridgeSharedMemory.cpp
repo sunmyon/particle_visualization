@@ -71,7 +71,7 @@ void PythonBridgeSharedMemory::mapSharedPointers()
   shared_.hsml = static_cast<float*>(fieldPtr(F_HSML));
   shared_.val = static_cast<float*>(fieldPtr(F_VAL));
   shared_.val2 = static_cast<float*>(fieldPtr(F_VAL2));
-  shared_.id = static_cast<uint32_t*>(fieldPtr(F_ID));
+  shared_.id = static_cast<uint64_t*>(fieldPtr(F_ID));
   shared_.type = static_cast<uint8_t*>(fieldPtr(F_TYPE));
   shared_.origpos = static_cast<float*>(fieldPtr(F_ORIGPOS));
   shared_.flag = static_cast<uint8_t*>(fieldPtr(F_FLAG));

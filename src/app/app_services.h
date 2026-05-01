@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ProjectionMapGenerator;
 class SnapshotIOService;

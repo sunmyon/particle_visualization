@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "core/tracking_vector.h"
+#include <vector>
 
 class ImageCanvas;
 class ParticleArray;
@@ -49,19 +49,20 @@ private:
     float xlen[3] = {0.f, 0.f, 0.f}, xmin[3] = {0.f, 0.f, 0.f};
     float dx = 0.f, dy = 0.f, dz = 0.f;
     float cell_size = 0.f;
+    float sourceNormalizedScale = 1.0f;
     float minVal = 0.f, maxVal = 0.f;
     bool flagDensityWeight = false;
     bool flagLogScale = false;
     glm::vec3 center = glm::vec3(0.f);
     glm::vec3 uAxis = glm::vec3(1.f,0.f,0.f), vAxis = glm::vec3(0.f,1.f,0.f), wAxis = glm::vec3(0.f,0.f,1.f);
-    TrackingVector<double> values;
-    TrackingVector<double> weights;
-    TrackingVector<unsigned char> image;
+    std::vector<double> values;
+    std::vector<double> weights;
+    std::vector<unsigned char> image;
   };
 
-  void createProjectionMap(ProjectionMap &map, const TrackingVector<pos_val>& particles);
-  void createVoronoiSliceMap(ProjectionMap& map, const TrackingVector<pos_val>& particles);
-  void createStarMap(ProjectionMap &map, const TrackingVector<pos_val>& particles, float sigma_pix, bool normalize);
+  void createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles);
+  void createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles);
+  void createStarMap(ProjectionMap &map, const std::vector<pos_val>& particles, float sigma_pix, bool normalize);
 
 #ifdef USE_LUA
   lua_State* gLua_ = nullptr;
@@ -88,14 +89,14 @@ private:
 			    const ProjectionMap& map,
 			    const ProjectionMapParams& params,
 			    const ProjectionMapContext& ctx,
-			    const TrackingVector<ParticleData>& particles);
+			    const std::vector<ParticleData>& particles);
   float kernel(float u);
   ProjectionMap buildProjectionMap(const ProjectionMapParams& params,
                                    const ProjectionMapContext& ctx) const;
   RgbImage composeProjectionMapImage(ProjectionMap& map,
                                      const ProjectionMapParams& params,
                                      const ProjectionMapContext& ctx,
-                                     const TrackingVector<ParticleData>& originalParticles);
+                                     const std::vector<ParticleData>& originalParticles);
   RgbImage makeSingleDensityMapImage(ParticleArray& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,
@@ -117,7 +118,7 @@ public:
   
   ProjectionMapGenerator();
 
-  TrackingVector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);
+  std::vector<glm::vec3> computeCuboidVertices(float *xmin, float *xmax, glm::vec3 center, glm::quat cuboidTransform);
 
   static void colormapLookup(float t, float& r, float& g, float& b, const float *colorMap, int countColorMap);  
 };
