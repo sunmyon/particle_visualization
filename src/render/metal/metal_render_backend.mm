@@ -187,6 +187,412 @@ fragment float4 solidFragment(SolidVertexOut in [[stage_in]])
 {
   return in.color;
 }
+
+struct VolumeUniforms {
+  float4x4 invProjection;
+  float4x4 invView;
+  float4 cameraForwardFocal;
+  float4 rayParams;
+  float4 baseColorAndMode;
+  float4 tfRangeScale;
+  int4 tfControl;
+  int4 colorControl;
+  float4 opticalParams;
+  int4 tfType[4];
+  int4 tfLogDomain[4];
+  float4 tfCenter[4];
+  float4 tfWidth[4];
+  float4 tfAmp[4];
+};
+
+struct VolumeVertexOut {
+  float4 position [[position]];
+  float2 ndc;
+};
+
+vertex VolumeVertexOut volumeVertex(uint vertexId [[vertex_id]])
+{
+  float2 pos[3] = {
+    float2(-1.0, -1.0),
+    float2( 3.0, -1.0),
+    float2(-1.0,  3.0)
+  };
+  VolumeVertexOut out;
+  out.ndc = pos[vertexId];
+  out.position = float4(out.ndc, 0.0, 1.0);
+  return out;
+}
+
+float volumeHeat(float t)
+{
+  t = clamp(t, 0.0, 1.0);
+  float r = smoothstep(0.5, 1.0, t);
+  float g = t < 0.5 ? smoothstep(0.0, 0.5, t)
+                    : smoothstep(1.0, 0.5, t);
+  float b = smoothstep(1.0, 0.5, t);
+  return float3(r, g, b).x;
+}
+
+float3 volumeHeat3(float t)
+{
+  t = clamp(t, 0.0, 1.0);
+  float r = smoothstep(0.5, 1.0, t);
+  float g = t < 0.5 ? smoothstep(0.0, 0.5, t)
+                    : smoothstep(1.0, 0.5, t);
+  float b = smoothstep(1.0, 0.5, t);
+  return float3(r, g, b);
+}
+
+int packedInt(constant int4* groups, int i)
+{
+  return groups[i / 4][i & 3];
+}
+
+float packedFloat(constant float4* groups, int i)
+{
+  return groups[i / 4][i & 3];
+}
+
+float gaussianComponent(float value, int i, constant VolumeUniforms& params)
+{
+  float width = max(packedFloat(params.tfWidth, i), 1.0e-12);
+  float center = packedFloat(params.tfCenter, i);
+  float x = 0.0;
+  if (packedInt(params.tfLogDomain, i) != 0) {
+    if (value <= 0.0 || center <= 0.0) {
+      return 0.0;
+    }
+    x = (log10(max(value, 1.0e-30)) -
+         log10(max(center, 1.0e-30))) / width;
+  } else {
+    x = (value - center) / width;
+  }
+  return packedFloat(params.tfAmp, i) * exp(-0.5 * x * x);
+}
+
+float transferNorm(float value, constant VolumeUniforms& params)
+{
+  float lo = params.tfRangeScale.x;
+  float hi = max(params.tfRangeScale.y, lo + 1.0e-6);
+  float t = 0.0;
+  if (params.tfControl.x != 0) {
+    if (value <= 0.0 || lo <= 0.0) {
+      return 0.0;
+    }
+    float llo = log10(max(lo, 1.0e-30));
+    float lhi = log10(max(hi, 1.0e-30));
+    t = (log10(max(value, 1.0e-30)) - llo) / max(lhi - llo, 1.0e-6);
+  } else {
+    t = (value - lo) / max(hi - lo, 1.0e-6);
+  }
+  return clamp(t, 0.0, 1.0);
+}
+
+float transferSigma(float value, constant VolumeUniforms& params)
+{
+  float sigma = 0.0;
+  int n = min(max(params.tfControl.y, 0), 16);
+  for (int i = 0; i < n; ++i) {
+    int type = packedInt(params.tfType, i);
+    float center = packedFloat(params.tfCenter, i);
+    float width = packedFloat(params.tfWidth, i);
+    float amp = packedFloat(params.tfAmp, i);
+    if (type == 0) {
+      sigma += gaussianComponent(value, i, params);
+    } else if (type == 1) {
+      sigma += (abs(value - center) <= max(width, 0.0)) ? amp : 0.0;
+    } else {
+      float dx = abs(value - center);
+      float safeWidth = max(width, 1.0e-12);
+      sigma += (dx < safeWidth) ? amp * (1.0 - dx / safeWidth) : 0.0;
+    }
+  }
+  return max(params.tfRangeScale.z, 0.0) * max(sigma, 0.0);
+}
+
+float3 volumeColor(float value,
+                   constant VolumeUniforms& params,
+                   texture2d<float> colormapTexture,
+                   sampler colormapSampler)
+{
+  if (params.baseColorAndMode.w > 1.5) {
+    float rows = max(float(params.colorControl.y), 1.0);
+    float y = (float(max(params.colorControl.x, 0)) + 0.5) / rows;
+    return colormapTexture.sample(colormapSampler,
+                                  float2(transferNorm(value, params), y)).rgb;
+  }
+  if (params.baseColorAndMode.w > 0.5) {
+    return volumeHeat3(transferNorm(value, params));
+  }
+  return params.baseColorAndMode.rgb;
+}
+
+float screenRadiusPx(float rEff, float zView, float focalPx)
+{
+  return (zView > 0.0) ? (focalPx * rEff / zView) : 1.0e9;
+}
+
+bool rayBox(float3 ro,
+            float3 invd,
+            float3 mn,
+            float3 mx,
+            thread float& t0,
+            thread float& t1)
+{
+  float3 t1v = (mn - ro) * invd;
+  float3 t2v = (mx - ro) * invd;
+  float3 tminv = min(t1v, t2v);
+  float3 tmaxv = max(t1v, t2v);
+  float lo = max(max(tminv.x, tminv.y), tminv.z);
+  float hi = min(min(tmaxv.x, tmaxv.y), tmaxv.z);
+  t0 = max(t0, lo);
+  t1 = min(t1, hi);
+  return t1 >= max(t0, 0.0);
+}
+
+float trilerp8(float4 lo, float4 hi, float3 uvw)
+{
+  float c000 = lo.x;
+  float c100 = lo.y;
+  float c110 = lo.z;
+  float c010 = lo.w;
+  float c001 = hi.x;
+  float c101 = hi.y;
+  float c111 = hi.z;
+  float c011 = hi.w;
+
+  float ux = clamp(uvw.x, 0.0, 1.0);
+  float uy = clamp(uvw.y, 0.0, 1.0);
+  float uz = clamp(uvw.z, 0.0, 1.0);
+
+  float c00 = mix(c000, c100, ux);
+  float c10 = mix(c010, c110, ux);
+  float c01 = mix(c001, c101, ux);
+  float c11 = mix(c011, c111, ux);
+  float c0 = mix(c00, c10, uy);
+  float c1 = mix(c01, c11, uy);
+  return mix(c0, c1, uz);
+}
+
+fragment float4 volumeFragment(VolumeVertexOut in [[stage_in]],
+                               constant VolumeUniforms& params [[buffer(0)]],
+                               constant float4* nodeMinBuffer [[buffer(1)]],
+                               constant float4* nodeMaxBuffer [[buffer(2)]],
+                               constant int4* childABuffer [[buffer(3)]],
+                               constant int4* childBBuffer [[buffer(4)]],
+                               constant float4* cornerLoBuffer [[buffer(5)]],
+                               constant float4* cornerHiBuffer [[buffer(6)]],
+                               texture2d<float> colormapTexture [[texture(0)]],
+                               sampler colormapSampler [[sampler(0)]])
+{
+  int root = params.tfControl.z;
+  if (root < 0) {
+    return float4(0.0);
+  }
+
+  float2 ndc = in.ndc;
+  float4 pN = params.invProjection * float4(ndc, -1.0, 1.0);
+  pN /= pN.w;
+  float3 ro = (params.invView * float4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float3 rd = normalize((params.invView * float4(pN.xyz, 0.0)).xyz);
+  float3 invd = 1.0 / max(abs(rd), float3(1.0e-30)) * sign(rd);
+
+  float3 rootMin = nodeMinBuffer[root].xyz;
+  float3 rootMax = nodeMaxBuffer[root].xyz;
+  float t0 = 0.0;
+  float t1 = 1.0e30;
+  if (!rayBox(ro, invd, rootMin, rootMax, t0, t1)) {
+    return float4(0.0);
+  }
+
+  const int STACK_MAX = 64;
+  int stack[STACK_MAX];
+  float t0s[STACK_MAX];
+  float t1s[STACK_MAX];
+  int sp = 0;
+  stack[sp] = root;
+  t0s[sp] = t0;
+  t1s[sp] = t1;
+  sp++;
+
+  float alpha = 0.0;
+  float3 color = float3(0.0);
+
+  int visits = 0;
+  int leafStops = 0;
+  int lodStops = 0;
+  int childHits = 0;
+  int emptySkips = 0;
+  const int MAX_VISITS = 1000;
+
+  while (sp > 0 && alpha < 0.995 && visits < MAX_VISITS) {
+    int id = stack[--sp];
+    t0 = t0s[sp];
+    t1 = t1s[sp];
+    visits++;
+
+    float4 nodeMin = nodeMinBuffer[id];
+    float4 nodeMax = nodeMaxBuffer[id];
+    float3 bmin = nodeMin.xyz;
+    float3 bmax = nodeMax.xyz;
+
+    float radius = 0.5 * length(bmax - bmin);
+    float3 center = 0.5 * (bmin + bmax);
+    float zView = dot(center - ro, params.cameraForwardFocal.xyz);
+    float rPx = screenRadiusPx(radius, zView, params.cameraForwardFocal.w);
+
+    int4 cA = childABuffer[id];
+    int4 cB = childBBuffer[id];
+    bool isLeaf = cA.x < 0 && cA.y < 0 && cA.z < 0 && cA.w < 0 &&
+                  cB.x < 0 && cB.y < 0 && cB.z < 0 && cB.w < 0;
+
+    if (params.tfRangeScale.w <= 0.0 ||
+        params.tfRangeScale.w * max(0.0, t1 - t0) < params.rayParams.w) {
+      emptySkips++;
+      continue;
+    }
+
+    bool useLod = params.rayParams.x > 0.0 &&
+                  !isLeaf &&
+                  rPx < 2.0 * params.rayParams.x;
+    if (isLeaf || useLod) {
+      if (isLeaf) {
+        leafStops++;
+      } else {
+        lodStops++;
+      }
+
+      float interval = max(0.0, t1 - t0);
+      float requestedStep = params.rayParams.z;
+      int maxSamples = int(clamp(params.opticalParams.w, 1.0, 256.0));
+      int sampleCount = (requestedStep > 0.0)
+        ? int(clamp(ceil(interval / requestedStep), 1.0, float(maxSamples)))
+        : 1;
+      float dt = interval / float(sampleCount);
+      float3 size = max(bmax - bmin, float3(1.0e-8));
+      int opticalModel = int(params.opticalParams.x + 0.5);
+      for (int sampleIndex = 0;
+           sampleIndex < 256 && sampleIndex < sampleCount;
+           ++sampleIndex) {
+        float ts = t0 + (float(sampleIndex) + 0.5) * dt;
+        float3 pmid = ro + rd * ts;
+        float3 uvw = clamp((pmid - bmin) / size, 0.0, 1.0);
+        float value = trilerp8(cornerLoBuffer[id],
+                               cornerHiBuffer[id],
+                               uvw);
+        float sigma = transferSigma(value, params);
+        float3 tfc = volumeColor(value,
+                                 params,
+                                 colormapTexture,
+                                 colormapSampler);
+        if (opticalModel == 0) {
+          float a = 1.0 - exp(-sigma * dt);
+          color += (1.0 - alpha) * a * tfc;
+          alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+        } else {
+          float transmittance = 1.0 - alpha;
+          float emission = sigma * max(params.opticalParams.y, 0.0);
+          float absorption =
+            (opticalModel == 2) ? sigma * max(params.opticalParams.z, 0.0)
+                                : 0.0;
+          color += transmittance * tfc * emission * dt;
+          if (absorption > 0.0) {
+            float a = 1.0 - exp(-absorption * dt);
+            alpha = 1.0 - (1.0 - alpha) * (1.0 - a);
+          } else {
+            alpha = max(alpha,
+                        clamp(max(max(color.r, color.g), color.b),
+                              0.0,
+                              0.995));
+          }
+        }
+        if (alpha >= 0.995) {
+          break;
+        }
+      }
+      continue;
+    }
+
+    int childIdx[8] = {
+      cA.x, cA.y, cA.z, cA.w, cB.x, cB.y, cB.z, cB.w
+    };
+
+    int hitId[8];
+    float hitT0[8];
+    float hitT1[8];
+    int hitCount = 0;
+
+    for (int k = 0; k < 8; ++k) {
+      int cid = childIdx[k];
+      if (cid < 0) {
+        continue;
+      }
+      float3 childMin = nodeMinBuffer[cid].xyz;
+      float3 childMax = nodeMaxBuffer[cid].xyz;
+      float c0 = t0;
+      float c1 = t1;
+      if (!rayBox(ro, invd, childMin, childMax, c0, c1)) {
+        continue;
+      }
+      if (params.tfRangeScale.w <= 0.0 ||
+          params.tfRangeScale.w * max(0.0, c1 - c0) < params.rayParams.w) {
+        emptySkips++;
+        continue;
+      }
+      childHits++;
+      hitId[hitCount] = cid;
+      hitT0[hitCount] = c0;
+      hitT1[hitCount] = c1;
+      hitCount++;
+    }
+
+    for (int i = 1; i < hitCount; ++i) {
+      int idv = hitId[i];
+      float t0v = hitT0[i];
+      float t1v = hitT1[i];
+      int j = i - 1;
+      while (j >= 0 && hitT0[j] > t0v) {
+        hitId[j + 1] = hitId[j];
+        hitT0[j + 1] = hitT0[j];
+        hitT1[j + 1] = hitT1[j];
+        j--;
+      }
+      hitId[j + 1] = idv;
+      hitT0[j + 1] = t0v;
+      hitT1[j + 1] = t1v;
+    }
+
+    for (int i = hitCount - 1; i >= 0; --i) {
+      if (sp < STACK_MAX) {
+        stack[sp] = hitId[i];
+        t0s[sp] = hitT0[i];
+        t1s[sp] = hitT1[i];
+        sp++;
+      }
+    }
+  }
+
+  if (params.tfControl.w == 10) {
+    return float4(volumeHeat3(float(visits) / 100.0), 1.0);
+  }
+  if (params.tfControl.w == 11) {
+    return float4(volumeHeat3(clamp(float(leafStops) / 64.0, 0.0, 1.0)), 1.0);
+  }
+  if (params.tfControl.w == 12) {
+    return float4(volumeHeat3(clamp(float(lodStops) / 64.0, 0.0, 1.0)), 1.0);
+  }
+  if (params.tfControl.w == 13) {
+    return float4(volumeHeat3(clamp(float(emptySkips) / 64.0, 0.0, 1.0)), 1.0);
+  }
+  if (params.tfControl.w == 14) {
+    return float4(float3(alpha), 1.0);
+  }
+  if (params.tfControl.w == 20) {
+    return float4(float(visits), float(childHits), float(leafStops), 1.0);
+  }
+
+  return float4(color, alpha);
+}
 )";
 
 struct alignas(16) ParticleUniformsCpu {
@@ -208,6 +614,39 @@ struct alignas(16) SolidUniformsCpu {
   float opacityScale = 1.0f;
   float pad[3] = {};
 };
+
+#ifdef VOLUME_RENDERING
+constexpr std::size_t kVolumeTransferGroups = 4;
+constexpr std::size_t kVolumeTransferSlots = kVolumeTransferGroups * 4;
+
+struct alignas(16) MetalInt4 {
+  int v[4] = {};
+};
+
+struct alignas(16) MetalFloat4 {
+  float v[4] = {};
+};
+
+struct alignas(16) VolumeUniformsCpu {
+  float invProjection[16] = {};
+  float invView[16] = {};
+  float cameraForwardFocal[4] = {0.0f, 0.0f, -1.0f, 1.0f};
+  float rayParams[4] = {2.0f, 1.0f, 0.0f, 1.0e-4f};
+  float baseColorAndMode[4] = {0.6f, 0.7f, 1.0f, 0.0f};
+  float tfRangeScale[4] = {1.0e-6f, 1.0f, 1.0f, 0.0f};
+  MetalInt4 tfControl;
+  MetalInt4 colorControl;
+  float opticalParams[4] = {0.0f, 1.0f, 1.0f, 32.0f};
+  MetalInt4 tfType[kVolumeTransferGroups];
+  MetalInt4 tfLogDomain[kVolumeTransferGroups];
+  MetalFloat4 tfCenter[kVolumeTransferGroups];
+  MetalFloat4 tfWidth[kVolumeTransferGroups];
+  MetalFloat4 tfAmp[kVolumeTransferGroups];
+};
+
+static_assert(sizeof(MetalInt4) == 16);
+static_assert(sizeof(MetalFloat4) == 16);
+#endif
 
 struct MetalLineVertex {
   float pos[4] = {};
@@ -340,6 +779,64 @@ void FillSolidUniforms(const RenderFrameState& frame,
            uniforms.viewProjection);
   uniforms.opacityScale = std::clamp(opacity, 0.0f, 1.0f);
 }
+
+#ifdef VOLUME_RENDERING
+void FillVolumeUniforms(const RenderFrameState& frame,
+                        int root,
+                        VolumeUniformsCpu& uniforms)
+{
+  const RenderRuntimeState& render = frame.runtime;
+  CopyMat4(frame.matrices.invProj, uniforms.invProjection);
+  CopyMat4(frame.matrices.invView, uniforms.invView);
+  uniforms.cameraForwardFocal[0] = frame.matrices.camForward.x;
+  uniforms.cameraForwardFocal[1] = frame.matrices.camForward.y;
+  uniforms.cameraForwardFocal[2] = frame.matrices.camForward.z;
+  uniforms.cameraForwardFocal[3] = frame.matrices.focalPx;
+  uniforms.rayParams[0] = render.volume.pixelThreshold;
+  uniforms.rayParams[1] = render.volume.tauMax;
+  uniforms.rayParams[2] = render.volume.stepBias;
+  uniforms.rayParams[3] = render.volume.skipEpsilon;
+  uniforms.baseColorAndMode[0] = render.volume.baseColor.r;
+  uniforms.baseColorAndMode[1] = render.volume.baseColor.g;
+  uniforms.baseColorAndMode[2] = render.volume.baseColor.b;
+  uniforms.baseColorAndMode[3] =
+    static_cast<float>(std::clamp(render.volume.colorMode, 0, 2));
+  uniforms.tfRangeScale[0] = render.volume.tfValueMin;
+  uniforms.tfRangeScale[1] = render.volume.tfValueMax;
+  uniforms.tfRangeScale[2] = render.volume.tfSigmaScale;
+  uniforms.tfRangeScale[3] = render.volume.tfMaxSigma;
+  uniforms.tfControl.v[0] = render.volume.tfLogScale ? 1 : 0;
+  uniforms.tfControl.v[1] =
+    std::min(static_cast<int>(render.volume.tfComponents.size()),
+             static_cast<int>(kVolumeTransferSlots));
+  uniforms.tfControl.v[2] = root;
+  uniforms.tfControl.v[3] = render.volume.debugMode;
+  uniforms.colorControl.v[0] =
+    std::clamp(render.volume.colormapIndex,
+               0,
+               std::max(0, AvailableColormapCount() - 1));
+  uniforms.colorControl.v[1] = std::max(1, AvailableColormapCount());
+  uniforms.opticalParams[0] =
+    static_cast<float>(std::clamp(render.volume.opticalModel, 0, 2));
+  uniforms.opticalParams[1] = std::max(render.volume.emissionScale, 0.0f);
+  uniforms.opticalParams[2] = std::max(render.volume.absorptionScale, 0.0f);
+  uniforms.opticalParams[3] =
+    static_cast<float>(std::clamp(render.volume.maxSamplesPerCell, 1, 256));
+
+  for (std::size_t i = 0; i < kVolumeTransferSlots; ++i) {
+    const std::size_t group = i / 4u;
+    const std::size_t slot = i & 3u;
+    if (i < render.volume.tfComponents.size()) {
+      const auto& comp = render.volume.tfComponents[i];
+      uniforms.tfType[group].v[slot] = comp.type;
+      uniforms.tfLogDomain[group].v[slot] = comp.logDomain ? 1 : 0;
+      uniforms.tfCenter[group].v[slot] = comp.center;
+      uniforms.tfWidth[group].v[slot] = comp.width;
+      uniforms.tfAmp[group].v[slot] = comp.amplitude;
+    }
+  }
+}
+#endif
 
 std::vector<float> BuildColormapTexturePixels()
 {
@@ -786,6 +1283,20 @@ struct MetalInstanceSet {
   RenderSceneVersion version = 0;
 };
 
+#ifdef VOLUME_RENDERING
+struct MetalVolumeBuffers {
+  id<MTLBuffer> nodeMin = nil;
+  id<MTLBuffer> nodeMax = nil;
+  id<MTLBuffer> childA = nil;
+  id<MTLBuffer> childB = nil;
+  id<MTLBuffer> cornerLo = nil;
+  id<MTLBuffer> cornerHi = nil;
+  std::size_t nodeCount = 0;
+  int root = -1;
+  RenderSceneVersion version = 0;
+};
+#endif
+
 struct MetalMeshData {
   std::vector<MetalSolidVertex> vertices;
   std::vector<std::uint32_t> indices;
@@ -988,6 +1499,12 @@ public:
     id<MTLFunction> solidVertex = [library newFunctionWithName:@"solidVertex"];
     id<MTLFunction> solidFragment =
       [library newFunctionWithName:@"solidFragment"];
+#ifdef VOLUME_RENDERING
+    id<MTLFunction> volumeVertex =
+      [library newFunctionWithName:@"volumeVertex"];
+    id<MTLFunction> volumeFragment =
+      [library newFunctionWithName:@"volumeFragment"];
+#endif
     if (!vertex || !fragment) {
       std::cerr << "Metal particle shader entry point missing." << std::endl;
       return;
@@ -1000,6 +1517,12 @@ public:
       std::cerr << "Metal solid shader entry point missing." << std::endl;
       return;
     }
+#ifdef VOLUME_RENDERING
+    if (!volumeVertex || !volumeFragment) {
+      std::cerr << "Metal volume shader entry point missing." << std::endl;
+      return;
+    }
+#endif
 
     MTLRenderPipelineDescriptor* desc =
       [[MTLRenderPipelineDescriptor alloc] init];
@@ -1073,6 +1596,32 @@ public:
       return;
     }
 
+#ifdef VOLUME_RENDERING
+    MTLRenderPipelineDescriptor* volumeDesc =
+      [[MTLRenderPipelineDescriptor alloc] init];
+    volumeDesc.vertexFunction = volumeVertex;
+    volumeDesc.fragmentFunction = volumeFragment;
+    volumeDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    volumeDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    volumeDesc.colorAttachments[0].blendingEnabled = YES;
+    volumeDesc.colorAttachments[0].sourceRGBBlendFactor =
+      MTLBlendFactorSourceAlpha;
+    volumeDesc.colorAttachments[0].destinationRGBBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    volumeDesc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    volumeDesc.colorAttachments[0].destinationAlphaBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    volumePipeline_ =
+      [device newRenderPipelineStateWithDescriptor:volumeDesc error:&error];
+    if (!volumePipeline_) {
+      std::cerr << "Metal volume pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+#endif
+
     MTLDepthStencilDescriptor* depthDesc =
       [[MTLDepthStencilDescriptor alloc] init];
     depthDesc.depthCompareFunction = MTLCompareFunctionLess;
@@ -1093,6 +1642,19 @@ public:
       return;
     }
 
+#ifdef VOLUME_RENDERING
+    MTLDepthStencilDescriptor* volumeDepthDesc =
+      [[MTLDepthStencilDescriptor alloc] init];
+    volumeDepthDesc.depthCompareFunction = MTLCompareFunctionAlways;
+    volumeDepthDesc.depthWriteEnabled = NO;
+    volumeDepthStencil_ =
+      [device newDepthStencilStateWithDescriptor:volumeDepthDesc];
+    if (!volumeDepthStencil_) {
+      std::cerr << "Metal volume depth state creation failed." << std::endl;
+      return;
+    }
+#endif
+
     if (!createColormapResources(device)) {
       return;
     }
@@ -1112,8 +1674,14 @@ public:
     particlePipeline_ = nil;
     linePipeline_ = nil;
     solidPipeline_ = nil;
+#ifdef VOLUME_RENDERING
+    volumePipeline_ = nil;
+#endif
     depthStencil_ = nil;
     lineDepthStencil_ = nil;
+#ifdef VOLUME_RENDERING
+    volumeDepthStencil_ = nil;
+#endif
     colormapTexture_ = nil;
     colormapSampler_ = nil;
     previewTexture_ = nil;
@@ -1126,6 +1694,9 @@ public:
     cubeInstances_ = MetalInstanceSet{};
     diskInstances_ = MetalInstanceSet{};
     ellipsoidInstances_ = MetalInstanceSet{};
+#ifdef VOLUME_RENDERING
+    volumeBuffers_ = MetalVolumeBuffers{};
+#endif
 #ifdef ISO_CONTOUR
     isoContourMesh_ = MetalMesh{};
     isoContourInstances_ = MetalInstanceSet{};
@@ -1149,6 +1720,9 @@ public:
       return;
     }
     syncParticles(scene);
+#ifdef VOLUME_RENDERING
+    syncVolume(scene);
+#endif
     syncLineVertices(scene, frame.runtime.velocity);
     syncSolidInstances(scene);
 #ifdef ISO_CONTOUR
@@ -1174,6 +1748,9 @@ public:
       1.0
     };
     [encoder setViewport:viewport];
+#ifdef VOLUME_RENDERING
+    drawVolume(encoder, frame);
+#endif
     if (particlePipeline_ && particleBuffer_ && particleCount_ > 0) {
       [encoder setRenderPipelineState:particlePipeline_];
       [encoder setDepthStencilState:depthStencil_];
@@ -1238,6 +1815,9 @@ public:
     caps.colorbar = initialized_;
     caps.gizmos = initialized_;
     caps.projectionPreview = initialized_;
+#ifdef VOLUME_RENDERING
+    caps.volumeRendering = initialized_;
+#endif
 #ifdef ISO_CONTOUR
     caps.isoContour = initialized_;
 #endif
@@ -1549,6 +2129,139 @@ private:
                      instanceCount:instances.count];
   }
 
+#ifdef VOLUME_RENDERING
+  template <typename T>
+  id<MTLBuffer> makeSharedBuffer(id<MTLDevice> device,
+                                 const std::vector<T>& values)
+  {
+    if (!device || values.empty()) {
+      return nil;
+    }
+    return [device newBufferWithBytes:values.data()
+                               length:values.size() * sizeof(T)
+                              options:MTLResourceStorageModeShared];
+  }
+
+  void syncVolume(const RenderSceneData& scene)
+  {
+    if (!scene.volume.valid()) {
+      volumeBuffers_ = MetalVolumeBuffers{};
+      return;
+    }
+    if (volumeBuffers_.version == scene.volumeVersion &&
+        volumeBuffers_.nodeCount == scene.volume.nodes.size()) {
+      return;
+    }
+
+    std::vector<MetalFloat4> nodeMin;
+    std::vector<MetalFloat4> nodeMax;
+    std::vector<MetalInt4> childA;
+    std::vector<MetalInt4> childB;
+    std::vector<MetalFloat4> cornerLo;
+    std::vector<MetalFloat4> cornerHi;
+    nodeMin.reserve(scene.volume.nodes.size());
+    nodeMax.reserve(scene.volume.nodes.size());
+    childA.reserve(scene.volume.nodes.size());
+    childB.reserve(scene.volume.nodes.size());
+    cornerLo.reserve(scene.volume.nodes.size());
+    cornerHi.reserve(scene.volume.nodes.size());
+
+    for (const AdaptiveVolumeTreeNode& node : scene.volume.nodes) {
+      MetalFloat4 mn;
+      mn.v[0] = node.boundsMin.x;
+      mn.v[1] = node.boundsMin.y;
+      mn.v[2] = node.boundsMin.z;
+      mn.v[3] = node.sigmaAvg;
+      nodeMin.push_back(mn);
+
+      MetalFloat4 mx;
+      mx.v[0] = node.boundsMax.x;
+      mx.v[1] = node.boundsMax.y;
+      mx.v[2] = node.boundsMax.z;
+      mx.v[3] = node.sigmaMax;
+      nodeMax.push_back(mx);
+
+      MetalInt4 ca;
+      MetalInt4 cb;
+      for (int i = 0; i < 4; ++i) {
+        ca.v[i] = node.child[i];
+        cb.v[i] = node.child[i + 4];
+      }
+      childA.push_back(ca);
+      childB.push_back(cb);
+
+      MetalFloat4 clo;
+      MetalFloat4 chi;
+      for (int i = 0; i < 4; ++i) {
+        clo.v[i] = node.cornerSigma[i];
+        chi.v[i] = node.cornerSigma[i + 4];
+      }
+      cornerLo.push_back(clo);
+      cornerHi.push_back(chi);
+    }
+
+    id<MTLDevice> device =
+      (__bridge id<MTLDevice>)context_->device();
+    MetalVolumeBuffers next;
+    next.nodeMin = makeSharedBuffer(device, nodeMin);
+    next.nodeMax = makeSharedBuffer(device, nodeMax);
+    next.childA = makeSharedBuffer(device, childA);
+    next.childB = makeSharedBuffer(device, childB);
+    next.cornerLo = makeSharedBuffer(device, cornerLo);
+    next.cornerHi = makeSharedBuffer(device, cornerHi);
+    next.nodeCount = nodeMin.size();
+    next.root = scene.volume.root;
+    next.version = scene.volumeVersion;
+
+    if (!next.nodeMin || !next.nodeMax || !next.childA || !next.childB ||
+        !next.cornerLo || !next.cornerHi) {
+      std::cerr << "Metal volume buffer upload failed." << std::endl;
+      volumeBuffers_ = MetalVolumeBuffers{};
+      return;
+    }
+    volumeBuffers_ = next;
+  }
+
+  bool shouldSkipVolumeForInteraction(const RenderFrameState& frame) const
+  {
+    const RenderRuntimeState& render = frame.runtime;
+    return render.scheduling.responsiveInteraction &&
+           render.scheduling.interactionActive &&
+           render.scheduling.skipVolumeWhileInteracting;
+  }
+
+  void drawVolume(id<MTLRenderCommandEncoder> encoder,
+                  const RenderFrameState& frame)
+  {
+    if (!frame.runtime.volume.show || shouldSkipVolumeForInteraction(frame) ||
+        !volumePipeline_ || !volumeDepthStencil_ ||
+        volumeBuffers_.nodeCount == 0 || volumeBuffers_.root < 0 ||
+        !volumeBuffers_.nodeMin || !volumeBuffers_.nodeMax ||
+        !volumeBuffers_.childA || !volumeBuffers_.childB ||
+        !volumeBuffers_.cornerLo || !volumeBuffers_.cornerHi) {
+      return;
+    }
+
+    VolumeUniformsCpu uniforms;
+    FillVolumeUniforms(frame, volumeBuffers_.root, uniforms);
+
+    [encoder setRenderPipelineState:volumePipeline_];
+    [encoder setDepthStencilState:volumeDepthStencil_];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+    [encoder setFragmentBuffer:volumeBuffers_.nodeMin offset:0 atIndex:1];
+    [encoder setFragmentBuffer:volumeBuffers_.nodeMax offset:0 atIndex:2];
+    [encoder setFragmentBuffer:volumeBuffers_.childA offset:0 atIndex:3];
+    [encoder setFragmentBuffer:volumeBuffers_.childB offset:0 atIndex:4];
+    [encoder setFragmentBuffer:volumeBuffers_.cornerLo offset:0 atIndex:5];
+    [encoder setFragmentBuffer:volumeBuffers_.cornerHi offset:0 atIndex:6];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:3];
+  }
+#endif
+
   void syncParticles(const RenderSceneData& scene)
   {
     if (scene.particlesVersion == particleVersion_ && particleBuffer_) {
@@ -1573,8 +2286,14 @@ private:
   id<MTLRenderPipelineState> particlePipeline_ = nil;
   id<MTLRenderPipelineState> linePipeline_ = nil;
   id<MTLRenderPipelineState> solidPipeline_ = nil;
+#ifdef VOLUME_RENDERING
+  id<MTLRenderPipelineState> volumePipeline_ = nil;
+#endif
   id<MTLDepthStencilState> depthStencil_ = nil;
   id<MTLDepthStencilState> lineDepthStencil_ = nil;
+#ifdef VOLUME_RENDERING
+  id<MTLDepthStencilState> volumeDepthStencil_ = nil;
+#endif
   id<MTLTexture> colormapTexture_ = nil;
   id<MTLTexture> previewTexture_ = nil;
   id<MTLSamplerState> colormapSampler_ = nil;
@@ -1589,6 +2308,9 @@ private:
   MetalInstanceSet cubeInstances_;
   MetalInstanceSet diskInstances_;
   MetalInstanceSet ellipsoidInstances_;
+#ifdef VOLUME_RENDERING
+  MetalVolumeBuffers volumeBuffers_;
+#endif
 #ifdef ISO_CONTOUR
   MetalMesh isoContourMesh_;
   MetalInstanceSet isoContourInstances_;
