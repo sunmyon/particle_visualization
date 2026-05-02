@@ -23,6 +23,10 @@ std::unique_ptr<ImGuiBackend> CreateHeadlessVulkanImGuiBackend(
   VulkanContext& context,
   int width,
   int height);
+std::unique_ptr<ImGuiBackend> CreateHeadlessMetalImGuiBackend(
+  MetalContext& context,
+  int width,
+  int height);
 std::unique_ptr<ImGuiBackend> CreateGlfwVulkanImGuiBackend(
   NativeWindowHandle window,
   VulkanContext& context);

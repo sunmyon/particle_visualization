@@ -312,6 +312,7 @@ private:
 #endif
 
 #ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+#ifndef PARTICLE_VIS_HEADLESS_ONLY
 class GlfwMetalImGuiBackend final : public ImGuiBackend {
 public:
   GlfwMetalImGuiBackend(GLFWwindow* window, MetalContext& context)
@@ -390,6 +391,89 @@ private:
   bool frameReady_ = false;
 };
 #endif
+
+class HeadlessMetalImGuiBackend final : public ImGuiBackend {
+public:
+  HeadlessMetalImGuiBackend(MetalContext& context, int width, int height)
+    : context_(&context)
+    , width_(width)
+    , height_(height)
+  {
+  }
+
+  bool init() override
+  {
+    if (!context_) {
+      return false;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width_),
+                            static_cast<float>(height_));
+
+    if (!context_->initImGuiRenderer()) {
+      ImGui::DestroyContext();
+      ImPlot::DestroyContext();
+      return false;
+    }
+
+    initialized_ = true;
+    return true;
+  }
+
+  void newFrame(int width, int height) override
+  {
+    width_ = width;
+    height_ = height;
+    if (!context_->beginFrame(width, height)) {
+      frameReady_ = false;
+      return;
+    }
+    frameReady_ = true;
+    context_->newImGuiFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width),
+                            static_cast<float>(height));
+    ImGui::NewFrame();
+  }
+
+  void render() override
+  {
+    if (!frameReady_) {
+      return;
+    }
+    ImGui::Render();
+    context_->renderImGuiDrawData(ImGui::GetDrawData());
+    frameReady_ = false;
+  }
+
+  void shutdown() override
+  {
+    if (!initialized_) {
+      return;
+    }
+    if (context_) {
+      context_->shutdownImGuiRenderer();
+    }
+    ImGui::DestroyContext();
+    ImPlot::DestroyContext();
+    initialized_ = false;
+    frameReady_ = false;
+  }
+
+private:
+  MetalContext* context_ = nullptr;
+  int width_ = 1;
+  int height_ = 1;
+  bool initialized_ = false;
+  bool frameReady_ = false;
+};
+#endif
 #endif
 
 std::unique_ptr<ImGuiBackend> g_backend;
@@ -424,6 +508,21 @@ std::unique_ptr<ImGuiBackend> CreateHeadlessVulkanImGuiBackend(
 {
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
   return std::make_unique<HeadlessVulkanImGuiBackend>(context, width, height);
+#else
+  (void)context;
+  (void)width;
+  (void)height;
+  return nullptr;
+#endif
+}
+
+std::unique_ptr<ImGuiBackend> CreateHeadlessMetalImGuiBackend(
+  MetalContext& context,
+  int width,
+  int height)
+{
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+  return std::make_unique<HeadlessMetalImGuiBackend>(context, width, height);
 #else
   (void)context;
   (void)width;

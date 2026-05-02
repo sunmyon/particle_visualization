@@ -26,6 +26,27 @@
 
 namespace {
 
+bool ShouldUseParticleLod(const RenderRuntimeState& render,
+                          const std::vector<RenderParticle>& proxy,
+                          bool softwareRenderer)
+{
+  if (proxy.empty()) {
+    return false;
+  }
+
+  switch (render.scheduling.particleLod.mode) {
+    case ParticleLodMode::Off:
+      return render.scheduling.autoParticleLodOnSoftwareRenderer &&
+             softwareRenderer &&
+             render.scheduling.interactionActive;
+    case ParticleLodMode::WhileInteracting:
+      return render.scheduling.interactionActive;
+    case ParticleLodMode::Always:
+      return true;
+  }
+  return false;
+}
+
 constexpr const char* kParticleShaderSource = R"(
 #include <metal_stdlib>
 using namespace metal;
@@ -186,6 +207,49 @@ vertex SolidVertexOut solidVertex(uint vertexId [[vertex_id]],
 fragment float4 solidFragment(SolidVertexOut in [[stage_in]])
 {
   return in.color;
+}
+
+struct CacheVertexOut {
+  float4 position [[position]];
+  float2 uv;
+};
+
+vertex CacheVertexOut cacheVertex(uint vertexId [[vertex_id]])
+{
+  float2 pos[3] = {
+    float2(-1.0, -1.0),
+    float2( 3.0, -1.0),
+    float2(-1.0,  3.0)
+  };
+  CacheVertexOut out;
+  out.position = float4(pos[vertexId], 0.0, 1.0);
+  float2 uv = pos[vertexId] * 0.5 + 0.5;
+  out.uv = float2(uv.x, 1.0 - uv.y);
+  return out;
+}
+
+struct CacheFragmentOut {
+  float4 color [[color(0)]];
+  float depth [[depth(any)]];
+};
+
+fragment float4 colorCacheFragment(CacheVertexOut in [[stage_in]],
+                                   texture2d<float> colorTexture [[texture(0)]],
+                                   sampler colorSampler [[sampler(0)]])
+{
+  return colorTexture.sample(colorSampler, in.uv);
+}
+
+fragment CacheFragmentOut particleCacheFragment(
+  CacheVertexOut in [[stage_in]],
+  texture2d<float> colorTexture [[texture(0)]],
+  depth2d<float> depthTexture [[texture(1)]],
+  sampler colorSampler [[sampler(0)]])
+{
+  CacheFragmentOut out;
+  out.color = colorTexture.sample(colorSampler, in.uv);
+  out.depth = depthTexture.sample(colorSampler, in.uv);
+  return out;
 }
 
 struct VolumeUniforms {
@@ -783,6 +847,7 @@ void FillSolidUniforms(const RenderFrameState& frame,
 #ifdef VOLUME_RENDERING
 void FillVolumeUniforms(const RenderFrameState& frame,
                         int root,
+                        float focalScale,
                         VolumeUniformsCpu& uniforms)
 {
   const RenderRuntimeState& render = frame.runtime;
@@ -791,7 +856,7 @@ void FillVolumeUniforms(const RenderFrameState& frame,
   uniforms.cameraForwardFocal[0] = frame.matrices.camForward.x;
   uniforms.cameraForwardFocal[1] = frame.matrices.camForward.y;
   uniforms.cameraForwardFocal[2] = frame.matrices.camForward.z;
-  uniforms.cameraForwardFocal[3] = frame.matrices.focalPx;
+  uniforms.cameraForwardFocal[3] = frame.matrices.focalPx * focalScale;
   uniforms.rayParams[0] = render.volume.pixelThreshold;
   uniforms.rayParams[1] = render.volume.tauMax;
   uniforms.rayParams[2] = render.volume.stepBias;
@@ -948,6 +1013,42 @@ bool ProjectWorldToImGui(const RenderFrameState& frame,
     (1.0f - (ndc.y * 0.5f + 0.5f)) *
       static_cast<float>(frame.viewport.height);
   out = PhysicalToImGui(x, y);
+  return true;
+}
+
+bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
+{
+  for (int c = 0; c < 4; ++c) {
+    for (int r = 0; r < 4; ++r) {
+      if (a[c][r] != b[c][r]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool EqualParticleTypeVisualConfig(const ParticleTypeVisualConfig& a,
+                                   const ParticleTypeVisualConfig& b)
+{
+  return a.selectedQuantity == b.selectedQuantity &&
+         a.pointSize == b.pointSize &&
+         a.colorMin == b.colorMin &&
+         a.colorMax == b.colorMax &&
+         a.useLogScale == b.useLogScale &&
+         a.hideParticles == b.hideParticles &&
+         a.periodicColorBar == b.periodicColorBar &&
+         a.colormapIndex == b.colormapIndex;
+}
+
+bool EqualParticleVisualConfig(const ParticleVisualConfig& a,
+                               const ParticleVisualConfig& b)
+{
+  for (int i = 0; i < kNumParticleTypes; ++i) {
+    if (!EqualParticleTypeVisualConfig(a.types[i], b.types[i])) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1297,6 +1398,31 @@ struct MetalVolumeBuffers {
 };
 #endif
 
+struct MetalParticleFrameCache {
+  id<MTLTexture> color = nil;
+  id<MTLTexture> depth = nil;
+  int width = 0;
+  int height = 0;
+  RenderSceneVersion particlesVersion = 0;
+  glm::mat4 model{1.0f};
+  glm::mat4 view{1.0f};
+  glm::mat4 projection{1.0f};
+  ParticleVisualConfig visualConfig;
+  bool valid = false;
+};
+
+#ifdef VOLUME_RENDERING
+struct MetalVolumeFrameCache {
+  id<MTLTexture> color = nil;
+  int width = 0;
+  int height = 0;
+  RenderSceneVersion volumeVersion = 0;
+  VolumeUniformsCpu uniforms;
+  bool uniformInitialized = false;
+  bool valid = false;
+};
+#endif
+
 struct MetalMeshData {
   std::vector<MetalSolidVertex> vertices;
   std::vector<std::uint32_t> indices;
@@ -1499,6 +1625,11 @@ public:
     id<MTLFunction> solidVertex = [library newFunctionWithName:@"solidVertex"];
     id<MTLFunction> solidFragment =
       [library newFunctionWithName:@"solidFragment"];
+    id<MTLFunction> cacheVertex = [library newFunctionWithName:@"cacheVertex"];
+    id<MTLFunction> colorCacheFragment =
+      [library newFunctionWithName:@"colorCacheFragment"];
+    id<MTLFunction> particleCacheFragment =
+      [library newFunctionWithName:@"particleCacheFragment"];
 #ifdef VOLUME_RENDERING
     id<MTLFunction> volumeVertex =
       [library newFunctionWithName:@"volumeVertex"];
@@ -1515,6 +1646,10 @@ public:
     }
     if (!solidVertex || !solidFragment) {
       std::cerr << "Metal solid shader entry point missing." << std::endl;
+      return;
+    }
+    if (!cacheVertex || !colorCacheFragment || !particleCacheFragment) {
+      std::cerr << "Metal cache shader entry point missing." << std::endl;
       return;
     }
 #ifdef VOLUME_RENDERING
@@ -1596,6 +1731,56 @@ public:
       return;
     }
 
+    MTLRenderPipelineDescriptor* cacheDesc =
+      [[MTLRenderPipelineDescriptor alloc] init];
+    cacheDesc.vertexFunction = cacheVertex;
+    cacheDesc.fragmentFunction = colorCacheFragment;
+    cacheDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    cacheDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    cacheDesc.colorAttachments[0].blendingEnabled = YES;
+    cacheDesc.colorAttachments[0].sourceRGBBlendFactor =
+      MTLBlendFactorSourceAlpha;
+    cacheDesc.colorAttachments[0].destinationRGBBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    cacheDesc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    cacheDesc.colorAttachments[0].destinationAlphaBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    colorCachePipeline_ =
+      [device newRenderPipelineStateWithDescriptor:cacheDesc error:&error];
+    if (!colorCachePipeline_) {
+      std::cerr << "Metal color cache pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+
+    MTLRenderPipelineDescriptor* particleCacheDesc =
+      [[MTLRenderPipelineDescriptor alloc] init];
+    particleCacheDesc.vertexFunction = cacheVertex;
+    particleCacheDesc.fragmentFunction = particleCacheFragment;
+    particleCacheDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    particleCacheDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    particleCacheDesc.colorAttachments[0].blendingEnabled = YES;
+    particleCacheDesc.colorAttachments[0].sourceRGBBlendFactor =
+      MTLBlendFactorSourceAlpha;
+    particleCacheDesc.colorAttachments[0].destinationRGBBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    particleCacheDesc.colorAttachments[0].sourceAlphaBlendFactor =
+      MTLBlendFactorOne;
+    particleCacheDesc.colorAttachments[0].destinationAlphaBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+    particleCachePipeline_ =
+      [device newRenderPipelineStateWithDescriptor:particleCacheDesc
+                                             error:&error];
+    if (!particleCachePipeline_) {
+      std::cerr << "Metal particle cache pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+
 #ifdef VOLUME_RENDERING
     MTLRenderPipelineDescriptor* volumeDesc =
       [[MTLRenderPipelineDescriptor alloc] init];
@@ -1642,6 +1827,17 @@ public:
       return;
     }
 
+    MTLDepthStencilDescriptor* cacheDepthDesc =
+      [[MTLDepthStencilDescriptor alloc] init];
+    cacheDepthDesc.depthCompareFunction = MTLCompareFunctionAlways;
+    cacheDepthDesc.depthWriteEnabled = YES;
+    cacheDepthStencil_ =
+      [device newDepthStencilStateWithDescriptor:cacheDepthDesc];
+    if (!cacheDepthStencil_) {
+      std::cerr << "Metal cache depth state creation failed." << std::endl;
+      return;
+    }
+
 #ifdef VOLUME_RENDERING
     MTLDepthStencilDescriptor* volumeDepthDesc =
       [[MTLDepthStencilDescriptor alloc] init];
@@ -1671,14 +1867,20 @@ public:
       context_->setPreImGuiDrawCallback({});
     }
     particleBuffer_ = nil;
+    stressParticleBuffer_ = nil;
+    particleLodBuffer_ = nil;
+    stressParticleLodBuffer_ = nil;
     particlePipeline_ = nil;
     linePipeline_ = nil;
     solidPipeline_ = nil;
+    colorCachePipeline_ = nil;
+    particleCachePipeline_ = nil;
 #ifdef VOLUME_RENDERING
     volumePipeline_ = nil;
 #endif
     depthStencil_ = nil;
     lineDepthStencil_ = nil;
+    cacheDepthStencil_ = nil;
 #ifdef VOLUME_RENDERING
     volumeDepthStencil_ = nil;
 #endif
@@ -1694,8 +1896,10 @@ public:
     cubeInstances_ = MetalInstanceSet{};
     diskInstances_ = MetalInstanceSet{};
     ellipsoidInstances_ = MetalInstanceSet{};
+    particleFrameCache_ = MetalParticleFrameCache{};
 #ifdef VOLUME_RENDERING
     volumeBuffers_ = MetalVolumeBuffers{};
+    volumeFrameCache_ = MetalVolumeFrameCache{};
 #endif
 #ifdef ISO_CONTOUR
     isoContourMesh_ = MetalMesh{};
@@ -1706,7 +1910,13 @@ public:
     diskMesh_ = MetalMesh{};
     sphereMesh_ = MetalMesh{};
     particleCount_ = 0;
+    stressParticleCount_ = 0;
+    particleLodCount_ = 0;
+    stressParticleLodCount_ = 0;
     particleVersion_ = 0;
+    stressParticleVersion_ = 0;
+    particleLodVersion_ = 0;
+    stressParticleLodVersion_ = 0;
     velocityVersion_ = 0;
     velocityArrowScale_ = 0.0f;
     velocityUseLogScale_ = false;
@@ -1720,6 +1930,23 @@ public:
       return;
     }
     syncParticles(scene);
+    syncStressParticles(scene);
+    useParticleLod_ =
+      ShouldUseParticleLod(frame.runtime,
+                           scene.particleLodProxy,
+                           false);
+    if (useParticleLod_) {
+      syncParticleBuffer(scene.particleLodProxy,
+                         scene.particleLodVersion,
+                         particleLodBuffer_,
+                         particleLodVersion_,
+                         particleLodCount_);
+      syncParticleBuffer(scene.particleLodStressProxy,
+                         scene.particleLodVersion,
+                         stressParticleLodBuffer_,
+                         stressParticleLodVersion_,
+                         stressParticleLodCount_);
+    }
 #ifdef VOLUME_RENDERING
     syncVolume(scene);
 #endif
@@ -1729,16 +1956,6 @@ public:
     syncIsoContour(scene);
 #endif
 
-    id<MTLRenderCommandEncoder> encoder =
-      (__bridge id<MTLRenderCommandEncoder>)
-        context_->currentRenderCommandEncoder();
-    if (!encoder) {
-      return;
-    }
-
-    ParticleUniformsCpu uniforms;
-    FillParticleUniforms(frame, uniforms);
-
     MTLViewport viewport{
       static_cast<double>(frame.viewport.x),
       static_cast<double>(frame.viewport.y),
@@ -1747,25 +1964,57 @@ public:
       0.0,
       1.0
     };
+    id<MTLRenderCommandEncoder> encoder = currentEncoder();
+    if (!encoder) {
+      return;
+    }
     [encoder setViewport:viewport];
 #ifdef VOLUME_RENDERING
-    drawVolume(encoder, frame);
+    updateVolumeFrameCache(frame);
+    encoder = currentEncoder();
+    if (!encoder) {
+      return;
+    }
+    [encoder setViewport:viewport];
+    if (frame.runtime.scheduling.cacheVolumeFrames) {
+      if (!drawCachedVolumeFrame(encoder, frame)) {
+        drawVolume(encoder, frame, 1.0f);
+      }
+    } else {
+      volumeFrameCache_.valid = false;
+      drawVolume(encoder, frame, 1.0f);
+    }
 #endif
-    if (particlePipeline_ && particleBuffer_ && particleCount_ > 0) {
-      [encoder setRenderPipelineState:particlePipeline_];
-      [encoder setDepthStencilState:depthStencil_];
-      [encoder setVertexBuffer:particleBuffer_ offset:0 atIndex:0];
-      [encoder setVertexBytes:&uniforms
-                       length:sizeof(uniforms)
-                      atIndex:1];
-      [encoder setFragmentBytes:&uniforms
-                         length:sizeof(uniforms)
-                        atIndex:1];
-      [encoder setFragmentTexture:colormapTexture_ atIndex:0];
-      [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
-      [encoder drawPrimitives:MTLPrimitiveTypePoint
-                  vertexStart:0
-                  vertexCount:particleCount_];
+
+    if (useParticleLod_) {
+      particleFrameCache_.valid = false;
+      drawParticleBuffer(encoder, particleLodBuffer_, particleLodCount_, frame);
+      drawParticleBuffer(encoder,
+                         stressParticleLodBuffer_,
+                         stressParticleLodCount_,
+                         frame);
+    } else if (frame.runtime.scheduling.cacheParticleFrames &&
+               !frame.runtime.scheduling.interactionActive) {
+      updateParticleFrameCache(frame);
+      encoder = currentEncoder();
+      if (!encoder) {
+        return;
+      }
+      [encoder setViewport:viewport];
+      if (!drawParticleFrameCache(encoder)) {
+        drawParticles(encoder, frame);
+      }
+      drawParticleBuffer(encoder,
+                         stressParticleBuffer_,
+                         stressParticleCount_,
+                         frame);
+    } else {
+      particleFrameCache_.valid = false;
+      drawParticles(encoder, frame);
+      drawParticleBuffer(encoder,
+                         stressParticleBuffer_,
+                         stressParticleCount_,
+                         frame);
     }
 
     drawLineSet(encoder, velocityVertices_, frame, frame.runtime.velocity);
@@ -1808,6 +2057,7 @@ public:
   {
     RenderBackendCapabilities caps;
     caps.particles = initialized_;
+    caps.particleLod = initialized_;
     caps.velocityField = initialized_;
     caps.instancedObjects = initialized_;
     caps.lines = initialized_;
@@ -1815,13 +2065,40 @@ public:
     caps.colorbar = initialized_;
     caps.gizmos = initialized_;
     caps.projectionPreview = initialized_;
+    caps.particleFrameCache = initialized_;
+    caps.gpuMemoryQuery = initialized_;
 #ifdef VOLUME_RENDERING
     caps.volumeRendering = initialized_;
+    caps.volumeFrameCache = initialized_;
 #endif
 #ifdef ISO_CONTOUR
     caps.isoContour = initialized_;
 #endif
     return caps;
+  }
+
+  RenderBackendMemoryInfo queryMemoryInfo() const override
+  {
+    RenderBackendMemoryInfo info;
+    id<MTLDevice> device =
+      context_ ? (__bridge id<MTLDevice>)context_->device() : nil;
+    if (!device) {
+      return info;
+    }
+
+    const unsigned long long recommended = [device recommendedMaxWorkingSetSize];
+    const unsigned long long allocated = [device currentAllocatedSize];
+    if (recommended > 0 && recommended > allocated) {
+      info.gpuAvailableKnown = true;
+      info.gpuAvailableBytes =
+        static_cast<std::size_t>(recommended - allocated);
+    }
+    return info;
+  }
+
+  RenderBackendTimingInfo queryTimingInfo() const override
+  {
+    return timing_;
   }
 
 private:
@@ -2129,6 +2406,194 @@ private:
                      instanceCount:instances.count];
   }
 
+  id<MTLRenderCommandEncoder> currentEncoder() const
+  {
+    return (__bridge id<MTLRenderCommandEncoder>)
+      context_->currentRenderCommandEncoder();
+  }
+
+  id<MTLCommandBuffer> currentCommandBuffer() const
+  {
+    return (__bridge id<MTLCommandBuffer>)context_->currentCommandBuffer();
+  }
+
+  bool ensureTexture(id<MTLTexture>& texture,
+                     MTLPixelFormat format,
+                     int width,
+                     int height,
+                     MTLTextureUsage usage)
+  {
+    width = std::max(width, 1);
+    height = std::max(height, 1);
+    if (texture &&
+        static_cast<int>(texture.width) == width &&
+        static_cast<int>(texture.height) == height &&
+        texture.pixelFormat == format) {
+      return true;
+    }
+    id<MTLDevice> device =
+      (__bridge id<MTLDevice>)context_->device();
+    if (!device) {
+      texture = nil;
+      return false;
+    }
+    MTLTextureDescriptor* desc =
+      [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                         width:static_cast<NSUInteger>(width)
+                                                        height:static_cast<NSUInteger>(height)
+                                                     mipmapped:NO];
+    desc.usage = usage;
+    desc.storageMode = MTLStorageModePrivate;
+    texture = [device newTextureWithDescriptor:desc];
+    return texture != nil;
+  }
+
+  MTLRenderPassDescriptor* makeOffscreenPass(id<MTLTexture> color,
+                                             id<MTLTexture> depth)
+  {
+    if (!color) {
+      return nil;
+    }
+    MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    auto* colorAttachment = pass.colorAttachments[0];
+    colorAttachment.texture = color;
+    colorAttachment.loadAction = MTLLoadActionClear;
+    colorAttachment.storeAction = MTLStoreActionStore;
+    colorAttachment.clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+    if (depth) {
+      auto* depthAttachment = pass.depthAttachment;
+      depthAttachment.texture = depth;
+      depthAttachment.loadAction = MTLLoadActionClear;
+      depthAttachment.storeAction = MTLStoreActionStore;
+      depthAttachment.clearDepth = 1.0;
+    }
+    return pass;
+  }
+
+  void drawParticles(id<MTLRenderCommandEncoder> encoder,
+                     const RenderFrameState& frame)
+  {
+    drawParticleBuffer(encoder, particleBuffer_, particleCount_, frame);
+  }
+
+  void drawParticleBuffer(id<MTLRenderCommandEncoder> encoder,
+                          id<MTLBuffer> buffer,
+                          std::size_t count,
+                          const RenderFrameState& frame)
+  {
+    if (!particlePipeline_ || !buffer || count == 0) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    [encoder setRenderPipelineState:particlePipeline_];
+    [encoder setDepthStencilState:depthStencil_];
+    [encoder setVertexBuffer:buffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+                vertexStart:0
+                vertexCount:count];
+  }
+
+  bool particleFrameCacheMatches(const RenderFrameState& frame) const
+  {
+    return particleFrameCache_.valid &&
+           particleFrameCache_.particlesVersion == particleVersion_ &&
+           particleFrameCache_.width == frame.viewport.width &&
+           particleFrameCache_.height == frame.viewport.height &&
+           EqualMatrix(particleFrameCache_.model, frame.matrices.model) &&
+           EqualMatrix(particleFrameCache_.view, frame.matrices.view) &&
+           EqualMatrix(particleFrameCache_.projection,
+                       frame.matrices.projection) &&
+           EqualParticleVisualConfig(particleFrameCache_.visualConfig,
+                                     frame.particleVisual);
+  }
+
+  void updateParticleFrameCache(const RenderFrameState& frame)
+  {
+    if (!particlePipeline_ || !particleBuffer_ || particleCount_ == 0 ||
+        particleFrameCacheMatches(frame)) {
+      return;
+    }
+
+    const int width = std::max(frame.viewport.width, 1);
+    const int height = std::max(frame.viewport.height, 1);
+    const bool colorOk =
+      ensureTexture(particleFrameCache_.color,
+                    MTLPixelFormatBGRA8Unorm,
+                    width,
+                    height,
+                    MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+    const bool depthOk =
+      ensureTexture(particleFrameCache_.depth,
+                    MTLPixelFormatDepth32Float,
+                    width,
+                    height,
+                    MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+    if (!colorOk || !depthOk) {
+      particleFrameCache_.valid = false;
+      return;
+    }
+
+    id<MTLCommandBuffer> commandBuffer = currentCommandBuffer();
+    if (!commandBuffer) {
+      particleFrameCache_.valid = false;
+      return;
+    }
+    context_->endCurrentRenderCommandEncoder();
+
+    MTLRenderPassDescriptor* pass =
+      makeOffscreenPass(particleFrameCache_.color, particleFrameCache_.depth);
+    id<MTLRenderCommandEncoder> encoder =
+      [commandBuffer renderCommandEncoderWithDescriptor:pass];
+    if (!encoder) {
+      particleFrameCache_.valid = false;
+      context_->restartCurrentRenderCommandEncoder(true, true);
+      return;
+    }
+    MTLViewport viewport{0.0,
+                         0.0,
+                         static_cast<double>(width),
+                         static_cast<double>(height),
+                         0.0,
+                         1.0};
+    [encoder setViewport:viewport];
+    drawParticles(encoder, frame);
+    [encoder endEncoding];
+
+    particleFrameCache_.width = width;
+    particleFrameCache_.height = height;
+    particleFrameCache_.particlesVersion = particleVersion_;
+    particleFrameCache_.model = frame.matrices.model;
+    particleFrameCache_.view = frame.matrices.view;
+    particleFrameCache_.projection = frame.matrices.projection;
+    particleFrameCache_.visualConfig = frame.particleVisual;
+    particleFrameCache_.valid = true;
+    context_->restartCurrentRenderCommandEncoder(true, true);
+  }
+
+  bool drawParticleFrameCache(id<MTLRenderCommandEncoder> encoder)
+  {
+    if (!particleFrameCache_.valid || !particleFrameCache_.color ||
+        !particleFrameCache_.depth || !particleCachePipeline_ ||
+        !cacheDepthStencil_) {
+      return false;
+    }
+    [encoder setRenderPipelineState:particleCachePipeline_];
+    [encoder setDepthStencilState:cacheDepthStencil_];
+    [encoder setFragmentTexture:particleFrameCache_.color atIndex:0];
+    [encoder setFragmentTexture:particleFrameCache_.depth atIndex:1];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:3];
+    return true;
+  }
+
 #ifdef VOLUME_RENDERING
   template <typename T>
   id<MTLBuffer> makeSharedBuffer(id<MTLDevice> device,
@@ -2230,20 +2695,126 @@ private:
            render.scheduling.skipVolumeWhileInteracting;
   }
 
-  void drawVolume(id<MTLRenderCommandEncoder> encoder,
-                  const RenderFrameState& frame)
+  bool volumeFrameCacheMatches(const VolumeUniformsCpu& uniforms,
+                               int width,
+                               int height) const
   {
-    if (!frame.runtime.volume.show || shouldSkipVolumeForInteraction(frame) ||
-        !volumePipeline_ || !volumeDepthStencil_ ||
-        volumeBuffers_.nodeCount == 0 || volumeBuffers_.root < 0 ||
+    return volumeFrameCache_.valid &&
+           volumeFrameCache_.volumeVersion == volumeBuffers_.version &&
+           volumeFrameCache_.width == width &&
+           volumeFrameCache_.height == height &&
+           volumeFrameCache_.uniformInitialized &&
+           std::memcmp(&volumeFrameCache_.uniforms,
+                       &uniforms,
+                       sizeof(VolumeUniformsCpu)) == 0;
+  }
+
+  void updateVolumeFrameCache(const RenderFrameState& frame)
+  {
+    timing_.volumeCacheUsed = frame.runtime.scheduling.cacheVolumeFrames;
+    timing_.volumeCacheUpdated = false;
+    timing_.volumeCacheHit = false;
+    timing_.volumeCacheScale =
+      std::clamp(static_cast<double>(
+                   frame.runtime.scheduling.volumeFrameCacheScale),
+                 0.25,
+                 1.0);
+    if (!frame.runtime.scheduling.cacheVolumeFrames ||
+        shouldSkipVolumeForInteraction(frame) ||
+        !frame.runtime.volume.show || !volumePipeline_ ||
+        volumeBuffers_.nodeCount == 0 || volumeBuffers_.root < 0) {
+      return;
+    }
+
+    const float cacheScale =
+      std::clamp(frame.runtime.scheduling.volumeFrameCacheScale, 0.25f, 1.0f);
+    const int cacheWidth =
+      std::max(1, static_cast<int>(std::ceil(frame.viewport.width * cacheScale)));
+    const int cacheHeight =
+      std::max(1, static_cast<int>(std::ceil(frame.viewport.height * cacheScale)));
+
+    VolumeUniformsCpu uniforms;
+    FillVolumeUniforms(frame, volumeBuffers_.root, cacheScale, uniforms);
+    if (volumeFrameCacheMatches(uniforms, cacheWidth, cacheHeight)) {
+      timing_.volumeCacheHit = true;
+      return;
+    }
+
+    if (!ensureTexture(volumeFrameCache_.color,
+                       MTLPixelFormatBGRA8Unorm,
+                       cacheWidth,
+                       cacheHeight,
+                       MTLTextureUsageRenderTarget |
+                         MTLTextureUsageShaderRead)) {
+      volumeFrameCache_.valid = false;
+      return;
+    }
+
+    id<MTLCommandBuffer> commandBuffer = currentCommandBuffer();
+    if (!commandBuffer) {
+      volumeFrameCache_.valid = false;
+      return;
+    }
+    context_->endCurrentRenderCommandEncoder();
+
+    MTLRenderPassDescriptor* pass =
+      makeOffscreenPass(volumeFrameCache_.color, nil);
+    id<MTLRenderCommandEncoder> encoder =
+      [commandBuffer renderCommandEncoderWithDescriptor:pass];
+    if (!encoder) {
+      volumeFrameCache_.valid = false;
+      context_->restartCurrentRenderCommandEncoder(true, true);
+      return;
+    }
+
+    MTLViewport viewport{0.0,
+                         0.0,
+                         static_cast<double>(cacheWidth),
+                         static_cast<double>(cacheHeight),
+                         0.0,
+                         1.0};
+    [encoder setViewport:viewport];
+    drawVolumeWithUniforms(encoder, uniforms);
+    [encoder endEncoding];
+
+    volumeFrameCache_.width = cacheWidth;
+    volumeFrameCache_.height = cacheHeight;
+    volumeFrameCache_.volumeVersion = volumeBuffers_.version;
+    volumeFrameCache_.uniforms = uniforms;
+    volumeFrameCache_.uniformInitialized = true;
+    volumeFrameCache_.valid = true;
+    timing_.volumeCacheUpdated = true;
+    context_->restartCurrentRenderCommandEncoder(true, true);
+  }
+
+  bool drawCachedVolumeFrame(id<MTLRenderCommandEncoder> encoder,
+                             const RenderFrameState& frame)
+  {
+    if (shouldSkipVolumeForInteraction(frame) ||
+        !frame.runtime.volume.show ||
+        !volumeFrameCache_.valid || !volumeFrameCache_.color ||
+        !colorCachePipeline_) {
+      return false;
+    }
+    [encoder setRenderPipelineState:colorCachePipeline_];
+    [encoder setDepthStencilState:volumeDepthStencil_];
+    [encoder setFragmentTexture:volumeFrameCache_.color atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:3];
+    return true;
+  }
+
+  void drawVolumeWithUniforms(id<MTLRenderCommandEncoder> encoder,
+                              const VolumeUniformsCpu& uniforms)
+  {
+    if (!volumePipeline_ || !volumeDepthStencil_ ||
         !volumeBuffers_.nodeMin || !volumeBuffers_.nodeMax ||
         !volumeBuffers_.childA || !volumeBuffers_.childB ||
         !volumeBuffers_.cornerLo || !volumeBuffers_.cornerHi) {
       return;
     }
-
-    VolumeUniformsCpu uniforms;
-    FillVolumeUniforms(frame, volumeBuffers_.root, uniforms);
 
     [encoder setRenderPipelineState:volumePipeline_];
     [encoder setDepthStencilState:volumeDepthStencil_];
@@ -2260,37 +2831,80 @@ private:
                 vertexStart:0
                 vertexCount:3];
   }
+
+  void drawVolume(id<MTLRenderCommandEncoder> encoder,
+                  const RenderFrameState& frame,
+                  float focalScale)
+  {
+    if (!frame.runtime.volume.show || shouldSkipVolumeForInteraction(frame) ||
+        !volumePipeline_ || !volumeDepthStencil_ ||
+        volumeBuffers_.nodeCount == 0 || volumeBuffers_.root < 0 ||
+        !volumeBuffers_.nodeMin || !volumeBuffers_.nodeMax ||
+        !volumeBuffers_.childA || !volumeBuffers_.childB ||
+        !volumeBuffers_.cornerLo || !volumeBuffers_.cornerHi) {
+      return;
+    }
+
+    VolumeUniformsCpu uniforms;
+    FillVolumeUniforms(frame, volumeBuffers_.root, focalScale, uniforms);
+    drawVolumeWithUniforms(encoder, uniforms);
+  }
 #endif
 
   void syncParticles(const RenderSceneData& scene)
   {
-    if (scene.particlesVersion == particleVersion_ && particleBuffer_) {
+    syncParticleBuffer(scene.particles,
+                       scene.particlesVersion,
+                       particleBuffer_,
+                       particleVersion_,
+                       particleCount_);
+  }
+
+  void syncStressParticles(const RenderSceneData& scene)
+  {
+    syncParticleBuffer(scene.stressParticles,
+                       scene.stressParticlesVersion,
+                       stressParticleBuffer_,
+                       stressParticleVersion_,
+                       stressParticleCount_);
+  }
+
+  void syncParticleBuffer(const std::vector<RenderParticle>& particles,
+                          RenderSceneVersion version,
+                          id<MTLBuffer>& buffer,
+                          RenderSceneVersion& uploadedVersion,
+                          std::size_t& count)
+  {
+    if (version == uploadedVersion && buffer) {
+      count = particles.size();
       return;
     }
-    particleVersion_ = scene.particlesVersion;
-    particleCount_ = scene.particles.size();
-    if (particleCount_ == 0) {
-      particleBuffer_ = nil;
+    uploadedVersion = version;
+    count = particles.size();
+    if (count == 0) {
+      buffer = nil;
       return;
     }
 
     id<MTLDevice> device =
       (__bridge id<MTLDevice>)context_->device();
-    particleBuffer_ =
-      [device newBufferWithBytes:scene.particles.data()
-                          length:particleCount_ * sizeof(RenderParticle)
-                         options:MTLResourceStorageModeShared];
+    buffer = [device newBufferWithBytes:particles.data()
+                                 length:count * sizeof(RenderParticle)
+                                options:MTLResourceStorageModeShared];
   }
 
   MetalContext* context_ = nullptr;
   id<MTLRenderPipelineState> particlePipeline_ = nil;
   id<MTLRenderPipelineState> linePipeline_ = nil;
   id<MTLRenderPipelineState> solidPipeline_ = nil;
+  id<MTLRenderPipelineState> colorCachePipeline_ = nil;
+  id<MTLRenderPipelineState> particleCachePipeline_ = nil;
 #ifdef VOLUME_RENDERING
   id<MTLRenderPipelineState> volumePipeline_ = nil;
 #endif
   id<MTLDepthStencilState> depthStencil_ = nil;
   id<MTLDepthStencilState> lineDepthStencil_ = nil;
+  id<MTLDepthStencilState> cacheDepthStencil_ = nil;
 #ifdef VOLUME_RENDERING
   id<MTLDepthStencilState> volumeDepthStencil_ = nil;
 #endif
@@ -2298,6 +2912,9 @@ private:
   id<MTLTexture> previewTexture_ = nil;
   id<MTLSamplerState> colormapSampler_ = nil;
   id<MTLBuffer> particleBuffer_ = nil;
+  id<MTLBuffer> stressParticleBuffer_ = nil;
+  id<MTLBuffer> particleLodBuffer_ = nil;
+  id<MTLBuffer> stressParticleLodBuffer_ = nil;
   MetalLineVertexSet lineVertices_;
   MetalLineVertexSet cuboidVertices_;
   MetalLineVertexSet polyhedronVertices_;
@@ -2308,8 +2925,10 @@ private:
   MetalInstanceSet cubeInstances_;
   MetalInstanceSet diskInstances_;
   MetalInstanceSet ellipsoidInstances_;
+  MetalParticleFrameCache particleFrameCache_;
 #ifdef VOLUME_RENDERING
   MetalVolumeBuffers volumeBuffers_;
+  MetalVolumeFrameCache volumeFrameCache_;
 #endif
 #ifdef ISO_CONTOUR
   MetalMesh isoContourMesh_;
@@ -2317,12 +2936,20 @@ private:
   RenderSceneVersion isoContourVersion_ = 0;
 #endif
   std::size_t particleCount_ = 0;
+  std::size_t stressParticleCount_ = 0;
+  std::size_t particleLodCount_ = 0;
+  std::size_t stressParticleLodCount_ = 0;
   RenderSceneVersion particleVersion_ = 0;
+  RenderSceneVersion stressParticleVersion_ = 0;
+  RenderSceneVersion particleLodVersion_ = 0;
+  RenderSceneVersion stressParticleLodVersion_ = 0;
   RenderSceneVersion velocityVersion_ = 0;
   std::uint64_t previewVersion_ = 0;
   float velocityArrowScale_ = 0.0f;
   bool velocityUseLogScale_ = false;
+  bool useParticleLod_ = false;
   bool initialized_ = false;
+  RenderBackendTimingInfo timing_;
   ProjectionPreviewUIState preview_;
 };
 

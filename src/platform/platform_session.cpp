@@ -172,6 +172,14 @@ bool PlatformSession::init(AppState& app, CallbackContext& callbackCtx)
     }
   } else {
 #endif
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+    if (auto* metal = dynamic_cast<MetalContext*>(graphics_.get())) {
+      imguiBackend =
+        CreateHeadlessMetalImGuiBackend(*metal,
+                                        window_.framebufferWidth(),
+                                        window_.framebufferHeight());
+    } else
+#endif
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
     if (auto* vulkan = dynamic_cast<VulkanContext*>(graphics_.get())) {
       imguiBackend =

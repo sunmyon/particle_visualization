@@ -20,10 +20,13 @@ public:
   void destroy() override;
   void present(NativeWindowHandle window) override;
   RenderedFrame readDefaultFramebuffer(int width, int height) override;
-  bool isHeadless() const override { return false; }
+  bool isHeadless() const override;
 
   void* device() const;
+  void* currentCommandBuffer() const;
   void* currentRenderCommandEncoder() const;
+  void endCurrentRenderCommandEncoder();
+  bool restartCurrentRenderCommandEncoder(bool loadColor, bool loadDepth);
   bool beginFrame(int width, int height);
   bool initImGuiRenderer();
   void newImGuiFrame();
