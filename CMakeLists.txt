@@ -635,7 +635,7 @@ if(PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
     enable_language(OBJCXX)
     target_sources(${PROJECT_NAME} PRIVATE
       ${SRC_DIR}/platform/metal_context.mm
-      ${SRC_DIR}/render/metal/metal_render_backend.cpp
+      ${SRC_DIR}/render/metal/metal_render_backend.mm
       ${EXTERNAL_DIR}/imgui/backends/imgui_impl_metal.mm)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)

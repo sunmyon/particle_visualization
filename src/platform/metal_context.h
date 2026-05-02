@@ -23,6 +23,7 @@ public:
   bool isHeadless() const override { return false; }
 
   void* device() const;
+  void* currentRenderCommandEncoder() const;
   bool beginFrame(int width, int height);
   bool initImGuiRenderer();
   void newImGuiFrame();

@@ -22,9 +22,12 @@ struct MetalContext::Impl {
   id<MTLCommandQueue> commandQueue = nil;
   CAMetalLayer* layer = nil;
   MTLRenderPassDescriptor* renderPass = nil;
+  id<MTLTexture> depthTexture = nil;
   id<CAMetalDrawable> drawable = nil;
   id<MTLCommandBuffer> commandBuffer = nil;
   id<MTLRenderCommandEncoder> encoder = nil;
+  int depthWidth = 0;
+  int depthHeight = 0;
 };
 
 MetalContext::MetalContext()
@@ -105,6 +108,7 @@ void MetalContext::destroy()
   impl_->encoder = nil;
   impl_->commandBuffer = nil;
   impl_->drawable = nil;
+  impl_->depthTexture = nil;
   impl_->renderPass = nil;
   impl_->layer = nil;
   impl_->commandQueue = nil;
@@ -127,6 +131,11 @@ RenderedFrame MetalContext::readDefaultFramebuffer(int width, int height)
 void* MetalContext::device() const
 {
   return (__bridge void*)impl_->device;
+}
+
+void* MetalContext::currentRenderCommandEncoder() const
+{
+  return (__bridge void*)impl_->encoder;
 }
 
 bool MetalContext::beginFrame(int width, int height)
@@ -154,6 +163,26 @@ bool MetalContext::beginFrame(int width, int height)
   color.loadAction = MTLLoadActionClear;
   color.storeAction = MTLStoreActionStore;
   color.clearColor = MTLClearColorMake(0.02, 0.025, 0.03, 1.0);
+
+  if (!impl_->depthTexture || impl_->depthWidth != width ||
+      impl_->depthHeight != height) {
+    MTLTextureDescriptor* depthDesc =
+      [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                         width:static_cast<NSUInteger>(width)
+                                                        height:static_cast<NSUInteger>(height)
+                                                     mipmapped:NO];
+    depthDesc.usage = MTLTextureUsageRenderTarget;
+    depthDesc.storageMode = MTLStorageModePrivate;
+    impl_->depthTexture = [impl_->device newTextureWithDescriptor:depthDesc];
+    impl_->depthWidth = width;
+    impl_->depthHeight = height;
+  }
+
+  auto* depth = impl_->renderPass.depthAttachment;
+  depth.texture = impl_->depthTexture;
+  depth.loadAction = MTLLoadActionClear;
+  depth.storeAction = MTLStoreActionDontCare;
+  depth.clearDepth = 1.0;
 
   impl_->encoder =
     [impl_->commandBuffer renderCommandEncoderWithDescriptor:impl_->renderPass];
