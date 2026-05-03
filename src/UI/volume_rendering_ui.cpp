@@ -24,6 +24,21 @@ struct QuantityRangeAggregate {
   bool valid = false;
 };
 
+struct VolumeColorPreset {
+  const char* name = "";
+  glm::vec3 color{1.0f, 1.0f, 1.0f};
+};
+
+const VolumeColorPreset kVolumeColorPresets[] = {
+  {"Cyan plasma", {0.30f, 1.00f, 0.82f}},
+  {"Ionized blue", {0.35f, 0.55f, 1.00f}},
+  {"Warm gas", {1.00f, 0.62f, 0.28f}},
+  {"Hydrogen red", {1.00f, 0.22f, 0.18f}},
+  {"Oxygen green", {0.25f, 1.00f, 0.42f}},
+  {"Magenta shock", {1.00f, 0.22f, 0.95f}},
+  {"Soft white", {0.90f, 0.94f, 1.00f}},
+};
+
 QuantityRangeAggregate AggregateQuantityRange(const QuantityState& quantity,
                                               QuantityId selected,
                                               bool positiveOnly)
@@ -78,7 +93,7 @@ void ApplyVolumeTransferFunction(TransferFunctionEditor& editor,
   edit.logScale = editor.logScale();
   render.tfValueMin = edit.valueMin;
   render.tfValueMax = edit.valueMax;
-  render.tfSigmaScale = edit.sigmaScale;
+  render.tfSigmaScale = 1.0f;
   render.tfLogScale = edit.logScale;
   render.tfMaxSigma = 0.0f;
 
@@ -100,19 +115,7 @@ void ApplyVolumeTransferFunction(TransferFunctionEditor& editor,
     dst.logDomain = src.logDomain;
     render.tfComponents.push_back(dst);
     render.tfMaxSigma = std::max(render.tfMaxSigma,
-                                 render.tfSigmaScale * std::max(src.amp, 0.0f));
-  }
-}
-
-void UpdateVolumeTransferScale(SettingsVolumeRenderingEdit& edit,
-                               VolumeRenderState& render)
-{
-  render.tfSigmaScale = edit.sigmaScale;
-  render.tfMaxSigma = 0.0f;
-  for (const VolumeTransferFunctionComponent& comp : render.tfComponents) {
-    render.tfMaxSigma =
-      std::max(render.tfMaxSigma,
-               render.tfSigmaScale * std::max(comp.amplitude, 0.0f));
+                                 std::max(src.amp, 0.0f));
   }
 }
 
@@ -132,7 +135,7 @@ void DrawVolumeRenderingSettingsSection(
   bool volumeDirty = false;
   bool renderDirty = false;
 
-  ImGui::SeparatorText("Tree construction");
+  ImGui::SeparatorText("Volume tree");
 
   if (ImGui::BeginCombo("Volume quantity",
                         QuantityLabel(volumeReq.selectedQuantity))) {
@@ -159,87 +162,7 @@ void DrawVolumeRenderingSettingsSection(
                                   &volumeReq.maxTreeLevel,
                                   1,
                                   24);
-  if (ImGui::InputFloat("Sigma scale",
-                        &volumeReq.sigmaScale,
-                        0.1f,
-                        1.0f,
-                        "%g")) {
-    volumeDirty = true;
-    UpdateVolumeTransferScale(volumeReq, volumeRender);
-    renderDirty = true;
-  }
-  if (volumeReq.sigmaScale < 0.0f) {
-    volumeReq.sigmaScale = 0.0f;
-    volumeDirty = true;
-    UpdateVolumeTransferScale(volumeReq, volumeRender);
-    renderDirty = true;
-  }
 
-  ImGui::SeparatorText("Density to sigma transfer function");
-  ImGui::TextUnformatted("Apply updates opacity immediately; rebuild only after tree settings change.");
-  if (volumeReq.autoRange) {
-    const QuantityRangeAggregate dataRange =
-      AggregateQuantityRange(quantity,
-                             volumeReq.selectedQuantity,
-                             volumeReq.logScale);
-    if (dataRange.valid) {
-      if (volumeReq.valueMin != dataRange.min ||
-          volumeReq.valueMax != dataRange.max) {
-        volumeReq.valueMin = dataRange.min;
-        volumeReq.valueMax = dataRange.max;
-        volumeDirty = true;
-      }
-    }
-    ImGui::Text("Editor range from loaded data: [%g, %g]",
-                volumeReq.valueMin,
-                volumeReq.valueMax);
-  }
-  if (volumeReq.autoRange) {
-    transferEditor.set_minmax(volumeReq.selectedQuantity,
-                              volumeReq.valueMin,
-                              volumeReq.valueMax);
-  }
-  if (ImGui::Button("Open sigma-density editor")) {
-    transferEditor.set_window();
-  }
-  if (!volumeRender.tfComponents.empty()) {
-    ImGui::Text("Applied TF: %zu components, [%g, %g], %s",
-                volumeRender.tfComponents.size(),
-                volumeRender.tfValueMin,
-                volumeRender.tfValueMax,
-                volumeRender.tfLogScale ? "log" : "linear");
-  } else {
-    ImGui::TextUnformatted("No applied TF. Volume is transparent.");
-  }
-  if (transferEditor.showUI(nullptr)) {
-    ApplyVolumeTransferFunction(transferEditor, volumeReq, volumeRender);
-    volumeDirty = true;
-    renderDirty = true;
-  }
-
-  volumeDirty |= ImGui::Checkbox("Log scale density mapping",
-                                 &volumeReq.logScale);
-  volumeDirty |= ImGui::Checkbox("Auto range",
-                                 &volumeReq.autoRange);
-  if (!volumeReq.autoRange) {
-    volumeDirty |= ImGui::InputFloat("Value min",
-                                     &volumeReq.valueMin,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-    volumeDirty |= ImGui::InputFloat("Value max",
-                                     &volumeReq.valueMax,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-  } else {
-    ImGui::Text("Current range: [%g, %g]",
-                volumeReq.valueMin,
-                volumeReq.valueMax);
-  }
-
-  volumeDirty |= ImGui::Checkbox("Balance tree (slow)",
-                                 &volumeReq.balanceTree);
   const char* reconstructionModes[] = {
     "Cell average (fast)",
     "Shared corners",
@@ -262,7 +185,53 @@ void DrawVolumeRenderingSettingsSection(
     edit.volumeDirty = true;
   }
 
-  ImGui::SeparatorText("Rendering");
+  ImGui::SeparatorText("Transfer function");
+  if (volumeReq.autoRange) {
+    const QuantityRangeAggregate dataRange =
+      AggregateQuantityRange(quantity,
+                             volumeReq.selectedQuantity,
+                             volumeReq.logScale);
+    if (dataRange.valid) {
+      if (volumeReq.valueMin != dataRange.min ||
+          volumeReq.valueMax != dataRange.max) {
+        volumeReq.valueMin = dataRange.min;
+        volumeReq.valueMax = dataRange.max;
+        volumeDirty = true;
+      }
+    }
+  }
+  if (volumeReq.autoRange) {
+    transferEditor.set_minmax(volumeReq.selectedQuantity,
+                              volumeReq.valueMin,
+                              volumeReq.valueMax);
+  }
+  if (ImGui::Button("Open sigma-density editor")) {
+    transferEditor.set_window();
+  }
+  if (transferEditor.showUI(nullptr)) {
+    ApplyVolumeTransferFunction(transferEditor, volumeReq, volumeRender);
+    volumeDirty = true;
+    renderDirty = true;
+  }
+
+  volumeDirty |= ImGui::Checkbox("Log scale density mapping",
+                                 &volumeReq.logScale);
+  volumeDirty |= ImGui::Checkbox("Auto range",
+                                 &volumeReq.autoRange);
+  if (!volumeReq.autoRange) {
+    volumeDirty |= ImGui::InputFloat("Value min",
+                                     &volumeReq.valueMin,
+                                     0.0f,
+                                     0.0f,
+                                     "%g");
+    volumeDirty |= ImGui::InputFloat("Value max",
+                                     &volumeReq.valueMax,
+                                     0.0f,
+                                     0.0f,
+                                     "%g");
+  }
+
+  ImGui::SeparatorText("Ray marching");
   renderDirty |= ImGui::Checkbox("Show adaptive volume",
                                  &volumeRender.show);
   renderDirty |= ImGui::InputFloat("LOD pixel threshold (0=off)",
@@ -294,7 +263,7 @@ void DrawVolumeRenderingSettingsSection(
   volumeRender.maxSamplesPerCell =
     std::clamp(volumeRender.maxSamplesPerCell, 1, 256);
 
-  ImGui::SeparatorText("Rendering color");
+  ImGui::SeparatorText("Appearance");
   const char* colorModes[] = {
     "Fixed color",
     "Procedural heat",
@@ -306,10 +275,39 @@ void DrawVolumeRenderingSettingsSection(
                               IM_ARRAYSIZE(colorModes));
   volumeRender.colorMode = std::clamp(volumeRender.colorMode, 0, 2);
   if (volumeRender.colorMode == 0) {
-    renderDirty |= ImGui::ColorEdit3("Volume base color",
-                                     &volumeRender.baseColor.x);
+    const char* preview = "Preset";
+    for (const VolumeColorPreset& preset : kVolumeColorPresets) {
+      if (std::abs(volumeRender.baseColor.x - preset.color.x) < 1.0e-4f &&
+          std::abs(volumeRender.baseColor.y - preset.color.y) < 1.0e-4f &&
+          std::abs(volumeRender.baseColor.z - preset.color.z) < 1.0e-4f) {
+        preview = preset.name;
+        break;
+      }
+    }
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::BeginCombo("Base color", preview)) {
+      for (const VolumeColorPreset& preset : kVolumeColorPresets) {
+        const bool selected =
+          std::abs(volumeRender.baseColor.x - preset.color.x) < 1.0e-4f &&
+          std::abs(volumeRender.baseColor.y - preset.color.y) < 1.0e-4f &&
+          std::abs(volumeRender.baseColor.z - preset.color.z) < 1.0e-4f;
+        if (ImGui::Selectable(preset.name, selected)) {
+          volumeRender.baseColor = preset.color;
+          renderDirty = true;
+        }
+        if (selected) {
+          ImGui::SetItemDefaultFocus();
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170.0f);
+    renderDirty |= ImGui::ColorEdit3("##Volume base color RGB",
+                                     &volumeRender.baseColor.x,
+                                     ImGuiColorEditFlags_NoLabel |
+                                       ImGuiColorEditFlags_Float);
   } else if (volumeRender.colorMode == 2) {
-    ImGui::TextUnformatted("Vulkan samples the selected colormap; OpenGL falls back to heat.");
     const ColormapDef* colormaps = AvailableColormaps();
     const int colormapCount = AvailableColormapCount();
     volumeRender.colormapIndex =
@@ -331,7 +329,6 @@ void DrawVolumeRenderingSettingsSection(
     }
   }
 
-  ImGui::SeparatorText("Optical model");
   const char* opticalModels[] = {
     "Opacity",
     "Emission",

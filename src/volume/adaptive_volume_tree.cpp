@@ -714,10 +714,6 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromOctree(
   const AdaptiveVolumeTreeBuildParams& params,
   const VolumeSigmaMapper& sigmaMapper)
 {
-  if (params.balanceTree) {
-    octree.balanceTree(/*isIsoDensity=*/false);
-  }
-
   TreeBuilder builder{octree,
                       params,
                       sigmaMapper,

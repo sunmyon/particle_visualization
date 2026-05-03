@@ -241,6 +241,7 @@ void VulkanContext::destroy()
   cleanupVulkan();
   window_ = nullptr;
   headless_ = false;
+  shaderBufferFloat32AtomicAdd_ = false;
 }
 
 void VulkanContext::present(NativeWindowHandle window)
@@ -804,6 +805,7 @@ bool VulkanContext::createInstance()
 
 bool VulkanContext::createDevice()
 {
+  shaderBufferFloat32AtomicAdd_ = false;
   physicalDevice_ = ImGui_ImplVulkanH_SelectPhysicalDevice(instance_);
   if (physicalDevice_ == VK_NULL_HANDLE) {
     std::cerr << "No Vulkan physical device found" << std::endl;
@@ -831,6 +833,24 @@ bool VulkanContext::createDevice()
     extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
   }
 #endif
+#if defined(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) && \
+  defined(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT)
+  VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
+  atomicFloatFeatures.sType =
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+  bool enableShaderBufferFloat32AtomicAdd = false;
+  if (HasDeviceExtension(physicalDevice_,
+                         VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME)) {
+    VkPhysicalDeviceFeatures2 features2{};
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2.pNext = &atomicFloatFeatures;
+    vkGetPhysicalDeviceFeatures2(physicalDevice_, &features2);
+    if (atomicFloatFeatures.shaderBufferFloat32AtomicAdd == VK_TRUE) {
+      extensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+      enableShaderBufferFloat32AtomicAdd = true;
+    }
+  }
+#endif
 
   const float queuePriority = 1.0f;
   VkDeviceQueueCreateInfo queueInfo{};
@@ -846,6 +866,12 @@ bool VulkanContext::createDevice()
   createInfo.enabledExtensionCount =
     static_cast<std::uint32_t>(extensions.size());
   createInfo.ppEnabledExtensionNames = extensions.data();
+#if defined(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) && \
+  defined(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT)
+  if (enableShaderBufferFloat32AtomicAdd) {
+    createInfo.pNext = &atomicFloatFeatures;
+  }
+#endif
 
   if (!Check(vkCreateDevice(physicalDevice_,
                             &createInfo,
@@ -855,10 +881,18 @@ bool VulkanContext::createDevice()
     return false;
   }
   vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
+#if defined(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) && \
+  defined(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT)
+  shaderBufferFloat32AtomicAdd_ = enableShaderBufferFloat32AtomicAdd;
+#endif
 
   VkPhysicalDeviceProperties props{};
   vkGetPhysicalDeviceProperties(physicalDevice_, &props);
   std::cerr << "Vulkan platform device: " << props.deviceName << std::endl;
+  if (shaderBufferFloat32AtomicAdd_) {
+    std::cerr << "Vulkan feature: shaderBufferFloat32AtomicAdd available"
+              << std::endl;
+  }
   return true;
 }
 

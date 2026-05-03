@@ -11,6 +11,7 @@
 struct AppState;
 struct CallbackContext;
 class RenderBackend;
+class VulkanContext;
 
 class PlatformSession {
 public:
@@ -26,6 +27,7 @@ public:
 
   IFramePresenter& presenter();
   std::unique_ptr<RenderBackend> createRenderBackend();
+  VulkanContext* vulkanContext();
 
 private:
   WindowContext window_;

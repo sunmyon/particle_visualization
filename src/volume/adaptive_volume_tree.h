@@ -44,7 +44,6 @@ struct AdaptiveVolumeTreeBuildParams {
   std::size_t minParticlesPerLeaf = 32;
   std::size_t maxDepth = 18;
   float emptySigmaEpsilon = 0.0f;
-  bool balanceTree = false;
   bool expandBoundsByHsml = true;
   int cornerReconstructionMode = 1; // 0=cell average, 1=shared corners, 2=face gradient.
 };

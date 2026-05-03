@@ -873,11 +873,15 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
     paramsDirty |= ImGui::Checkbox("Density Weighting", &params.flagDensityWeight);
     paramsDirty |= ImGui::Checkbox("Use Voronoi tesselation", &params.flagVoronoi);
-
     if (params.flagVoronoi) {
       ImGui::SetNextItemWidth(200.0f);
       ImGui::SameLine();
       paramsDirty |= ImGui::InputInt("nz", &params.step_z, 10, 1000);
+    }
+    paramsDirty |= ImGui::Checkbox("Use GPU projection (experimental)",
+                                   &params.useGpuProjection);
+    if (params.useGpuProjection) {
+      ImGui::TextDisabled("Backend is selected by PARTICLE_VIS_PROJECTION_BACKEND=auto|metal|vulkan|opengl.");
     }
   }
   else if (params.dataSource == DataSource::Stars) {

@@ -132,6 +132,9 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
     render.disks.opacity = req.renderDraft.diskOpacity;
     render.ellipsoids.opacity = req.renderDraft.ellipsoidOpacity;
     render.isocontour.opacity = req.renderDraft.isoContourOpacity;
+    render.colorbar.show = req.renderDraft.showColorbar;
+    render.coordAxes.show = req.renderDraft.showCoordAxes;
+    render.crossGizmo.show = req.renderDraft.showCrossGizmo;
     render.crossGizmo.size = req.renderDraft.crossGizmoSize;
     req.applyRenderRequested = false;
     req.renderDraftDirty = false;

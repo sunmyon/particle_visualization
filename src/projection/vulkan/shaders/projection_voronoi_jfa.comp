@@ -1,0 +1,108 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+struct ProjectionParticle {
+  vec4 posVal;
+  vec4 densityMassHsmlPad;
+};
+
+layout(std430, binding = 0) readonly buffer Particles {
+  ProjectionParticle particles[];
+};
+
+layout(std140, binding = 1) uniform VoronoiUniforms {
+  uint width;
+  uint height;
+  uint depth;
+  uint particleCount;
+  float dx;
+  float dy;
+  float dz;
+  float xminX;
+  float xminY;
+  float xminZ;
+  uint densityWeight;
+  uint pad0;
+} uniforms;
+
+layout(std430, binding = 2) readonly buffer InputLabels {
+  int inputLabels[];
+};
+
+layout(std430, binding = 3) writeonly buffer OutputLabels {
+  int outputLabels[];
+};
+
+layout(std140, binding = 4) uniform StepUniform {
+  uint stepSize;
+} stepUniform;
+
+vec3 voxelCenter(uint index)
+{
+  uint widthHeight = uniforms.width * uniforms.height;
+  uint k = index / widthHeight;
+  uint rem = index - k * widthHeight;
+  uint j = rem / uniforms.width;
+  uint i = rem - j * uniforms.width;
+  return vec3(uniforms.xminX + (float(i) + 0.5) * uniforms.dx,
+              uniforms.xminY + (float(j) + 0.5) * uniforms.dy,
+              uniforms.xminZ + float(k) * uniforms.dz);
+}
+
+void main()
+{
+  uint gid = gl_GlobalInvocationID.x;
+  uint voxelCount = uniforms.width * uniforms.height * uniforms.depth;
+  if (gid >= voxelCount) {
+    return;
+  }
+
+  uint widthHeight = uniforms.width * uniforms.height;
+  uint k = gid / widthHeight;
+  uint rem = gid - k * widthHeight;
+  uint j = rem / uniforms.width;
+  uint i = rem - j * uniforms.width;
+  vec3 center = voxelCenter(gid);
+
+  int bestLabel = inputLabels[gid];
+  float bestDist2 = uintBitsToFloat(0x7f800000u);
+  if (bestLabel >= 0) {
+    vec3 d = particles[bestLabel].posVal.xyz - center;
+    bestDist2 = dot(d, d);
+  }
+
+  int s = int(stepUniform.stepSize);
+  for (int dz = -s; dz <= s; dz += s) {
+    int nk = int(k) + dz;
+    if (nk < 0 || nk >= int(uniforms.depth)) {
+      continue;
+    }
+    for (int dy = -s; dy <= s; dy += s) {
+      int nj = int(j) + dy;
+      if (nj < 0 || nj >= int(uniforms.height)) {
+        continue;
+      }
+      for (int dx = -s; dx <= s; dx += s) {
+        int ni = int(i) + dx;
+        if (ni < 0 || ni >= int(uniforms.width)) {
+          continue;
+        }
+        uint neighborIndex =
+          uint(nk) * widthHeight + uint(nj) * uniforms.width + uint(ni);
+        int label = inputLabels[neighborIndex];
+        if (label < 0) {
+          continue;
+        }
+        vec3 d = particles[label].posVal.xyz - center;
+        float dist2 = dot(d, d);
+        if (dist2 < bestDist2) {
+          bestDist2 = dist2;
+          bestLabel = label;
+        }
+      }
+    }
+  }
+
+  outputLabels[gid] = bestLabel;
+}

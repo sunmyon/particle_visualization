@@ -17,6 +17,7 @@ cmake-vtk-debug.log
 
 ffmpeg_frames/
 output/
+render_snapshots/
 
 /.vcpkg-cache/
 example/data/

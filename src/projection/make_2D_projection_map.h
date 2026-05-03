@@ -15,6 +15,11 @@
 
 #include <vector>
 
+#include "projection/projection_gpu_backend.h"
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+#include "projection/metal_projection_backend.h"
+#endif
+
 class ImageCanvas;
 class SimulationDataset;
 class SimulationElement;
@@ -43,6 +48,24 @@ struct pos_val {
 class ProjectionMapGenerator {
 private:
   BitmapFontRenderer fontRenderer_;
+
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+  struct MetalVoronoiCache {
+    bool valid = false;
+    std::size_t key = 0;
+    ProjectionGpuLabelGrid grid;
+  };
+  MetalVoronoiCache metalVoronoiCache_;
+#endif
+
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  struct VulkanVoronoiCache {
+    bool valid = false;
+    std::size_t key = 0;
+    ProjectionGpuLabelGrid grid;
+  };
+  VulkanVoronoiCache vulkanVoronoiCache_;
+#endif
   
   struct ProjectionMap {
     int npixel = 0, npixel_x = 0, npixel_y = 0, npixel_z = 0;
@@ -60,8 +83,27 @@ private:
     std::vector<unsigned char> image;
   };
 
+  struct VoronoiLabelGrid {
+    int width = 0;
+    int height = 0;
+    int depth = 0;
+    std::vector<int> labels;
+  };
+
+  struct CpuVoronoiCache {
+    bool valid = false;
+    std::size_t key = 0;
+    VoronoiLabelGrid grid;
+  };
+  CpuVoronoiCache cpuVoronoiCache_;
+
   void createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles);
   void createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles);
+  VoronoiLabelGrid buildCpuVoronoiLabelGrid(const ProjectionMap& map,
+                                            const std::vector<pos_val>& particles);
+  void integrateCpuVoronoiLabelGrid(ProjectionMap& map,
+                                    const std::vector<pos_val>& particles,
+                                    const VoronoiLabelGrid& grid);
   void createStarMap(ProjectionMap &map, const std::vector<pos_val>& particles, float sigma_pix, bool normalize);
 
 #ifdef USE_LUA

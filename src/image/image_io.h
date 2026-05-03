@@ -6,3 +6,8 @@ bool WritePngRgb(const char* filename,
                  int width,
                  int height,
                  const std::vector<unsigned char>& rgb);
+
+bool WritePngRgba(const char* filename,
+                  int width,
+                  int height,
+                  const std::vector<unsigned char>& rgba);

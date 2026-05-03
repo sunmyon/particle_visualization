@@ -40,6 +40,7 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
                                           const RenderRuntimeState& render,
                                           const QuantityState& quantity);
 static void DrawCameraInfoSection(const SettingsCameraView& camera);
+static void DrawRenderSnapshotSection(SettingsActionRequestState& request);
 static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
                                          const RenderBackendCapabilities& backend,
                                          SettingsActionRequestState& req);
@@ -123,6 +124,7 @@ void ShowSettingsUI(SettingsUIState& ui,
                        windowCommands,
                        settings.request);
   DrawOtherSettingsSection(settings);
+  DrawRenderSnapshotSection(settings.request);
 
   ImGui::End();
 }
@@ -146,6 +148,9 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
     request.renderDraft.diskOpacity = render.disks.opacity;
     request.renderDraft.ellipsoidOpacity = render.ellipsoids.opacity;
     request.renderDraft.isoContourOpacity = render.isocontour.opacity;
+    request.renderDraft.showColorbar = render.colorbar.show;
+    request.renderDraft.showCoordAxes = render.coordAxes.show;
+    request.renderDraft.showCrossGizmo = render.crossGizmo.show;
     request.renderDraft.crossGizmoSize = render.crossGizmo.size;
   }
 
@@ -163,6 +168,38 @@ static void DrawCameraInfoSection(const SettingsCameraView& camera) {
               camera.originalTarget[0],
               camera.originalTarget[1],
               camera.originalTarget[2]);
+}
+
+static void DrawRenderSnapshotSection(SettingsActionRequestState& request)
+{
+  ImGui::Spacing();
+  ImGui::BeginChild("RenderSnapshotPanel",
+                    ImVec2(0.0f, 112.0f),
+                    true,
+                    ImGuiWindowFlags_NoScrollbar);
+  ImGui::TextUnformatted("Render snapshot");
+
+  if (ImGui::Button("Save render snapshot")) {
+    request.renderSnapshotRequested = true;
+    request.renderSnapshotMessage = "Saving...";
+  }
+  if (!request.renderSnapshotMessage.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", request.renderSnapshotMessage.c_str());
+  }
+
+  ImGui::TextUnformatted("Overlays for snapshot only");
+  ImGui::PushID("render_snapshot_overlays");
+  ImGui::Checkbox("Colorbar", &request.renderSnapshotShowColorbar);
+  ImGui::SameLine();
+  ImGui::Checkbox("Axes", &request.renderSnapshotShowCoordAxes);
+  ImGui::SameLine();
+  ImGui::Checkbox("Cross", &request.renderSnapshotShowCrossGizmo);
+  ImGui::Checkbox("Particle IDs", &request.renderSnapshotShowParticleLabels);
+  ImGui::SameLine();
+  ImGui::Checkbox("Time label", &request.renderSnapshotShowTimeLabel);
+  ImGui::PopID();
+  ImGui::EndChild();
 }
 
 static const char* FormatBytes(size_t bytes)
@@ -1640,7 +1677,15 @@ static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
     ImGui::InputFloat("Max Zoom", &rt.maxZoom, 0.0f, 0.0f, "%g");
   }
 
-  if (ImGui::CollapsingHeader("Cross Marker")) {
+  if (ImGui::CollapsingHeader("Render Overlays")) {
+    bool dirty = false;
+    dirty |= ImGui::Checkbox("Colorbar", &req.renderDraft.showColorbar);
+    dirty |= ImGui::Checkbox("Coordinate axes", &req.renderDraft.showCoordAxes);
+    dirty |= ImGui::Checkbox("Cross marker", &req.renderDraft.showCrossGizmo);
+    if (dirty) {
+      req.renderDraftDirty = true;
+      req.applyRenderRequested = true;
+    }
     if (ImGui::SliderFloat("Cross Marker Size",
                            &req.renderDraft.crossGizmoSize,
                            0.01f,

@@ -22,3 +22,23 @@ bool WritePngRgb(const char* filename,
                         rgb.data(),
                         width * 3) != 0;
 }
+
+bool WritePngRgba(const char* filename,
+                  int width,
+                  int height,
+                  const std::vector<unsigned char>& rgba)
+{
+  if (!filename || width <= 0 || height <= 0) return false;
+
+  const size_t expectedSize =
+    static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+
+  if (rgba.size() < expectedSize) return false;
+
+  return stbi_write_png(filename,
+                        width,
+                        height,
+                        4,
+                        rgba.data(),
+                        width * 4) != 0;
+}

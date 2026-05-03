@@ -17,10 +17,19 @@
 #include "projection/projection_geometry.h"
 #include "projection/projection_map_context.h"
 #include "projection/stellar_luminosity.h"
+#include "projection/opengl_projection_backend.h"
+#include "projection/vulkan_projection_backend.h"
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+#include "projection/metal_projection_backend.h"
+#endif
 
 #include <algorithm>
 #include <cfloat>
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 
 #ifdef USE_LUA
 #include <lua.hpp>
@@ -60,6 +69,21 @@ namespace{
 namespace fs = std::filesystem;
 
 ProjectionMapGenerator::ProjectionMapGenerator() = default;
+
+namespace {
+inline void HashCombine(std::size_t& seed, std::size_t value)
+{
+  seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6u) + (seed >> 2u);
+}
+
+inline void HashFloat(std::size_t& seed, float value)
+{
+  static_assert(sizeof(float) == sizeof(std::uint32_t));
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  HashCombine(seed, static_cast<std::size_t>(bits));
+}
+} // namespace
 
 RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particles,
 						     const UnitSystem& units,
@@ -217,8 +241,319 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   auto start = high_resolution_clock::now();
 
   if (params.dataSource == DataSource::Gas) {
-    if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
-    else             createProjectionMap(map, insideParticles);
+    bool projectedOnGpu = false;
+    if (params.useGpuProjection) {
+      ProjectionGpuMapInput input;
+      input.width = map.npixel_x;
+      input.height = map.npixel_y;
+      input.depth = map.npixel_z;
+      input.dx = map.dx;
+      input.dy = map.dy;
+      input.dz = map.dz;
+      input.xminLocal[0] = map.xmin[0] - map.center.x;
+      input.xminLocal[1] = map.xmin[1] - map.center.y;
+      input.xminLocal[2] = map.xmin[2] - map.center.z;
+      input.center = map.center;
+      input.uAxis = map.uAxis;
+      input.vAxis = map.vAxis;
+      input.densityWeight = map.flagDensityWeight;
+      input.particles.reserve(insideParticles.size());
+      double pxMin = std::numeric_limits<double>::max();
+      double pxMax = -std::numeric_limits<double>::max();
+      double pyMin = std::numeric_limits<double>::max();
+      double pyMax = -std::numeric_limits<double>::max();
+      double radiusPixMin = std::numeric_limits<double>::max();
+      double radiusPixMax = 0.0;
+      double radiusPixSum = 0.0;
+      size_t positiveRadiusCount = 0;
+      size_t projectedInsideCount = 0;
+      double weightNormMin = std::numeric_limits<double>::max();
+      double weightNormMax = 0.0;
+      size_t finiteWeightNormCount = 0;
+      size_t nonfiniteInputCount = 0;
+      double valueMin = std::numeric_limits<double>::max();
+      double valueMax = -std::numeric_limits<double>::max();
+      for (const pos_val& p : insideParticles) {
+        const glm::vec3 diff =
+          glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
+        const double cx = glm::dot(diff, map.uAxis);
+        const double cy = glm::dot(diff, map.vAxis);
+        const double cz = glm::dot(diff, map.wAxis);
+
+        ProjectionGpuParticle gp;
+        if (params.flagVoronoi) {
+          gp.pos[0] = static_cast<float>(cx);
+          gp.pos[1] = static_cast<float>(cy);
+          gp.pos[2] = static_cast<float>(cz);
+        } else {
+          gp.pos[0] = p.pos[0];
+          gp.pos[1] = p.pos[1];
+          gp.pos[2] = p.pos[2];
+        }
+        gp.val = p.val;
+        gp.density = p.density;
+        gp.mass = p.mass;
+        gp.hsml = p.hsml;
+        input.particles.push_back(gp);
+
+        const double px = (cx - input.xminLocal[0]) / input.dx;
+        const double py = (cy - input.xminLocal[1]) / input.dy;
+        pxMin = std::min(pxMin, px);
+        pxMax = std::max(pxMax, px);
+        pyMin = std::min(pyMin, py);
+        pyMax = std::max(pyMax, py);
+        const double radiusPix = p.hsml / std::max<double>(input.dx, 1.0e-30);
+        if (radiusPix > 0.0) {
+          radiusPixMin = std::min(radiusPixMin, radiusPix);
+          radiusPixMax = std::max(radiusPixMax, radiusPix);
+          radiusPixSum += radiusPix;
+          ++positiveRadiusCount;
+        }
+        if (px + radiusPix >= 0.0 && px - radiusPix <= input.width &&
+            py + radiusPix >= 0.0 && py - radiusPix <= input.height) {
+          ++projectedInsideCount;
+        }
+
+        const double hsml3 =
+          static_cast<double>(p.hsml) * p.hsml * p.hsml;
+        const double density = std::max<double>(p.density, 1.0e-30);
+        const double weightNorm =
+          static_cast<double>(p.mass) / std::max(hsml3 * density, 1.0e-30);
+        if (std::isfinite(weightNorm) && weightNorm > 0.0 &&
+            std::isfinite(p.val) && std::isfinite(p.hsml) &&
+            std::isfinite(p.density) && std::isfinite(p.mass)) {
+          weightNormMin = std::min(weightNormMin, weightNorm);
+          weightNormMax = std::max(weightNormMax, weightNorm);
+          valueMin = std::min<double>(valueMin, p.val);
+          valueMax = std::max<double>(valueMax, p.val);
+          ++finiteWeightNormCount;
+        } else {
+          ++nonfiniteInputCount;
+        }
+      }
+      if (finiteWeightNormCount > 0) {
+        input.valueMin = static_cast<float>(valueMin);
+        input.valueMax = static_cast<float>(valueMax);
+      }
+
+      std::cout << "GPU projection input: particles="
+                << input.particles.size()
+                << " pixels=" << input.width << "x" << input.height
+                << " pxRange=[" << pxMin << ", " << pxMax << "]"
+                << " pyRange=[" << pyMin << ", " << pyMax << "]"
+                << " projectedInside=" << projectedInsideCount
+                << " radiusPixRange=["
+                << (positiveRadiusCount > 0 ? radiusPixMin : 0.0)
+                << ", " << radiusPixMax << "]"
+                << " radiusPixMean="
+                << (positiveRadiusCount > 0
+                      ? radiusPixSum / static_cast<double>(positiveRadiusCount)
+                      : 0.0)
+                << " weightNormRange=["
+                << (finiteWeightNormCount > 0 ? weightNormMin : 0.0)
+                << ", " << weightNormMax << "]"
+                << " valueRange=["
+                << (finiteWeightNormCount > 0 ? valueMin : 0.0)
+                << ", " << (finiteWeightNormCount > 0 ? valueMax : 0.0)
+                << "]"
+                << " finiteWeightNorm=" << finiteWeightNormCount
+                << " nonfiniteInput=" << nonfiniteInputCount
+                << std::endl;
+
+      ProjectionGpuMapOutput output;
+      bool projectionOk = false;
+      std::string projectionBackendUsed;
+      const char* requestedBackendEnv =
+        std::getenv("PARTICLE_VIS_PROJECTION_BACKEND");
+      const char* renderBackendEnv =
+        std::getenv("PARTICLE_VIS_RENDER_BACKEND");
+      std::string requestedBackend =
+        requestedBackendEnv ? requestedBackendEnv : "auto";
+      if (requestedBackend == "auto" && renderBackendEnv &&
+          renderBackendEnv[0] != '\0') {
+        // Keep compute projection aligned with the selected render backend.
+        // If that backend cannot compute this projection, fall back to CPU
+        // rather than silently mixing GPU APIs.
+        requestedBackend = renderBackendEnv;
+      }
+
+      const auto tryMetalProjection = [&]() {
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+        if (params.flagVoronoi) {
+          return false;
+        }
+        if (RunMetalProjectionMap(input, output)) {
+          projectionBackendUsed = "Metal";
+          return true;
+        }
+        return false;
+#else
+        return false;
+#endif
+      };
+      const auto tryMetalVoronoiProjection = [&]() {
+#ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
+        if (!params.flagVoronoi) {
+          return false;
+        }
+        std::size_t cacheKey = 1469598103934665603ull;
+        HashCombine(cacheKey, static_cast<std::size_t>(input.width));
+        HashCombine(cacheKey, static_cast<std::size_t>(input.height));
+        HashCombine(cacheKey, static_cast<std::size_t>(input.depth));
+        HashFloat(cacheKey, input.dx);
+        HashFloat(cacheKey, input.dy);
+        HashFloat(cacheKey, input.dz);
+        HashFloat(cacheKey, input.xminLocal[0]);
+        HashFloat(cacheKey, input.xminLocal[1]);
+        HashFloat(cacheKey, input.xminLocal[2]);
+        for (int k = 0; k < 3; ++k) {
+          HashFloat(cacheKey, input.uAxis[k]);
+          HashFloat(cacheKey, input.vAxis[k]);
+          HashFloat(cacheKey, map.wAxis[k]);
+        }
+        HashCombine(cacheKey, input.particles.size());
+        for (const ProjectionGpuParticle& p : input.particles) {
+          HashFloat(cacheKey, p.pos[0]);
+          HashFloat(cacheKey, p.pos[1]);
+          HashFloat(cacheKey, p.pos[2]);
+        }
+
+        if (!metalVoronoiCache_.valid ||
+            metalVoronoiCache_.key != cacheKey) {
+          metalVoronoiCache_.valid = false;
+          metalVoronoiCache_.key = cacheKey;
+          projectionOk =
+            BuildMetalVoronoiLabelGrid(input, metalVoronoiCache_.grid);
+          metalVoronoiCache_.valid = projectionOk;
+        } else {
+          std::cout << "Metal Voronoi label cache hit: grid="
+                    << metalVoronoiCache_.grid.width << "x"
+                    << metalVoronoiCache_.grid.height << "x"
+                    << metalVoronoiCache_.grid.depth << std::endl;
+          projectionOk = true;
+        }
+        if (projectionOk) {
+          projectionOk =
+            IntegrateMetalVoronoiLabelGrid(input,
+                                           metalVoronoiCache_.grid,
+                                           output);
+          if (projectionOk) {
+            output.elapsedMs += metalVoronoiCache_.grid.elapsedMs;
+          }
+        }
+        if (projectionOk) {
+          projectionBackendUsed = "Metal";
+        }
+        return projectionOk;
+#else
+        return false;
+#endif
+      };
+      const auto tryVulkanProjection = [&]() {
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+        bool ok = false;
+        if (params.flagVoronoi) {
+          std::size_t cacheKey = 1469598103934665603ull;
+          HashCombine(cacheKey, static_cast<std::size_t>(input.width));
+          HashCombine(cacheKey, static_cast<std::size_t>(input.height));
+          HashCombine(cacheKey, static_cast<std::size_t>(input.depth));
+          HashFloat(cacheKey, input.dx);
+          HashFloat(cacheKey, input.dy);
+          HashFloat(cacheKey, input.dz);
+          HashFloat(cacheKey, input.xminLocal[0]);
+          HashFloat(cacheKey, input.xminLocal[1]);
+          HashFloat(cacheKey, input.xminLocal[2]);
+          for (int k = 0; k < 3; ++k) {
+            HashFloat(cacheKey, input.uAxis[k]);
+            HashFloat(cacheKey, input.vAxis[k]);
+            HashFloat(cacheKey, map.wAxis[k]);
+          }
+          HashCombine(cacheKey, input.particles.size());
+          for (const ProjectionGpuParticle& p : input.particles) {
+            HashFloat(cacheKey, p.pos[0]);
+            HashFloat(cacheKey, p.pos[1]);
+            HashFloat(cacheKey, p.pos[2]);
+          }
+
+          if (!vulkanVoronoiCache_.valid ||
+              vulkanVoronoiCache_.key != cacheKey) {
+            vulkanVoronoiCache_.valid = false;
+            vulkanVoronoiCache_.key = cacheKey;
+            ok = BuildVulkanVoronoiLabelGrid(input, vulkanVoronoiCache_.grid);
+            vulkanVoronoiCache_.valid = ok;
+          } else {
+            std::cout << "Vulkan Voronoi label cache hit: grid="
+                      << vulkanVoronoiCache_.grid.width << "x"
+                      << vulkanVoronoiCache_.grid.height << "x"
+                      << vulkanVoronoiCache_.grid.depth << std::endl;
+            ok = true;
+          }
+          if (ok) {
+            ok = IntegrateVulkanVoronoiLabelGrid(input,
+                                                 vulkanVoronoiCache_.grid,
+                                                 output);
+            if (ok) {
+              output.elapsedMs += vulkanVoronoiCache_.grid.elapsedMs;
+            }
+          }
+        } else {
+          ok = RunVulkanProjectionMap(input, output);
+        }
+        if (ok) {
+          projectionBackendUsed = "Vulkan";
+        }
+        return ok;
+#else
+        return false;
+#endif
+      };
+      const auto tryOpenGLProjection = [&]() {
+        const bool ok = params.flagVoronoi
+                          ? RunOpenGLVoronoiProjectionMap(input, output)
+                          : RunOpenGLProjectionMap(input, output);
+        if (ok) {
+          projectionBackendUsed = "OpenGL";
+        }
+        return ok;
+      };
+
+      if (requestedBackend == "metal") {
+        projectionOk = params.flagVoronoi ? tryMetalVoronoiProjection()
+                                          : tryMetalProjection();
+      } else if (requestedBackend == "vulkan") {
+        projectionOk = tryVulkanProjection();
+      } else if (requestedBackend == "opengl") {
+        projectionOk = tryOpenGLProjection();
+      } else {
+        projectionOk = params.flagVoronoi ? tryMetalVoronoiProjection()
+                                          : tryMetalProjection();
+        if (!projectionOk) {
+          projectionOk = tryVulkanProjection();
+        }
+        if (!projectionOk) {
+          projectionOk = tryOpenGLProjection();
+        }
+      }
+      if (projectionOk) {
+        for (size_t i = 0; i < map.values.size(); ++i) {
+          const double weight = output.weights[i];
+          map.weights[i] = weight;
+          map.values[i] = weight > 0.0 ? output.values[i] / weight : 0.0;
+        }
+        std::cout << projectionBackendUsed << " "
+                  << (params.flagVoronoi ? "Voronoi " : "")
+                  << "projection elapsed time: "
+                  << output.elapsedMs * 1.0e-3 << " sec\n";
+        projectedOnGpu = true;
+      } else {
+        std::cerr << "GPU projection failed; falling back to CPU projection."
+                  << std::endl;
+      }
+    }
+    if (!projectedOnGpu) {
+      if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
+      else             createProjectionMap(map, insideParticles);
+    }
   }
   else if (params.dataSource == DataSource::Stars) {
     bool normalize = (params.starQuantity != StarQuantity::Flux);
@@ -514,6 +849,50 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
 
 void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles)
 {  
+  std::size_t cacheKey = 1099511628211ull;
+  HashCombine(cacheKey, static_cast<std::size_t>(map.npixel_x));
+  HashCombine(cacheKey, static_cast<std::size_t>(map.npixel_y));
+  HashCombine(cacheKey, static_cast<std::size_t>(map.npixel_z));
+  HashFloat(cacheKey, map.dx);
+  HashFloat(cacheKey, map.dy);
+  HashFloat(cacheKey, map.dz);
+  HashFloat(cacheKey, map.xmin[0] - map.center.x);
+  HashFloat(cacheKey, map.xmin[1] - map.center.y);
+  HashFloat(cacheKey, map.xmin[2] - map.center.z);
+  for (int k = 0; k < 3; ++k) {
+    HashFloat(cacheKey, map.uAxis[k]);
+    HashFloat(cacheKey, map.vAxis[k]);
+    HashFloat(cacheKey, map.wAxis[k]);
+  }
+  HashCombine(cacheKey, particles.size());
+  for (const pos_val& p : particles) {
+    glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
+    HashFloat(cacheKey, glm::dot(diff, map.uAxis));
+    HashFloat(cacheKey, glm::dot(diff, map.vAxis));
+    HashFloat(cacheKey, glm::dot(diff, map.wAxis));
+  }
+
+  if (!cpuVoronoiCache_.valid || cpuVoronoiCache_.key != cacheKey) {
+    cpuVoronoiCache_.grid = buildCpuVoronoiLabelGrid(map, particles);
+    cpuVoronoiCache_.key = cacheKey;
+    cpuVoronoiCache_.valid = !cpuVoronoiCache_.grid.labels.empty();
+  } else {
+    std::cout << "CPU Voronoi label cache hit: grid="
+              << cpuVoronoiCache_.grid.width << "x"
+              << cpuVoronoiCache_.grid.height << "x"
+              << cpuVoronoiCache_.grid.depth << std::endl;
+  }
+
+  if (cpuVoronoiCache_.valid) {
+    integrateCpuVoronoiLabelGrid(map, particles, cpuVoronoiCache_.grid);
+  }
+}
+
+ProjectionMapGenerator::VoronoiLabelGrid
+ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
+  const ProjectionMap& map,
+  const std::vector<pos_val>& particles)
+{
   std::vector<pos_val> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
@@ -532,6 +911,15 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std
       
       filtered.push_back(sp);      
     }
+
+  VoronoiLabelGrid grid;
+  grid.width = map.npixel_x;
+  grid.height = map.npixel_y;
+  grid.depth = map.npixel_z;
+  grid.labels.assign(static_cast<size_t>(grid.width) *
+                       static_cast<size_t>(grid.height) *
+                       static_cast<size_t>(grid.depth),
+                     -1);
 
   float xmin_local[3];
   xmin_local[0] = map.xmin[0] - map.center.x;
@@ -575,22 +963,76 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std
 	  printf("no neighbours found. why this happen?\n");
 	  continue;
 	}
-
-	double hsml = cloud.particles[ret_index].hsml;
-	double vol = hsml * hsml * hsml;	
-	double weight = cloud.particles[ret_index].mass / vol;
-
-	if(map.flagDensityWeight == true)
-	  weight *= cloud.particles[ret_index].density;	    
-
-	map.values[j * map.npixel_x + i] += cloud.particles[ret_index].val * weight;
-	map.weights[j * map.npixel_x + i] += weight;
+        const size_t idx =
+          static_cast<size_t>(k) * static_cast<size_t>(map.npixel_x) *
+            static_cast<size_t>(map.npixel_y) +
+          static_cast<size_t>(j) * static_cast<size_t>(map.npixel_x) +
+          static_cast<size_t>(i);
+        grid.labels[idx] = static_cast<int>(ret_index);
       }
     }
   }
 
+  std::cout << "CPU Voronoi label grid built: grid="
+            << grid.width << "x" << grid.height << "x" << grid.depth
+            << " particles=" << filtered.size() << std::endl;
+  return grid;
+}
+
+void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
+  ProjectionMap& map,
+  const std::vector<pos_val>& particles,
+  const VoronoiLabelGrid& grid)
+{
+  std::vector<pos_val> filtered;
+  filtered.reserve(particles.size());
+  for (const pos_val& p : particles) {
+    pos_val sp;
+    glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
+    sp.pos[0] = glm::dot(diff, map.uAxis);
+    sp.pos[1] = glm::dot(diff, map.vAxis);
+    sp.pos[2] = glm::dot(diff, map.wAxis);
+    sp.val = p.val;
+    sp.density = p.density;
+    sp.hsml = p.hsml;
+    sp.mass = p.mass;
+    filtered.push_back(sp);
+  }
+
+#pragma omp parallel for collapse(2)
+  for (int j = 0; j < map.npixel_y; j++) {
+    for (int i = 0; i < map.npixel_x; i++) {
+      double value = 0.0;
+      double weightSum = 0.0;
+      for (int k = 0; k < map.npixel_z; k++) {
+        const size_t labelIdx =
+          static_cast<size_t>(k) * static_cast<size_t>(map.npixel_x) *
+            static_cast<size_t>(map.npixel_y) +
+          static_cast<size_t>(j) * static_cast<size_t>(map.npixel_x) +
+          static_cast<size_t>(i);
+        const int label = grid.labels[labelIdx];
+        if (label < 0 ||
+            static_cast<size_t>(label) >= filtered.size()) {
+          continue;
+        }
+        const pos_val& p = filtered[static_cast<size_t>(label)];
+        double hsml = p.hsml;
+        double vol = hsml * hsml * hsml;
+        double weight = p.mass / vol;
+        if (map.flagDensityWeight == true)
+          weight *= p.density;
+        value += p.val * weight;
+        weightSum += weight;
+      }
+      const size_t outIdx =
+        static_cast<size_t>(j) * static_cast<size_t>(map.npixel_x) +
+        static_cast<size_t>(i);
+      map.values[outIdx] += value;
+      map.weights[outIdx] += weightSum;
+    }
+  }
+
   for (size_t i = 0; i < map.values.size(); i++){
-    //printf("[%zu] value=%g weights=%g\n", i, map.values[i], map.weights[i]);
     if(map.weights[i])
       map.values[i] /= map.weights[i];       
   }

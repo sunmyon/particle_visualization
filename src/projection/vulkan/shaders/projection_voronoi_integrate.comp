@@ -1,0 +1,73 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+struct ProjectionParticle {
+  vec4 posVal;
+  vec4 densityMassHsmlPad;
+};
+
+layout(std430, binding = 0) readonly buffer Particles {
+  ProjectionParticle particles[];
+};
+
+layout(std140, binding = 1) uniform VoronoiUniforms {
+  uint width;
+  uint height;
+  uint depth;
+  uint particleCount;
+  float dx;
+  float dy;
+  float dz;
+  float xminX;
+  float xminY;
+  float xminZ;
+  uint densityWeight;
+  uint pad0;
+} uniforms;
+
+layout(std430, binding = 2) readonly buffer Labels {
+  int labels[];
+};
+
+layout(std430, binding = 3) writeonly buffer OutputValue {
+  float outputValue[];
+};
+
+layout(std430, binding = 4) writeonly buffer OutputWeight {
+  float outputWeight[];
+};
+
+void main()
+{
+  uint gid = gl_GlobalInvocationID.x;
+  uint pixelCount = uniforms.width * uniforms.height;
+  if (gid >= pixelCount) {
+    return;
+  }
+
+  float sumValue = 0.0;
+  float sumWeight = 0.0;
+  for (uint k = 0; k < uniforms.depth; ++k) {
+    uint voxelIndex = k * pixelCount + gid;
+    int label = labels[voxelIndex];
+    if (label < 0) {
+      continue;
+    }
+
+    ProjectionParticle p = particles[label];
+    float hsml = max(p.densityMassHsmlPad.z, 1.0e-30);
+    float weight = p.densityMassHsmlPad.y / max(hsml * hsml * hsml, 1.0e-30);
+    if (uniforms.densityWeight != 0u) {
+      weight *= p.densityMassHsmlPad.x;
+    }
+    if (weight > 0.0 && !isnan(weight) && !isinf(weight) &&
+        !isnan(p.posVal.w) && !isinf(p.posVal.w)) {
+      sumValue += p.posVal.w * weight;
+      sumWeight += weight;
+    }
+  }
+
+  outputValue[gid] = sumValue;
+  outputWeight[gid] = sumWeight;
+}

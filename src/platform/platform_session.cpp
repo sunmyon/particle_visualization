@@ -255,6 +255,15 @@ std::unique_ptr<RenderBackend> PlatformSession::createRenderBackend()
   return nullptr;
 }
 
+VulkanContext* PlatformSession::vulkanContext()
+{
+#ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  return dynamic_cast<VulkanContext*>(graphics_.get());
+#else
+  return nullptr;
+#endif
+}
+
 void PlatformSession::shutdown()
 {
   if (shutdownCalled_) {

@@ -119,12 +119,10 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
     edit.volume.selectedQuantity = requests.volume.selectedQuantity;
     edit.volume.minParticlesPerLeaf = requests.volume.minParticlesPerLeaf;
     edit.volume.maxTreeLevel = requests.volume.maxTreeLevel;
-    edit.volume.sigmaScale = requests.volume.sigmaScale;
     edit.volume.logScale = requests.volume.logScale;
     edit.volume.autoRange = requests.volume.autoRange;
     edit.volume.valueMin = requests.volume.valueMin;
     edit.volume.valueMax = requests.volume.valueMax;
-    edit.volume.balanceTree = requests.volume.balanceTree;
     edit.volume.cornerReconstructionMode =
       requests.volume.cornerReconstructionMode;
   }
@@ -374,12 +372,10 @@ void SubmitVolumeRenderingRequest(SettingsVolumeRenderingEdit& edit,
   request.selectedQuantity = edit.selectedQuantity;
   request.minParticlesPerLeaf = edit.minParticlesPerLeaf;
   request.maxTreeLevel = edit.maxTreeLevel;
-  request.sigmaScale = edit.sigmaScale;
   request.logScale = edit.logScale;
   request.autoRange = edit.autoRange;
   request.valueMin = edit.valueMin;
   request.valueMax = edit.valueMax;
-  request.balanceTree = edit.balanceTree;
   request.cornerReconstructionMode = edit.cornerReconstructionMode;
   request.buildRequested = edit.buildClicked;
   request.clearRequested = edit.clearClicked;

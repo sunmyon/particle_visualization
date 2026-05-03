@@ -28,7 +28,6 @@ Mesh IsoSurfaceGenerator::generateMC(IsoSurfaceParams params)
   AdaptiveVolumeTreeBuildParams treeParams;
   treeParams.minParticlesPerLeaf = params.minParticles;
   treeParams.maxDepth = params.maxDepth;
-  treeParams.balanceTree = false;
   treeParams.expandBoundsByHsml = false;
   treeParams.emptySigmaEpsilon = 0.0f;
   treeParams.cornerReconstructionMode =

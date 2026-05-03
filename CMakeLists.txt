@@ -445,9 +445,11 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI/clump_loaded_window.cpp
   ${SRC_DIR}/UI/clump_chain_window.cpp
   ${SRC_DIR}/projection/make_2D_projection_map.cpp
+  ${SRC_DIR}/projection/opengl_projection_backend.cpp
   ${SRC_DIR}/projection/projection_frame_execution.cpp
   ${SRC_DIR}/projection/projection_geometry.cpp
   ${SRC_DIR}/projection/projection_map_context.cpp
+  ${SRC_DIR}/projection/vulkan_projection_backend.cpp
   ${SRC_DIR}/image/image_canvas.cpp
   ${SRC_DIR}/image/image_io.cpp
   ${SRC_DIR}/image/bitmap_font_renderer.cpp
@@ -598,7 +600,10 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
       ${SRC_DIR}/render/vulkan/shaders/particle_cache.frag
       ${SRC_DIR}/render/vulkan/shaders/volume.vert
       ${SRC_DIR}/render/vulkan/shaders/volume.frag
-      ${SRC_DIR}/render/vulkan/shaders/volume_cache.frag)
+      ${SRC_DIR}/render/vulkan/shaders/volume_cache.frag
+      ${SRC_DIR}/projection/vulkan/shaders/projection_sph.comp
+      ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_jfa.comp
+      ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_integrate.comp)
     set(PARTICLE_VIS_VULKAN_SHADER_OUTPUTS)
     foreach(shader IN LISTS PARTICLE_VIS_VULKAN_SHADER_SOURCES)
       get_filename_component(shader_name "${shader}" NAME)
@@ -624,6 +629,22 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
       PARTICLE_VIS_VULKAN_SHADER_DIR="${PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR}")
     add_dependencies(${PROJECT_NAME} vulkan_shaders)
+    add_executable(vulkan_projection_smoke
+      ${CMAKE_SOURCE_DIR}/tools/vulkan_projection_smoke/main.cpp
+      ${SRC_DIR}/projection/vulkan_projection_backend.cpp)
+    target_include_directories(vulkan_projection_smoke PRIVATE ${SRC_DIR})
+    target_link_libraries(vulkan_projection_smoke PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(vulkan_projection_smoke PRIVATE
+      PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+      PARTICLE_VIS_VULKAN_SHADER_DIR="${PARTICLE_VIS_VULKAN_SHADER_OUTPUT_DIR}")
+    if(TARGET glm::glm)
+      target_link_libraries(vulkan_projection_smoke PRIVATE glm::glm)
+    elseif(GLM_INCLUDE_DIR)
+      target_include_directories(vulkan_projection_smoke PRIVATE ${GLM_INCLUDE_DIR})
+    elseif(GLM_PC_FOUND)
+      target_include_directories(vulkan_projection_smoke PRIVATE ${GLM_PC_INCLUDE_DIRS})
+    endif()
+    add_dependencies(vulkan_projection_smoke vulkan_shaders)
     message(STATUS "Vulkan render backend: ON")
   else()
     message(STATUS "Vulkan render backend: OFF (Vulkan package not found)")
@@ -636,6 +657,7 @@ if(PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
     target_sources(${PROJECT_NAME} PRIVATE
       ${SRC_DIR}/platform/metal_context.mm
       ${SRC_DIR}/render/metal/metal_render_backend.mm
+      ${SRC_DIR}/projection/metal_projection_backend.mm
       ${EXTERNAL_DIR}/imgui/backends/imgui_impl_metal.mm)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
@@ -1468,9 +1490,11 @@ if(PARTICLE_VIS_BUILD_BATCH)
     ${SRC_DIR}/interaction/interaction_utils.cpp
     ${SRC_DIR}/platform/shell_utils.cpp
     ${SRC_DIR}/projection/make_2D_projection_map.cpp
+    ${SRC_DIR}/projection/opengl_projection_backend.cpp
     ${SRC_DIR}/projection/projection_frame_execution.cpp
     ${SRC_DIR}/projection/projection_geometry.cpp
     ${SRC_DIR}/projection/projection_map_context.cpp
+    ${SRC_DIR}/projection/vulkan_projection_backend.cpp
     ${SRC_DIR}/render/colormap_defs.cpp
   )
 
@@ -1594,6 +1618,23 @@ if(PARTICLE_VIS_BUILD_VULKAN_PROBE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
     message(STATUS "Vulkan probe target: ON")
   else()
     message(STATUS "Vulkan probe target: OFF (Vulkan package not found)")
+  endif()
+endif()
+
+if(APPLE AND PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
+  add_executable(metal_projection_smoke
+    ${CMAKE_SOURCE_DIR}/tools/metal_projection_smoke/main.mm
+    ${SRC_DIR}/projection/metal_projection_backend.mm)
+  target_include_directories(metal_projection_smoke PRIVATE ${SRC_DIR})
+  target_link_libraries(metal_projection_smoke PRIVATE
+    "-framework Metal"
+    "-framework Foundation")
+  if(TARGET glm::glm)
+    target_link_libraries(metal_projection_smoke PRIVATE glm::glm)
+  elseif(GLM_INCLUDE_DIR)
+    target_include_directories(metal_projection_smoke PRIVATE ${GLM_INCLUDE_DIR})
+  elseif(GLM_PC_FOUND)
+    target_include_directories(metal_projection_smoke PRIVATE ${GLM_PC_INCLUDE_DIRS})
   endif()
 endif()
 

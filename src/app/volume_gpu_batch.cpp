@@ -143,7 +143,6 @@ void ApplyVolumeJson(const json& obj,
   if (obj.contains("autoRange")) request.autoRange = obj.at("autoRange").get<bool>();
   if (obj.contains("valueMin")) request.valueMin = obj.at("valueMin").get<float>();
   if (obj.contains("valueMax")) request.valueMax = obj.at("valueMax").get<float>();
-  if (obj.contains("balanceTree")) request.balanceTree = obj.at("balanceTree").get<bool>();
   request.cornerReconstructionMode =
     obj.value("cornerReconstructionMode", request.cornerReconstructionMode);
 
@@ -156,7 +155,7 @@ void ApplyVolumeJson(const json& obj,
   render.debugMode = obj.value("debugMode", 0);
   render.colorMode = obj.value("colorMode", 0);
   render.colormapIndex = obj.value("colormapIndex", render.colormapIndex);
-  render.tfSigmaScale = obj.value("sigmaScale", 1.0f);
+  render.tfSigmaScale = 1.0f;
   render.tfLogScale = request.logScale;
 }
 
@@ -190,8 +189,7 @@ void ConfigureTransferFunction(const json& obj,
       comp.logDomain = src.value("logDomain", request.logScale);
       render.tfComponents.push_back(comp);
       render.tfMaxSigma =
-        std::max(render.tfMaxSigma,
-                 render.tfSigmaScale * std::max(comp.amplitude, 0.0f));
+        std::max(render.tfMaxSigma, std::max(comp.amplitude, 0.0f));
     }
   }
 
@@ -213,7 +211,7 @@ void ConfigureTransferFunction(const json& obj,
       "gaussianAmplitude",
       sigmaAtDensity1 / std::max(weightAtDensity1, 1.0e-30f));
     render.tfComponents.push_back(comp);
-    render.tfMaxSigma = render.tfSigmaScale * std::max(comp.amplitude, 0.0f);
+    render.tfMaxSigma = std::max(comp.amplitude, 0.0f);
   }
 }
 
@@ -400,7 +398,6 @@ void WriteResultJson(const std::string& path,
       {"firstWidth", comp.width},
       {"firstAmplitude", comp.amplitude},
       {"firstLogDomain", comp.logDomain},
-      {"sigmaScale", render.tfSigmaScale},
       {"maxSigma", render.tfMaxSigma}
     };
   }

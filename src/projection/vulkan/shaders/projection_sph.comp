@@ -1,0 +1,123 @@
+#version 450
+#extension GL_EXT_shader_atomic_float : require
+
+layout(local_size_x = 256) in;
+
+struct ProjectionParticle {
+  vec4 posVal;
+  vec4 densityMassHsmlPad;
+};
+
+layout(std430, binding = 0) readonly buffer ParticleBuffer {
+  ProjectionParticle particles[];
+};
+
+layout(std140, binding = 1) uniform ProjectionUniforms {
+  uint width;
+  uint height;
+  uint densityWeight;
+  uint particleCount;
+  float dx;
+  float dy;
+  float xminX;
+  float xminY;
+  vec4 center;
+  vec4 uAxis;
+  vec4 vAxis;
+  float valueMin;
+  float valueMax;
+  float pad0;
+  float pad1;
+} uniforms;
+
+layout(std430, binding = 2) buffer ValueBuffer {
+  float accumValue[];
+};
+
+layout(std430, binding = 3) buffer WeightBuffer {
+  float accumWeight[];
+};
+
+float cubicKernel(float u)
+{
+  if (u < 0.5) {
+    return 1.0 - 6.0 * u * u + 6.0 * u * u * u;
+  }
+  if (u < 1.0) {
+    float oneMinusU = 1.0 - u;
+    return 2.0 * oneMinusU * oneMinusU * oneMinusU;
+  }
+  return 0.0;
+}
+
+bool finiteFloat(float v)
+{
+  return !isnan(v) && !isinf(v);
+}
+
+void main()
+{
+  uint gid = gl_GlobalInvocationID.x;
+  if (gid >= uniforms.particleCount) {
+    return;
+  }
+
+  ProjectionParticle p = particles[gid];
+  float hsml = p.densityMassHsmlPad.z;
+  float density = p.densityMassHsmlPad.x;
+  float mass = p.densityMassHsmlPad.y;
+  float value = p.posVal.w;
+  if (hsml <= 0.0 || !finiteFloat(hsml) || !finiteFloat(mass) ||
+      !finiteFloat(density) || !finiteFloat(value)) {
+    return;
+  }
+
+  vec3 diff = p.posVal.xyz - uniforms.center.xyz;
+  float cx = dot(diff, uniforms.uAxis.xyz);
+  float cy = dot(diff, uniforms.vAxis.xyz);
+  float hsml2 = hsml * hsml;
+
+  int jMin = max(0, int(floor((cy - hsml - uniforms.xminY) / uniforms.dy)));
+  int jMax = min(int(uniforms.height) - 1,
+                 int(ceil((cy + hsml - uniforms.xminY) / uniforms.dy)) - 1);
+  int iMin = max(0, int(floor((cx - hsml - uniforms.xminX) / uniforms.dx)));
+  int iMax = min(int(uniforms.width) - 1,
+                 int(ceil((cx + hsml - uniforms.xminX) / uniforms.dx)) - 1);
+  if (iMin > iMax || jMin > jMax) {
+    return;
+  }
+
+  float safeDensity = max(density, 1.0e-30);
+  float weightNorm = mass / max(hsml * hsml2 * safeDensity, 1.0e-30);
+  if (uniforms.densityWeight != 0u) {
+    weightNorm *= density;
+  }
+
+  for (int j = jMin; j <= jMax; ++j) {
+    float cellY = uniforms.xminY + (float(j) + 0.5) * uniforms.dy;
+    float dy = cellY - cy;
+    float dy2 = dy * dy;
+    if (dy2 > hsml2) {
+      continue;
+    }
+
+    for (int i = iMin; i <= iMax; ++i) {
+      float cellX = uniforms.xminX + (float(i) + 0.5) * uniforms.dx;
+      float dx = cellX - cx;
+      float r2 = dx * dx + dy2;
+      if (r2 > hsml2) {
+        continue;
+      }
+
+      float kernelRadius = sqrt(r2) / hsml;
+      float weight = cubicKernel(kernelRadius) * weightNorm;
+      if (!(weight > 0.0) || !finiteFloat(weight)) {
+        continue;
+      }
+
+      uint pixelIndex = uint(j) * uniforms.width + uint(i);
+      atomicAdd(accumWeight[pixelIndex], weight);
+      atomicAdd(accumValue[pixelIndex], value * weight);
+    }
+  }
+}

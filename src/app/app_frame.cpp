@@ -1,9 +1,14 @@
 #include "app/app_frame.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -35,6 +40,7 @@
 #include "UI/settings_ui.h"
 #include "UI/file_format_dialog.h"
 #include "FileIO/snapshot_io_service.h"
+#include "image/image_io.h"
 
 #include "render/render_frame.h"
 #include "render/render_viewport.h"
@@ -44,6 +50,54 @@
 #include "platform/window_context.h"
 
 #include "UI/clump_ui.h"
+
+namespace {
+
+std::filesystem::path MakeRenderSnapshotPath()
+{
+  std::filesystem::create_directories("render_snapshots");
+
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t t = std::chrono::system_clock::to_time_t(now);
+  std::tm tm{};
+#if defined(_WIN32)
+  localtime_s(&tm, &t);
+#else
+  localtime_r(&t, &tm);
+#endif
+
+  std::ostringstream name;
+  name << "render_"
+       << std::put_time(&tm, "%Y%m%d_%H%M%S")
+       << ".png";
+  return std::filesystem::path("render_snapshots") / name.str();
+}
+
+void SaveRequestedRenderSnapshot(SettingsActionRequestState& request,
+                                 const RenderedFrame& frame)
+{
+  if (!request.renderSnapshotRequested) {
+    return;
+  }
+  request.renderSnapshotRequested = false;
+
+  if (!frame.valid() || frame.format != RenderedFrameFormat::RGBA8) {
+    request.renderSnapshotMessage = "Failed.";
+    return;
+  }
+
+  const std::filesystem::path path = MakeRenderSnapshotPath();
+  if (!WritePngRgba(path.string().c_str(),
+                    frame.width,
+                    frame.height,
+                    frame.pixels)) {
+    request.renderSnapshotMessage = "Failed.";
+    return;
+  }
+  request.renderSnapshotMessage = "Saved.";
+}
+
+} // namespace
 
 static bool QuerySystemAvailableMemoryBytes(size_t& outBytes)
 {
@@ -585,6 +639,8 @@ void RunFrame(AppState& app,
               IFramePresenter& presenter)
 {
   BeginFrame(app.runtime, window);
+  const bool captureRenderSnapshot =
+    app.runtime.settings.request.renderSnapshotRequested;
 
   app.view.camera.stopCameraMode =
     app.ui.toolWindows.projectionMap.open &&
@@ -607,41 +663,45 @@ void RunFrame(AppState& app,
     (app.services.snapshotIO && app.services.snapshotIO->isLoading());
 
   const RenderViewport uiViewport = MakeRenderViewport(window);
-  DrawMainUI(app.view,
-	     app.runtime,
-	     app.derived.analysis,
-             app.data,
-             render,
-             uiViewport,
-	     app.ui.settings,
-             app.ui.windowCommands,
-             app.runtime.settings.fileNavigation.current);
+  if (!captureRenderSnapshot) {
+    DrawMainUI(app.view,
+	       app.runtime,
+	       app.derived.analysis,
+               app.data,
+               render,
+               uiViewport,
+	       app.ui.settings,
+               app.ui.windowCommands,
+               app.runtime.settings.fileNavigation.current);
 
-  ExecuteSettingsWindowOpenRequests(app.runtime.settings,
-                                    app.ui.toolWindows,
-                                    app.ui.windowCommands);
+    ExecuteSettingsWindowOpenRequests(app.runtime.settings,
+                                      app.ui.toolWindows,
+                                      app.ui.windowCommands);
 
-  ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
+    ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
+  }
 
   const bool supportsProjectionPreview =
     render.backend && render.backend->capabilities().projectionPreview;
-  if (supportsProjectionPreview) {
+  if (!captureRenderSnapshot && supportsProjectionPreview) {
     UpdateProjectionPreviewTexture(app.derived.analysis.projectionPreview, render);
   }
   const ProjectionPreviewUIState projectionPreviewUI =
     supportsProjectionPreview ? render.backend->makeProjectionPreviewUIState()
                               : ProjectionPreviewUIState{};
 
-  DrawToolWindows(app.runtime,
-                  app.view,
-                  app.data,
-                  app.ui.toolWindows,
-                  app.ui.windowCommands,
-                  app.derived.analysis.radial,
-                  app.derived.analysis.hist2D,
-                  projectionPreviewUI);
+  if (!captureRenderSnapshot) {
+    DrawToolWindows(app.runtime,
+                    app.view,
+                    app.data,
+                    app.ui.toolWindows,
+                    app.ui.windowCommands,
+                    app.derived.analysis.radial,
+                    app.derived.analysis.hist2D,
+                    projectionPreviewUI);
 
-  ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
+    ApplyWindowCommands(app.ui.windowCommands, app.ui.toolWindows);
+  }
 
   UpdateExternalInputs(app.services, *app.data.particles);
 
@@ -689,15 +749,41 @@ void RunFrame(AppState& app,
   AcknowledgeParticleRenderBuild(*app.data.particles, buildResult);
 
   const RenderViewport renderViewport = MakeRenderViewport(window);
+  RenderRuntimeState frameRender = app.runtime.render;
+  OverlayState frameOverlay = app.derived.overlay;
+  if (captureRenderSnapshot) {
+    const auto& snapshot = app.runtime.settings.request;
+    frameRender.colorbar.show =
+      frameRender.colorbar.show && snapshot.renderSnapshotShowColorbar;
+    frameRender.coordAxes.show =
+      frameRender.coordAxes.show && snapshot.renderSnapshotShowCoordAxes;
+    frameRender.crossGizmo.show =
+      frameRender.crossGizmo.show && snapshot.renderSnapshotShowCrossGizmo;
+    frameRender.particleLabels.show =
+      frameRender.particleLabels.show && snapshot.renderSnapshotShowParticleLabels;
+    if (!snapshot.renderSnapshotShowParticleLabels) {
+      frameOverlay.particleLabels.clear();
+    }
+    if (snapshot.renderSnapshotShowTimeLabel) {
+      ShowTime(app.runtime.settings.fileNavigation.current);
+    }
+  }
+
   UpdateRenderFrameInput(app.renderFrameInput,
                          renderViewport,
                          app.view.camera,
                          app.runtime.particleVisual,
-                         app.runtime.render,
-                         app.derived.overlay);
+                         frameRender,
+                         frameOverlay);
   PrepareRenderFrame(app.renderFrameInput, render);
 
   RenderScene(render);
 
-  presenter.present();
+  PresentOptions presentOptions;
+  presentOptions.readbackFrame = captureRenderSnapshot;
+  const PresentResult presentResult = presenter.present(presentOptions);
+  if (captureRenderSnapshot) {
+    SaveRequestedRenderSnapshot(app.runtime.settings.request,
+                                presentResult.frame);
+  }
 }

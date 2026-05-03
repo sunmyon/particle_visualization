@@ -93,12 +93,10 @@ struct SettingsVolumeRenderingEdit {
   QuantityId selectedQuantity = QuantityId::Density;
   int minParticlesPerLeaf = 64;
   int maxTreeLevel = 16;
-  float sigmaScale = 1.0f;
   bool logScale = true;
   bool autoRange = true;
   float valueMin = 1.0e-6f;
   float valueMax = 1.0f;
-  bool balanceTree = false;
   int cornerReconstructionMode = 1;
   bool buildClicked = false;
   bool clearClicked = false;

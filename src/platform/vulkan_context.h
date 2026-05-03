@@ -43,6 +43,10 @@ public:
   std::uint32_t minImageCount() const { return minImageCount_; }
   std::uint32_t imageCount() const;
   VkExtent2D swapchainExtent() const;
+  bool shaderBufferFloat32AtomicAdd() const
+  {
+    return shaderBufferFloat32AtomicAdd_;
+  }
 
 private:
   bool createInstance();
@@ -73,6 +77,7 @@ private:
   std::uint32_t queueFamily_ = UINT32_MAX;
   VkQueue queue_ = VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
+  bool shaderBufferFloat32AtomicAdd_ = false;
   ImGui_ImplVulkanH_Window* windowData_ = nullptr;
   std::uint32_t minImageCount_ = 2;
   bool swapChainRebuild_ = false;

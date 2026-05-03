@@ -19,6 +19,7 @@ struct ProjectionMapParams {
 
   bool flagDensityWeight = true;
   bool flagVoronoi = true;
+  bool useGpuProjection = false;
   int step_z = 200;
 
   bool flagLogScale = true;
