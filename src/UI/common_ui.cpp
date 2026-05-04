@@ -28,6 +28,7 @@ void ShowTime(const SnapshotCurrentState& current){
     } else {
       ImGui::Text("time: %.6g", current.loadedTime);
     }
+    ImGui::Text("particles: %zu", current.loadedParticleCount);
     ImGui::End();
 }
 

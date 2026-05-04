@@ -158,6 +158,9 @@ void SubmitTopParticleFilterRequest(const TopParticlesUIState& state,
   for (int i = 0; i < 6; ++i) {
     request.selectedTypes[i] = state.selectType[i];
   }
+  request.topCount = state.m;
+  request.sortQuantity = state.sortQuantity;
+  request.sortDescending = state.sortDescending;
   request.refreshFilteredRequested = true;
 }
 
@@ -175,6 +178,9 @@ void SubmitTopParticleHistogramRequest(const TopParticlesUIState& state,
   request.histogramRange2Max = state.range2_max;
   request.histogramUseCameraCenter = state.useCameraCenter;
   request.histogramCameraRadius = state.cameraRadius;
+  for (int i = 0; i < 6; ++i) {
+    request.selectedTypes[i] = state.selectType[i];
+  }
   request.computeHistogramRequested = true;
 }
 
@@ -1310,33 +1316,139 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   ImGui::SameLine();
   if (ImGui::Checkbox("Type 5", &state.selectType[5])) flag_pushed = true;
 
-  ImGui::InputInt("Number of Particles", &state.m);
+  ImGui::TextUnformatted("Top");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(78.0f);
+  const bool countChanged = ImGui::InputInt("##top_particle_count", &state.m);
   if (state.m < 1) state.m = 1;
 
+  bool sortChanged = false;
+  const auto& catalog = quantity.catalog;
+  ImGui::SameLine();
+  ImGui::TextUnformatted("Sort");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(145.0f);
+  if (ImGui::BeginCombo("##top_particle_sort", QuantityLabel(state.sortQuantity))) {
+    for (int i = 0; i < catalog.nUIQ; ++i) {
+      const QuantityId q = catalog.uiQ[i];
+      const bool selected = (q == state.sortQuantity);
+      if (ImGui::Selectable(QuantityLabel(q), selected)) {
+        state.sortQuantity = q;
+        sortChanged = true;
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine();
+  sortChanged |= ImGui::Checkbox("Desc", &state.sortDescending);
+
   if (flag_pushed) {
+    SubmitTopParticleFilterRequest(state, request);
+  }
+  if (sortChanged || countChanged) {
     SubmitTopParticleFilterRequest(state, request);
   }
 
   int count = std::min(state.m, (int)result.filtered.size());
 
-  ImGui::Text("Type %d : Showing top %d particles sorted by mass", state.particleType, count);
-  for (int i = 0; i < count; i++) {
-    const int64_t particleId =
-      (static_cast<size_t>(i) < result.filteredIds.size()) ? result.filteredIds[i] : -1;
-    char label[512];
-    std::snprintf(label, sizeof(label),
-                  "ID %lld: mass = %.3g, pos = (%.2g, %.2g, %.2g) vel = (%.2g, %.2g, %.2g), radius = %g rho=%g t=%g",
-                  static_cast<long long>(particleId),
-                  quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass),
-                  result.filtered[i].position[0], result.filtered[i].position[1], result.filtered[i].position[2],
-                  result.filtered[i].vel[0], result.filtered[i].vel[1], result.filtered[i].vel[2],
-                  result.filtered[i].supportRadius,
-                  result.filtered[i].density, result.filtered[i].temperature);
+  ImGui::Text("Selected candidates: %zu; showing top %d sorted by %s %s",
+              result.filteredCandidateCount,
+              count,
+              QuantityLabel(result.filteredSortQuantity),
+              result.filteredSortDescending ? "desc" : "asc");
+  const QuantityId sortQ = result.filteredSortQuantity;
+  const bool showMassColumn = sortQ != QuantityId::Mass;
+  const bool showDensityColumn = sortQ != QuantityId::Density;
+  const bool showTempColumn = sortQ != QuantityId::Temperature;
+  int topParticleColumnCount = 5;
+  if (showMassColumn) ++topParticleColumnCount;
+  if (showDensityColumn) ++topParticleColumnCount;
+  if (showTempColumn) ++topParticleColumnCount;
 
-    if (ImGui::Selectable(label)) {
-      request.centerParticleId = particleId;
-      request.centerParticleRequested = true;
+  if (ImGui::BeginTable("top_particles_table",
+                        topParticleColumnCount,
+                        ImGuiTableFlags_BordersInnerV |
+                        ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_Resizable |
+                        ImGuiTableFlags_SizingFixedFit |
+                        ImGuiTableFlags_ScrollX)) {
+    ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 86.0f);
+    ImGui::TableSetupColumn(QuantityLabel(sortQ),
+                            ImGuiTableColumnFlags_WidthFixed,
+                            88.0f);
+    if (showMassColumn) {
+      ImGui::TableSetupColumn("Mass", ImGuiTableColumnFlags_WidthFixed, 70.0f);
     }
+    if (showDensityColumn) {
+      ImGui::TableSetupColumn("Density", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+    }
+    if (showTempColumn) {
+      ImGui::TableSetupColumn("Temp", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+    }
+    ImGui::TableSetupColumn("Pos", ImGuiTableColumnFlags_WidthFixed, 230.0f);
+    ImGui::TableSetupColumn("Vel", ImGuiTableColumnFlags_WidthFixed, 230.0f);
+    ImGui::TableSetupColumn("Copy", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < count; i++) {
+      const int64_t particleId =
+        (static_cast<size_t>(i) < result.filteredIds.size()) ? result.filteredIds[i] : -1;
+      const float sortValue =
+        (static_cast<size_t>(i) < result.filteredSortValues.size())
+          ? result.filteredSortValues[i]
+          : 0.0f;
+      const double displaySortValue =
+        quantity.toDisplay(result.filteredSortQuantity, sortValue);
+
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+
+      ImGui::TableSetColumnIndex(0);
+      char idLabel[64];
+      std::snprintf(idLabel, sizeof(idLabel), "%lld",
+                    static_cast<long long>(particleId));
+      if (ImGui::Selectable(idLabel)) {
+        request.centerParticleId = particleId;
+        request.centerParticleRequested = true;
+      }
+
+      ImGui::TableSetColumnIndex(1);
+      ImGui::Text("%.4g", displaySortValue);
+
+      int column = 2;
+      if (showMassColumn) {
+        ImGui::TableSetColumnIndex(column++);
+        ImGui::Text("%.4g", quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass));
+      }
+      if (showDensityColumn) {
+        ImGui::TableSetColumnIndex(column++);
+        ImGui::Text("%.4g", result.filtered[i].density);
+      }
+      if (showTempColumn) {
+        ImGui::TableSetColumnIndex(column++);
+        ImGui::Text("%.4g", result.filtered[i].temperature);
+      }
+
+      ImGui::TableSetColumnIndex(column++);
+      ImGui::Text("(%.3g, %.3g, %.3g)",
+                  result.filtered[i].position[0],
+                  result.filtered[i].position[1],
+                  result.filtered[i].position[2]);
+
+      ImGui::TableSetColumnIndex(column++);
+      ImGui::Text("(%.3g, %.3g, %.3g)",
+                  result.filtered[i].vel[0],
+                  result.filtered[i].vel[1],
+                  result.filtered[i].vel[2]);
+
+      ImGui::TableSetColumnIndex(column++);
+      if (ImGui::SmallButton("Copy")) {
+        ImGui::SetClipboardText(idLabel);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
   }
 
   ImGui::Text("Plot 1d histogram");

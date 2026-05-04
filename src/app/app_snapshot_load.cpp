@@ -167,6 +167,8 @@ static void GenerateTestDataSnapshot(AppDataState& data,
                                    runtime.settings.normalization,
 				   runtime.quantity);
   UpdateSnapshotCurrentState(header, runtime.quantity.units, runtime.settings.fileNavigation.current);
+  runtime.settings.fileNavigation.current.loadedParticleCount =
+    data.particles->simulationBlock.size();
 }
 
 static void MarkSnapshotLoadFailure(SnapshotLoadRuntimeState& load,
@@ -282,6 +284,7 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
                                      runtime.settings.normalization,
 				     runtime.quantity);
     UpdateSnapshotCurrentState(loaded.header, runtime.quantity.units, fileNav.current);
+    fileNav.current.loadedParticleCount = data.particles->simulationBlock.size();
   }
 
   if (data.particles) {

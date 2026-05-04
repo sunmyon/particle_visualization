@@ -7,6 +7,7 @@
 #include <limits>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -46,6 +47,14 @@ SimulationElement* FindParticleById(SimulationDataset& particles, int64_t partic
   return &particles.simulationBlock.particles[index];
 }
 
+float TopParticleSortValue(const SimulationBlock& block,
+                           const SimulationElement& p,
+                           size_t index,
+                           QuantityId quantity)
+{
+  return getScalarValue(block, p, static_cast<int>(index), quantity);
+}
+
 } // namespace
 
 void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
@@ -63,6 +72,12 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   };
 
   if (post.refreshTopParticles) {
+    for (int i = 0; i < 6; ++i) {
+      req.selectedTypes[i] = ui.selectType[i];
+    }
+    req.topCount = ui.m;
+    req.sortQuantity = ui.sortQuantity;
+    req.sortDescending = ui.sortDescending;
     req.refreshHistoryRequested = true;
     req.refreshFilteredRequested = true;
     post.refreshTopParticles = false;
@@ -156,32 +171,64 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   if (req.refreshFilteredRequested) {
     result.filtered.clear();
     result.filteredIds.clear();
+    result.filteredSortValues.clear();
+    result.filteredCandidateCount = 0;
+    result.filteredSortQuantity = req.sortQuantity;
+    result.filteredSortDescending = req.sortDescending;
+
+    const size_t topCount = std::min(
+      static_cast<size_t>(std::max(1, req.topCount)),
+      particles.simulationBlock.particles.size());
+    struct TopCandidate {
+      size_t index = 0;
+      int64_t id = -1;
+      float value = 0.0f;
+    };
+    auto better = [&](const TopCandidate& a, const TopCandidate& b) {
+      if (a.value == b.value) {
+        return a.id < b.id;
+      }
+      return req.sortDescending ? (a.value > b.value) : (a.value < b.value);
+    };
+    std::vector<TopCandidate> heap;
+    heap.reserve(topCount);
+
     for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
       const SimulationElement& p = particles.simulationBlock.particles[i];
       if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) {
         continue;
       }
       if (p.type >= 0 && p.type < 6 && req.selectedTypes[p.type]) {
-        result.filtered.push_back(p);
-        result.filteredIds.push_back(particles.simulationBlock.particleIdSigned(i));
+        const float value =
+          TopParticleSortValue(particles.simulationBlock, p, i, req.sortQuantity);
+        if (!std::isfinite(value)) {
+          continue;
+        }
+        ++result.filteredCandidateCount;
+        TopCandidate cand;
+        cand.index = i;
+        cand.id = particles.simulationBlock.particleIdSigned(i);
+        cand.value = value;
+        if (heap.size() < topCount) {
+          heap.push_back(cand);
+          std::push_heap(heap.begin(), heap.end(), better);
+        } else if (better(cand, heap.front())) {
+          std::pop_heap(heap.begin(), heap.end(), better);
+          heap.back() = cand;
+          std::push_heap(heap.begin(), heap.end(), better);
+        }
       }
     }
 
-    std::vector<size_t> order(result.filtered.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-      return result.filtered[a].mass > result.filtered[b].mass;
-    });
-    std::vector<SimulationElement> sorted;
-    std::vector<int64_t> sortedIds;
-    sorted.reserve(result.filtered.size());
-    sortedIds.reserve(result.filteredIds.size());
-    for (size_t idx : order) {
-      sorted.push_back(result.filtered[idx]);
-      sortedIds.push_back(result.filteredIds[idx]);
+    std::sort(heap.begin(), heap.end(), better);
+    result.filtered.reserve(heap.size());
+    result.filteredIds.reserve(heap.size());
+    result.filteredSortValues.reserve(heap.size());
+    for (const TopCandidate& cand : heap) {
+      result.filtered.push_back(particles.simulationBlock.particles[cand.index]);
+      result.filteredIds.push_back(cand.id);
+      result.filteredSortValues.push_back(cand.value);
     }
-    result.filtered.swap(sorted);
-    result.filteredIds.swap(sortedIds);
 
     req.refreshFilteredRequested = false;
   }
@@ -245,7 +292,10 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   float valueMax = std::numeric_limits<float>::lowest();
   bool hasValue = false;
 
-  for (const auto& p : result.filtered) {
+  for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+    const auto& p = particles.simulationBlock.particles[i];
+    if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) continue;
+    if (!(p.type >= 0 && p.type < 6 && req.selectedTypes[p.type])) continue;
     if (!includeParticle(p)) continue;
 
     float value = particleValue(p);
@@ -283,7 +333,10 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     result.binSize = 1.0f;
   }
 
-  for (const auto& p : result.filtered) {
+  for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+    const auto& p = particles.simulationBlock.particles[i];
+    if (i < particles.flag_mask.size() && particles.flag_mask[i] != 0) continue;
+    if (!(p.type >= 0 && p.type < 6 && req.selectedTypes[p.type])) continue;
     if (!includeParticle(p)) continue;
 
     float value = particleValue(p);

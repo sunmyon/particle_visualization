@@ -21,6 +21,15 @@ public:
     return cfg_.typeMode[t] == ParticleMaskConfig::TypeMode::On_ThinOK;
   }
 
+  bool typePassesAll(int t) const {
+    if (!typeEnabled(t)) return false;
+    if (cfg_.enableSphere) return false;
+    if (cfg_.enableMaxParticles && id_stride_ > 1 && typeThinOK(t)) {
+      return false;
+    }
+    return true;
+  }
+
   // Determine the stride from the number of thinning candidates.
   void prepare(size_t thinCandidates){
     id_stride_ = 1;

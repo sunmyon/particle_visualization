@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -422,6 +423,7 @@ struct SnapshotInputState {
 
 struct SnapshotCurrentState {
   int loadedFileIndex = -1;
+  size_t loadedParticleCount = 0;
   double loadedTime = 0.0;
   double loadedScaleFactor = 1.0;
   double loadedRedshift = 0.0;

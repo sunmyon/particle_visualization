@@ -67,13 +67,6 @@ private:
     bool needSynth = false;
   };
 
-  struct TempSynthBuffers {
-    std::vector<double> u;
-    std::vector<double> e;
-    std::vector<double> h2;
-    std::vector<double> g;
-  };
-
   struct OpenedField {
     FieldLayout* fl = nullptr;
     H5::DataSet ds;
@@ -81,6 +74,14 @@ private:
     int comps = 0;
     size_t bpp = 0;
     std::vector<uint8_t> buf;
+  };
+
+  struct TempSynthBuffers {
+    const OpenedField* u = nullptr;
+    const OpenedField* e = nullptr;
+    const OpenedField* h2 = nullptr;
+    const OpenedField* g = nullptr;
+    bool synthesized = false;
   };
 
   struct ChunkContext {
@@ -94,6 +95,7 @@ private:
     size_t nwrite = 0;
 
     bool masked = false;
+    bool contiguousKeep = false;
     const std::vector<uint32_t>* keepPtr = nullptr;
   };
 
@@ -103,7 +105,7 @@ private:
 
   TempSynthRequest build_temp_synth_request_(const BinaryReadLayout& layout) const;
   TempSynthAvailability probe_temp_synth_availability_(int ptype,
-						       const BinaryReadLayout& layout,
+						       const std::vector<OpenedField>& opened,
 						       const TempSynthRequest& req) const;
 
   bool build_opened_fields_for_ptype_(int ptype,
@@ -128,6 +130,11 @@ private:
 				     const ChunkContext& ctx,
 				     const TempSynthAvailability& tempAvail,
 				     const TempSynthBuffers& tmp);
+  bool dispatch_h2_and_temperature_chunk_(SimulationBlock& out,
+                                          const OpenedField& of,
+                                          const ChunkContext& ctx,
+                                          const TempSynthAvailability& tempAvail,
+                                          TempSynthBuffers& tmp);
 
   void apply_density_scale_(SimulationBlock& out);
   void apply_bfield_scale_(SimulationBlock& out);
@@ -135,6 +142,9 @@ private:
 					   int ptype,
 					   size_t outBase,
 					   size_t nwrite);
+  void apply_density_scale_chunk_(SimulationBlock& out,
+                                  size_t outBase,
+                                  size_t nwrite) const;
 
   bool read_coords_chunk_(int ptype, size_t localStart, size_t n,
 			  std::vector<uint8_t>& buf);

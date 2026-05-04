@@ -5,6 +5,20 @@
 #include "app/state/normalization_config.h"
 #include "data/quantity_catalog_builder.h"
 
+#include <chrono>
+#include <cstdio>
+
+namespace {
+using DatasetProfileClock = std::chrono::steady_clock;
+
+double DatasetElapsedMs(DatasetProfileClock::time_point start)
+{
+  return std::chrono::duration<double, std::milli>(
+           DatasetProfileClock::now() - start)
+    .count();
+}
+}
+
 void SimulationDataset::rescalePositions(NormalizationContext& ctx){
   simulationBlock.worldToRenderScale = ctx.toNormalizedScale();
   particlesDirty = true;  // Mark the global dirty flag.
@@ -12,16 +26,25 @@ void SimulationDataset::rescalePositions(NormalizationContext& ctx){
 
 bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, SimulationBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity) {
   TIME_FUNCTION();
+  const auto totalStart = DatasetProfileClock::now();
 
+  const auto moveStart = DatasetProfileClock::now();
   bool hadOld = !simulationBlock.particles.empty();
   if (oldBlock && hadOld) {
     *oldBlock = std::move(simulationBlock);
   }
   simulationBlock = std::move(newBlock);
+  const double moveMs = DatasetElapsedMs(moveStart);
 
+  const auto catalogStart = DatasetProfileClock::now();
   BuildQuantityCatalog(simulationBlock, quantity.catalog);
-  auto stats = simulationBlock.rebuild(ctx.desiredMax, quantity.catalog);
+  const double catalogMs = DatasetElapsedMs(catalogStart);
 
+  const auto rebuildStart = DatasetProfileClock::now();
+  auto stats = simulationBlock.rebuild(ctx.desiredMax, quantity.catalog);
+  const double rebuildMs = DatasetElapsedMs(rebuildStart);
+
+  const auto rangeStart = DatasetProfileClock::now();
   for (int q = 0; q < kMaxQ; ++q) {
     for (int t = 0; t < kNumTypes; ++t) {
       quantity.range.valueMin[q][t] = 0.0f;
@@ -42,7 +65,9 @@ bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, Simulatio
 
   quantity.range.originalMax = stats.originalMax;
   ctx.originalMax = stats.originalMax;
+  const double rangeMs = DatasetElapsedMs(rangeStart);
 
+  const auto unitsStart = DatasetProfileClock::now();
   if (header.flag_hdf5) {
     quantity.units.length_cm = header.UnitLength_in_cm;
     quantity.units.mass_g = header.UnitMass_in_g;
@@ -51,13 +76,30 @@ bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, Simulatio
     quantity.units.useComovingCoordinate = header.flag_comoving;
     quantity.units.updateDerived();
   }
+  const double unitsMs = DatasetElapsedMs(unitsStart);
 
+  const auto flagsStart = DatasetProfileClock::now();
   flag_mask.resize(simulationBlock.particles.size(), 0);
   flag_stress.assign(simulationBlock.particles.size(), 0);
+  const double flagsMs = DatasetElapsedMs(flagsStart);
   
   simulationBlock_index = 0; // Or remove this later.
   particlesDirty = true;
   flagParticleIndexDirty = true;
+
+  std::fprintf(stderr,
+               "[Dataset] setSimulationBlock n=%zu hadOld=%s move=%.3f ms "
+               "catalog=%.3f ms rebuild=%.3f ms range=%.3f ms units=%.3f ms "
+               "flags=%.3f ms total=%.3f ms\n",
+               simulationBlock.particles.size(),
+               hadOld ? "yes" : "no",
+               moveMs,
+               catalogMs,
+               rebuildMs,
+               rangeMs,
+               unitsMs,
+               flagsMs,
+               DatasetElapsedMs(totalStart));
 
   return hadOld;
 }

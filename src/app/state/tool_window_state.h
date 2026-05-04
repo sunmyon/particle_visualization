@@ -84,6 +84,8 @@ struct TopParticlesUIState {
 
   int particleType = 3;
   int m = 10;
+  QuantityId sortQuantity = QuantityId::Mass;
+  bool sortDescending = true;
 
   int historySel = -1;
 
@@ -135,6 +137,10 @@ struct TopParticlesRequestState {
   float histogramRange2Max = 1.0f;
   bool histogramUseCameraCenter = false;
   float histogramCameraRadius = 10.0f;
+
+  int topCount = 10;
+  QuantityId sortQuantity = QuantityId::Mass;
+  bool sortDescending = true;
 };
 
 struct TopParticlesResultState {
@@ -147,6 +153,10 @@ struct TopParticlesResultState {
   std::deque<int64_t> historyIds;
   std::vector<SimulationElement> filtered;
   std::vector<int64_t> filteredIds;
+  std::vector<float> filteredSortValues;
+  size_t filteredCandidateCount = 0;
+  QuantityId filteredSortQuantity = QuantityId::Mass;
+  bool filteredSortDescending = true;
 
   bool histogramComputed = false;
   uint64_t histogramVersion = 0;

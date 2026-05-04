@@ -1,8 +1,10 @@
 #ifdef HAVE_HDF5
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
@@ -13,8 +15,49 @@
 #include "core/physics_constants.h"
 
 namespace {
+  using Hdf5ProfileClock = std::chrono::steady_clock;
+
+  double elapsed_ms(Hdf5ProfileClock::time_point start)
+  {
+    return std::chrono::duration<double, std::milli>(
+             Hdf5ProfileClock::now() - start)
+      .count();
+  }
+
   std::string partPath(int ptype, const std::string& dsName) {
     return "/PartType" + std::to_string(ptype) + "/" + dsName;
+  }
+
+  struct Hdf5FieldReadStat {
+    std::string fieldName;
+    std::string sourceName;
+    size_t chunks = 0;
+    size_t elements = 0;
+    size_t bytes = 0;
+    double readMs = 0.0;
+    double dispatchMs = 0.0;
+    double tempSynthInputMs = 0.0;
+  };
+
+  const char* yes_no(bool value)
+  {
+    return value ? "yes" : "no";
+  }
+
+  float fast_cbrt_positive_float(float x)
+  {
+    if (!(x > 0.0f)) return 0.0f;
+    if (!std::isfinite(x)) return x;
+
+    uint32_t bits = 0;
+    std::memcpy(&bits, &x, sizeof(bits));
+    bits = bits / 3u + 709921077u;
+
+    float y = 0.0f;
+    std::memcpy(&y, &bits, sizeof(y));
+    y = (2.0f * y + x / (y * y)) * (1.0f / 3.0f);
+    y = (2.0f * y + x / (y * y)) * (1.0f / 3.0f);
+    return y;
   }
 
   size_t inferCountFromDataset(H5::H5File& f, int ptype, const std::string& dsName) {
@@ -131,37 +174,63 @@ bool HDF5Reader::readRange(SimulationBlock& out,
 			   const std::vector<FieldSpec>& fields,
 			   ParticleMask* mask)
 {
+  const auto totalStart = Hdf5ProfileClock::now();
   if (begin + count > npart_) return false;
 
   BinaryReadLayout layout = buildBinaryReadLayout(fields, true);
   const bool masked = (mask != nullptr) && mask->active();
 
+  double maskMs = 0.0;
   size_t totalKept = count;
   if (masked) {
+    const auto t0 = Hdf5ProfileClock::now();
     if (!prepareMaskedOutput_(begin, count, *mask, totalKept))
       return false;
+    maskMs = elapsed_ms(t0);
   }
 
   const size_t globalBegin = begin;
   const size_t globalEnd   = begin + count;
 
+  const auto layoutStart = Hdf5ProfileClock::now();
   if (!finalize_layout_from_hdf5_(layout))
     return false;
+  const double layoutMs = elapsed_ms(layoutStart);
 
+  const auto allocStart = Hdf5ProfileClock::now();
   allocate_output_from_layout_(out, layout, totalKept);
+  double allocMs = elapsed_ms(allocStart);
 
   const TempSynthRequest tempReq = build_temp_synth_request_(layout);
 
   size_t outWriteCursor = 0;
+  double totalProbeMs = 0.0;
+  double totalOpenDatasetMs = 0.0;
+  double totalReadMs = 0.0;
+  double totalDispatchMs = 0.0;
+  double totalTempInputMs = 0.0;
+  double totalTempSynthMs = 0.0;
+  size_t totalChunks = 0;
+  size_t totalReadBytes = 0;
+
+  std::fprintf(stderr,
+               "[HDF5] readRange begin=%zu requested=%zu masked=%s kept=%zu\n",
+               begin,
+               count,
+               yes_no(masked),
+               totalKept);
 
   for (int ptype = 0; ptype < 6; ++ptype) {
     if (flag_skip_DM_ && ptype == 1) continue;
+    if (masked && mask && !mask->typeEnabled(ptype)) {
+      std::fprintf(stderr,
+                   "[HDF5] ptype=%d source=%zu count=%zu written=0 fields=0 chunks=0 skippedByMask=yes\n",
+                   ptype,
+                   count_[ptype],
+                   count_[ptype]);
+      continue;
+    }
 
-    const TempSynthAvailability tempAvail =
-      probe_temp_synth_availability_(ptype, layout, tempReq);
-    
-    const bool needSynth = tempAvail.needSynth;
-    
     const size_t pBeg = IndexStart_[ptype];
     const size_t pEnd = IndexStart_[ptype + 1];
     if (pEnd <= globalBegin || globalEnd <= pBeg) continue;
@@ -176,9 +245,31 @@ bool HDF5Reader::readRange(SimulationBlock& out,
     size_t done = 0;
     std::vector<uint32_t> keep;
 
+    const auto openStart = Hdf5ProfileClock::now();
     std::vector<OpenedField> opened;
     if (!build_opened_fields_for_ptype_(ptype, layout, opened))
       return false;
+    const double openMs = elapsed_ms(openStart);
+    totalOpenDatasetMs += openMs;
+
+    const auto probeStart = Hdf5ProfileClock::now();
+    const TempSynthAvailability tempAvail =
+      probe_temp_synth_availability_(ptype, opened, tempReq);
+    const double probeMs = elapsed_ms(probeStart);
+    totalProbeMs += probeMs;
+
+    const bool needSynth = tempAvail.needSynth;
+
+    std::vector<Hdf5FieldReadStat> fieldStats(opened.size());
+    for (size_t i = 0; i < opened.size(); ++i) {
+      fieldStats[i].fieldName = GetFieldKeyDisplayName(opened[i].fl->ftype);
+      fieldStats[i].sourceName = opened[i].fl->spec.sourceName;
+    }
+
+    double ptypePrepareMs = 0.0;
+    double ptypeTempSynthMs = 0.0;
+    size_t ptypeChunks = 0;
+    size_t ptypeWritten = 0;
     
     while (done < subCount) {      
       const size_t n = std::min(blockSize_, subCount - done);
@@ -191,13 +282,18 @@ bool HDF5Reader::readRange(SimulationBlock& out,
       ctx.outStart   = outStart;
       ctx.masked     = masked;
 
+      const auto prepareStart = Hdf5ProfileClock::now();
       if (!prepare_chunk_context_(ctx, mask, keep, outWriteCursor))
 	return false;
+      ptypePrepareMs += elapsed_ms(prepareStart);
 
       if (ctx.nwrite == 0) {
 	done += n;
 	continue;
       }
+      ++ptypeChunks;
+      ++totalChunks;
+      ptypeWritten += ctx.nwrite;
 
       initialize_particle_defaults_chunk_(out, ptype, ctx.outBase, ctx.nwrite);
 
@@ -205,32 +301,107 @@ bool HDF5Reader::readRange(SimulationBlock& out,
       if (needSynth)
 	init_temp_synth_buffers_(tmp, tempAvail, ctx.nwrite);
       
-      for (auto& of : opened) {
+      for (size_t fieldIndex = 0; fieldIndex < opened.size(); ++fieldIndex) {
+        auto& of = opened[fieldIndex];
+        Hdf5FieldReadStat& stat = fieldStats[fieldIndex];
         of.buf.resize(n * of.bpp);
         const H5::PredType memType = h5_memtype_from_source(of.fl->spec.type);
 
+        const auto readStart = Hdf5ProfileClock::now();
         HDF5Utils::readHyperslabBytes(of.ds, memType,
 				      (hsize_t)(ctx.localStart + ctx.done),
 				      (hsize_t)ctx.nread,
 				      of.comps, of.buf, of.elemSz);
+	const double readMs = elapsed_ms(readStart);
+        const size_t readBytes = ctx.nread * of.bpp;
+        stat.readMs += readMs;
+        stat.chunks += 1;
+        stat.elements += ctx.nread;
+        stat.bytes += readBytes;
+        totalReadMs += readMs;
+        totalReadBytes += readBytes;
+
+        const auto dispatchStart = Hdf5ProfileClock::now();
+        bool dispatchedWithTempSynth = false;
+        if (needSynth) {
+          dispatchedWithTempSynth =
+            dispatch_h2_and_temperature_chunk_(out, of, ctx, tempAvail, tmp);
+        }
+        if (!dispatchedWithTempSynth) {
+	  dispatch_opened_field_chunk_(out, of, ctx);
+        }
+        const double dispatchMs = elapsed_ms(dispatchStart);
+        stat.dispatchMs += dispatchMs;
+        totalDispatchMs += dispatchMs;
 	
-	dispatch_opened_field_chunk_(out, of, ctx);
-	
-	if (needSynth) {
+	if (needSynth && !dispatchedWithTempSynth) {
+          const auto tempInputStart = Hdf5ProfileClock::now();
 	  accumulate_temp_synth_inputs_(of, tempAvail, ctx, tmp);
+          const double tempInputMs = elapsed_ms(tempInputStart);
+          stat.tempSynthInputMs += tempInputMs;
+          totalTempInputMs += tempInputMs;
 	}
       }
 
-      if (needSynth) {
+      if (needSynth && !tmp.synthesized) {
+        const auto synthStart = Hdf5ProfileClock::now();
 	synthesize_temperature_chunk_(out, ctx, tempAvail, tmp);
+        const double synthMs = elapsed_ms(synthStart);
+        ptypeTempSynthMs += synthMs;
+        totalTempSynthMs += synthMs;
       }
          
       done += n;
     }
+
+    double ptypeReadMs = 0.0;
+    double ptypeDispatchMs = 0.0;
+    double ptypeTempInputMs = 0.0;
+    size_t ptypeReadBytes = 0;
+    for (const auto& stat : fieldStats) {
+      ptypeReadMs += stat.readMs;
+      ptypeDispatchMs += stat.dispatchMs;
+      ptypeTempInputMs += stat.tempSynthInputMs;
+      ptypeReadBytes += stat.bytes;
+    }
+    std::fprintf(stderr,
+                 "[HDF5] ptype=%d source=%zu count=%zu written=%zu fields=%zu chunks=%zu "
+                 "probe=%.3f ms openDatasets=%.3f ms prepare=%.3f ms "
+                 "read=%.3f ms dispatch=%.3f ms tempInput=%.3f ms tempSynth=%.3f ms bytes=%.3f MB\n",
+                 ptype,
+                 subCount,
+                 count_[ptype],
+                 ptypeWritten,
+                 opened.size(),
+                 ptypeChunks,
+                 probeMs,
+                 openMs,
+                 ptypePrepareMs,
+                 ptypeReadMs,
+                 ptypeDispatchMs,
+                 ptypeTempInputMs,
+                 ptypeTempSynthMs,
+                 ptypeReadBytes / (1024.0 * 1024.0));
+    for (const auto& stat : fieldStats) {
+      if (stat.chunks == 0) continue;
+      std::fprintf(stderr,
+                   "[HDF5]   field=%s source=%s chunks=%zu elements=%zu "
+                   "read=%.3f ms dispatch=%.3f ms tempInput=%.3f ms bytes=%.3f MB\n",
+                   stat.fieldName.c_str(),
+                   stat.sourceName.c_str(),
+                   stat.chunks,
+                   stat.elements,
+                   stat.readMs,
+                   stat.dispatchMs,
+                   stat.tempSynthInputMs,
+                   stat.bytes / (1024.0 * 1024.0));
+    }
   }
 
-  apply_density_scale_(out);
+  const double densityScaleMs = 0.0;
+  const auto bfieldScaleStart = Hdf5ProfileClock::now();
   apply_bfield_scale_(out);
+  const double bfieldScaleMs = elapsed_ms(bfieldScaleStart);
   
   if (masked && outWriteCursor != totalKept) {
     fprintf(stderr, "BUG: outWriteCursor(%zu) != totalKept(%zu)\n",
@@ -238,10 +409,34 @@ bool HDF5Reader::readRange(SimulationBlock& out,
     return false;
   }
 
+  std::fprintf(stderr,
+               "[HDF5] readRange summary requested=%zu kept=%zu chunks=%zu "
+               "layout=%.3f ms mask=%.3f ms alloc=%.3f ms probe=%.3f ms "
+               "openDatasets=%.3f ms read=%.3f ms dispatch=%.3f ms "
+               "tempInput=%.3f ms tempSynth=%.3f ms densityScale=%.3f ms "
+               "bfieldScale=%.3f ms bytes=%.3f MB total=%.3f ms\n",
+               count,
+               totalKept,
+               totalChunks,
+               layoutMs,
+               maskMs,
+               allocMs,
+               totalProbeMs,
+               totalOpenDatasetMs,
+               totalReadMs,
+               totalDispatchMs,
+               totalTempInputMs,
+               totalTempSynthMs,
+               densityScaleMs,
+               bfieldScaleMs,
+               totalReadBytes / (1024.0 * 1024.0),
+               elapsed_ms(totalStart));
+
   return true;
 }
 
 bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
+  const auto totalStart = Hdf5ProfileClock::now();
   // HDF5 files may omit /Parameters. Do not let units/comoving flags from the
   // previously loaded snapshot leak into this file.
   header.UnitLength_in_cm = physics_constants::pc_cm;
@@ -257,8 +452,11 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   IndexStart_[6]=0;
 
   // open file
+  double fileOpenMs = 0.0;
   try {
+    const auto t0 = Hdf5ProfileClock::now();
     file_ = H5::H5File(path, H5F_ACC_RDONLY);
+    fileOpenMs = elapsed_ms(t0);
   } catch (const H5::FileIException& e) {
     std::cerr << "HDF5 open failed: " << e.getDetailMsg() << "\n";
     return false;
@@ -278,6 +476,8 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
 		     0.75);
     
   bool hasHeader = false;
+  double headerMs = 0.0;
+  const auto headerStart = Hdf5ProfileClock::now();
   try {
     H5::Group hg = file_.openGroup("/Header");
     hasHeader = true;
@@ -301,26 +501,42 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     // MassTable double[6]
     double mt[6]{};
     if (HDF5Utils::readAttributeArray(hg, "MassTable", mt)) {
-      for (int t=0;t<6;++t) mass_type_[t] = mt[t];
+      for (int t=0;t<6;++t) {
+        mass_type_[t] = mt[t];
+        header.massTable[t] = mt[t];
+      }
     } else {
-      for (int t=0;t<6;++t) mass_type_[t] = 0.0;
-    }
-
-    // NumPart_Total (uint32)
-    bool okNum = false;
-    {
-      unsigned int       n32[6]{};
-      if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", n32)) {
-	for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
-	okNum = true;
+      for (int t=0;t<6;++t) {
+        mass_type_[t] = 0.0;
+        header.massTable[t] = 0.0;
       }
     }
 
-    if (!okNum) {
-      unsigned int       n32[6]{};
+    // For split Gadget/AREPO HDF5 snapshots, NumPart_Total is the whole
+    // snapshot, while the datasets in this file contain NumPart_ThisFile.
+    // The reader's internal count_ must therefore prefer ThisFile.
+    unsigned int total32[6]{};
+    bool hasNumPartTotal = false;
+    if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", total32)) {
+      hasNumPartTotal = true;
+      for (int t=0;t<6;++t) header.NumPart_ThisFile[t] = static_cast<int>(total32[t]);
+    }
+
+    bool okThisFile = false;
+    {
+      unsigned int n32[6]{};
       if (HDF5Utils::readAttributeArray(hg, "NumPart_ThisFile", n32)) {
-	for (int t=0;t<6;++t) count_[t] = (size_t)n32[t];
-	okNum = true;
+        for (int t=0;t<6;++t) count_[t] = static_cast<size_t>(n32[t]);
+        if (!hasNumPartTotal) {
+          for (int t=0;t<6;++t) header.NumPart_ThisFile[t] = static_cast<int>(n32[t]);
+        }
+        okThisFile = true;
+      }
+    }
+
+    if (!okThisFile) {
+      if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", total32)) {
+        for (int t=0;t<6;++t) count_[t] = static_cast<size_t>(total32[t]);
       }
     }
   } catch (...) {
@@ -330,7 +546,10 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     header.has_redshift = false;
     for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
   }
+  headerMs = elapsed_ms(headerStart);
 
+  double parametersMs = 0.0;
+  const auto parametersStart = Hdf5ProfileClock::now();
   try {
     H5::Group param = file_.openGroup("/Parameters");
 
@@ -382,17 +601,21 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     header.flag_density_in_cgs = true;
     header.flag_B_in_cgs = true;
   }
+  parametersMs = elapsed_ms(parametersStart);
 
   bool allZero = true;
   for (int t=0;t<6;++t) if (count_[t] > 0) { allZero=false; break; }
 
+  double inferCountsMs = 0.0;
   if (!hasHeader || allZero) {
+    const auto inferStart = Hdf5ProfileClock::now();
     for (int t=0;t<6;++t) {
       size_t n = inferCountFromDataset(file_, t, "Coordinates");
       if (n==0) n = inferCountFromDataset(file_, t, "Velocities");
       if (n==0) n = inferCountFromDataset(file_, t, "ParticleIDs");
       count_[t] = n;
     }
+    inferCountsMs = elapsed_ms(inferStart);
   }
 
   // prefix sum
@@ -418,6 +641,30 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   }
 
   factor_IntEnergy_ = header.UnitVelocity_in_cm_per_s*header.UnitVelocity_in_cm_per_s * physics_constants::proton_mass_cgs / physics_constants::boltzmann_cgs;    
+
+  std::fprintf(stderr,
+               "[HDF5] open path=%s npart=%zu counts=[%zu,%zu,%zu,%zu,%zu,%zu] "
+               "hasHeader=%s hasRedshift=%s comoving=%s densityCgs=%s bfieldCgs=%s "
+               "fileOpen=%.3f ms header=%.3f ms parameters=%.3f ms "
+               "inferCounts=%.3f ms total=%.3f ms\n",
+               path.c_str(),
+               npart_,
+               count_[0],
+               count_[1],
+               count_[2],
+               count_[3],
+               count_[4],
+               count_[5],
+               yes_no(hasHeader),
+               yes_no(header.has_redshift),
+               yes_no(header.flag_comoving),
+               yes_no(header.flag_density_in_cgs),
+               yes_no(header.flag_B_in_cgs),
+               fileOpenMs,
+               headerMs,
+               parametersMs,
+               inferCountsMs,
+               elapsed_ms(totalStart));
     
   return true;
 }
@@ -479,6 +726,11 @@ bool HDF5Reader::prepareMaskedOutput_(size_t begin, size_t count,
     const size_t subCount = subEndG - subBegG;
     const size_t localStart0 = subBegG - pBeg;
 
+    if (mask.typePassesAll(ptype)) {
+      totalKept += subCount;
+      continue;
+    }
+
     size_t done = 0;
     while (done < subCount) {
       const size_t n = std::min(blockSize_, subCount - done);
@@ -509,6 +761,7 @@ bool HDF5Reader::build_opened_fields_for_ptype_(int ptype,
       H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
 
       update_layout_from_hdf5(fl, ds);
+      fl.present = true;
 
       OpenedField of;
       of.fl     = &fl;
@@ -533,6 +786,7 @@ bool HDF5Reader::prepare_chunk_context_(ChunkContext& ctx,
 {
   ctx.outBase = 0;
   ctx.nwrite = 0;
+  ctx.contiguousKeep = false;
   ctx.keepPtr = nullptr;
 
   if (!ctx.masked) {
@@ -543,12 +797,29 @@ bool HDF5Reader::prepare_chunk_context_(ChunkContext& ctx,
 
   if (!mask) return false;
 
+  if (mask->typePassesAll(ctx.ptype)) {
+    ctx.outBase = outWriteCursor;
+    ctx.nwrite = ctx.nread;
+    ctx.contiguousKeep = true;
+    outWriteCursor += ctx.nread;
+    return true;
+  }
+
   if (!build_keep_chunk_(ctx.ptype, ctx.localStart + ctx.done, ctx.nread, *mask, keep))
     return false;
 
   ctx.keepPtr = &keep;
   ctx.outBase = outWriteCursor;
   ctx.nwrite  = keep.size();
+  if (ctx.nwrite == ctx.nread) {
+    ctx.contiguousKeep = true;
+    for (size_t i = 0; i < keep.size(); ++i) {
+      if (keep[i] != i) {
+        ctx.contiguousKeep = false;
+        break;
+      }
+    }
+  }
 
   outWriteCursor += keep.size();
   return true;
@@ -561,11 +832,127 @@ void HDF5Reader::dispatch_opened_field_chunk_(SimulationBlock& out,
   if (of.fl->dest == DestKind::Ignore) return;
 
   if (of.fl->dest == DestKind::AoSCore) {
-    if (!ctx.masked) {
+    if (!ctx.masked || ctx.contiguousKeep) {
+      if (of.fl->spec.type == DataType::Float) {
+        const float* src = reinterpret_cast<const float*>(of.buf.data());
+        switch (of.fl->ftype) {
+        case FieldKey::Position:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            SimulationElement& p = out.particles[ctx.outBase + j];
+            p.position[0] = src[3 * j + 0];
+            p.position[1] = src[3 * j + 1];
+            p.position[2] = src[3 * j + 2];
+          }
+          return;
+        case FieldKey::Velocity:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            SimulationElement& p = out.particles[ctx.outBase + j];
+            p.vel[0] = src[3 * j + 0];
+            p.vel[1] = src[3 * j + 1];
+            p.vel[2] = src[3 * j + 2];
+          }
+          return;
+        case FieldKey::Mass:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].mass = src[j];
+          }
+          return;
+        case FieldKey::Density:
+          if (factor_density_ == 1.0) {
+            for (size_t j = 0; j < ctx.nread; ++j) {
+              out.particles[ctx.outBase + j].density = src[j];
+            }
+          } else {
+            const float densityFactor = static_cast<float>(factor_density_);
+            for (size_t j = 0; j < ctx.nread; ++j) {
+              out.particles[ctx.outBase + j].density = src[j] * densityFactor;
+            }
+          }
+          return;
+        case FieldKey::Temperature:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].temperature = src[j];
+          }
+          return;
+        case FieldKey::Hsml:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].supportRadius = src[j];
+          }
+          return;
+        case FieldKey::Volume:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].supportRadius =
+              fast_cbrt_positive_float(src[j]);
+          }
+          return;
+        default:
+          break;
+        }
+      } else if (of.fl->spec.type == DataType::Double) {
+        const double* src = reinterpret_cast<const double*>(of.buf.data());
+        switch (of.fl->ftype) {
+        case FieldKey::Position:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            SimulationElement& p = out.particles[ctx.outBase + j];
+            p.position[0] = static_cast<float>(src[3 * j + 0]);
+            p.position[1] = static_cast<float>(src[3 * j + 1]);
+            p.position[2] = static_cast<float>(src[3 * j + 2]);
+          }
+          return;
+        case FieldKey::Velocity:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            SimulationElement& p = out.particles[ctx.outBase + j];
+            p.vel[0] = static_cast<float>(src[3 * j + 0]);
+            p.vel[1] = static_cast<float>(src[3 * j + 1]);
+            p.vel[2] = static_cast<float>(src[3 * j + 2]);
+          }
+          return;
+        case FieldKey::Mass:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].mass = static_cast<float>(src[j]);
+          }
+          return;
+        case FieldKey::Density:
+          if (factor_density_ == 1.0) {
+            for (size_t j = 0; j < ctx.nread; ++j) {
+              out.particles[ctx.outBase + j].density = static_cast<float>(src[j]);
+            }
+          } else {
+            const double densityFactor = factor_density_;
+            for (size_t j = 0; j < ctx.nread; ++j) {
+              out.particles[ctx.outBase + j].density =
+                static_cast<float>(src[j] * densityFactor);
+            }
+          }
+          return;
+        case FieldKey::Temperature:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].temperature = static_cast<float>(src[j]);
+          }
+          return;
+        case FieldKey::Hsml:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].supportRadius = static_cast<float>(src[j]);
+          }
+          return;
+        case FieldKey::Volume:
+          for (size_t j = 0; j < ctx.nread; ++j) {
+            out.particles[ctx.outBase + j].supportRadius =
+              fast_cbrt_positive_float(static_cast<float>(src[j]));
+          }
+          return;
+        default:
+          break;
+        }
+      }
+
       for (size_t j = 0; j < ctx.nread; ++j) {
         SimulationElement& p = out.particles[ctx.outBase + j];
         const uint8_t* src = of.buf.data() + j * of.bpp;
         of.fl->store(p, src);
+      }
+      if (of.fl->ftype == FieldKey::Density) {
+        apply_density_scale_chunk_(out, ctx.outBase, ctx.nread);
       }
     } else {
       for (size_t kk = 0; kk < ctx.keepPtr->size(); ++kk) {
@@ -574,17 +961,20 @@ void HDF5Reader::dispatch_opened_field_chunk_(SimulationBlock& out,
         const uint8_t* src = of.buf.data() + (size_t)j * of.bpp;
         of.fl->store(p, src);
       }
+      if (of.fl->ftype == FieldKey::Density) {
+        apply_density_scale_chunk_(out, ctx.outBase, ctx.nwrite);
+      }
     }
     return;
   }
 
   if (of.fl->dest == DestKind::SoA) {
     copy_chunk_to_soa(out, *of.fl, ctx.outBase, ctx.nread, of.bpp, of.buf,
-                      ctx.masked, ctx.keepPtr);
+                      ctx.masked && !ctx.contiguousKeep, ctx.keepPtr);
     return;
   }
 
-  if (!ctx.masked) {
+  if (!ctx.masked || ctx.contiguousKeep) {
     for (size_t j = 0; j < ctx.nread; ++j) {
       const size_t oi = ctx.outBase + j;
       const uint8_t* src = of.buf.data() + j * of.bpp;
@@ -615,74 +1005,113 @@ void HDF5Reader::accumulate_temp_synth_inputs_(const OpenedField& of,
                                                const ChunkContext& ctx,
                                                TempSynthBuffers& tmp)
 {
-  auto fill_chunk_scalar = [&](std::vector<double>& dst, DataType srcType)
-  {
-    auto get_double = [&](const uint8_t* p)->double {
-      switch (srcType) {
-        case DataType::Float:  { float   v; std::memcpy(&v, p, sizeof(v)); return (double)v; }
-        case DataType::Double: { double  v; std::memcpy(&v, p, sizeof(v)); return v; }
-        case DataType::Int32:  { int32_t v; std::memcpy(&v, p, sizeof(v)); return (double)v; }
-        case DataType::Int64:  { int64_t v; std::memcpy(&v, p, sizeof(v)); return (double)v; }
-      }
-      return -1.0;
-    };
-
-    if (!ctx.masked) {
-      for (size_t j = 0; j < ctx.nread; ++j) {
-        dst[j] = get_double(of.buf.data() + j * of.elemSz);
-      }
-    } else {
-      for (size_t kk = 0; kk < ctx.keepPtr->size(); ++kk) {
-        const uint32_t j = (*ctx.keepPtr)[kk];
-        dst[kk] = get_double(of.buf.data() + (size_t)j * of.elemSz);
-      }
-    }
-  };
+  (void)ctx;
 
   if (of.fl->ftype == FieldKey::InternalEnergy) {
-    fill_chunk_scalar(tmp.u, of.fl->spec.type);
+    tmp.u = &of;
   } else if (tempAvail.hasE && of.fl->ftype == FieldKey::ElectronAbundance) {
-    fill_chunk_scalar(tmp.e, of.fl->spec.type);
+    tmp.e = &of;
   } else if (tempAvail.hasH2 && of.fl->ftype == FieldKey::H2Abundance) {
-    fill_chunk_scalar(tmp.h2, of.fl->spec.type);
+    tmp.h2 = &of;
   } else if (tempAvail.hasG && of.fl->ftype == FieldKey::Gamma) {
-    fill_chunk_scalar(tmp.g, of.fl->spec.type);
+    tmp.g = &of;
   }
+}
+
+bool HDF5Reader::dispatch_h2_and_temperature_chunk_(
+  SimulationBlock& out,
+  const OpenedField& of,
+  const ChunkContext& ctx,
+  const TempSynthAvailability& tempAvail,
+  TempSynthBuffers& tmp)
+{
+  if (tmp.synthesized) return false;
+  if (!tmp.u) return false;
+  if (tempAvail.hasE || tempAvail.hasG) return false;
+  if (!tempAvail.hasH2) return false;
+  if (of.fl->ftype != FieldKey::H2Abundance) return false;
+  if (of.fl->dest != DestKind::SoA) return false;
+  if (of.fl->spec.type != tmp.u->fl->spec.type) {
+    return false;
+  }
+
+  auto it = out.soa.find(of.fl->soaKey);
+  if (it == out.soa.end()) return false;
+
+  const bool direct = !ctx.masked || ctx.contiguousKeep;
+
+  auto synth = [&](auto scalarTag) {
+    using Scalar = decltype(scalarTag);
+    if (of.bpp != sizeof(Scalar) || tmp.u->bpp != sizeof(Scalar)) {
+      return false;
+    }
+
+    auto& soa = it->second;
+    auto* dstH2 = reinterpret_cast<Scalar*>(soa.bytes.data() +
+                                            ctx.outBase * sizeof(Scalar));
+    const auto* h2 = reinterpret_cast<const Scalar*>(of.buf.data());
+    const auto* u = reinterpret_cast<const Scalar*>(tmp.u->buf.data());
+    const Scalar intEnergyFactor = static_cast<Scalar>(factor_IntEnergy_);
+
+    for (size_t kk = 0; kk < ctx.nwrite; ++kk) {
+      const size_t sourceIndex =
+        direct ? kk : static_cast<size_t>((*ctx.keepPtr)[kk]);
+      const Scalar h2Val = h2[sourceIndex];
+      dstH2[kk] = h2Val;
+
+      const Scalar uVal = u[sourceIndex];
+      if (!(uVal > static_cast<Scalar>(0))) continue;
+
+      const Scalar denom =
+        static_cast<Scalar>(1.2) -
+        ((h2Val > static_cast<Scalar>(0)) ? h2Val : static_cast<Scalar>(0));
+      const Scalar T =
+        (static_cast<Scalar>(2.0) / static_cast<Scalar>(3.0)) *
+        uVal / denom * intEnergyFactor;
+      if (T > static_cast<Scalar>(0)) {
+        out.particles[ctx.outBase + kk].temperature = static_cast<float>(T);
+      }
+    }
+    return true;
+  };
+
+  bool ok = false;
+  if (of.fl->spec.type == DataType::Float) {
+    ok = synth(float{});
+  } else if (of.fl->spec.type == DataType::Double) {
+    ok = synth(double{});
+  } else {
+    return false;
+  }
+  if (!ok) return false;
+
+  tmp.h2 = &of;
+  tmp.synthesized = true;
+  return true;
 }
 
 HDF5Reader::TempSynthAvailability
 HDF5Reader::probe_temp_synth_availability_(int ptype,
-					   const BinaryReadLayout& layout,
+					   const std::vector<OpenedField>& opened,
 					   const TempSynthRequest& req) const
 {
   TempSynthAvailability avail;
 
   if (ptype != 0) return avail;
 
-  auto findDSName = [&](FieldKey ft) -> std::string {
-    for (const auto& fl : layout.fields) {
-      if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
-      if (fl.ftype != ft) continue;
-      return fl.spec.sourceName;
+  auto isPresent = [&](FieldKey ft) -> bool {
+    for (const OpenedField& of : opened) {
+      if (!of.fl) continue;
+      if (of.fl->ftype == ft) return true;
     }
-    return std::string();
+    return false;
   };
 
-  auto tryOpen = [&](const std::string& dsName) -> bool {
-    if (dsName.empty()) return false;
-    try {
-      (void)openDataSetWithDAPL(partPath(ptype, dsName));
-      return true;
-    } catch (...) {
-      return false;
-    }
-  };
-
-  if (req.wantTemp) avail.hasTemp = tryOpen(findDSName(FieldKey::Temperature));
-  if (req.wantU)    avail.hasU    = tryOpen(findDSName(FieldKey::InternalEnergy));
-  if (req.wantE)    avail.hasE    = tryOpen(findDSName(FieldKey::ElectronAbundance));
-  if (req.wantH2)   avail.hasH2   = tryOpen(findDSName(FieldKey::H2Abundance));
-  if (req.wantG)    avail.hasG    = tryOpen(findDSName(FieldKey::Gamma));
+  if (req.wantTemp) avail.hasTemp = isPresent(FieldKey::Temperature);
+  if (req.wantU)    avail.hasU    = isPresent(FieldKey::InternalEnergy);
+  if (req.wantE)    avail.hasE    = isPresent(FieldKey::ElectronAbundance);
+  if (req.wantH2)   avail.hasH2   = isPresent(FieldKey::H2Abundance);
+  if (req.wantG)    avail.hasG    = isPresent(FieldKey::Gamma);
 
   avail.needSynth = (!avail.hasTemp && avail.hasU);
   return avail;
@@ -693,16 +1122,67 @@ void HDF5Reader::synthesize_temperature_chunk_(SimulationBlock& out,
                                                const TempSynthAvailability& tempAvail,
                                                const TempSynthBuffers& tmp)
 {
+  if (!tmp.u) return;
+
+  if (tmp.u->fl->spec.type == DataType::Float &&
+      (!tempAvail.hasE || (tmp.e && tmp.e->fl->spec.type == DataType::Float)) &&
+      (!tempAvail.hasH2 || (tmp.h2 && tmp.h2->fl->spec.type == DataType::Float)) &&
+      (!tempAvail.hasG || (tmp.g && tmp.g->fl->spec.type == DataType::Float))) {
+    const auto* u = reinterpret_cast<const float*>(tmp.u->buf.data());
+    const auto* e = tmp.e ? reinterpret_cast<const float*>(tmp.e->buf.data()) : nullptr;
+    const auto* h2 = tmp.h2 ? reinterpret_cast<const float*>(tmp.h2->buf.data()) : nullptr;
+    const auto* g = tmp.g ? reinterpret_cast<const float*>(tmp.g->buf.data()) : nullptr;
+    const float intEnergyFactor = static_cast<float>(factor_IntEnergy_);
+    const bool direct = !ctx.masked || ctx.contiguousKeep;
+
+    for (size_t kk = 0; kk < ctx.nwrite; ++kk) {
+      const size_t sourceIndex =
+        direct ? kk : static_cast<size_t>((*ctx.keepPtr)[kk]);
+      const float uVal = u[sourceIndex];
+      if (!(uVal > 0.0f)) continue;
+
+      float gamma = 5.0f / 3.0f;
+      if (g && g[sourceIndex] > 0.0f) gamma = g[sourceIndex];
+
+      float denom = 1.2f;
+      if (e && e[sourceIndex] > 0.0f) denom += e[sourceIndex];
+      if (h2 && h2[sourceIndex] > 0.0f) denom -= h2[sourceIndex];
+
+      const float T = (gamma - 1.0f) * uVal / denom * intEnergyFactor;
+      if (T > 0.0f) {
+        out.particles[ctx.outBase + kk].temperature = T;
+      }
+    }
+    return;
+  }
+
+  auto read_scalar = [](const OpenedField* field, size_t sourceIndex)->double {
+    if (!field) return -1.0;
+    const uint8_t* p = field->buf.data() + sourceIndex * field->bpp;
+    switch (field->fl->spec.type) {
+      case DataType::Float:  { float   v; std::memcpy(&v, p, sizeof(v)); return static_cast<double>(v); }
+      case DataType::Double: { double  v; std::memcpy(&v, p, sizeof(v)); return v; }
+      case DataType::Int32:  { int32_t v; std::memcpy(&v, p, sizeof(v)); return static_cast<double>(v); }
+      case DataType::Int64:  { int64_t v; std::memcpy(&v, p, sizeof(v)); return static_cast<double>(v); }
+    }
+    return -1.0;
+  };
+
   for (size_t kk = 0; kk < ctx.nwrite; ++kk) {
-    const double u = tmp.u[kk];
+    const size_t sourceIndex =
+      (!ctx.masked || ctx.contiguousKeep) ? kk : static_cast<size_t>((*ctx.keepPtr)[kk]);
+    const double u = read_scalar(tmp.u, sourceIndex);
     if (!(u > 0.0)) continue;
 
     double gamma = 5.0 / 3.0;
-    if (tempAvail.hasG && tmp.g[kk] > 0.0) gamma = tmp.g[kk];
+    const double g = tempAvail.hasG ? read_scalar(tmp.g, sourceIndex) : -1.0;
+    if (g > 0.0) gamma = g;
 
     double denom = 1.2;
-    if (tempAvail.hasE  && tmp.e[kk]  > 0.0) denom += tmp.e[kk];
-    if (tempAvail.hasH2 && tmp.h2[kk] > 0.0) denom -= tmp.h2[kk];
+    const double e = tempAvail.hasE ? read_scalar(tmp.e, sourceIndex) : -1.0;
+    const double h2 = tempAvail.hasH2 ? read_scalar(tmp.h2, sourceIndex) : -1.0;
+    if (e > 0.0) denom += e;
+    if (h2 > 0.0) denom -= h2;
 
     const double T = (gamma - 1.0) * u / denom * factor_IntEnergy_;
     if (T > 0.0) {
@@ -736,14 +1216,13 @@ void HDF5Reader::init_temp_synth_buffers_(HDF5Reader::TempSynthBuffers& tmp,
 					  const HDF5Reader::TempSynthAvailability& tempAvail,
 					  size_t nwrite)
 {
-  tmp.u.assign(nwrite, -1.0);
-  tmp.e.clear();
-  tmp.h2.clear();
-  tmp.g.clear();
-
-  if (tempAvail.hasE)  tmp.e.assign(nwrite, -1.0);
-  if (tempAvail.hasH2) tmp.h2.assign(nwrite, -1.0);
-  if (tempAvail.hasG)  tmp.g.assign(nwrite, -1.0);
+  (void)tempAvail;
+  (void)nwrite;
+  tmp.u = nullptr;
+  tmp.e = nullptr;
+  tmp.h2 = nullptr;
+  tmp.g = nullptr;
+  tmp.synthesized = false;
 }
 
 bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
@@ -880,6 +1359,18 @@ void HDF5Reader::apply_density_scale_(SimulationBlock& out)
   
   for (auto& p : out.particles) {
     p.density = (float)((double)p.density * factor_density_);
+  }
+}
+
+void HDF5Reader::apply_density_scale_chunk_(SimulationBlock& out,
+                                            size_t outBase,
+                                            size_t nwrite) const
+{
+  if (factor_density_ == 1.0) return;
+
+  const float densityFactor = static_cast<float>(factor_density_);
+  for (size_t i = 0; i < nwrite; ++i) {
+    out.particles[outBase + i].density *= densityFactor;
   }
 }
 
