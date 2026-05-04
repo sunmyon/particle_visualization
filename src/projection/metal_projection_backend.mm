@@ -20,6 +20,7 @@ using namespace metal;
 struct ProjectionParticle {
   packed_float3 pos;
   float val;
+  float colorVal;
   float density;
   float mass;
   float hsml;
@@ -56,6 +57,23 @@ struct VoronoiUniforms {
   float xminZ;
   uint densityWeight;
   uint pad0;
+  float4 renderColor;
+  uint tfCount;
+  uint colorMapSize;
+  uint colorLogScale;
+  uint pad1;
+  float colorValueMin;
+  float colorValueMax;
+  float2 pad2;
+};
+
+struct ProjectionTfComponent {
+  uint type;
+  float center;
+  float width;
+  float amplitude;
+  uint logDomain;
+  float3 pad;
 };
 
 float cubicKernel(float u)
@@ -258,6 +276,120 @@ kernel void voronoiIntegrate(
   outputValue[gid] = sumValue;
   outputWeight[gid] = sumWeight;
 }
+
+float evalProjectionTfComponent(constant ProjectionTfComponent& c, float value)
+{
+  if (!isfinite(value)) {
+    return 0.0;
+  }
+  float width = max(abs(c.width), 1.0e-12);
+  float amp = max(c.amplitude, 0.0);
+  if (amp <= 0.0) {
+    return 0.0;
+  }
+
+  if (c.type == 0u && c.logDomain != 0u) {
+    if (value <= 0.0 || c.center <= 0.0) {
+      return 0.0;
+    }
+    float x = log10(value);
+    float center = log10(max(c.center, 1.0e-30));
+    float q = (x - center) / width;
+    return amp * exp(-0.5 * q * q);
+  }
+
+  float q = abs(value - c.center);
+  if (c.type == 0u) {
+    float u = q / width;
+    return amp * exp(-0.5 * u * u);
+  }
+  if (c.type == 1u) {
+    return q <= width ? amp : 0.0;
+  }
+  if (c.type == 2u) {
+    return q <= width ? amp * (1.0 - q / width) : 0.0;
+  }
+  return 0.0;
+}
+
+float evalProjectionTf(constant VoronoiUniforms& uniforms,
+                       constant ProjectionTfComponent* components,
+                       float value)
+{
+  float sigma = 0.0;
+  uint count = min(uniforms.tfCount, 16u);
+  for (uint i = 0; i < count; ++i) {
+    sigma += evalProjectionTfComponent(components[i], value);
+  }
+  return max(sigma, 0.0);
+}
+
+kernel void voronoiRender(
+  uint gid [[thread_position_in_grid]],
+  constant ProjectionParticle* particles [[buffer(0)]],
+  constant VoronoiUniforms& uniforms [[buffer(1)]],
+  constant int* labels [[buffer(2)]],
+  device float* outputRgb [[buffer(3)]],
+  device float* outputAlpha [[buffer(4)]],
+  constant ProjectionTfComponent* tfComponents [[buffer(5)]],
+  constant float* colorMap [[buffer(6)]])
+{
+  uint pixelCount = uniforms.width * uniforms.height;
+  if (gid >= pixelCount) {
+    return;
+  }
+
+  float3 accum = float3(0.0);
+  float alphaAccum = 0.0;
+  float dzLen = max(abs(uniforms.dz), 1.0e-30);
+  uint colorMapSize = max(uniforms.colorMapSize, 1u);
+
+  for (uint k = 0; k < uniforms.depth && alphaAccum < 0.999; ++k) {
+    uint voxelIndex = k * pixelCount + gid;
+    int label = labels[voxelIndex];
+    if (label < 0) {
+      continue;
+    }
+
+    ProjectionParticle p = particles[label];
+    float sigma = evalProjectionTf(uniforms, tfComponents, p.val);
+    if (!(sigma > 0.0) || !isfinite(sigma)) {
+      continue;
+    }
+    float alpha = clamp(1.0 - exp(-sigma * dzLen), 0.0, 1.0);
+    float colorValue = p.colorVal;
+    if (uniforms.colorLogScale != 0u) {
+      if (colorValue <= 0.0) {
+        continue;
+      }
+      colorValue = log10(colorValue);
+    }
+    float t = clamp((colorValue - uniforms.colorValueMin) /
+                    max(uniforms.colorValueMax - uniforms.colorValueMin,
+                        1.0e-12),
+                    0.0,
+                    1.0);
+    float x = t * float(colorMapSize - 1u);
+    uint i0 = min(uint(floor(x)), colorMapSize - 1u);
+    uint i1 = min(i0 + 1u, colorMapSize - 1u);
+    float f = x - float(i0);
+    float3 c0 = float3(colorMap[i0 * 3u + 0u],
+                       colorMap[i0 * 3u + 1u],
+                       colorMap[i0 * 3u + 2u]);
+    float3 c1 = float3(colorMap[i1 * 3u + 0u],
+                       colorMap[i1 * 3u + 1u],
+                       colorMap[i1 * 3u + 2u]);
+    float3 color = mix(c0, c1, f);
+    float trans = 1.0 - alphaAccum;
+    accum += trans * alpha * color;
+    alphaAccum += trans * alpha;
+  }
+
+  outputRgb[gid * 3u + 0u] = accum.x;
+  outputRgb[gid * 3u + 1u] = accum.y;
+  outputRgb[gid * 3u + 2u] = accum.z;
+  outputAlpha[gid] = alphaAccum;
+}
 )";
 
 struct ProjectionUniformsCpu {
@@ -291,6 +423,23 @@ struct VoronoiUniformsCpu {
   float xminZ = 0.0f;
   std::uint32_t densityWeight = 0;
   std::uint32_t pad0 = 0;
+  float renderColor[4] = {0.35f, 1.0f, 0.8f, 0.0f};
+  std::uint32_t tfCount = 0;
+  std::uint32_t colorMapSize = 0;
+  std::uint32_t colorLogScale = 0;
+  std::uint32_t pad1 = 0;
+  float colorValueMin = 0.0f;
+  float colorValueMax = 1.0f;
+  float pad2[2] = {0.0f, 0.0f};
+};
+
+struct ProjectionTfComponentCpu {
+  std::uint32_t type = 0;
+  float center = 1.0f;
+  float width = 1.0f;
+  float amplitude = 0.0f;
+  std::uint32_t logDomain = 1;
+  float pad[3] = {0.0f, 0.0f, 0.0f};
 };
 
 id<MTLDevice> CreateProjectionDevice()
@@ -648,6 +797,13 @@ bool BuildMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
   uniforms.xminY = input.xminLocal[1];
   uniforms.xminZ = input.xminLocal[2];
   uniforms.densityWeight = input.densityWeight ? 1u : 0u;
+  uniforms.renderColor[0] = input.renderColor[0];
+  uniforms.renderColor[1] = input.renderColor[1];
+  uniforms.renderColor[2] = input.renderColor[2];
+  uniforms.colorMapSize = static_cast<std::uint32_t>(input.colorMapSize);
+  uniforms.colorLogScale = input.colorLogScale ? 1u : 0u;
+  uniforms.colorValueMin = input.colorValueMin;
+  uniforms.colorValueMax = input.colorValueMax;
 
   id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
   if (!commandBuffer) {
@@ -863,6 +1019,166 @@ bool IntegrateMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
               << std::endl;
     return false;
   }
+  return true;
+}
+
+bool RenderMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
+                                 const MetalVoronoiLabelGrid& grid,
+                                 MetalProjectionMapOutput& output)
+{
+  output = MetalProjectionMapOutput{};
+  if (input.width <= 0 || input.height <= 0 || input.depth <= 0 ||
+      input.width != grid.width || input.height != grid.height ||
+      input.depth != grid.depth || input.particles.empty() ||
+      grid.labels.empty() || input.transferComponents.empty()) {
+    return false;
+  }
+
+  static id<MTLDevice> device = CreateProjectionDevice();
+  static id<MTLCommandQueue> queue = device ? [device newCommandQueue] : nil;
+  static id<MTLComputePipelineState> renderPipeline = nil;
+  if (!device || !queue ||
+      !CompileNamedPipeline(device, @"voronoiRender", renderPipeline)) {
+    std::cerr << "Metal Voronoi render setup failed." << std::endl;
+    return false;
+  }
+
+  const std::size_t pixelCount =
+    static_cast<std::size_t>(input.width) *
+    static_cast<std::size_t>(input.height);
+  const std::size_t voxelCount = pixelCount * static_cast<std::size_t>(input.depth);
+  const std::size_t particleBytes =
+    input.particles.size() * sizeof(MetalProjectionParticle);
+  const std::size_t labelBytes = voxelCount * sizeof(std::int32_t);
+  const std::size_t rgbBytes = pixelCount * 3 * sizeof(float);
+  const std::size_t alphaBytes = pixelCount * sizeof(float);
+
+  std::vector<ProjectionTfComponentCpu> tfComponents(
+    std::min<std::size_t>(input.transferComponents.size(),
+                          kProjectionGpuMaxTfComponents));
+  for (std::size_t i = 0; i < tfComponents.size(); ++i) {
+    const ProjectionGpuTransferComponent& src = input.transferComponents[i];
+    tfComponents[i].type = static_cast<std::uint32_t>(std::clamp(src.type, 0, 2));
+    tfComponents[i].center = src.center;
+    tfComponents[i].width = src.width;
+    tfComponents[i].amplitude = src.amplitude;
+    tfComponents[i].logDomain = src.logDomain ? 1u : 0u;
+  }
+
+  id<MTLBuffer> particleBuffer =
+    [device newBufferWithBytes:input.particles.data()
+                        length:particleBytes
+                       options:MTLResourceStorageModeShared];
+  id<MTLBuffer> labelBuffer =
+    [device newBufferWithBytes:grid.labels.data()
+                        length:labelBytes
+                       options:MTLResourceStorageModeShared];
+  id<MTLBuffer> rgbBuffer =
+    [device newBufferWithLength:rgbBytes options:MTLResourceStorageModeShared];
+  id<MTLBuffer> alphaBuffer =
+    [device newBufferWithLength:alphaBytes options:MTLResourceStorageModeShared];
+  id<MTLBuffer> tfBuffer =
+    [device newBufferWithBytes:tfComponents.data()
+                        length:tfComponents.size() * sizeof(ProjectionTfComponentCpu)
+                       options:MTLResourceStorageModeShared];
+  id<MTLBuffer> colorMapBuffer =
+    [device newBufferWithBytes:input.colorMap.data()
+                        length:input.colorMap.size() * sizeof(float)
+                       options:MTLResourceStorageModeShared];
+  if (!particleBuffer || !labelBuffer || !rgbBuffer || !alphaBuffer ||
+      !tfBuffer || !colorMapBuffer) {
+    std::cerr << "Metal Voronoi render resource allocation failed."
+              << std::endl;
+    return false;
+  }
+
+  VoronoiUniformsCpu uniforms;
+  uniforms.width = static_cast<std::uint32_t>(input.width);
+  uniforms.height = static_cast<std::uint32_t>(input.height);
+  uniforms.depth = static_cast<std::uint32_t>(input.depth);
+  uniforms.particleCount = static_cast<std::uint32_t>(input.particles.size());
+  uniforms.dx = input.dx;
+  uniforms.dy = input.dy;
+  uniforms.dz = input.dz;
+  uniforms.xminX = input.xminLocal[0];
+  uniforms.xminY = input.xminLocal[1];
+  uniforms.xminZ = input.xminLocal[2];
+  uniforms.densityWeight = input.densityWeight ? 1u : 0u;
+  uniforms.renderColor[0] = input.renderColor[0];
+  uniforms.renderColor[1] = input.renderColor[1];
+  uniforms.renderColor[2] = input.renderColor[2];
+  uniforms.tfCount = static_cast<std::uint32_t>(tfComponents.size());
+  uniforms.colorMapSize = static_cast<std::uint32_t>(input.colorMapSize);
+  uniforms.colorLogScale = input.colorLogScale ? 1u : 0u;
+  uniforms.colorValueMin = input.colorValueMin;
+  uniforms.colorValueMax = input.colorValueMax;
+
+  id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+  if (!commandBuffer || !encoder) {
+    return false;
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const auto dispatch1D = [](id<MTLComputeCommandEncoder> encoder,
+                             id<MTLComputePipelineState> pipeline,
+                             std::size_t count) {
+    const NSUInteger threadsPerGroup =
+      std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup,
+                           std::max<NSUInteger>(pipeline.threadExecutionWidth,
+                                               64u));
+    [encoder dispatchThreads:MTLSizeMake(static_cast<NSUInteger>(count), 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(threadsPerGroup, 1, 1)];
+  };
+
+  [encoder setComputePipelineState:renderPipeline];
+  [encoder setBuffer:particleBuffer offset:0 atIndex:0];
+  [encoder setBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+  [encoder setBuffer:labelBuffer offset:0 atIndex:2];
+  [encoder setBuffer:rgbBuffer offset:0 atIndex:3];
+  [encoder setBuffer:alphaBuffer offset:0 atIndex:4];
+  [encoder setBuffer:tfBuffer offset:0 atIndex:5];
+  [encoder setBuffer:colorMapBuffer offset:0 atIndex:6];
+  dispatch1D(encoder, renderPipeline, pixelCount);
+  [encoder endEncoding];
+  [commandBuffer commit];
+  [commandBuffer waitUntilCompleted];
+  const auto end = std::chrono::steady_clock::now();
+
+  if (commandBuffer.status == MTLCommandBufferStatusError) {
+    std::cerr << "Metal Voronoi render command failed: "
+              << (commandBuffer.error
+                    ? [[commandBuffer.error localizedDescription] UTF8String]
+                    : "unknown error")
+              << std::endl;
+    return false;
+  }
+
+  output.rgb.resize(pixelCount * 3);
+  output.weights.resize(pixelCount);
+  const auto* rgb = static_cast<const float*>([rgbBuffer contents]);
+  const auto* alpha = static_cast<const float*>([alphaBuffer contents]);
+  std::copy(rgb, rgb + pixelCount * 3, output.rgb.begin());
+  std::copy(alpha, alpha + pixelCount, output.weights.begin());
+  output.elapsedMs =
+    std::chrono::duration<double, std::milli>(end - start).count();
+
+  std::size_t nonzeroAlpha = 0;
+  double alphaSum = 0.0;
+  for (float a : output.weights) {
+    if (a > 0.0f) {
+      ++nonzeroAlpha;
+      alphaSum += a;
+    }
+  }
+  std::cout << "Metal Voronoi opacity render: particles="
+            << input.particles.size()
+            << " grid=" << input.width << "x" << input.height << "x"
+            << input.depth
+            << " nonzeroAlpha=" << nonzeroAlpha
+            << " alphaSum=" << alphaSum
+            << " elapsedMs=" << output.elapsedMs
+            << std::endl;
   return true;
 }
 

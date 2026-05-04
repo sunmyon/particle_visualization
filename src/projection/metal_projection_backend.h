@@ -19,3 +19,7 @@ bool BuildMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
 bool IntegrateMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
                                     const MetalVoronoiLabelGrid& grid,
                                     MetalProjectionMapOutput& output);
+
+bool RenderMetalVoronoiLabelGrid(const MetalProjectionMapInput& input,
+                                 const MetalVoronoiLabelGrid& grid,
+                                 MetalProjectionMapOutput& output);

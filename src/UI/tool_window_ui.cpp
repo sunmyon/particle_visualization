@@ -16,6 +16,7 @@
 #include "interaction/camera.h"
 #include "render/scene_objects.h"
 #include "render/colormap_defs.h"
+#include "UI/transfer_function_editor.hpp"
 #include "data/simulation_dataset.h"
 #include "data/halo_store.h"
 
@@ -27,6 +28,8 @@
 #include "analysis/profile_histogram_export.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,
@@ -36,6 +39,88 @@ extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          const glm::vec3& pivot);
 
 namespace {
+struct ProjectionQuantityRange {
+  float min = 1.0e-6f;
+  float max = 1.0f;
+};
+
+ProjectionQuantityRange ProjectionRangeForQuantity(const QuantityState& quantity,
+                                                   QuantityId selected,
+                                                   bool positiveOnly)
+{
+  ProjectionQuantityRange out;
+  out.min = std::numeric_limits<float>::max();
+  out.max = -std::numeric_limits<float>::max();
+  bool valid = false;
+
+  const int qidx = static_cast<int>(selected);
+  if (qidx < 0 || qidx >= kMaxQ) {
+    return {};
+  }
+
+  for (int t = 0; t < kNumTypes; ++t) {
+    const float typeMin = quantity.range.valueMin[qidx][t];
+    const float typeMax = quantity.range.valueMax[qidx][t];
+    if (!std::isfinite(typeMin) || !std::isfinite(typeMax)) continue;
+    if (typeMin == 0.0f && typeMax == 0.0f) continue;
+
+    if (positiveOnly) {
+      if (typeMax <= 0.0f) continue;
+      out.min = std::min(out.min, std::max(typeMin, typeMax * 1.0e-12f));
+      out.max = std::max(out.max, typeMax);
+    } else {
+      out.min = std::min(out.min, typeMin);
+      out.max = std::max(out.max, typeMax);
+    }
+    valid = true;
+  }
+
+  if (!valid) {
+    return {};
+  }
+  if (out.max <= out.min) {
+    out.max = out.min + std::max(std::abs(out.min) * 1.0e-6f, 1.0e-6f);
+  }
+  return out;
+}
+
+void ApplyProjectionTransferFunction(TransferFunctionEditor& editor,
+                                     ProjectionMapParams& params)
+{
+  params.voronoiTfComponents.clear();
+  params.voronoiTfLogDomain = editor.logScale();
+  params.voronoiTfValueMin = editor.valueMin();
+  params.voronoiTfValueMax = editor.valueMax();
+
+  for (const TFComponent& src : editor.components()) {
+    ProjectionTransferFunctionComponent dst;
+    dst.type = static_cast<int>(src.type);
+    dst.center = src.center;
+    dst.width = src.width;
+    dst.amplitude = src.amp;
+    dst.logDomain = src.logDomain;
+    params.voronoiTfComponents.push_back(dst);
+  }
+}
+
+std::vector<TFComponent>
+MakeEditorComponents(const ProjectionMapParams& params)
+{
+  std::vector<TFComponent> out;
+  out.reserve(params.voronoiTfComponents.size());
+  for (const ProjectionTransferFunctionComponent& src :
+       params.voronoiTfComponents) {
+    TFComponent dst;
+    dst.type = static_cast<TFShape>(std::clamp(src.type, 0, 2));
+    dst.center = src.center;
+    dst.width = src.width;
+    dst.amp = src.amplitude;
+    dst.logDomain = src.logDomain;
+    out.push_back(dst);
+  }
+  return out;
+}
+
 void SubmitRadialProfileRequest(const RadialProfileUIState& state,
                                 RadialProfileRequestState& request)
 {
@@ -612,6 +697,8 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
                          ProjectionMapRequestState& request,
                          const ProjectionMapViewContext& ctx)
 {
+  static TransferFunctionEditor voronoiTransferEditor;
+
   if (!state.open) {
     state.selectMode = false;
     state.dragInitialized = false;
@@ -631,6 +718,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     }
     state.paramsInitialized = true;
     state.observedToolRevision = ctx.tool.revision;
+    voronoiTransferEditor.setComponents(MakeEditorComponents(state.draftParams));
   }
 
   auto& params = state.draftParams;
@@ -781,9 +869,15 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   // data source specific UI
   // -----------------------------
   if (params.dataSource == DataSource::Gas) {
-    if (ImGui::BeginCombo("Quantity", QuantityLabel(params.selectedVarGas))) {
-      for (int q = 0; q < static_cast<int>(state.gasQuantityOptions.size()); ++q) {
-        QuantityId cand = state.gasQuantityOptions[q];
+    const bool voronoiOpacityMode =
+      params.flagVoronoi &&
+      params.voronoiMode == ProjectionVoronoiMode::OpacityRendering;
+    const char* colorQuantityLabel =
+      voronoiOpacityMode ? "Color quantity" : "Quantity";
+    if (ImGui::BeginCombo(colorQuantityLabel,
+                          QuantityLabel(params.selectedVarGas))) {
+      for (int q = 0; q < ctx.quantity.catalog.nUIQ; ++q) {
+        QuantityId cand = ctx.quantity.catalog.uiQ[q];
         bool is_selected = (cand == params.selectedVarGas);
         if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
           params.selectedVarGas = cand;
@@ -840,8 +934,8 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
         std::snprintf(label, sizeof(label), "Panel %d", panel + 1);
         ImGui::SetNextItemWidth(180.0f);
         if (ImGui::BeginCombo(label, QuantityLabel(params.multiPanelVars[panel]))) {
-          for (int q = 0; q < static_cast<int>(state.gasQuantityOptions.size()); ++q) {
-            QuantityId cand = state.gasQuantityOptions[q];
+          for (int q = 0; q < ctx.quantity.catalog.nUIQ; ++q) {
+            QuantityId cand = ctx.quantity.catalog.uiQ[q];
             bool is_selected = (cand == params.multiPanelVars[panel]);
             if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
               params.multiPanelVars[panel] = cand;
@@ -874,9 +968,73 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     paramsDirty |= ImGui::Checkbox("Density Weighting", &params.flagDensityWeight);
     paramsDirty |= ImGui::Checkbox("Use Voronoi tesselation", &params.flagVoronoi);
     if (params.flagVoronoi) {
-      ImGui::SetNextItemWidth(200.0f);
-      ImGui::SameLine();
-      paramsDirty |= ImGui::InputInt("nz", &params.step_z, 10, 1000);
+      ImGui::Spacing();
+      ImVec2 voronoiBoxMin = ImGui::GetCursorScreenPos();
+      ImGui::BeginGroup();
+      ImGui::Dummy(ImVec2(0.0f, 3.0f));
+      ImGui::Indent(10.0f);
+      ImGui::TextUnformatted("Voronoi settings");
+      {
+        int voronoiMode = static_cast<int>(params.voronoiMode);
+        const char* modeLabels[] = { "Weighted mean", "Opacity rendering" };
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::Combo("Voronoi mode", &voronoiMode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
+          params.voronoiMode = static_cast<ProjectionVoronoiMode>(voronoiMode);
+          paramsDirty = true;
+        }
+
+        ImGui::SetNextItemWidth(200.0f);
+        paramsDirty |= ImGui::InputInt("nz", &params.step_z, 10, 1000);
+
+        if (params.voronoiMode == ProjectionVoronoiMode::OpacityRendering) {
+          ImGui::Spacing();
+          ImGui::TextUnformatted("Opacity rendering");
+          ImGui::TextDisabled("alpha = 1 - exp(-TF(value) * dz); nz controls sample count.");
+
+          ImGui::SetNextItemWidth(180.0f);
+          if (ImGui::BeginCombo("Opacity quantity",
+                                QuantityLabel(params.voronoiOpacityVarGas))) {
+            for (int q = 0; q < ctx.quantity.catalog.nUIQ; ++q) {
+              QuantityId cand = ctx.quantity.catalog.uiQ[q];
+              bool isSelected = (cand == params.voronoiOpacityVarGas);
+              if (ImGui::Selectable(QuantityLabel(cand), isSelected)) {
+                params.voronoiOpacityVarGas = cand;
+                paramsDirty = true;
+              }
+              if (isSelected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+
+          const ProjectionQuantityRange tfRange =
+            ProjectionRangeForQuantity(ctx.quantity,
+                                       params.voronoiOpacityVarGas,
+                                       params.voronoiTfLogDomain);
+          voronoiTransferEditor.set_minmax(params.voronoiOpacityVarGas,
+                                           tfRange.min,
+                                           tfRange.max);
+          if (ImGui::Button("Open opacity transfer function")) {
+            voronoiTransferEditor.set_window();
+          }
+          ImGui::SameLine();
+          ImGui::TextDisabled("%zu component(s)",
+                              params.voronoiTfComponents.size());
+          if (voronoiTransferEditor.showUI(nullptr)) {
+            ApplyProjectionTransferFunction(voronoiTransferEditor, params);
+            paramsDirty = true;
+          }
+
+          ImGui::TextDisabled("Color comes from Color quantity and the selected colormap.");
+        }
+      }
+      ImGui::Unindent(10.0f);
+      ImGui::Dummy(ImVec2(0.0f, 5.0f));
+      ImGui::EndGroup();
+      ImVec2 voronoiBoxMax = ImGui::GetItemRectMax();
+      ImGui::GetWindowDrawList()->AddRect(voronoiBoxMin,
+                                          voronoiBoxMax,
+                                          ImGui::GetColorU32(ImGuiCol_Border),
+                                          4.0f);
     }
     paramsDirty |= ImGui::Checkbox("Use GPU projection (experimental)",
                                    &params.useGpuProjection);

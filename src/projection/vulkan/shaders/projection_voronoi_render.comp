@@ -1,0 +1,169 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+struct ProjectionParticle {
+  vec4 posVal;
+  vec4 densityMassHsmlPad;
+};
+
+struct ProjectionTfComponent {
+  uint type;
+  float center;
+  float width;
+  float amplitude;
+  uint logDomain;
+  vec3 pad;
+};
+
+layout(std430, binding = 0) readonly buffer Particles {
+  ProjectionParticle particles[];
+};
+
+layout(std140, binding = 1) uniform VoronoiUniforms {
+  uint width;
+  uint height;
+  uint depth;
+  uint particleCount;
+  float dx;
+  float dy;
+  float dz;
+  float xminX;
+  float xminY;
+  float xminZ;
+  uint densityWeight;
+  uint pad0;
+  vec4 renderColor;
+  uint tfCount;
+  uint colorMapSize;
+  uint colorLogScale;
+  uint pad1;
+  float colorValueMin;
+  float colorValueMax;
+  vec2 pad2;
+} uniforms;
+
+layout(std430, binding = 2) readonly buffer Labels {
+  int labels[];
+};
+
+layout(std430, binding = 3) writeonly buffer OutputRgb {
+  float outputRgb[];
+};
+
+layout(std430, binding = 4) writeonly buffer OutputAlpha {
+  float outputAlpha[];
+};
+
+layout(std430, binding = 5) readonly buffer TransferFunction {
+  ProjectionTfComponent tfComponents[];
+};
+
+layout(std430, binding = 6) readonly buffer ColorMap {
+  float colorMap[];
+};
+
+float evalTfComponent(ProjectionTfComponent c, float value)
+{
+  if (isnan(value) || isinf(value)) {
+    return 0.0;
+  }
+  float width = max(abs(c.width), 1.0e-12);
+  float amp = max(c.amplitude, 0.0);
+  if (amp <= 0.0) {
+    return 0.0;
+  }
+
+  if (c.type == 0u && c.logDomain != 0u) {
+    if (value <= 0.0 || c.center <= 0.0) {
+      return 0.0;
+    }
+    float x = log(value) / log(10.0);
+    float center = log(max(c.center, 1.0e-30)) / log(10.0);
+    float q = (x - center) / width;
+    return amp * exp(-0.5 * q * q);
+  }
+
+  float q = abs(value - c.center);
+  if (c.type == 0u) {
+    float u = q / width;
+    return amp * exp(-0.5 * u * u);
+  }
+  if (c.type == 1u) {
+    return q <= width ? amp : 0.0;
+  }
+  if (c.type == 2u) {
+    return q <= width ? amp * (1.0 - q / width) : 0.0;
+  }
+  return 0.0;
+}
+
+float evalTf(float value)
+{
+  float sigma = 0.0;
+  uint count = min(uniforms.tfCount, 16u);
+  for (uint i = 0; i < count; ++i) {
+    sigma += evalTfComponent(tfComponents[i], value);
+  }
+  return max(sigma, 0.0);
+}
+
+void main()
+{
+  uint gid = gl_GlobalInvocationID.x;
+  uint pixelCount = uniforms.width * uniforms.height;
+  if (gid >= pixelCount) {
+    return;
+  }
+
+  vec3 accum = vec3(0.0);
+  float alphaAccum = 0.0;
+  float dzLen = max(abs(uniforms.dz), 1.0e-30);
+  uint colorMapSize = max(uniforms.colorMapSize, 1u);
+
+  for (uint k = 0; k < uniforms.depth && alphaAccum < 0.999; ++k) {
+    uint voxelIndex = k * pixelCount + gid;
+    int label = labels[voxelIndex];
+    if (label < 0) {
+      continue;
+    }
+
+    ProjectionParticle p = particles[label];
+    float sigma = evalTf(p.posVal.w);
+    if (!(sigma > 0.0) || isnan(sigma) || isinf(sigma)) {
+      continue;
+    }
+    float alpha = clamp(1.0 - exp(-sigma * dzLen), 0.0, 1.0);
+    float colorValue = p.densityMassHsmlPad.w;
+    if (uniforms.colorLogScale != 0u) {
+      if (colorValue <= 0.0) {
+        continue;
+      }
+      colorValue = log(colorValue) / log(10.0);
+    }
+    float t = clamp((colorValue - uniforms.colorValueMin) /
+                    max(uniforms.colorValueMax - uniforms.colorValueMin,
+                        1.0e-12),
+                    0.0,
+                    1.0);
+    float x = t * float(colorMapSize - 1u);
+    uint i0 = min(uint(floor(x)), colorMapSize - 1u);
+    uint i1 = min(i0 + 1u, colorMapSize - 1u);
+    float f = x - float(i0);
+    vec3 c0 = vec3(colorMap[i0 * 3u + 0u],
+                   colorMap[i0 * 3u + 1u],
+                   colorMap[i0 * 3u + 2u]);
+    vec3 c1 = vec3(colorMap[i1 * 3u + 0u],
+                   colorMap[i1 * 3u + 1u],
+                   colorMap[i1 * 3u + 2u]);
+    vec3 color = mix(c0, c1, f);
+    float trans = 1.0 - alphaAccum;
+    accum += trans * alpha * color;
+    alphaAccum += trans * alpha;
+  }
+
+  outputRgb[gid * 3u + 0u] = accum.x;
+  outputRgb[gid * 3u + 1u] = accum.y;
+  outputRgb[gid * 3u + 2u] = accum.z;
+  outputAlpha[gid] = alphaAccum;
+}

@@ -24,6 +24,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
@@ -82,6 +83,54 @@ inline void HashFloat(std::size_t& seed, float value)
   std::uint32_t bits = 0;
   std::memcpy(&bits, &value, sizeof(bits));
   HashCombine(seed, static_cast<std::size_t>(bits));
+}
+
+double EvaluateProjectionTfComponent(
+  const ProjectionTransferFunctionComponent& c,
+  double value)
+{
+  if (!std::isfinite(value)) {
+    return 0.0;
+  }
+
+  const double width = std::max<double>(std::abs(c.width), 1.0e-12);
+  const double amp = std::max<double>(c.amplitude, 0.0);
+  if (amp <= 0.0) {
+    return 0.0;
+  }
+
+  if (c.type == 0 && c.logDomain) {
+    if (value <= 0.0 || c.center <= 0.0) {
+      return 0.0;
+    }
+    const double x = std::log10(value);
+    const double center = std::log10(std::max<double>(c.center, 1.0e-30));
+    const double q = (x - center) / width;
+    return amp * std::exp(-0.5 * q * q);
+  }
+
+  const double q = std::abs(value - static_cast<double>(c.center));
+  if (c.type == 0) {
+    const double u = q / width;
+    return amp * std::exp(-0.5 * u * u);
+  }
+  if (c.type == 1) {
+    return q <= width ? amp : 0.0;
+  }
+  if (c.type == 2) {
+    return q <= width ? amp * (1.0 - q / width) : 0.0;
+  }
+  return 0.0;
+}
+
+double EvaluateProjectionTf(const ProjectionMapParams& params, double value)
+{
+  double sigma = 0.0;
+  for (const ProjectionTransferFunctionComponent& c :
+       params.voronoiTfComponents) {
+    sigma += EvaluateProjectionTfComponent(c, value);
+  }
+  return std::max(sigma, 0.0);
 }
 } // namespace
 
@@ -202,8 +251,20 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
     pp.hsml = renderSupportRadius(p, particles.simulationBlock.worldToRenderScale);
     pp.mass = p.mass;
     
-    if (params.dataSource == DataSource::Gas) {    
-      pp.val = getScalarValue(particles.simulationBlock, p, idx, params.selectedVarGas);
+    if (params.dataSource == DataSource::Gas) {
+      const QuantityId projectionQuantity =
+        (params.flagVoronoi &&
+         params.voronoiMode == ProjectionVoronoiMode::OpacityRendering)
+          ? params.voronoiOpacityVarGas
+          : params.selectedVarGas;
+      pp.val = getScalarValue(particles.simulationBlock,
+                              p,
+                              idx,
+                              projectionQuantity);
+      pp.colorVal = getScalarValue(particles.simulationBlock,
+                                   p,
+                                   idx,
+                                   params.selectedVarGas);
       pp.density = p.density;
     }
     
@@ -212,14 +273,19 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
 	float zmet = 0.0f;
 	particles.simulationBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);
 	pp.val = zmet;
+        pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Mass) {
 	pp.val = p.mass;
+        pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Density) {
 	pp.val = p.density;
+        pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Flux) {
 	pp.val = (float)compute_band_luminosity_Lsun(p.mass*units.mass_msun, params.flux);
+        pp.colorVal = pp.val;
       } else {
 	pp.val = 1.0f;
+        pp.colorVal = pp.val;
       }
     }
 
@@ -257,6 +323,27 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       input.uAxis = map.uAxis;
       input.vAxis = map.vAxis;
       input.densityWeight = map.flagDensityWeight;
+      input.renderColor[0] = params.voronoiRenderColor[0];
+      input.renderColor[1] = params.voronoiRenderColor[1];
+      input.renderColor[2] = params.voronoiRenderColor[2];
+      input.colorLogScale = params.flagLogScale;
+      input.colorMapSize = ctx.colorMapSize;
+      input.colorMap.assign(ctx.colorMap,
+                            ctx.colorMap + static_cast<size_t>(ctx.colorMapSize) * 3);
+      for (const ProjectionTransferFunctionComponent& src :
+           params.voronoiTfComponents) {
+        if (input.transferComponents.size() >=
+            static_cast<std::size_t>(kProjectionGpuMaxTfComponents)) {
+          break;
+        }
+        ProjectionGpuTransferComponent dst;
+        dst.type = src.type;
+        dst.center = src.center;
+        dst.width = src.width;
+        dst.amplitude = src.amplitude;
+        dst.logDomain = src.logDomain;
+        input.transferComponents.push_back(dst);
+      }
       input.particles.reserve(insideParticles.size());
       double pxMin = std::numeric_limits<double>::max();
       double pxMax = -std::numeric_limits<double>::max();
@@ -273,6 +360,9 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       size_t nonfiniteInputCount = 0;
       double valueMin = std::numeric_limits<double>::max();
       double valueMax = -std::numeric_limits<double>::max();
+      double colorValueMin = std::numeric_limits<double>::max();
+      double colorValueMax = -std::numeric_limits<double>::max();
+      size_t finiteColorValueCount = 0;
       for (const pos_val& p : insideParticles) {
         const glm::vec3 diff =
           glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
@@ -291,6 +381,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
           gp.pos[2] = p.pos[2];
         }
         gp.val = p.val;
+        gp.colorVal = p.colorVal;
         gp.density = p.density;
         gp.mass = p.mass;
         gp.hsml = p.hsml;
@@ -330,10 +421,32 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
         } else {
           ++nonfiniteInputCount;
         }
+        if (std::isfinite(p.colorVal)) {
+          double colorValue = p.colorVal;
+          if (params.flagLogScale) {
+            if (colorValue <= 0.0) {
+              continue;
+            }
+            colorValue = std::log10(colorValue);
+          }
+          colorValueMin = std::min<double>(colorValueMin, colorValue);
+          colorValueMax = std::max<double>(colorValueMax, colorValue);
+          ++finiteColorValueCount;
+        }
       }
       if (finiteWeightNormCount > 0) {
         input.valueMin = static_cast<float>(valueMin);
         input.valueMax = static_cast<float>(valueMax);
+      }
+      if (finiteColorValueCount > 0) {
+        input.colorValueMin =
+          params.autoRange ? static_cast<float>(colorValueMin)
+                           : params.range_min;
+        input.colorValueMax =
+          params.autoRange ? static_cast<float>(colorValueMax)
+                           : params.range_max;
+        map.colorMinVal = input.colorValueMin;
+        map.colorMaxVal = input.colorValueMax;
       }
 
       std::cout << "GPU projection input: particles="
@@ -434,9 +547,13 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
         }
         if (projectionOk) {
           projectionOk =
-            IntegrateMetalVoronoiLabelGrid(input,
-                                           metalVoronoiCache_.grid,
-                                           output);
+            (params.voronoiMode == ProjectionVoronoiMode::OpacityRendering)
+              ? RenderMetalVoronoiLabelGrid(input,
+                                            metalVoronoiCache_.grid,
+                                            output)
+              : IntegrateMetalVoronoiLabelGrid(input,
+                                               metalVoronoiCache_.grid,
+                                               output);
           if (projectionOk) {
             output.elapsedMs += metalVoronoiCache_.grid.elapsedMs;
           }
@@ -489,9 +606,13 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
             ok = true;
           }
           if (ok) {
-            ok = IntegrateVulkanVoronoiLabelGrid(input,
-                                                 vulkanVoronoiCache_.grid,
-                                                 output);
+            ok = (params.voronoiMode == ProjectionVoronoiMode::OpacityRendering)
+                   ? RenderVulkanVoronoiLabelGrid(input,
+                                                  vulkanVoronoiCache_.grid,
+                                                  output)
+                   : IntegrateVulkanVoronoiLabelGrid(input,
+                                                     vulkanVoronoiCache_.grid,
+                                                     output);
             if (ok) {
               output.elapsedMs += vulkanVoronoiCache_.grid.elapsedMs;
             }
@@ -508,6 +629,10 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
 #endif
       };
       const auto tryOpenGLProjection = [&]() {
+        if (params.flagVoronoi &&
+            params.voronoiMode == ProjectionVoronoiMode::OpacityRendering) {
+          return false;
+        }
         const bool ok = params.flagVoronoi
                           ? RunOpenGLVoronoiProjectionMap(input, output)
                           : RunOpenGLProjectionMap(input, output);
@@ -535,10 +660,28 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
         }
       }
       if (projectionOk) {
-        for (size_t i = 0; i < map.values.size(); ++i) {
-          const double weight = output.weights[i];
-          map.weights[i] = weight;
-          map.values[i] = weight > 0.0 ? output.values[i] / weight : 0.0;
+        if (params.flagVoronoi &&
+            params.voronoiMode == ProjectionVoronoiMode::OpacityRendering &&
+            output.rgb.size() >= map.values.size() * 3) {
+          map.image.assign(map.values.size() * 3, 0);
+          for (size_t i = 0; i < map.values.size(); ++i) {
+            const float alpha =
+              (i < output.weights.size()) ? output.weights[i] : 0.0f;
+            map.weights[i] = alpha;
+            map.values[i] = alpha;
+            map.image[i * 3 + 0] = static_cast<unsigned char>(
+              std::clamp(output.rgb[i * 3 + 0], 0.0f, 1.0f) * 255.0f);
+            map.image[i * 3 + 1] = static_cast<unsigned char>(
+              std::clamp(output.rgb[i * 3 + 1], 0.0f, 1.0f) * 255.0f);
+            map.image[i * 3 + 2] = static_cast<unsigned char>(
+              std::clamp(output.rgb[i * 3 + 2], 0.0f, 1.0f) * 255.0f);
+          }
+        } else {
+          for (size_t i = 0; i < map.values.size(); ++i) {
+            const double weight = output.weights[i];
+            map.weights[i] = weight;
+            map.values[i] = weight > 0.0 ? output.values[i] / weight : 0.0;
+          }
         }
         std::cout << projectionBackendUsed << " "
                   << (params.flagVoronoi ? "Voronoi " : "")
@@ -551,7 +694,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       }
     }
     if (!projectedOnGpu) {
-      if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles);
+      if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles, params, ctx);
       else             createProjectionMap(map, insideParticles);
     }
   }
@@ -685,6 +828,35 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   const ProjectionMapContext& ctx,
   const std::vector<SimulationElement>& originalParticles)
 {
+  if (params.flagVoronoi &&
+      params.voronoiMode == ProjectionVoronoiMode::OpacityRendering &&
+      !map.image.empty()) {
+    map.minVal = *std::min_element(map.values.begin(), map.values.end());
+    map.maxVal = *std::max_element(map.values.begin(), map.values.end());
+    if (map.maxVal <= map.minVal) {
+      map.maxVal = map.minVal + 1.0e-6f;
+    }
+
+    int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
+    ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
+    if (params.flagShowStarParticles) {
+      overlayStarParticles(canvas, map, params, ctx, originalParticles);
+    }
+
+    addColorBarToMap(canvas,
+                     map.cell_size,
+                     map.colorMinVal,
+                     map.colorMaxVal,
+                     colorBarWidth,
+                     ctx.colorMap,
+                     ctx.colorMapSize,
+                     QuantityLabel(params.selectedVarGas),
+                     params,
+                     ctx);
+
+    return ToRgbImage(canvas);
+  }
+
   float minVal = FLT_MAX;
   for (auto val : map.values) {
     if (val < minVal && val > 0.0f) minVal = val;
@@ -847,7 +1019,11 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
 }
 
 
-void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles)
+void ProjectionMapGenerator::createVoronoiSliceMap(
+  ProjectionMap& map,
+  const std::vector<pos_val>& particles,
+  const ProjectionMapParams& params,
+  const ProjectionMapContext& ctx)
 {  
   std::size_t cacheKey = 1099511628211ull;
   HashCombine(cacheKey, static_cast<std::size_t>(map.npixel_x));
@@ -883,7 +1059,10 @@ void ProjectionMapGenerator::createVoronoiSliceMap(ProjectionMap& map, const std
               << cpuVoronoiCache_.grid.depth << std::endl;
   }
 
-  if (cpuVoronoiCache_.valid) {
+  if (cpuVoronoiCache_.valid &&
+      params.voronoiMode == ProjectionVoronoiMode::OpacityRendering) {
+    renderCpuVoronoiLabelGrid(map, particles, cpuVoronoiCache_.grid, params, ctx);
+  } else if (cpuVoronoiCache_.valid) {
     integrateCpuVoronoiLabelGrid(map, particles, cpuVoronoiCache_.grid);
   }
 }
@@ -905,6 +1084,7 @@ ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
       sp.pos[2] = glm::dot(diff, map.wAxis);      
 
       sp.val = p.val;
+      sp.colorVal = p.colorVal;
       sp.density = p.density;
       sp.hsml = p.hsml;
       sp.mass = p.mass;
@@ -1035,6 +1215,127 @@ void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
   for (size_t i = 0; i < map.values.size(); i++){
     if(map.weights[i])
       map.values[i] /= map.weights[i];       
+  }
+}
+
+void ProjectionMapGenerator::renderCpuVoronoiLabelGrid(
+  ProjectionMap& map,
+  const std::vector<pos_val>& particles,
+  const VoronoiLabelGrid& grid,
+  const ProjectionMapParams& params,
+  const ProjectionMapContext& ctx)
+{
+  std::vector<pos_val> filtered;
+  filtered.reserve(particles.size());
+  for (const pos_val& p : particles) {
+    pos_val sp;
+    glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
+    sp.pos[0] = glm::dot(diff, map.uAxis);
+    sp.pos[1] = glm::dot(diff, map.vAxis);
+    sp.pos[2] = glm::dot(diff, map.wAxis);
+    sp.val = p.val;
+    sp.colorVal = p.colorVal;
+    sp.density = p.density;
+    sp.hsml = p.hsml;
+    sp.mass = p.mass;
+    filtered.push_back(sp);
+  }
+
+  map.image.assign(static_cast<size_t>(map.npixel_x) *
+                     static_cast<size_t>(map.npixel_y) * 3,
+                   0);
+  std::fill(map.values.begin(), map.values.end(), 0.0);
+  std::fill(map.weights.begin(), map.weights.end(), 0.0);
+
+  const double dz = std::max<double>(std::abs(map.dz), 1.0e-30);
+  double colorMin = std::numeric_limits<double>::max();
+  double colorMax = -std::numeric_limits<double>::max();
+  for (const pos_val& p : filtered) {
+    double value = p.colorVal;
+    if (!std::isfinite(value)) continue;
+    if (params.flagLogScale) {
+      if (value <= 0.0) continue;
+      value = std::log10(value);
+    }
+    colorMin = std::min(colorMin, value);
+    colorMax = std::max(colorMax, value);
+  }
+  if (!params.autoRange) {
+    colorMin = params.range_min;
+    colorMax = params.range_max;
+  }
+  if (!(colorMax > colorMin)) {
+    colorMax = colorMin + 1.0e-6;
+  }
+  map.colorMinVal = static_cast<float>(colorMin);
+  map.colorMaxVal = static_cast<float>(colorMax);
+
+#pragma omp parallel for collapse(2)
+  for (int j = 0; j < map.npixel_y; j++) {
+    for (int i = 0; i < map.npixel_x; i++) {
+      double accumR = 0.0;
+      double accumG = 0.0;
+      double accumB = 0.0;
+      double accumA = 0.0;
+
+      for (int k = 0; k < map.npixel_z && accumA < 0.999; k++) {
+        const size_t labelIdx =
+          static_cast<size_t>(k) * static_cast<size_t>(map.npixel_x) *
+            static_cast<size_t>(map.npixel_y) +
+          static_cast<size_t>(j) * static_cast<size_t>(map.npixel_x) +
+          static_cast<size_t>(i);
+        const int label = grid.labels[labelIdx];
+        if (label < 0 ||
+            static_cast<size_t>(label) >= filtered.size()) {
+          continue;
+        }
+
+        const pos_val& p = filtered[static_cast<size_t>(label)];
+        const double sigma = EvaluateProjectionTf(params,
+                                                  static_cast<double>(p.val));
+        if (!(sigma > 0.0) || !std::isfinite(sigma)) {
+          continue;
+        }
+
+        const double alpha =
+          std::clamp(1.0 - std::exp(-sigma * dz), 0.0, 1.0);
+        double colorValue = p.colorVal;
+        if (params.flagLogScale && colorValue > 0.0) {
+          colorValue = std::log10(colorValue);
+        }
+        const float colorT = static_cast<float>(
+          std::clamp((colorValue - colorMin) / (colorMax - colorMin),
+                     0.0,
+                     1.0));
+        float colorR = 0.0f;
+        float colorG = 0.0f;
+        float colorB = 0.0f;
+        colormapLookup(colorT,
+                       colorR,
+                       colorG,
+                       colorB,
+                       ctx.colorMap,
+                       ctx.colorMapSize);
+        const double trans = 1.0 - accumA;
+        accumR += trans * alpha * colorR;
+        accumG += trans * alpha * colorG;
+        accumB += trans * alpha * colorB;
+        accumA += trans * alpha;
+      }
+
+      const size_t outIdx =
+        static_cast<size_t>(j) * static_cast<size_t>(map.npixel_x) +
+        static_cast<size_t>(i);
+      map.values[outIdx] = accumA;
+      map.weights[outIdx] = accumA;
+      const size_t rgbIdx = outIdx * 3;
+      map.image[rgbIdx + 0] =
+        static_cast<unsigned char>(std::clamp(accumR, 0.0, 1.0) * 255.0);
+      map.image[rgbIdx + 1] =
+        static_cast<unsigned char>(std::clamp(accumG, 0.0, 1.0) * 255.0);
+      map.image[rgbIdx + 2] =
+        static_cast<unsigned char>(std::clamp(accumB, 0.0, 1.0) * 255.0);
+    }
   }
 }
 

@@ -1,9 +1,19 @@
 #pragma once
+#include <vector>
 #include <string>
 #include "core/quantity.h"
 
 enum class DataSource : int { Gas = 0, DM = 1, Stars = 2 };
 enum class StarQuantity : int { Density=0, Metallicity=1, Mass=2, Flux=3 };
+enum class ProjectionVoronoiMode : int { WeightedMean = 0, OpacityRendering = 1 };
+
+struct ProjectionTransferFunctionComponent {
+  int type = 0; // 0=Gaussian, 1=Box, 2=Triangle.
+  float center = 1.0f;
+  float width = 1.0f;
+  float amplitude = 1.0f;
+  bool logDomain = true;
+};
 
 struct FluxSettings {
   float band_center_nm = 1500.0f;
@@ -21,6 +31,13 @@ struct ProjectionMapParams {
   bool flagVoronoi = true;
   bool useGpuProjection = false;
   int step_z = 200;
+  ProjectionVoronoiMode voronoiMode = ProjectionVoronoiMode::WeightedMean;
+  bool voronoiTfLogDomain = true;
+  float voronoiTfValueMin = 1.0e-6f;
+  float voronoiTfValueMax = 1.0f;
+  float voronoiRenderColor[3] = {0.35f, 1.0f, 0.8f};
+  std::vector<ProjectionTransferFunctionComponent> voronoiTfComponents;
+  QuantityId voronoiOpacityVarGas = QuantityId::Density;
 
   bool flagLogScale = true;
   bool autoRange = true;

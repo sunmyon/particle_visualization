@@ -183,6 +183,12 @@ public:
     return comps_;
   }
 
+  void setComponents(const std::vector<TFComponent>& components) {
+    comps_ = components;
+    selected_ = -1;
+    dirty_ = false;
+  }
+
   float valueMin() const { return rhoMin_; }
   float valueMax() const { return rhoMax_; }
   bool logScale() const { return logScale_; }

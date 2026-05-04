@@ -45,6 +45,23 @@ struct VulkanVoronoiUniforms {
   float xminZ = 0.0f;
   std::uint32_t densityWeight = 0;
   std::uint32_t pad0 = 0;
+  float renderColor[4] = {0.35f, 1.0f, 0.8f, 0.0f};
+  std::uint32_t tfCount = 0;
+  std::uint32_t colorMapSize = 0;
+  std::uint32_t colorLogScale = 0;
+  std::uint32_t pad1 = 0;
+  float colorValueMin = 0.0f;
+  float colorValueMax = 1.0f;
+  float pad2[2] = {0.0f, 0.0f};
+};
+
+struct VulkanProjectionTfComponent {
+  std::uint32_t type = 0;
+  float center = 1.0f;
+  float width = 1.0f;
+  float amplitude = 0.0f;
+  std::uint32_t logDomain = 1;
+  float pad[3] = {0.0f, 0.0f, 0.0f};
 };
 
 struct VulkanProjectionUniforms {
@@ -411,6 +428,12 @@ public:
       }
       return jfaPipeline_;
     }
+    if (std::strcmp(shaderName, "projection_voronoi_render.comp.spv") == 0) {
+      if (renderPipeline_ == VK_NULL_HANDLE) {
+        renderPipeline_ = createComputePipeline(shaderName);
+      }
+      return renderPipeline_;
+    }
     if (integratePipeline_ == VK_NULL_HANDLE) {
       integratePipeline_ = createComputePipeline(shaderName);
     }
@@ -453,7 +476,79 @@ public:
       writes[i].dstBinding = i;
       writes[i].descriptorCount = 1;
       writes[i].descriptorType =
-        (i == 1 || i == 4)
+        (i == 1)
+          ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+          : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writes[i].pBufferInfo = &infos[i];
+    }
+    vkUpdateDescriptorSets(device_,
+                           static_cast<std::uint32_t>(writes.size()),
+                           writes.data(),
+                           0,
+                           nullptr);
+  }
+
+  void updateDescriptorSet(VkDescriptorSet descriptorSet,
+                           const VulkanBuffer& b0,
+                           const VulkanBuffer& b1,
+                           const VulkanBuffer& b2,
+                           const VulkanBuffer& b3,
+                           const VulkanBuffer& b4,
+                           const VulkanBuffer& b5)
+  {
+    std::array<VkDescriptorBufferInfo, 6> infos = {{
+      {b0.buffer, 0, b0.size},
+      {b1.buffer, 0, b1.size},
+      {b2.buffer, 0, b2.size},
+      {b3.buffer, 0, b3.size},
+      {b4.buffer, 0, b4.size},
+      {b5.buffer, 0, b5.size},
+    }};
+    std::array<VkWriteDescriptorSet, 6> writes{};
+    for (std::uint32_t i = 0; i < writes.size(); ++i) {
+      writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[i].dstSet = descriptorSet;
+      writes[i].dstBinding = i;
+      writes[i].descriptorCount = 1;
+      writes[i].descriptorType =
+        (i == 1)
+          ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+          : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writes[i].pBufferInfo = &infos[i];
+    }
+    vkUpdateDescriptorSets(device_,
+                           static_cast<std::uint32_t>(writes.size()),
+                           writes.data(),
+                           0,
+                           nullptr);
+  }
+
+  void updateDescriptorSet(VkDescriptorSet descriptorSet,
+                           const VulkanBuffer& b0,
+                           const VulkanBuffer& b1,
+                           const VulkanBuffer& b2,
+                           const VulkanBuffer& b3,
+                           const VulkanBuffer& b4,
+                           const VulkanBuffer& b5,
+                           const VulkanBuffer& b6)
+  {
+    std::array<VkDescriptorBufferInfo, 7> infos = {{
+      {b0.buffer, 0, b0.size},
+      {b1.buffer, 0, b1.size},
+      {b2.buffer, 0, b2.size},
+      {b3.buffer, 0, b3.size},
+      {b4.buffer, 0, b4.size},
+      {b5.buffer, 0, b5.size},
+      {b6.buffer, 0, b6.size},
+    }};
+    std::array<VkWriteDescriptorSet, 7> writes{};
+    for (std::uint32_t i = 0; i < writes.size(); ++i) {
+      writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[i].dstSet = descriptorSet;
+      writes[i].dstBinding = i;
+      writes[i].descriptorCount = 1;
+      writes[i].descriptorType =
+        (i == 1)
           ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
           : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       writes[i].pBufferInfo = &infos[i];
@@ -659,12 +754,12 @@ private:
 
   bool createDescriptorResources()
   {
-    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
     for (std::uint32_t i = 0; i < bindings.size(); ++i) {
       bindings[i].binding = i;
       bindings[i].descriptorCount = 1;
       bindings[i].descriptorType =
-        (i == 1 || i == 4)
+        (i == 1)
           ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
           : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -806,6 +901,7 @@ private:
     sphPipeline_ = VK_NULL_HANDLE;
     jfaPipeline_ = VK_NULL_HANDLE;
     integratePipeline_ = VK_NULL_HANDLE;
+    renderPipeline_ = VK_NULL_HANDLE;
   }
 
   VkInstance instance_ = VK_NULL_HANDLE;
@@ -820,6 +916,7 @@ private:
   VkPipeline sphPipeline_ = VK_NULL_HANDLE;
   VkPipeline jfaPipeline_ = VK_NULL_HANDLE;
   VkPipeline integratePipeline_ = VK_NULL_HANDLE;
+  VkPipeline renderPipeline_ = VK_NULL_HANDLE;
   bool shaderBufferFloat32AtomicAdd_ = false;
   bool ownsVulkanHandles_ = true;
 #ifdef __APPLE__
@@ -853,6 +950,7 @@ BuildVulkanParticles(const ProjectionGpuMapInput& input)
     vp.densityMassHsmlPad[0] = p.density;
     vp.densityMassHsmlPad[1] = p.mass;
     vp.densityMassHsmlPad[2] = p.hsml;
+    vp.densityMassHsmlPad[3] = p.colorVal;
     out.push_back(vp);
   }
   return out;
@@ -880,6 +978,16 @@ VulkanVoronoiUniforms BuildUniforms(const ProjectionGpuMapInput& input)
   uniforms.xminY = input.xminLocal[1];
   uniforms.xminZ = input.xminLocal[2];
   uniforms.densityWeight = input.densityWeight ? 1u : 0u;
+  uniforms.renderColor[0] = input.renderColor[0];
+  uniforms.renderColor[1] = input.renderColor[1];
+  uniforms.renderColor[2] = input.renderColor[2];
+  uniforms.tfCount = static_cast<std::uint32_t>(
+    std::min<std::size_t>(input.transferComponents.size(),
+                          kProjectionGpuMaxTfComponents));
+  uniforms.colorMapSize = static_cast<std::uint32_t>(input.colorMapSize);
+  uniforms.colorLogScale = input.colorLogScale ? 1u : 0u;
+  uniforms.colorValueMin = input.colorValueMin;
+  uniforms.colorValueMax = input.colorValueMax;
   return uniforms;
 }
 
@@ -1640,6 +1748,210 @@ bool IntegrateVulkanVoronoiLabelGrid(const ProjectionGpuMapInput& input,
   ctx.destroyBuffer(weightBuffer);
   ctx.resetReusableProjectionResources();
   return readValues && readWeights && nonzeroWeights > 0;
+#endif
+}
+
+bool RenderVulkanVoronoiLabelGrid(const ProjectionGpuMapInput& input,
+                                  const ProjectionGpuLabelGrid& grid,
+                                  ProjectionGpuMapOutput& output)
+{
+  output = ProjectionGpuMapOutput{};
+#ifndef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
+  (void)input;
+  (void)grid;
+  std::cerr << "Vulkan backend was not compiled into this build." << std::endl;
+  return false;
+#else
+  if (input.width <= 0 || input.height <= 0 || input.depth <= 0 ||
+      input.width != grid.width || input.height != grid.height ||
+      input.depth != grid.depth || input.particles.empty() ||
+      grid.labels.empty() || input.transferComponents.empty()) {
+    return false;
+  }
+  std::string availabilityReason;
+  const bool hasExternal = ActiveExternalContext() != nullptr;
+  if (!hasExternal &&
+      !StandaloneVulkanProjectionAllowed(&availabilityReason)) {
+    std::cerr << "Vulkan Voronoi render unavailable: "
+              << availabilityReason << std::endl;
+    return false;
+  }
+  VulkanProjectionContext& ctx = Context();
+  if (!(hasExternal ? ctx.initFromExternal(ActiveExternalContext())
+                    : ctx.init())) {
+    return false;
+  }
+
+  const std::size_t pixelCount =
+    static_cast<std::size_t>(input.width) *
+    static_cast<std::size_t>(input.height);
+  const std::size_t voxelCount =
+    pixelCount * static_cast<std::size_t>(input.depth);
+  const std::size_t rgbBytes = pixelCount * 3 * sizeof(float);
+  const std::size_t alphaBytes = pixelCount * sizeof(float);
+  const std::size_t labelBytes = voxelCount * sizeof(std::int32_t);
+  const std::size_t colorMapBytes =
+    input.colorMap.empty()
+      ? 0
+      : input.colorMap.size() * sizeof(float);
+  const auto vulkanParticles = BuildVulkanParticles(input);
+  const std::size_t particleBytes =
+    vulkanParticles.size() * sizeof(VulkanProjectionParticle);
+  const VulkanVoronoiUniforms uniforms = BuildUniforms(input);
+
+  std::vector<VulkanProjectionTfComponent> tfComponents(
+    std::min<std::size_t>(input.transferComponents.size(),
+                          kProjectionGpuMaxTfComponents));
+  for (std::size_t i = 0; i < tfComponents.size(); ++i) {
+    const ProjectionGpuTransferComponent& src = input.transferComponents[i];
+    tfComponents[i].type = static_cast<std::uint32_t>(std::clamp(src.type, 0, 2));
+    tfComponents[i].center = src.center;
+    tfComponents[i].width = src.width;
+    tfComponents[i].amplitude = src.amplitude;
+    tfComponents[i].logDomain = src.logDomain ? 1u : 0u;
+  }
+  const std::size_t tfBytes =
+    tfComponents.size() * sizeof(VulkanProjectionTfComponent);
+
+  VulkanBuffer particleBuffer = ctx.createBuffer(
+    particleBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer uniformBuffer = ctx.createBuffer(
+    sizeof(uniforms),
+    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer labelBuffer = ctx.createBuffer(
+    labelBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer rgbBuffer = ctx.createBuffer(
+    rgbBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer alphaBuffer = ctx.createBuffer(
+    alphaBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer tfBuffer = ctx.createBuffer(
+    tfBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VulkanBuffer colorMapBuffer = ctx.createBuffer(
+    colorMapBytes,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  if (particleBuffer.buffer == VK_NULL_HANDLE ||
+      uniformBuffer.buffer == VK_NULL_HANDLE ||
+      labelBuffer.buffer == VK_NULL_HANDLE ||
+      rgbBuffer.buffer == VK_NULL_HANDLE ||
+      alphaBuffer.buffer == VK_NULL_HANDLE ||
+      tfBuffer.buffer == VK_NULL_HANDLE ||
+      colorMapBuffer.buffer == VK_NULL_HANDLE ||
+      !ctx.writeBuffer(particleBuffer,
+                       vulkanParticles.data(),
+                       static_cast<VkDeviceSize>(particleBytes)) ||
+      !ctx.writeBuffer(uniformBuffer, &uniforms, sizeof(uniforms)) ||
+      !ctx.writeBuffer(labelBuffer, grid.labels.data(), labelBytes) ||
+      !ctx.writeBuffer(tfBuffer, tfComponents.data(), tfBytes) ||
+      !ctx.writeBuffer(colorMapBuffer, input.colorMap.data(), colorMapBytes)) {
+    ctx.destroyBuffer(particleBuffer);
+    ctx.destroyBuffer(uniformBuffer);
+    ctx.destroyBuffer(labelBuffer);
+    ctx.destroyBuffer(rgbBuffer);
+    ctx.destroyBuffer(alphaBuffer);
+    ctx.destroyBuffer(tfBuffer);
+    ctx.destroyBuffer(colorMapBuffer);
+    return false;
+  }
+
+  VkPipeline pipeline = ctx.pipeline("projection_voronoi_render.comp.spv");
+  if (pipeline == VK_NULL_HANDLE) {
+    ctx.destroyBuffer(particleBuffer);
+    ctx.destroyBuffer(uniformBuffer);
+    ctx.destroyBuffer(labelBuffer);
+    ctx.destroyBuffer(rgbBuffer);
+    ctx.destroyBuffer(alphaBuffer);
+    ctx.destroyBuffer(tfBuffer);
+    ctx.destroyBuffer(colorMapBuffer);
+    return false;
+  }
+
+  VkCommandBuffer commandBuffer = BeginOneShotCommand(ctx);
+  VkDescriptorSet set = ctx.allocateDescriptorSet();
+  ctx.updateDescriptorSet(set,
+                          particleBuffer,
+                          uniformBuffer,
+                          labelBuffer,
+                          rgbBuffer,
+                          alphaBuffer,
+                          tfBuffer,
+                          colorMapBuffer);
+  const auto start = std::chrono::steady_clock::now();
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+  vkCmdBindDescriptorSets(commandBuffer,
+                          VK_PIPELINE_BIND_POINT_COMPUTE,
+                          ctx.pipelineLayout(),
+                          0,
+                          1,
+                          &set,
+                          0,
+                          nullptr);
+  Dispatch1D(commandBuffer, pixelCount);
+  HostReadBarrier(commandBuffer, rgbBuffer.buffer, rgbBuffer.size);
+  HostReadBarrier(commandBuffer, alphaBuffer.buffer, alphaBuffer.size);
+  const bool submitted = EndSubmitWait(ctx, commandBuffer);
+  const auto end = std::chrono::steady_clock::now();
+  ctx.freeDescriptorSets(std::vector<VkDescriptorSet>{set});
+  if (!submitted) {
+    ctx.destroyBuffer(particleBuffer);
+    ctx.destroyBuffer(uniformBuffer);
+    ctx.destroyBuffer(labelBuffer);
+    ctx.destroyBuffer(rgbBuffer);
+    ctx.destroyBuffer(alphaBuffer);
+    ctx.destroyBuffer(tfBuffer);
+    ctx.destroyBuffer(colorMapBuffer);
+    return false;
+  }
+
+  output.rgb.resize(pixelCount * 3);
+  output.weights.resize(pixelCount);
+  const bool readRgb = ctx.readBuffer(rgbBuffer,
+                                      output.rgb.data(),
+                                      rgbBytes);
+  const bool readAlpha = ctx.readBuffer(alphaBuffer,
+                                        output.weights.data(),
+                                        alphaBytes);
+  output.elapsedMs =
+    std::chrono::duration<double, std::milli>(end - start).count();
+
+  std::size_t nonzeroAlpha = 0;
+  double alphaSum = 0.0;
+  for (float alpha : output.weights) {
+    if (alpha > 0.0f) {
+      ++nonzeroAlpha;
+      alphaSum += alpha;
+    }
+  }
+  std::cout << "Vulkan Voronoi opacity render: particles="
+            << input.particles.size()
+            << " grid=" << input.width << "x" << input.height << "x"
+            << input.depth
+            << " nonzeroAlpha=" << nonzeroAlpha
+            << " alphaSum=" << alphaSum
+            << " elapsedMs=" << output.elapsedMs
+            << std::endl;
+
+  ctx.destroyBuffer(particleBuffer);
+  ctx.destroyBuffer(uniformBuffer);
+  ctx.destroyBuffer(labelBuffer);
+  ctx.destroyBuffer(rgbBuffer);
+  ctx.destroyBuffer(alphaBuffer);
+  ctx.destroyBuffer(tfBuffer);
+  ctx.destroyBuffer(colorMapBuffer);
+  ctx.resetReusableProjectionResources();
+  return readRgb && readAlpha;
 #endif
 }
 

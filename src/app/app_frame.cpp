@@ -400,7 +400,8 @@ static void DrawToolWindows(AppRuntimeState& runtime,
   ProjectionMapViewContext projectionMapCtx{
     windowCommands,
     runtime.analysisTools.projectionMap,
-    runtime.settings.normalization
+    runtime.settings.normalization,
+    runtime.quantity
   };
   DrawProjectionMapUI(tools.projectionMap,
                       runtime.analysisRequests.projectionMapRequest,

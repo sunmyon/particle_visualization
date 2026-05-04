@@ -7,9 +7,20 @@
 struct ProjectionGpuParticle {
   float pos[3] = {0.0f, 0.0f, 0.0f};
   float val = 0.0f;
+  float colorVal = 0.0f;
   float density = 0.0f;
   float mass = 0.0f;
   float hsml = 0.0f;
+};
+
+inline constexpr int kProjectionGpuMaxTfComponents = 16;
+
+struct ProjectionGpuTransferComponent {
+  int type = 0; // 0=Gaussian, 1=Box, 2=Triangle.
+  float center = 1.0f;
+  float width = 1.0f;
+  float amplitude = 0.0f;
+  bool logDomain = true;
 };
 
 struct ProjectionGpuMapInput {
@@ -26,12 +37,20 @@ struct ProjectionGpuMapInput {
   bool densityWeight = false;
   float valueMin = 0.0f;
   float valueMax = 1.0f;
+  float colorValueMin = 0.0f;
+  float colorValueMax = 1.0f;
+  bool colorLogScale = true;
+  float renderColor[3] = {0.35f, 1.0f, 0.8f};
+  std::vector<float> colorMap;
+  int colorMapSize = 0;
+  std::vector<ProjectionGpuTransferComponent> transferComponents;
   std::vector<ProjectionGpuParticle> particles;
 };
 
 struct ProjectionGpuMapOutput {
   std::vector<float> values;
   std::vector<float> weights;
+  std::vector<float> rgb;
   double elapsedMs = 0.0;
 };
 

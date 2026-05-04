@@ -51,6 +51,7 @@ struct ProjectionMapViewContext {
   WindowCommandQueue& windowCommands;
   const ProjectionMapToolState& tool;
   const NormalizationContext& normalization;
+  const QuantityState& quantity;
 };
 
 void DrawProjectionMapUI(ProjectionMapUIState& state,

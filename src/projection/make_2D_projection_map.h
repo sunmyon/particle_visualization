@@ -40,6 +40,7 @@ extern const float plasmaMap[];
 struct pos_val {
   float pos[3];
   float val;
+  float colorVal;
   float density;
   float mass;
   float hsml;
@@ -74,6 +75,7 @@ private:
     float cell_size = 0.f;
     float sourceWorldToRenderScale = 1.0f;
     float minVal = 0.f, maxVal = 0.f;
+    float colorMinVal = 0.f, colorMaxVal = 1.f;
     bool flagDensityWeight = false;
     bool flagLogScale = false;
     glm::vec3 center = glm::vec3(0.f);
@@ -98,12 +100,20 @@ private:
   CpuVoronoiCache cpuVoronoiCache_;
 
   void createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles);
-  void createVoronoiSliceMap(ProjectionMap& map, const std::vector<pos_val>& particles);
+  void createVoronoiSliceMap(ProjectionMap& map,
+                             const std::vector<pos_val>& particles,
+                             const ProjectionMapParams& params,
+                             const ProjectionMapContext& ctx);
   VoronoiLabelGrid buildCpuVoronoiLabelGrid(const ProjectionMap& map,
                                             const std::vector<pos_val>& particles);
   void integrateCpuVoronoiLabelGrid(ProjectionMap& map,
                                     const std::vector<pos_val>& particles,
                                     const VoronoiLabelGrid& grid);
+  void renderCpuVoronoiLabelGrid(ProjectionMap& map,
+                                 const std::vector<pos_val>& particles,
+                                 const VoronoiLabelGrid& grid,
+                                 const ProjectionMapParams& params,
+                                 const ProjectionMapContext& ctx);
   void createStarMap(ProjectionMap &map, const std::vector<pos_val>& particles, float sigma_pix, bool normalize);
 
 #ifdef USE_LUA

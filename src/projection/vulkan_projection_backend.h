@@ -20,5 +20,9 @@ bool IntegrateVulkanVoronoiLabelGrid(const ProjectionGpuMapInput& input,
                                      const ProjectionGpuLabelGrid& grid,
                                      ProjectionGpuMapOutput& output);
 
+bool RenderVulkanVoronoiLabelGrid(const ProjectionGpuMapInput& input,
+                                  const ProjectionGpuLabelGrid& grid,
+                                  ProjectionGpuMapOutput& output);
+
 bool RunVulkanVoronoiProjectionMap(const ProjectionGpuMapInput& input,
                                    ProjectionGpuMapOutput& output);

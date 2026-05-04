@@ -603,7 +603,8 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
       ${SRC_DIR}/render/vulkan/shaders/volume_cache.frag
       ${SRC_DIR}/projection/vulkan/shaders/projection_sph.comp
       ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_jfa.comp
-      ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_integrate.comp)
+      ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_integrate.comp
+      ${SRC_DIR}/projection/vulkan/shaders/projection_voronoi_render.comp)
     set(PARTICLE_VIS_VULKAN_SHADER_OUTPUTS)
     foreach(shader IN LISTS PARTICLE_VIS_VULKAN_SHADER_SOURCES)
       get_filename_component(shader_name "${shader}" NAME)
