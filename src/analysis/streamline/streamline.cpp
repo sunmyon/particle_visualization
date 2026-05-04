@@ -305,10 +305,15 @@ void StreamlineComputer::estimate_gradB(const SimulationBlock& simulationBlock,
   m_kdTree->buildIndex();
 
   gradB.clear();
-  gradB.resize(cloud.particles.size());
   gradLimiter.clear();
-  gradLimiter.resize(cloud.particles.size(), Eigen::Vector3f::Ones());
   r_neighbours.clear();
+
+  if (useBfield) {
+    return;
+  }
+
+  gradB.resize(cloud.particles.size());
+  gradLimiter.resize(cloud.particles.size(), Eigen::Vector3f::Ones());
   r_neighbours.resize(cloud.particles.size(), 0.0f);
 
   std::array<IndexType, N_neighbours> idx_buf{};
@@ -422,8 +427,10 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
   const size_t n_found = m_kdTree->knnSearch(x, N_neighbours, idx_buf.data(), dist2_buf.data());
   if (n_found == 0) return false;
 
-  hsml = std::max(1.0e-6f, std::sqrt(dist2_buf[0]));
-
+  const size_t nearest = idx_buf[0];
+  hsml = std::max(1.0e-6f, cloud.particles[nearest].cell_size);
+  const float interpolationScale =
+    std::max(1.0e-6f, std::sqrt(dist2_buf[0]));
   const Eigen::Vector3f xe = toEigen(x);
   Eigen::Vector3f Bsum = Eigen::Vector3f::Zero();
   float sumw = 0.0f;
@@ -443,7 +450,7 @@ bool StreamlineComputer::evalFieldAt(const float x[3], float outB[3], float& hsm
       Bi[2] += g[2].dot(d);
     }
 
-    const float sigma = std::max(0.5f * p.cell_size, hsml);
+    const float sigma = std::max(0.5f * p.cell_size, interpolationScale);
     const float sigma2 = sigma * sigma;
     const float r2 = d.squaredNorm();
     const float w = std::exp(-r2 / std::max(1.0e-20f, sigma2));

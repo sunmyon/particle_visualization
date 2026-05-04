@@ -10,6 +10,8 @@
 
 #include <fftw3.h>
 
+#include "GridTypes.h"
+
 namespace fourier_analysis {
   class FourierGrid3D {
   public:
@@ -20,7 +22,8 @@ namespace fourier_analysis {
     };
 
     FourierGrid3D();
-    FourierGrid3D(const Region3D& region, const GridSize3D& size);
+    FourierGrid3D(const grid_analysis::Region3D& region,
+                  const grid_analysis::GridSize3D& size);
     ~FourierGrid3D();
 
     FourierGrid3D(const FourierGrid3D&) = delete;
@@ -28,9 +31,10 @@ namespace fourier_analysis {
     FourierGrid3D(FourierGrid3D&& other) noexcept;
     FourierGrid3D& operator=(FourierGrid3D&& other) noexcept;
 
-    void setRegion(const Region3D& region);
-    void setGridSize(const GridSize3D& size);
-    void configure(const Region3D& region, const GridSize3D& size);
+    void setRegion(const grid_analysis::Region3D& region);
+    void setGridSize(const grid_analysis::GridSize3D& size);
+    void configure(const grid_analysis::Region3D& region,
+                   const grid_analysis::GridSize3D& size);
     void clear();
 
     void setScalarField(const std::vector<double>& field);
@@ -61,8 +65,8 @@ namespace fourier_analysis {
     [[nodiscard]] const std::vector<std::complex<double>>& getVectorKSpaceY() const;
     [[nodiscard]] const std::vector<std::complex<double>>& getVectorKSpaceZ() const;
 
-    [[nodiscard]] const Region3D& getRegion() const;
-    [[nodiscard]] const GridSize3D& getGridSize() const;
+    [[nodiscard]] const grid_analysis::Region3D& getRegion() const;
+    [[nodiscard]] const grid_analysis::GridSize3D& getGridSize() const;
     [[nodiscard]] FieldKind getFieldKind() const;
 
     [[nodiscard]] std::size_t realSize() const;
@@ -98,8 +102,8 @@ namespace fourier_analysis {
 			fftw_complex* complexBuf,
 			double* realBuf) const;
 
-    Region3D region_{};
-    GridSize3D size_{};
+    grid_analysis::Region3D region_{};
+    grid_analysis::GridSize3D size_{};
     FieldKind fieldKind_ = FieldKind::None;
 
     std::vector<double> scalar_;

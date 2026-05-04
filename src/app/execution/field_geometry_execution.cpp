@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <utility>
 #include <array>
 #include <filesystem>
@@ -74,6 +75,11 @@ void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
   request.updateRequested = false;
 
   result = StreamlinePreviewResultState{};
+  result.cpuUpdated = true;
+
+  if (!request.showSeedBox) {
+    return;
+  }
 
   const float worldToRender =
     particles.simulationBlock.worldToRenderScale > 0.0f

@@ -19,6 +19,7 @@ struct EllipsoidAnalysisResultState;
 struct EllipsoidAnalysisBatchResultState;
 struct ProjectionMovieResultState;
 struct StreamlineBuildResultState;
+struct PowerSpectrumResultState;
 struct IsoContourGeometryState;
 struct VolumeRenderingResultState;
 struct PythonBridgeViewState;
@@ -62,6 +63,9 @@ struct SettingsAnalysisResultView {
   const EllipsoidAnalysisResultState* ellipsoid = nullptr;
   const EllipsoidAnalysisBatchResultState* ellipsoidBatch = nullptr;
   const StreamlineBuildResultState* streamlineBuild = nullptr;
+#ifdef POWER_SPECTRUM
+  const PowerSpectrumResultState* powerSpectrum = nullptr;
+#endif
 #ifdef ISO_CONTOUR
   const IsoContourGeometryState* isoContour = nullptr;
 #endif

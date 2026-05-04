@@ -16,12 +16,17 @@
 #include "analysis/isosurface/iso_contour_geometry.h"
 #endif
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <vector>
 #include <imgui.h>
+#include <implot.h>
 
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
@@ -60,6 +65,8 @@ static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit, const Python
 #endif
 
 static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
+                                const QuantityState& quantity,
+                                const SettingsCameraView& camera,
                                 const AnalysisJobRuntimeState& jobs,
                                 const FileNavigationRuntimeState& fileNav,
                                 const SettingsAnalysisResultView& result,
@@ -71,6 +78,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
 				 SettingsAnalysisEditState& edit,
                                  const AnalysisJobRuntimeState& jobs,
                                  const SettingsAnalysisResultView& result,
+                                 const SettingsCameraView& camera,
                                  SettingsUIState& ui,
                                  WindowCommandQueue& windowCommands,
 				 SettingsActionRequestState& settingsReq);
@@ -110,6 +118,8 @@ void ShowSettingsUI(SettingsUIState& ui,
   }
 #endif
   DrawAnalysisSection(ui.analysisEdit,
+                      quantity,
+                      view.camera,
 	                      analysisJobs,
                       settings.fileNavigation,
                       view.analysis,
@@ -120,6 +130,7 @@ void ShowSettingsUI(SettingsUIState& ui,
 		                       ui.analysisEdit,
                        analysisJobs,
                        view.analysis,
+                       view.camera,
                        ui,
                        windowCommands,
                        settings.request);
@@ -225,6 +236,76 @@ static const char* FormatBytes(size_t bytes)
   std::snprintf(out, 64, "%.2f %s", value, unit);
   return out;
 }
+
+#ifdef POWER_SPECTRUM
+namespace {
+void SyncAxisVectorFromTilt(float tiltDegrees[3], float axis[3])
+{
+  const glm::quat qx =
+    glm::angleAxis(glm::radians(tiltDegrees[0]), glm::vec3(1.0f, 0.0f, 0.0f));
+  const glm::quat qy =
+    glm::angleAxis(glm::radians(tiltDegrees[1]), glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::quat qz =
+    glm::angleAxis(glm::radians(tiltDegrees[2]), glm::vec3(0.0f, 0.0f, 1.0f));
+  const glm::vec3 a =
+    glm::normalize((qz * qy * qx) * glm::vec3(0.0f, 0.0f, 1.0f));
+  axis[0] = a.x;
+  axis[1] = a.y;
+  axis[2] = a.z;
+}
+
+struct PlotPositiveRange {
+  double min = std::numeric_limits<double>::max();
+  double max = 0.0;
+  bool valid = false;
+
+  void include(double v)
+  {
+    if (!std::isfinite(v) || v <= 0.0) return;
+    min = std::min(min, v);
+    max = std::max(max, v);
+    valid = true;
+  }
+};
+
+void ExpandLogRange(PlotPositiveRange& range)
+{
+  if (!range.valid) return;
+  if (range.max <= range.min) {
+    range.min *= 0.5;
+    range.max *= 2.0;
+  } else {
+    range.min *= 0.8;
+    range.max *= 1.25;
+  }
+  range.min = std::max(range.min, std::numeric_limits<double>::min());
+}
+
+void BuildPositivePlotSeries(const std::vector<double>& k,
+                             const std::vector<double>& y,
+                             std::vector<double>& plotK,
+                             std::vector<double>& plotY,
+                             PlotPositiveRange& xRange,
+                             PlotPositiveRange& yRange)
+{
+  plotK.clear();
+  plotY.clear();
+  const std::size_t n = std::min(k.size(), y.size());
+  plotK.reserve(n);
+  plotY.reserve(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (!std::isfinite(k[i]) || !std::isfinite(y[i]) ||
+        k[i] <= 0.0 || y[i] <= 0.0) {
+      continue;
+    }
+    plotK.push_back(k[i]);
+    plotY.push_back(y[i]);
+    xRange.include(k[i]);
+    yRange.include(y[i]);
+  }
+}
+}  // namespace
+#endif
 
 static void DrawMemoryPressureWarning(const char* label,
                                       size_t estimate,
@@ -871,6 +952,8 @@ static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit,
 #endif
 
 static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
+                                const QuantityState& quantity,
+                                const SettingsCameraView& camera,
                                 const AnalysisJobRuntimeState& jobs,
                                 const FileNavigationRuntimeState& fileNav,
                                 const SettingsAnalysisResultView& result,
@@ -1047,6 +1130,261 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
 			
 #ifdef POWER_SPECTRUM
   case ANALYSIS_POWER_SPEC: {
+    auto& req = edit.powerSpectrum;
+    const auto& spectrum = result.powerSpectrum;
+
+    ImGui::SeparatorText("Power spectrum");
+    const char* fieldKinds[] = {"scalar", "vector"};
+    if (ImGui::Combo("field kind##power_spectrum",
+                     &req.fieldKind,
+                     fieldKinds,
+                     IM_ARRAYSIZE(fieldKinds))) {
+      edit.powerSpectrumDirty = true;
+    }
+    if (req.fieldKind == 0) {
+      if (ImGui::BeginCombo("scalar quantity##power_spectrum",
+                            QuantityLabel(req.scalarQuantity))) {
+        for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
+          const QuantityId cand = quantity.catalog.uiQ[q];
+          const bool selected = (cand == req.scalarQuantity);
+          if (ImGui::Selectable(QuantityLabel(cand), selected)) {
+            req.scalarQuantity = cand;
+            edit.powerSpectrumDirty = true;
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    } else {
+      const char* fields[] = {"velocity", "B field"};
+      if (ImGui::Combo("vector field##power_spectrum",
+                       &req.vectorField,
+                       fields,
+                       IM_ARRAYSIZE(fields))) {
+        edit.powerSpectrumDirty = true;
+      }
+    }
+    if (ImGui::InputInt("grid size##power_spectrum", &req.gridSize)) {
+      req.gridSize = std::clamp(req.gridSize, 8, 256);
+      edit.powerSpectrumDirty = true;
+    }
+    if (ImGui::Checkbox("subtract mean##power_spectrum",
+                        &req.subtractMean)) {
+      edit.powerSpectrumDirty = true;
+    }
+    if (ImGui::Checkbox("Use analysis box##power_spectrum",
+                        &req.useRegionBox)) {
+      edit.powerSpectrumDirty = true;
+    }
+    if (req.useRegionBox) {
+      ImGui::Indent();
+      if (ImGui::SmallButton("camera center##power_spectrum_region")) {
+        for (int axis = 0; axis < 3; ++axis) {
+          req.regionCenter[axis] = camera.originalTarget[axis];
+        }
+        edit.powerSpectrumDirty = true;
+      }
+      if (ImGui::InputFloat3("center (original)##power_spectrum_region",
+                             req.regionCenter,
+                             "%.3f")) {
+        edit.powerSpectrumDirty = true;
+      }
+      if (ImGui::InputFloat("side length (original)##power_spectrum_region",
+                            &req.regionSideLength,
+                            0.0f,
+                            0.0f,
+                            "%.3f")) {
+        req.regionSideLength = std::max(0.0f, req.regionSideLength);
+        edit.powerSpectrumDirty = true;
+      }
+      if (ImGui::Checkbox("show analysis box##power_spectrum_region",
+                          &req.showRegionBox)) {
+        edit.powerSpectrumDirty = true;
+      }
+      if (req.showRegionBox &&
+          ImGui::SliderFloat("box opacity##power_spectrum_region",
+                             &req.regionOpacity,
+                             0.0f,
+                             1.0f,
+                             "%.2f")) {
+        edit.powerSpectrumDirty = true;
+      }
+      ImGui::Unindent();
+    }
+    ImGui::SeparatorText("Axis for component spectra");
+    if (ImGui::InputFloat3("axis tilt [deg]##power_spectrum_axis",
+                           req.axisTiltDegrees,
+                           "%.3f")) {
+      SyncAxisVectorFromTilt(req.axisTiltDegrees, req.analysisAxis);
+      edit.powerSpectrumDirty = true;
+    }
+    ImGui::Text("axis vector: (%.4f, %.4f, %.4f)",
+                req.analysisAxis[0],
+                req.analysisAxis[1],
+                req.analysisAxis[2]);
+    if (ImGui::SmallButton("set disk plane from angular momentum##power_spectrum_axis")) {
+      req.setAxisFromAngularMomentumClicked = true;
+      edit.powerSpectrumDirty = true;
+    }
+    ImGui::TextDisabled(
+      "Vector spectra include axial/radial and toroidal/poloidal components.");
+
+    if (ImGui::Button("Compute power spectrum##power_spectrum")) {
+      req.computeClicked = true;
+      edit.powerSpectrumDirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear##power_spectrum")) {
+      req.clearClicked = true;
+      edit.powerSpectrumDirty = true;
+    }
+
+    if (spectrum && !spectrum->result.message.empty()) {
+      const ImVec4 color = spectrum->result.success
+        ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f)
+        : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+      ImGui::TextColored(color, "%s", spectrum->result.message.c_str());
+    }
+
+    if (spectrum && spectrum->computed && spectrum->result.success) {
+      ImGui::Text("%s, grid: %d^3, samples: %d",
+                  spectrum->result.fieldLabel.c_str(),
+                  spectrum->result.gridSize,
+                  spectrum->result.depositedSamples);
+      if (spectrum->result.vectorSpectrum) {
+        const char* plotGroups[] = {
+          "radial / axial",
+          "poloidal / toroidal",
+          "compressive / solenoidal"
+        };
+        ImGui::Combo("plot group##power_spectrum",
+                     &req.plotGroup,
+                     plotGroups,
+                     IM_ARRAYSIZE(plotGroups));
+        req.plotGroup = std::clamp(req.plotGroup, 0,
+                                   static_cast<int>(IM_ARRAYSIZE(plotGroups)) - 1);
+      }
+      std::vector<double> totalK, totalP;
+      std::vector<double> solK, solP;
+      std::vector<double> compK, compP;
+      std::vector<double> axialK, axialP;
+      std::vector<double> radialK, radialP;
+      std::vector<double> toroidalK, toroidalP;
+      std::vector<double> poloidalK, poloidalP;
+      PlotPositiveRange xRange;
+      PlotPositiveRange yRange;
+      BuildPositivePlotSeries(spectrum->result.k,
+                              spectrum->result.powerTotal,
+                              totalK,
+                              totalP,
+                              xRange,
+                              yRange);
+      if (spectrum->result.vectorSpectrum) {
+        if (req.plotGroup == 0) {
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerRadial,
+                                  radialK,
+                                  radialP,
+                                  xRange,
+                                  yRange);
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerAxial,
+                                  axialK,
+                                  axialP,
+                                  xRange,
+                                  yRange);
+        } else if (req.plotGroup == 1) {
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerPoloidal,
+                                  poloidalK,
+                                  poloidalP,
+                                  xRange,
+                                  yRange);
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerToroidal,
+                                  toroidalK,
+                                  toroidalP,
+                                  xRange,
+                                  yRange);
+        } else {
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerCompressive,
+                                  compK,
+                                  compP,
+                                  xRange,
+                                  yRange);
+          BuildPositivePlotSeries(spectrum->result.k,
+                                  spectrum->result.powerSolenoidal,
+                                  solK,
+                                  solP,
+                                  xRange,
+                                  yRange);
+        }
+      }
+      ExpandLogRange(xRange);
+      ExpandLogRange(yRange);
+      if (ImPlot::BeginPlot("Power spectrum##power_spectrum",
+                            ImVec2(-1, 320))) {
+        ImPlot::SetupAxes("k", "P(k)");
+        ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+        ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        ImPlot::SetupAxisFormat(ImAxis_X1, "%.3g");
+        ImPlot::SetupAxisFormat(ImAxis_Y1, "%.3g");
+        if (xRange.valid) {
+          ImPlot::SetupAxisLimits(ImAxis_X1, xRange.min, xRange.max,
+                                  ImGuiCond_Always);
+        }
+        if (yRange.valid) {
+          ImPlot::SetupAxisLimits(ImAxis_Y1, yRange.min, yRange.max,
+                                  ImGuiCond_Always);
+        }
+        if (!totalK.empty()) {
+          ImPlot::PlotLine(spectrum->result.vectorSpectrum ? "total" : "scalar",
+                           totalK.data(),
+                           totalP.data(),
+                           static_cast<int>(totalK.size()));
+        }
+        if (spectrum->result.vectorSpectrum) {
+          if (req.plotGroup == 0 && !radialK.empty()) {
+            ImPlot::PlotLine("radial",
+                             radialK.data(),
+                             radialP.data(),
+                             static_cast<int>(radialK.size()));
+          }
+          if (req.plotGroup == 0 && !axialK.empty()) {
+            ImPlot::PlotLine("axial",
+                             axialK.data(),
+                             axialP.data(),
+                             static_cast<int>(axialK.size()));
+          }
+          if (req.plotGroup == 1 && !poloidalK.empty()) {
+            ImPlot::PlotLine("poloidal",
+                             poloidalK.data(),
+                             poloidalP.data(),
+                             static_cast<int>(poloidalK.size()));
+          }
+          if (req.plotGroup == 1 && !toroidalK.empty()) {
+            ImPlot::PlotLine("toroidal",
+                             toroidalK.data(),
+                             toroidalP.data(),
+                             static_cast<int>(toroidalK.size()));
+          }
+          if (req.plotGroup == 2 && !compK.empty()) {
+            ImPlot::PlotLine("compressive",
+                             compK.data(),
+                             compP.data(),
+                             static_cast<int>(compK.size()));
+          }
+          if (req.plotGroup == 2 && !solK.empty()) {
+            ImPlot::PlotLine("solenoidal",
+                             solK.data(),
+                             solP.data(),
+                             static_cast<int>(solK.size()));
+          }
+        }
+        ImPlot::EndPlot();
+      }
+    }
     break;
   }
 #endif
@@ -1206,6 +1544,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
 				 SettingsAnalysisEditState& edit,
                                  const AnalysisJobRuntimeState& jobs,
                                  const SettingsAnalysisResultView& result,
+                                 const SettingsCameraView& camera,
                                  SettingsUIState& ui,
                                  WindowCommandQueue& windowCommands,
 				 SettingsActionRequestState& settingsReq){
@@ -1418,7 +1757,6 @@ static void DrawRenderingSection(const QuantityState& quantity,
 			   previewReq.seedCenter, "%.3f")) {
       previewDirty = true;
     }
-
     if (ImGui::InputFloat3("seed region side length (original)",
 			   previewReq.seedSize, "%.3f")) {
       previewDirty = true;
@@ -1429,12 +1767,30 @@ static void DrawRenderingSection(const QuantityState& quantity,
       previewDirty = true;
     }
 
+    if (ImGui::SmallButton("camera center##streamline_seed_center")) {
+      for (int axis = 0; axis < 3; ++axis) {
+        previewReq.seedCenter[axis] = camera.originalTarget[axis];
+      }
+      previewDirty = true;
+    }
+
+    if (ImGui::Checkbox("show seed region box", &previewReq.showSeedBox)) {
+      previewDirty = true;
+    }
+
     if (previewDirty) {
       previewReq.updateClicked = true;
       edit.streamlinePreviewDirty = true;
     }
 
     ImGui::Text("Stream line setting");
+
+    if (!buildReq.limitRegion) {
+      for (int axis = 0; axis < 3; ++axis) {
+        buildReq.regionCenter[axis] = previewReq.seedCenter[axis];
+        buildReq.regionSize[axis] = previewReq.seedSize[axis];
+      }
+    }
 
     if (ImGui::Checkbox("limit stream lines in box", &buildReq.limitRegion)) {
       buildDirty = true;

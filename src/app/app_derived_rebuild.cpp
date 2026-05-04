@@ -114,6 +114,28 @@ static DerivedLayerUpdate RebuildStreamlineDerivedState(StreamlineBuildResultSta
 }
 #endif
 
+#ifdef POWER_SPECTRUM
+static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumResultState& result,
+                                                                 CubeManager& cubes)
+{
+  if (!result.regionPreviewCpuUpdated) {
+    return {};
+  }
+
+  cubes.clearGroup("power_spectrum_region");
+
+  bool visible = false;
+  if (result.regionPreviewValid) {
+    CubeObject cube = result.regionCube;
+    cube.tag = "power_spectrum_region";
+    cubes.add(cube);
+    visible = true;
+  }
+
+  return {true, visible};
+}
+#endif
+
 #ifdef USE_CONVEX_HULL
 static DerivedLayerUpdate RebuildConvexHullDerivedState(const ConvexHullRuntimeState& convexState,
                                                         bool requested,
@@ -219,6 +241,21 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
                                   derived.scene.line);
 #endif
 
+#ifdef POWER_SPECTRUM
+  {
+    const DerivedLayerUpdate powerRegion =
+      RebuildPowerSpectrumRegionDerivedState(derived.analysis.powerSpectrum,
+                                             derived.scene.cube);
+    if (powerRegion.changed) {
+      rebuild.cube.changed = true;
+    }
+  }
+#endif
+
+  if (rebuild.cube.changed) {
+    rebuild.cube.visible = derived.scene.cube.show();
+  }
+
   rebuild.particleLabelsUpdated =
     UpdateOverlayState(particles,
                        camera,
@@ -272,6 +309,12 @@ void AcknowledgeDerivedRebuild(SimulationDataset& particles,
   }
 #endif
 
+#ifdef POWER_SPECTRUM
+  if (rebuild.cube.changed) {
+    derived.analysis.powerSpectrum.regionPreviewCpuUpdated = false;
+  }
+#endif
+
   if (rebuild.particleLabelsUpdated) {
     particles.flagParticleIndexDirty = false;
   }
@@ -292,12 +335,14 @@ void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
   }
 #endif
 
-#ifdef STREAM_LINE
+#if defined(STREAM_LINE) || defined(POWER_SPECTRUM)
   if (rebuild.cube.changed) {
     render.cubes.show = rebuild.cube.visible;
     render.cubes.cpuUpdated = true;
   }
+#endif
 
+#ifdef STREAM_LINE
   if (rebuild.line.changed) {
     render.lines.cpuUpdated = true;
   }

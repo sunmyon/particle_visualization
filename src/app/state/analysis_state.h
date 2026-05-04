@@ -87,6 +87,9 @@ struct ProjectionMovieResultState {
 
 #include "analysis/radial_profile.h"
 #include "analysis/histogram2d.h"
+#ifdef POWER_SPECTRUM
+#include "analysis/power_spectrum.h"
+#endif
 
 #ifdef VOLUME_RENDERING
 #include "volume/adaptive_volume_tree.h"
@@ -105,6 +108,18 @@ struct Histogram2DResultState {
   Histogram2DParams paramsUsed;
   Histogram2DResult result;
 };
+
+#ifdef POWER_SPECTRUM
+struct PowerSpectrumResultState {
+  bool computed = false;
+  uint64_t version = 0;
+  PowerSpectrumParams paramsUsed;
+  PowerSpectrumResult result;
+  bool regionPreviewValid = false;
+  bool regionPreviewCpuUpdated = false;
+  CubeObject regionCube;
+};
+#endif
 
 #ifdef VOLUME_RENDERING
 struct VolumeRenderingResultState {
@@ -156,4 +171,7 @@ struct AnalysisDerivedState {
   
   RadialProfileResultState radial;
   Histogram2DResultState hist2D;
+#ifdef POWER_SPECTRUM
+  PowerSpectrumResultState powerSpectrum;
+#endif
 };

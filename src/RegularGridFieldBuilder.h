@@ -79,4 +79,4 @@ namespace grid_analysis {
     std::vector<double> vz_;
     std::vector<double> weight_;
   };
-}  // namespace fourier_analysis
+}  // namespace grid_analysis

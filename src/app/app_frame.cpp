@@ -279,6 +279,9 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
 #ifdef STREAM_LINE
   ctx.analysis.streamlineBuild = &analysis.streamlineBuild;
 #endif
+#ifdef POWER_SPECTRUM
+  ctx.analysis.powerSpectrum = &analysis.powerSpectrum;
+#endif
 #ifdef ISO_CONTOUR
   ctx.analysis.isoContour = &analysis.isoContour;
 #endif

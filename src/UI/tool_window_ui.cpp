@@ -1366,6 +1366,14 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   if (showDensityColumn) ++topParticleColumnCount;
   if (showTempColumn) ++topParticleColumnCount;
 
+  auto textCellCenterOnClick = [&](const char* text, int64_t particleId) {
+    ImGui::TextUnformatted(text);
+    if (ImGui::IsItemClicked()) {
+      request.centerParticleId = particleId;
+      request.centerParticleRequested = true;
+    }
+  };
+
   if (ImGui::BeginTable("top_particles_table",
                         topParticleColumnCount,
                         ImGuiTableFlags_BordersInnerV |
@@ -1408,39 +1416,61 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
       char idLabel[64];
       std::snprintf(idLabel, sizeof(idLabel), "%lld",
                     static_cast<long long>(particleId));
-      if (ImGui::Selectable(idLabel)) {
-        request.centerParticleId = particleId;
-        request.centerParticleRequested = true;
-      }
+      textCellCenterOnClick(idLabel, particleId);
 
       ImGui::TableSetColumnIndex(1);
-      ImGui::Text("%.4g", displaySortValue);
+      char sortText[64];
+      std::snprintf(sortText, sizeof(sortText), "%.4g", displaySortValue);
+      textCellCenterOnClick(sortText, particleId);
 
       int column = 2;
       if (showMassColumn) {
         ImGui::TableSetColumnIndex(column++);
-        ImGui::Text("%.4g", quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass));
+        char massText[64];
+        std::snprintf(massText,
+                      sizeof(massText),
+                      "%.4g",
+                      quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass));
+        textCellCenterOnClick(massText, particleId);
       }
       if (showDensityColumn) {
         ImGui::TableSetColumnIndex(column++);
-        ImGui::Text("%.4g", result.filtered[i].density);
+        char densityText[64];
+        std::snprintf(densityText,
+                      sizeof(densityText),
+                      "%.4g",
+                      result.filtered[i].density);
+        textCellCenterOnClick(densityText, particleId);
       }
       if (showTempColumn) {
         ImGui::TableSetColumnIndex(column++);
-        ImGui::Text("%.4g", result.filtered[i].temperature);
+        char temperatureText[64];
+        std::snprintf(temperatureText,
+                      sizeof(temperatureText),
+                      "%.4g",
+                      result.filtered[i].temperature);
+        textCellCenterOnClick(temperatureText, particleId);
       }
 
       ImGui::TableSetColumnIndex(column++);
-      ImGui::Text("(%.3g, %.3g, %.3g)",
-                  result.filtered[i].position[0],
-                  result.filtered[i].position[1],
-                  result.filtered[i].position[2]);
+      char posText[128];
+      std::snprintf(posText,
+                    sizeof(posText),
+                    "(%.3g, %.3g, %.3g)",
+                    result.filtered[i].position[0],
+                    result.filtered[i].position[1],
+                    result.filtered[i].position[2]);
+      textCellCenterOnClick(posText, particleId);
 
       ImGui::TableSetColumnIndex(column++);
-      ImGui::Text("(%.3g, %.3g, %.3g)",
-                  result.filtered[i].vel[0],
-                  result.filtered[i].vel[1],
-                  result.filtered[i].vel[2]);
+      char velText[128];
+      std::snprintf(velText,
+                    sizeof(velText),
+                    "(%.3g, %.3g, %.3g)",
+                    result.filtered[i].vel[0],
+                    result.filtered[i].vel[1],
+                    result.filtered[i].vel[2]);
+      textCellCenterOnClick(velText, particleId);
 
       ImGui::TableSetColumnIndex(column++);
       if (ImGui::SmallButton("Copy")) {

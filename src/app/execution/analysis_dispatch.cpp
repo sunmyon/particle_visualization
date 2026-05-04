@@ -63,6 +63,12 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
 			       runtime.analysisRequests.stellarDensity,
 			       runtime.settings.fileNavigation.current.loadedTime);
 
+#ifdef POWER_SPECTRUM
+  ExecutePowerSpectrumRequest(*data.particles,
+                              runtime.analysisRequests.powerSpectrum,
+                              analysis.powerSpectrum);
+#endif
+
 #ifdef ISO_CONTOUR
   ExecuteIsoContourRequest(*data.particles,
 			   runtime.analysisRequests.isoContour,

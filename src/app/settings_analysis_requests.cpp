@@ -1,6 +1,9 @@
 #include "app/settings_analysis_requests.h"
 
+#include <algorithm>
 #include <cstring>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include "app/state/runtime_state.h"
 #include "app/state/ui_state.h"
@@ -16,6 +19,26 @@ void CopyCStr(char* dst, std::size_t dstSize, const char* src)
   std::strncpy(dst, src, dstSize);
   dst[dstSize - 1] = '\0';
 }
+
+#ifdef POWER_SPECTRUM
+void SyncPowerSpectrumAxisVectorFromTilt(PowerSpectrumRequestState& request)
+{
+  const glm::quat qx =
+    glm::angleAxis(glm::radians(request.axisTiltDegrees[0]),
+                   glm::vec3(1.0f, 0.0f, 0.0f));
+  const glm::quat qy =
+    glm::angleAxis(glm::radians(request.axisTiltDegrees[1]),
+                   glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::quat qz =
+    glm::angleAxis(glm::radians(request.axisTiltDegrees[2]),
+                   glm::vec3(0.0f, 0.0f, 1.0f));
+  const glm::vec3 axis =
+    glm::normalize((qz * qy * qx) * glm::vec3(0.0f, 0.0f, 1.0f));
+  request.analysisAxis[0] = axis.x;
+  request.analysisAxis[1] = axis.y;
+  request.analysisAxis[2] = axis.z;
+}
+#endif
 }
 
 void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
@@ -29,6 +52,32 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
     edit.stellarDensity.overwriteHsml =
       requests.stellarDensity.overwriteHsml;
   }
+
+#ifdef POWER_SPECTRUM
+  if (!edit.powerSpectrumDirty) {
+    edit.powerSpectrum.gridSize = requests.powerSpectrum.gridSize;
+    edit.powerSpectrum.fieldKind = requests.powerSpectrum.fieldKind;
+    edit.powerSpectrum.scalarQuantity =
+      requests.powerSpectrum.scalarQuantity;
+    edit.powerSpectrum.vectorField = requests.powerSpectrum.vectorField;
+    edit.powerSpectrum.subtractMean = requests.powerSpectrum.subtractMean;
+    edit.powerSpectrum.useRegionBox = requests.powerSpectrum.useRegionBox;
+    for (int i = 0; i < 3; ++i) {
+      edit.powerSpectrum.regionCenter[i] =
+        requests.powerSpectrum.regionCenter[i];
+    }
+    edit.powerSpectrum.regionSideLength =
+      requests.powerSpectrum.regionSideLength;
+    edit.powerSpectrum.regionOpacity = requests.powerSpectrum.regionOpacity;
+    edit.powerSpectrum.showRegionBox = requests.powerSpectrum.showRegionBox;
+    for (int i = 0; i < 3; ++i) {
+      edit.powerSpectrum.axisTiltDegrees[i] =
+        requests.powerSpectrum.axisTiltDegrees[i];
+      edit.powerSpectrum.analysisAxis[i] =
+        requests.powerSpectrum.analysisAxis[i];
+    }
+  }
+#endif
 
 #ifdef CLUMP_DATA_READ
   if (!edit.clumpBatchDirty) {
@@ -91,6 +140,8 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
         requests.streamlinePreview.seedSize[i];
     }
     edit.streamlinePreview.opacity = requests.streamlinePreview.opacity;
+    edit.streamlinePreview.showSeedBox =
+      requests.streamlinePreview.showSeedBox;
   }
 
   if (!edit.streamlineBuildDirty) {
@@ -185,6 +236,53 @@ void SubmitStellarDensityRequest(SettingsStellarDensityEdit& edit,
   edit.computeClicked = false;
   dirty = false;
 }
+
+#ifdef POWER_SPECTRUM
+void SubmitPowerSpectrumRequest(SettingsPowerSpectrumEdit& edit,
+                                bool& dirty,
+                                PowerSpectrumRequestState& request)
+{
+  if (!dirty && !edit.computeClicked && !edit.clearClicked) return;
+
+  request.gridSize = std::clamp(edit.gridSize, 8, 256);
+  request.fieldKind = std::clamp(edit.fieldKind, 0, 1);
+  request.scalarQuantity = edit.scalarQuantity;
+  request.vectorField = std::clamp(edit.vectorField, 0, 1);
+  request.subtractMean = edit.subtractMean;
+  request.useRegionBox = edit.useRegionBox;
+  for (int i = 0; i < 3; ++i) {
+    request.regionCenter[i] = edit.regionCenter[i];
+  }
+  request.regionSideLength = std::max(0.0f, edit.regionSideLength);
+  request.regionOpacity = std::clamp(edit.regionOpacity, 0.0f, 1.0f);
+  request.showRegionBox = edit.showRegionBox;
+  for (int i = 0; i < 3; ++i) {
+    request.axisTiltDegrees[i] = edit.axisTiltDegrees[i];
+    request.analysisAxis[i] = edit.analysisAxis[i];
+  }
+  request.setAxisFromAngularMomentumRequested =
+    edit.setAxisFromAngularMomentumClicked;
+  if (!request.setAxisFromAngularMomentumRequested) {
+    SyncPowerSpectrumAxisVectorFromTilt(request);
+    for (int i = 0; i < 3; ++i) {
+      edit.analysisAxis[i] = request.analysisAxis[i];
+    }
+  }
+  request.runRequested = edit.computeClicked;
+  request.clearRequested = edit.clearClicked;
+  request.regionUpdateRequested = true;
+
+  edit.gridSize = request.gridSize;
+  edit.fieldKind = request.fieldKind;
+  edit.vectorField = request.vectorField;
+  edit.regionSideLength = request.regionSideLength;
+  edit.regionOpacity = request.regionOpacity;
+  edit.setAxisFromAngularMomentumClicked = false;
+  edit.computeClicked = false;
+  edit.clearClicked = false;
+  dirty = false;
+}
+#endif
 
 #ifdef CLUMP_DATA_READ
 void SubmitClumpBatchRequest(SettingsClumpBatchEdit& edit,
@@ -322,6 +420,7 @@ void SubmitStreamlinePreviewRequest(SettingsStreamlinePreviewEdit& edit,
     request.seedSize[i] = edit.seedSize[i];
   }
   request.opacity = edit.opacity;
+  request.showSeedBox = edit.showSeedBox;
   request.updateRequested = edit.updateClicked;
   request.clearRequested = edit.clearClicked;
 
@@ -350,8 +449,10 @@ void SubmitStreamlineBuildRequest(const SettingsStreamlinePreviewEdit& preview,
   }
   request.limitRegion = edit.limitRegion;
   for (int i = 0; i < 3; ++i) {
-    request.regionCenter[i] = edit.regionCenter[i];
-    request.regionSize[i] = edit.regionSize[i];
+    request.regionCenter[i] =
+      edit.limitRegion ? edit.regionCenter[i] : preview.seedCenter[i];
+    request.regionSize[i] =
+      edit.limitRegion ? edit.regionSize[i] : preview.seedSize[i];
   }
   request.runRequested = edit.buildClicked;
   request.clearRequested = edit.clearClicked;
@@ -460,6 +561,12 @@ void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
   SubmitStellarDensityRequest(edit.stellarDensity,
                               edit.stellarDensityDirty,
                               requests.stellarDensity);
+
+#ifdef POWER_SPECTRUM
+  SubmitPowerSpectrumRequest(edit.powerSpectrum,
+                             edit.powerSpectrumDirty,
+                             requests.powerSpectrum);
+#endif
 
 #ifdef CLUMP_DATA_READ
   SubmitClumpBatchRequest(edit.clumpBatch,

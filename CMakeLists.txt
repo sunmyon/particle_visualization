@@ -34,6 +34,7 @@ option(CLUMP_DATA_READ     "Enable Clump data read"              ON)
 option(ISO_CONTOUR         "Enable iso-contour"                  ON)
 option(GEOMETRICAL_ANALYSIS "Enable geometrical analysis"        ON)
 option(STREAM_LINE         "Enable streamline feature"           ON)
+option(POWER_SPECTRUM      "Enable Fourier power spectrum analysis" ON)
 option(VOLUME_RENDERING    "Enable volume rendering"             ON)
 option(HAVE_HDF5           "Enable HDF5 IO"                      ON)
 option(SAVE_GPU_MEMORY     "Save GPU memory"                     ON)
@@ -247,6 +248,35 @@ endif()
 if(NOT HAVE_HDF5 AND CLUMP_DATA_READ)
   message(STATUS "CLUMP_DATA_READ requires HDF5; disabling CLUMP_DATA_READ")
   set(CLUMP_DATA_READ OFF CACHE BOOL "Enable Clump data read" FORCE)
+endif()
+
+find_package(PkgConfig QUIET)
+
+if(POWER_SPECTRUM)
+  pkg_check_modules(FFTW3_PC QUIET IMPORTED_TARGET fftw3)
+  if(FFTW3_PC_FOUND)
+    set(FFTW3_INCLUDE_DIRS "${FFTW3_PC_INCLUDE_DIRS}")
+    if(TARGET PkgConfig::FFTW3_PC)
+      set(FFTW3_LIBRARIES PkgConfig::FFTW3_PC)
+    else()
+      set(FFTW3_LIBRARY_DIRS "${FFTW3_PC_LIBRARY_DIRS}")
+      set(FFTW3_LIBRARIES "${FFTW3_PC_LIBRARIES}")
+    endif()
+  else()
+    find_path(FFTW3_INCLUDE_DIRS NAMES fftw3.h PATH_SUFFIXES include)
+    find_library(FFTW3_LIBRARY NAMES fftw3 PATH_SUFFIXES lib lib64)
+    if(FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARY)
+      set(FFTW3_LIBRARIES "${FFTW3_LIBRARY}")
+    endif()
+  endif()
+
+  if(NOT FFTW3_INCLUDE_DIRS OR NOT FFTW3_LIBRARIES)
+    message(WARNING
+      "POWER_SPECTRUM was enabled, but FFTW3 is not available. "
+      "Disabling POWER_SPECTRUM for this build.")
+    set(POWER_SPECTRUM OFF CACHE BOOL
+      "Enable Fourier power spectrum analysis" FORCE)
+  endif()
 endif()
 
 function(add_egl_probe_target)
@@ -477,6 +507,14 @@ if(STREAM_LINE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/streamline/streamline.cpp)
 endif()
 
+if(POWER_SPECTRUM)
+  list(APPEND SOURCES_CPP
+    ${SRC_DIR}/RegularGridFieldBuilder.cpp
+    ${SRC_DIR}/FourierAnalysis.cpp
+    ${SRC_DIR}/analysis/power_spectrum.cpp
+    ${SRC_DIR}/app/execution/power_spectrum_execution.cpp)
+endif()
+
 if(VOLUME_RENDERING)
   list(APPEND SOURCES_CPP ${SRC_DIR}/volume/tau_sph.cpp)
   list(APPEND SOURCES_CPP ${SRC_DIR}/volume/adaptive_volume_tree.cpp)
@@ -578,6 +616,15 @@ add_executable(${PROJECT_NAME}
   ${IMPLOT_SRC}
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_OPENGL_BACKEND)
+
+if(POWER_SPECTRUM)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE POWER_SPECTRUM)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${FFTW3_INCLUDE_DIRS})
+  if(FFTW3_LIBRARY_DIRS)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${FFTW3_LIBRARY_DIRS})
+  endif()
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${FFTW3_LIBRARIES})
+endif()
 
 if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
   find_package(Vulkan QUIET)
@@ -722,8 +769,6 @@ endfunction()
 # =========================
 # Package manager support
 # =========================
-
-find_package(PkgConfig QUIET)
 
 # --- macOS + Homebrew ---
 if(APPLE)

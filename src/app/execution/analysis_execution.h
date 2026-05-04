@@ -113,6 +113,12 @@ void ExecuteStellarDensityRequest(SimulationDataset& particles,
                                   StellarDensityRequestState& request,
 				  double time);
 
+#ifdef POWER_SPECTRUM
+void ExecutePowerSpectrumRequest(SimulationDataset& particles,
+                                 PowerSpectrumRequestState& request,
+                                 PowerSpectrumResultState& result);
+#endif
+
 void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    QuantityState& quantity,
                                    ParticleVisualConfig& particleVisual,

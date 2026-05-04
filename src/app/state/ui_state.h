@@ -12,6 +12,27 @@ struct SettingsStellarDensityEdit {
   bool computeClicked = false;
 };
 
+#ifdef POWER_SPECTRUM
+struct SettingsPowerSpectrumEdit {
+  int gridSize = 64;
+  int fieldKind = 1; // 0: scalar, 1: vector.
+  QuantityId scalarQuantity = QuantityId::Density;
+  int vectorField = 1; // 0: velocity, 1: B field.
+  bool subtractMean = true;
+  bool useRegionBox = false;
+  float regionCenter[3] = {0.0f, 0.0f, 0.0f};
+  float regionSideLength = 1000.0f;
+  float regionOpacity = 0.18f;
+  bool showRegionBox = true;
+  float axisTiltDegrees[3] = {0.0f, 0.0f, 0.0f};
+  float analysisAxis[3] = {0.0f, 0.0f, 1.0f};
+  int plotGroup = 0; // 0: radial/axial, 1: poloidal/toroidal, 2: compressive/solenoidal.
+  bool setAxisFromAngularMomentumClicked = false;
+  bool computeClicked = false;
+  bool clearClicked = false;
+};
+#endif
+
 #ifdef CLUMP_DATA_READ
 struct SettingsClumpBatchEdit {
   int method = 0;
@@ -68,6 +89,7 @@ struct SettingsStreamlinePreviewEdit {
   float seedCenter[3] = {0.f, 0.f, 0.f};
   float seedSize[3] = {100.f, 100.f, 100.f};
   float opacity = 0.1f;
+  bool showSeedBox = true;
   bool updateClicked = false;
   bool clearClicked = false;
 };
@@ -82,7 +104,7 @@ struct SettingsStreamlineBuildEdit {
   std::vector<std::array<float, 3>> manualSeeds{{0.f, 0.f, 0.f}};
   bool limitRegion = false;
   float regionCenter[3] = {0.f, 0.f, 0.f};
-  float regionSize[3] = {0.f, 0.f, 0.f};
+  float regionSize[3] = {100.f, 100.f, 100.f};
   bool buildClicked = false;
   bool clearClicked = false;
 };
@@ -140,6 +162,11 @@ struct SettingsProjectionMovieEdit {
 struct SettingsAnalysisEditState {
   SettingsStellarDensityEdit stellarDensity;
   bool stellarDensityDirty = false;
+
+#ifdef POWER_SPECTRUM
+  SettingsPowerSpectrumEdit powerSpectrum;
+  bool powerSpectrumDirty = false;
+#endif
 
 #ifdef CLUMP_DATA_READ
   SettingsClumpBatchEdit clumpBatch;

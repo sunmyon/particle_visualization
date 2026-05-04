@@ -192,6 +192,7 @@ struct StreamlinePreviewRequestState {
   float seedCenter[3] = {0.f, 0.f, 0.f};
   float seedSize[3]   = {100.f, 100.f, 100.f};
   float opacity       = 0.1f;
+  bool showSeedBox    = true;
 
   bool updateRequested = false;
   bool clearRequested  = false;
@@ -211,7 +212,7 @@ struct StreamlineBuildRequestState {
 
   bool limitRegion = false;
   float regionCenter[3] = {0.f, 0.f, 0.f};
-  float regionSize[3]   = {0.f, 0.f, 0.f};
+  float regionSize[3]   = {100.f, 100.f, 100.f};
 
   bool runRequested   = false;
   bool clearRequested = false;
@@ -222,6 +223,27 @@ struct StellarDensityRequestState {
   bool overwriteHsml = false;
   bool runRequested = false;
 };
+
+#ifdef POWER_SPECTRUM
+struct PowerSpectrumRequestState {
+  int gridSize = 64;
+  int fieldKind = 1; // 0: scalar, 1: vector.
+  QuantityId scalarQuantity = QuantityId::Density;
+  int vectorField = 1; // 0: velocity, 1: B field.
+  bool subtractMean = true;
+  bool useRegionBox = false;
+  float regionCenter[3] = {0.0f, 0.0f, 0.0f};
+  float regionSideLength = 1000.0f;
+  float regionOpacity = 0.18f;
+  bool showRegionBox = true;
+  float axisTiltDegrees[3] = {0.0f, 0.0f, 0.0f};
+  float analysisAxis[3] = {0.0f, 0.0f, 1.0f};
+  bool setAxisFromAngularMomentumRequested = false;
+  bool runRequested = false;
+  bool clearRequested = false;
+  bool regionUpdateRequested = false;
+};
+#endif
 
 #ifdef ISO_CONTOUR
 #include "core/quantity.h"
@@ -327,6 +349,10 @@ struct PythonBridgeViewState {
 
 struct AnalysisRequestState {
   StellarDensityRequestState stellarDensity;
+
+#ifdef POWER_SPECTRUM
+  PowerSpectrumRequestState powerSpectrum;
+#endif
 
   DiskAnalysisRequestState disk;
   DiskAnalysisBatchRequestState diskBatch;
