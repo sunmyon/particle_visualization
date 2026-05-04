@@ -1,11 +1,11 @@
 
-#include "FourierAnalysis.h"
+#include "analysis/grid/FourierAnalysis.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <utility>
-#include "GridTypes.h"
+#include "analysis/grid/GridTypes.h"
 
 namespace fourier_analysis {
   namespace {

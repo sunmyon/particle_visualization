@@ -10,7 +10,7 @@
 
 #include <fftw3.h>
 
-#include "GridTypes.h"
+#include "analysis/grid/GridTypes.h"
 
 namespace fourier_analysis {
   class FourierGrid3D {

@@ -8,8 +8,8 @@
 #include <sstream>
 #include <vector>
 
-#include "FourierAnalysis.h"
-#include "RegularGridFieldBuilder.h"
+#include "analysis/grid/FourierAnalysis.h"
+#include "analysis/grid/RegularGridFieldBuilder.h"
 #include "data/sample_coordinates.h"
 
 namespace {

@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
-#include "GridTypes.h"
+#include "analysis/grid/GridTypes.h"
 
 namespace grid_analysis {
   class RegularGridFieldBuilder {

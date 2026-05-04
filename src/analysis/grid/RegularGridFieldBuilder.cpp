@@ -1,6 +1,6 @@
 
-#include "RegularGridFieldBuilder.h"
-#include "FourierAnalysis.h"
+#include "analysis/grid/RegularGridFieldBuilder.h"
+#include "analysis/grid/FourierAnalysis.h"
 
 #include <algorithm>
 #include <cmath>

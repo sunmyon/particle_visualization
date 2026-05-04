@@ -509,8 +509,8 @@ endif()
 
 if(POWER_SPECTRUM)
   list(APPEND SOURCES_CPP
-    ${SRC_DIR}/RegularGridFieldBuilder.cpp
-    ${SRC_DIR}/FourierAnalysis.cpp
+    ${SRC_DIR}/analysis/grid/RegularGridFieldBuilder.cpp
+    ${SRC_DIR}/analysis/grid/FourierAnalysis.cpp
     ${SRC_DIR}/analysis/power_spectrum.cpp
     ${SRC_DIR}/app/execution/power_spectrum_execution.cpp)
 endif()
