@@ -73,6 +73,21 @@ std::filesystem::path MakeRenderSnapshotPath()
   return std::filesystem::path("render_snapshots") / name.str();
 }
 
+std::filesystem::path MakeVolumeMovieFramePath(
+  const RenderSnapshotMovieState& movie)
+{
+  std::filesystem::path folder =
+    movie.outputFolder[0] != '\0'
+      ? std::filesystem::path(movie.outputFolder)
+      : std::filesystem::path("render_snapshots/volume_movie");
+  std::filesystem::create_directories(folder);
+
+  std::ostringstream name;
+  name << "frame_" << std::setw(4) << std::setfill('0')
+       << movie.frameIndex << ".png";
+  return folder / name.str();
+}
+
 void SaveRequestedRenderSnapshot(SettingsActionRequestState& request,
                                  const RenderedFrame& frame)
 {
@@ -83,18 +98,194 @@ void SaveRequestedRenderSnapshot(SettingsActionRequestState& request,
 
   if (!frame.valid() || frame.format != RenderedFrameFormat::RGBA8) {
     request.renderSnapshotMessage = "Failed.";
+    request.renderSnapshotOutputPath.clear();
     return;
   }
 
-  const std::filesystem::path path = MakeRenderSnapshotPath();
+  const std::filesystem::path path =
+    request.renderSnapshotOutputPath.empty()
+      ? MakeRenderSnapshotPath()
+      : std::filesystem::path(request.renderSnapshotOutputPath);
+  if (const std::filesystem::path parent = path.parent_path();
+      !parent.empty()) {
+    std::filesystem::create_directories(parent);
+  }
   if (!WritePngRgba(path.string().c_str(),
                     frame.width,
                     frame.height,
                     frame.pixels)) {
     request.renderSnapshotMessage = "Failed.";
+    request.renderSnapshotOutputPath.clear();
     return;
   }
   request.renderSnapshotMessage = "Saved.";
+  request.renderSnapshotOutputPath.clear();
+}
+
+#ifdef VOLUME_RENDERING
+void InvalidateVolumeTreeAfterSnapshotLoad(AppRuntimeState& runtime,
+                                           AnalysisDerivedState& analysis)
+{
+  if (!runtime.snapshotLoad.result.loadedThisFrame) {
+    return;
+  }
+
+  if (runtime.analysisRequests.volume.buildRequested) {
+    return;
+  }
+
+  analysis.volume.tree.clear();
+  analysis.volume.stats = AdaptiveVolumeTreeStats{};
+  analysis.volume.valid = false;
+  analysis.volume.success = true;
+  analysis.volume.message = "Volume tree invalidated after snapshot load.";
+  analysis.volume.cpuUpdated = true;
+
+  runtime.render.volume.show = false;
+  runtime.render.volume.cpuUpdated = true;
+}
+#endif
+
+void StartVolumeRenderMovieIfRequested(AppRuntimeState& runtime)
+{
+  auto& movie = runtime.settings.request.renderSnapshotMovie;
+  if (!movie.startRequested) {
+    return;
+  }
+
+  movie.startRequested = false;
+  movie.cancelRequested = false;
+  movie.nFrames = std::max(movie.nFrames, 1);
+  movie.stepStride = std::max(movie.stepStride, 1);
+  movie.status = JobStatus::Running;
+  movie.phase = 0;
+  movie.startStep = runtime.settings.fileNavigation.navigation.currentStep;
+  movie.targetStep = movie.startStep;
+  movie.frameIndex = 0;
+  movie.message = "Starting...";
+}
+
+void UpdateVolumeRenderMovieBeforeCapture(AppRuntimeState& runtime)
+{
+  auto& request = runtime.settings.request;
+  auto& movie = request.renderSnapshotMovie;
+  if (movie.status != JobStatus::Running) {
+    return;
+  }
+
+  if (movie.cancelRequested) {
+    movie.status = JobStatus::Cancelled;
+    movie.cancelRequested = false;
+    movie.message = "Cancelled.";
+    request.renderSnapshotRequested = false;
+    request.renderSnapshotOutputPath.clear();
+    return;
+  }
+
+  if (movie.phase == 0) {
+    movie.targetStep = movie.startStep + movie.frameIndex * movie.stepStride;
+    RequestSnapshotLoad(runtime.snapshotLoad,
+                        SnapshotLoadOwner::VolumeRenderMovie,
+                        movie.targetStep,
+                        90);
+    movie.phase = 1;
+    movie.message = "Loading snapshot...";
+  } else if (movie.phase == 3) {
+    request.renderSnapshotRequested = true;
+    request.renderSnapshotOutputPath =
+      MakeVolumeMovieFramePath(movie).string();
+    request.renderSnapshotMessage = "Saving movie frame...";
+    movie.message = "Saving frame...";
+  }
+}
+
+void UpdateVolumeRenderMovieAfterSnapshotLoad(AppRuntimeState& runtime)
+{
+  auto& movie = runtime.settings.request.renderSnapshotMovie;
+  if (movie.status != JobStatus::Running || movie.phase != 1) {
+    return;
+  }
+
+  if (IsSnapshotLoadFailedFor(runtime.snapshotLoad,
+                              SnapshotLoadOwner::VolumeRenderMovie,
+                              movie.targetStep)) {
+    movie.status = JobStatus::Error;
+    movie.message = runtime.snapshotLoad.result.errorMessage;
+    return;
+  }
+
+  if (!IsSnapshotLoadedFor(runtime.snapshotLoad,
+                           SnapshotLoadOwner::VolumeRenderMovie,
+                           movie.targetStep)) {
+    return;
+  }
+
+#ifdef VOLUME_RENDERING
+  if (movie.rebuildVolumeTree) {
+    runtime.analysisRequests.volume.buildRequested = true;
+    runtime.analysisRequests.volume.clearRequested = false;
+    movie.phase = 2;
+    movie.message = "Building volume tree...";
+  } else {
+    movie.phase = 3;
+    movie.message = "Ready to capture.";
+  }
+#else
+  movie.status = JobStatus::Error;
+  movie.message = "Volume rendering is disabled.";
+#endif
+}
+
+void UpdateVolumeRenderMovieAfterAnalysis(AppRuntimeState& runtime,
+                                          const AnalysisDerivedState& analysis)
+{
+  auto& movie = runtime.settings.request.renderSnapshotMovie;
+  if (movie.status != JobStatus::Running || movie.phase != 2) {
+    return;
+  }
+
+#ifdef VOLUME_RENDERING
+  if (!analysis.volume.success) {
+    movie.status = JobStatus::Error;
+    movie.message = analysis.volume.message.empty()
+      ? "Volume tree build failed."
+      : analysis.volume.message;
+    return;
+  }
+  if (analysis.volume.valid) {
+    movie.phase = 3;
+    movie.message = "Ready to capture.";
+  }
+#else
+  (void)analysis;
+#endif
+}
+
+void UpdateVolumeRenderMovieAfterCapture(AppRuntimeState& runtime)
+{
+  auto& request = runtime.settings.request;
+  auto& movie = request.renderSnapshotMovie;
+  if (movie.status != JobStatus::Running || movie.phase != 3) {
+    return;
+  }
+  if (request.renderSnapshotRequested) {
+    return;
+  }
+  if (request.renderSnapshotMessage == "Failed.") {
+    movie.status = JobStatus::Error;
+    movie.message = "Frame save failed.";
+    return;
+  }
+
+  ++movie.frameIndex;
+  if (movie.frameIndex >= movie.nFrames) {
+    movie.status = JobStatus::Completed;
+    movie.phase = 0;
+    movie.message = "Completed.";
+  } else {
+    movie.phase = 0;
+    movie.message = "Next frame...";
+  }
 }
 
 } // namespace
@@ -508,7 +699,8 @@ static int CurrentFileIndexForRequests(const FileNavigationRuntimeState& fileNav
 
 static void ExecuteSettingsAndNavigationRequests(AppDataState& data,
                                                  AppRuntimeState& runtime,
-                                                 CameraContext& camera)
+                                                 CameraContext& camera,
+                                                 AnalysisDerivedState& analysis)
 {
   ExecuteFileNavigationRequests(runtime.settings.fileNavigation,
                                 runtime.snapshotLoad);
@@ -518,7 +710,9 @@ static void ExecuteSettingsAndNavigationRequests(AppDataState& data,
                                 runtime.particleVisual,
                                 runtime.render,
                                 runtime.settings,
-                                runtime.snapshotPostprocess);
+                                runtime.snapshotPostprocess,
+                                camera,
+                                analysis);
 
   ExecuteCameraPlacementRequests(*data.particles,
 				 runtime.settings.normalization,
@@ -625,7 +819,8 @@ static void ExecuteRequests(AppDataState& data,
 
   ExecuteSettingsAndNavigationRequests(data,
                                        runtime,
-                                       camera);
+                                       camera,
+                                       analysis);
 
   ExecuteAnalysisJobRequests(data,
                              runtime,
@@ -643,6 +838,8 @@ void RunFrame(AppState& app,
               IFramePresenter& presenter)
 {
   BeginFrame(app.runtime, window);
+  StartVolumeRenderMovieIfRequested(app.runtime);
+  UpdateVolumeRenderMovieBeforeCapture(app.runtime);
   const bool captureRenderSnapshot =
     app.runtime.settings.request.renderSnapshotRequested;
 
@@ -715,12 +912,19 @@ void RunFrame(AppState& app,
                                app.view.camera);
   SubmitSettingsAnalysisRequests(app.ui.settings.analysisEdit,
                                  app.runtime.analysisRequests);
+  UpdateVolumeRenderMovieAfterSnapshotLoad(app.runtime);
+#ifdef VOLUME_RENDERING
+  InvalidateVolumeTreeAfterSnapshotLoad(app.runtime,
+                                        app.derived.analysis);
+#endif
   ExecuteRequests(app.data,
                   app.runtime,
                   app.derived.analysis,
                   app.ui.toolWindows,
                   app.services,
                   app.view.camera);
+  UpdateVolumeRenderMovieAfterAnalysis(app.runtime,
+                                       app.derived.analysis);
   
   const DerivedRebuildResult derivedRebuild =
     RebuildDerivedState(*app.data.particles,
@@ -755,8 +959,13 @@ void RunFrame(AppState& app,
   const RenderViewport renderViewport = MakeRenderViewport(window);
   RenderRuntimeState frameRender = app.runtime.render;
   OverlayState frameOverlay = app.derived.overlay;
+  ParticleVisualConfig frameParticleVisual = app.runtime.particleVisual;
   if (captureRenderSnapshot) {
     const auto& snapshot = app.runtime.settings.request;
+    const bool captureMovieFrame =
+      snapshot.renderSnapshotMovie.status == JobStatus::Running &&
+      snapshot.renderSnapshotMovie.phase == 3 &&
+      !snapshot.renderSnapshotOutputPath.empty();
     frameRender.colorbar.show =
       frameRender.colorbar.show && snapshot.renderSnapshotShowColorbar;
     frameRender.coordAxes.show =
@@ -771,12 +980,17 @@ void RunFrame(AppState& app,
     if (snapshot.renderSnapshotShowTimeLabel) {
       ShowTime(app.runtime.settings.fileNavigation.current);
     }
+    if (captureMovieFrame && !snapshot.renderSnapshotMovie.showParticles) {
+      for (auto& type : frameParticleVisual.types) {
+        type.hideParticles = true;
+      }
+    }
   }
 
   UpdateRenderFrameInput(app.renderFrameInput,
                          renderViewport,
                          app.view.camera,
-                         app.runtime.particleVisual,
+                         frameParticleVisual,
                          frameRender,
                          frameOverlay);
   PrepareRenderFrame(app.renderFrameInput, render);
@@ -789,5 +1003,6 @@ void RunFrame(AppState& app,
   if (captureRenderSnapshot) {
     SaveRequestedRenderSnapshot(app.runtime.settings.request,
                                 presentResult.frame);
+    UpdateVolumeRenderMovieAfterCapture(app.runtime);
   }
 }

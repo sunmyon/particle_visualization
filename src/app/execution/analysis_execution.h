@@ -124,7 +124,9 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    ParticleVisualConfig& particleVisual,
                                    RenderRuntimeState& render,
                                    SettingsRuntimeState& settings,
-                                   SnapshotPostprocessState& post);
+                                   SnapshotPostprocessState& post,
+                                   CameraContext& camera,
+                                   AnalysisDerivedState& analysis);
 
 void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad);

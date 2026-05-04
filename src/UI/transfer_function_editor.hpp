@@ -23,8 +23,7 @@ public:
       rhoMax_(1e16f),
       yPlotMax_(100.0f),
       ampSliderMax_(100.0f),
-      logScale_(true),
-      showAxes_(true)
+      logScale_(true)
   {
   }
 
@@ -60,12 +59,10 @@ public:
 
     // Display upper bound for y; this does not clamp stored amplitudes.
     ImGui::SetNextItemWidth(180);
-    if (ImGui::InputFloat("plot y max [display]", &yPlotMax_, 1.0f, 10.0f, "%.3g")) {
+    if (ImGui::InputFloat("plot y max [display]", &yPlotMax_, 0.0f, 0.0f, "%.3g")) {
       yPlotMax_ = std::max(1e-6f, yPlotMax_);
     }
-    ImGui::SameLine();
-    ImGui::Checkbox("show axes", &showAxes_);
-    
+
     // Add buttons.
     if (ImGui::Button("Add Gaussian")) { addComponent(TFShape::Gaussian); changed = true; }
     ImGui::SameLine();
@@ -120,8 +117,8 @@ public:
       ImGui::SetNextItemWidth(180);
       if (ImGui::InputFloat("amplitude slider max",
                             &ampSliderMax_,
-                            1.0f,
-                            10.0f,
+                            0.0f,
+                            0.0f,
                             "%.3g")) {
         ampSliderMax_ = std::max(1.0e-6f, ampSliderMax_);
       }
@@ -133,15 +130,6 @@ public:
       ImGui::Unindent();
       ImGui::Separator();
       ImGui::PopID();
-    }
-
-    // Delete the selected component with Delete or Backspace.
-    if (selected_ >= 0 && selected_ < (int)comps_.size()) {
-      if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-	comps_.erase(comps_.begin() + selected_);
-	selected_ = -1;
-	changed = true;
-      }
     }
 
     dirty_ = dirty_ || changed;
@@ -251,7 +239,6 @@ private:
   float rhoMin_, rhoMax_, yPlotMax_, ampSliderMax_;
   bool logScale_;
   bool showWindow_ = false;
-  bool showAxes_ = true;
   bool dirty_ = false;
 
   bool flag_show = false;
@@ -274,7 +261,7 @@ private:
     if(type == TFShape::Gaussian)
       w = std::max(log10(std::max(static_cast<double>(rhoMax_/rhoMin_), 1.e-6)) * 0.1f, 1.e-6);    
     
-    comps_.push_back({ type, c, w, 0.5f });
+    comps_.push_back({ type, c, w, std::max(yPlotMax_, 1.0e-6f) });
     selected_ = (int)comps_.size() - 1;
   }
 
@@ -417,7 +404,6 @@ private:
   }
 
   void drawAxes(ImDrawList* dl) const {
-    if(!showAxes_) return;
     // Frame.
     dl->AddRect(plot0_, plot1_, IM_COL32(160,160,160,255), 4.0f);
 

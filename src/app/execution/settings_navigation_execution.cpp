@@ -30,6 +30,46 @@
 #include "data/clump_store.h"
 #include "data/halo_store.h"
 #include "render/scene_objects.h"
+
+namespace {
+void RescaleCameraForNormalizationChange(CameraContext& camera,
+                                         float oldWorldToRenderScale,
+                                         float newWorldToRenderScale)
+{
+  if (!std::isfinite(oldWorldToRenderScale) || oldWorldToRenderScale <= 0.0f) {
+    return;
+  }
+  if (!std::isfinite(newWorldToRenderScale) || newWorldToRenderScale <= 0.0f) {
+    return;
+  }
+
+  const float ratio = newWorldToRenderScale / oldWorldToRenderScale;
+  if (!std::isfinite(ratio) || ratio <= 0.0f || ratio == 1.0f) {
+    return;
+  }
+
+  camera.cameraTarget *= ratio;
+  camera.cameraPos *= ratio;
+  camera.distance *= ratio;
+}
+
+#ifdef VOLUME_RENDERING
+void ClearVolumeTreeAfterCoordinateScaleChange(VolumeRenderingResultState& volume,
+                                               VolumeRenderState& render)
+{
+  volume.tree.clear();
+  volume.stats = AdaptiveVolumeTreeStats{};
+  volume.valid = false;
+  volume.success = true;
+  volume.message = "Volume tree invalidated after normalization change.";
+  volume.cpuUpdated = true;
+
+  render.show = false;
+  render.cpuUpdated = true;
+}
+#endif
+}  // namespace
+
 void ExecuteFileNavigationRequests(FileNavigationRuntimeState& rt,
                                    SnapshotLoadRuntimeState& snapshotLoad)
 {
@@ -108,7 +148,9 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    ParticleVisualConfig& particleVisual,
                                    RenderRuntimeState& render,
                                    SettingsRuntimeState& settings,
-                                   SnapshotPostprocessState& post)
+                                   SnapshotPostprocessState& post,
+                                   CameraContext& camera,
+                                   AnalysisDerivedState& analysis)
 {
   auto& req = settings.request;
 
@@ -149,8 +191,18 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
   }
 
   if (req.normalizeRequested) {
+    const float oldWorldToRenderScale = particles.simulationBlock.worldToRenderScale;
     settings.normalization.originalMax = quantity.range.originalMax;
     NormalizeParticlePositions(particles, settings.normalization);
+    RescaleCameraForNormalizationChange(camera,
+                                        oldWorldToRenderScale,
+                                        particles.simulationBlock.worldToRenderScale);
+#ifdef VOLUME_RENDERING
+    ClearVolumeTreeAfterCoordinateScaleChange(analysis.volume,
+                                              render.volume);
+#else
+    (void)analysis;
+#endif
     post.refreshTree = true;
     post.refreshCulling = true;
     post.refreshTopParticles = true;

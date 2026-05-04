@@ -185,7 +185,7 @@ static void DrawRenderSnapshotSection(SettingsActionRequestState& request)
 {
   ImGui::Spacing();
   ImGui::BeginChild("RenderSnapshotPanel",
-                    ImVec2(0.0f, 112.0f),
+                    ImVec2(0.0f, 120.0f),
                     true,
                     ImGuiWindowFlags_NoScrollbar);
   ImGui::TextUnformatted("Render snapshot");
@@ -193,6 +193,10 @@ static void DrawRenderSnapshotSection(SettingsActionRequestState& request)
   if (ImGui::Button("Save render snapshot")) {
     request.renderSnapshotRequested = true;
     request.renderSnapshotMessage = "Saving...";
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Save movie")) {
+    ImGui::OpenPopup("Volume movie settings");
   }
   if (!request.renderSnapshotMessage.empty()) {
     ImGui::SameLine();
@@ -210,6 +214,58 @@ static void DrawRenderSnapshotSection(SettingsActionRequestState& request)
   ImGui::SameLine();
   ImGui::Checkbox("Time label", &request.renderSnapshotShowTimeLabel);
   ImGui::PopID();
+
+  auto& movie = request.renderSnapshotMovie;
+  if (!movie.message.empty()) {
+    ImGui::TextDisabled("Movie: %s", movie.message.c_str());
+  }
+
+  if (ImGui::BeginPopupModal("Volume movie settings",
+                             nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    const bool running = movie.status == JobStatus::Running;
+    ImGui::TextUnformatted("Save volume-rendering frames as a PNG sequence.");
+    ImGui::TextDisabled("Camera is fixed for now; camera-path animation can be added later.");
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(running);
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::InputInt("frames##volume_render_movie", &movie.nFrames);
+    movie.nFrames = std::max(movie.nFrames, 1);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::InputInt("stride##volume_render_movie", &movie.stepStride);
+    movie.stepStride = std::max(movie.stepStride, 1);
+    ImGui::SetNextItemWidth(520.0f);
+    ImGui::InputText("output directory##volume_render_movie",
+                     movie.outputFolder,
+                     IM_ARRAYSIZE(movie.outputFolder));
+    ImGui::Checkbox("Rebuild volume tree per snapshot",
+                    &movie.rebuildVolumeTree);
+    ImGui::Checkbox("Show particles using current particle visualization",
+                    &movie.showParticles);
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    if (!movie.message.empty()) {
+      ImGui::TextDisabled("%s", movie.message.c_str());
+    }
+    if (!running) {
+      if (ImGui::Button("Start")) {
+        movie.startRequested = true;
+        ImGui::CloseCurrentPopup();
+      }
+    } else {
+      if (ImGui::Button("Cancel")) {
+        movie.cancelRequested = true;
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) {
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
   ImGui::EndChild();
 }
 

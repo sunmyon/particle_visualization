@@ -23,7 +23,8 @@ enum class SnapshotLoadOwner : uint8_t {
   DiskBatch = 3,
   EllipsoidBatch = 4,
   ClumpBatch = 5,
-  ClumpChainProjectionBatch = 6
+  ClumpChainProjectionBatch = 6,
+  VolumeRenderMovie = 7
 };
 
 enum class SnapshotLoadKind : uint8_t {
@@ -525,6 +526,23 @@ struct SettingsRenderEditDraft {
   float crossGizmoSize = 0.05f;
 };
 
+struct RenderSnapshotMovieState {
+  int nFrames = 10;
+  int stepStride = 1;
+  char outputFolder[512] = "render_snapshots/volume_movie";
+  bool rebuildVolumeTree = true;
+  bool showParticles = true;
+  bool startRequested = false;
+  bool cancelRequested = false;
+
+  JobStatus status = JobStatus::Idle;
+  int phase = 0; // 0=request load, 1=wait load, 2=build volume, 3=capture next frame.
+  int startStep = 0;
+  int targetStep = 0;
+  int frameIndex = 0;
+  std::string message;
+};
+
 struct SettingsActionRequestState {
   bool normalizeRequested = false;
   bool particleRenderDirtyRequested = false;
@@ -547,12 +565,14 @@ struct SettingsActionRequestState {
   UnitSystem unitsDraft;
 
   bool renderSnapshotRequested = false;
+  std::string renderSnapshotOutputPath;
   std::string renderSnapshotMessage;
   bool renderSnapshotShowColorbar = true;
   bool renderSnapshotShowCoordAxes = true;
   bool renderSnapshotShowCrossGizmo = true;
   bool renderSnapshotShowParticleLabels = true;
   bool renderSnapshotShowTimeLabel = true;
+  RenderSnapshotMovieState renderSnapshotMovie;
 };
 
 struct SettingsRuntimeState {
