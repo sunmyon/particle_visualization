@@ -754,7 +754,7 @@ function(_print_links tag)
   get_property(_libs TARGET ${PROJECT_NAME} PROPERTY LINK_LIBRARIES)
   message(STATUS "[trace:${tag}] LINK_LIBRARIES = ${_libs}")
   # Count selected link items.
-  set(_targets glfw gmp mpfr Cocoa OpenGL)
+  set(_targets glfw Cocoa OpenGL)
   foreach(tok IN LISTS _targets)
     set(cnt 0)
     foreach(x IN LISTS _libs)
@@ -775,7 +775,7 @@ if(APPLE)
   find_program(_BREW brew)
   if(_BREW)
     # List the required Homebrew packages.
-    set(_brew_packages libomp hdf5 lua gmp mpfr eigen)
+    set(_brew_packages libomp hdf5 lua eigen)
     if(PYTHON_BRIDGE)
       list(APPEND _brew_packages zeromq cppzmq nlohmann-json)
     endif()
@@ -896,8 +896,8 @@ endfunction()
 
 
 function(detect_and_link_glfw target lib_name pkg_name)
-  # lib_name: CMake package name, e.g. GLFW, GMP.
-  # pkg_name: pkg-config package name, e.g. glfw3, gmp.
+  # lib_name: CMake package name, e.g. GLFW.
+  # pkg_name: pkg-config package name, e.g. glfw3.
 
   # 1. CMake find_package.
   find_package(glfw QUIET CONFIG)
@@ -1036,8 +1036,6 @@ endif()
 if(NOT PARTICLE_VIS_HEADLESS_ONLY)
   detect_and_link_glfw(${PROJECT_NAME} "glfw" "glfw")
 endif()
-detect_and_link(${PROJECT_NAME} "GMP" "gmp")
-detect_and_link(${PROJECT_NAME} "MPFR" "mpfr")
 
 if(PYTHON_BRIDGE)
   detect_and_link(${PROJECT_NAME} "ZeroMQ" "libzmq" CMAKE_TARGET libzmq)
