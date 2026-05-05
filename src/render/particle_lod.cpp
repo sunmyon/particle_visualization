@@ -245,6 +245,17 @@ bool AppendDistanceLodNode(const std::vector<RenderParticle>& particles,
   return true;
 }
 
+std::uint32_t ChildMask(const ParticleLodNode& node)
+{
+  std::uint32_t mask = 0;
+  for (int child = 0; child < 8; ++child) {
+    if (node.children[child] >= 0) {
+      mask |= (1u << static_cast<std::uint32_t>(child));
+    }
+  }
+  return mask;
+}
+
 } // namespace
 
 void BuildParticleLodTree(const std::vector<RenderParticle>& particles,
@@ -268,6 +279,91 @@ void BuildParticleLodTree(const std::vector<RenderParticle>& particles,
                      0,
                      settings);
   out.valid = !out.nodes.empty();
+}
+
+void BuildParticleLodGpuTree(const ParticleLodTree& tree,
+                             ParticleLodGpuTree& out)
+{
+  out = ParticleLodGpuTree{};
+  if (!tree.valid || tree.nodes.empty()) {
+    return;
+  }
+
+  const std::size_t nodeCount = tree.nodes.size();
+  out.nodeCenterRadius.resize(nodeCount);
+  out.representativePosHsml.resize(nodeCount);
+  out.representativeValue.resize(nodeCount);
+  out.nodeMeta.resize(nodeCount);
+  out.childA.resize(nodeCount);
+  out.childB.resize(nodeCount);
+  out.representativeMeta.resize(nodeCount);
+  out.indices = tree.indices;
+
+  std::vector<std::uint32_t> parentIndex(
+    nodeCount, std::numeric_limits<std::uint32_t>::max());
+  for (std::size_t i = 0; i < nodeCount; ++i) {
+    const ParticleLodNode& node = tree.nodes[i];
+    for (int child : node.children) {
+      if (child >= 0 && static_cast<std::size_t>(child) < nodeCount) {
+        parentIndex[static_cast<std::size_t>(child)] =
+          static_cast<std::uint32_t>(i);
+      }
+    }
+  }
+
+  for (std::size_t i = 0; i < nodeCount; ++i) {
+    const ParticleLodNode& node = tree.nodes[i];
+    const glm::vec3 center = BoundsCenter(node.bounds);
+    out.nodeCenterRadius[i] =
+      glm::vec4(center.x, center.y, center.z, node.radius);
+    out.representativePosHsml[i] =
+      glm::vec4(node.representativePos[0],
+                node.representativePos[1],
+                node.representativePos[2],
+                node.representativeHsml);
+    out.representativeValue[i] =
+      glm::vec4(node.representativeValue, 0.0f, 0.0f, 0.0f);
+    out.nodeMeta[i] =
+      glm::uvec4(node.start, node.count, node.depth, ChildMask(node));
+    out.childA[i] =
+      glm::ivec4(node.children[0],
+                 node.children[1],
+                 node.children[2],
+                 node.children[3]);
+    out.childB[i] =
+      glm::ivec4(node.children[4],
+                 node.children[5],
+                 node.children[6],
+                 node.children[7]);
+    out.representativeMeta[i] =
+      glm::uvec4(node.representativeType,
+                 node.representativeFlagStress,
+                 parentIndex[i],
+                 0u);
+    if (ChildMask(node) == 0u) {
+      out.maxLeafCount = std::max(out.maxLeafCount, node.count);
+    }
+  }
+
+  out.valid = true;
+}
+
+void BuildParticleLodOrderedParticles(
+  const std::vector<RenderParticle>& particles,
+  const ParticleLodTree& tree,
+  std::vector<RenderParticle>& out)
+{
+  out.clear();
+  if (!tree.valid || tree.indices.empty()) {
+    return;
+  }
+
+  out.reserve(tree.indices.size());
+  for (std::uint32_t index : tree.indices) {
+    if (index < particles.size()) {
+      out.push_back(particles[index]);
+    }
+  }
 }
 
 bool BuildParticleLodProxyDrawList(const std::vector<RenderParticle>& particles,
@@ -304,4 +400,17 @@ std::size_t EstimateParticleLodTreeBytes(const ParticleLodTree& tree)
 {
   return tree.indices.size() * sizeof(std::uint32_t) +
          tree.nodes.size() * sizeof(ParticleLodNode);
+}
+
+std::size_t EstimateParticleLodGpuTreeBytes(const ParticleLodGpuTree& tree)
+{
+  return tree.nodeCenterRadius.size() * sizeof(glm::vec4) +
+         tree.representativePosHsml.size() * sizeof(glm::vec4) +
+         tree.representativeValue.size() * sizeof(glm::vec4) +
+         tree.nodeMeta.size() * sizeof(glm::uvec4) +
+         tree.childA.size() * sizeof(glm::ivec4) +
+         tree.childB.size() * sizeof(glm::ivec4) +
+         tree.representativeMeta.size() * sizeof(glm::uvec4) +
+         tree.indices.size() * sizeof(std::uint32_t) +
+         sizeof(tree.maxLeafCount);
 }

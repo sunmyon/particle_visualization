@@ -73,6 +73,8 @@ struct RenderSceneData {
   std::vector<RenderParticle> stressParticles;
   RenderSceneVersion stressParticlesVersion = 1;
   ParticleLodTree particleLod;
+  ParticleLodGpuTree particleLodGpu;
+  std::vector<RenderParticle> particleLodOrderedParticles;
   std::vector<RenderParticle> particleLodProxy;
   std::vector<RenderParticle> particleLodStressProxy;
   ParticleLodSettings particleLodSettings;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 struct ProjectionPreviewUIState;
@@ -17,6 +19,52 @@ struct RenderBackendMemoryInfo {
 };
 
 struct RenderBackendTimingInfo {
+  struct ParticleGpuLodLevelStats {
+    std::uint32_t visited = 0;
+    std::uint32_t proxy = 0;
+    std::uint32_t leaf = 0;
+    std::uint32_t expanded = 0;
+    float minProjectedPx = 0.0f;
+    float avgProjectedPx = 0.0f;
+    float maxProjectedPx = 0.0f;
+  };
+  static constexpr std::size_t kMaxParticleGpuLodLevels = 32;
+  bool particleDrawActive = false;
+  bool particleDrawCacheHit = false;
+  bool particleDrawWallTimeKnown = false;
+  double particleDrawWallMs = 0.0;
+  double particleDrawRefreshHz = 0.0;
+  bool particleGpuLodActive = false;
+  bool particleGpuLodUpdated = false;
+  bool particleGpuLodCacheHit = false;
+  bool particleGpuLodWallTimeKnown = false;
+  double particleGpuLodWallMs = 0.0;
+  double particleGpuLodRefreshHz = 0.0;
+  bool particleGpuLodDrawWallTimeKnown = false;
+  double particleGpuLodDrawWallMs = 0.0;
+  double particleGpuLodDrawRefreshHz = 0.0;
+  bool particleGpuLodIcbGenerationTimeKnown = false;
+  double particleGpuLodIcbGenerationMs = 0.0;
+  bool particleGpuLodIcbDrawTimeKnown = false;
+  double particleGpuLodIcbDrawMs = 0.0;
+  bool particleGpuLodNormalDrawTimeKnown = false;
+  double particleGpuLodNormalDrawMs = 0.0;
+  bool particleGpuLodStatsKnown = false;
+  std::uint64_t particleGpuLodVisitedNodes = 0;
+  std::uint64_t particleGpuLodFrustumCulledNodes = 0;
+  std::uint64_t particleGpuLodAcceptedProxyNodes = 0;
+  std::uint64_t particleGpuLodAcceptedLeafRanges = 0;
+  std::uint64_t particleGpuLodLeafParticleCount = 0;
+  std::uint64_t particleGpuLodExpandedNodes = 0;
+  std::uint64_t particleGpuLodAppendedChildren = 0;
+  std::uint64_t particleGpuLodProxyCount = 0;
+  std::uint64_t particleGpuLodLeafRangeCount = 0;
+  std::uint64_t particleGpuLodMergedLeafRangeCount = 0;
+  std::uint64_t particleGpuLodGeneratedDrawCommands = 0;
+  std::uint32_t particleGpuLodMaxLeafCount = 0;
+  std::uint32_t particleGpuLodLevelCount = 0;
+  std::array<ParticleGpuLodLevelStats, kMaxParticleGpuLodLevels>
+    particleGpuLodLevels{};
   bool volumeGpuTimeKnown = false;
   double volumeGpuMs = 0.0;
   bool volumeWallLatencyKnown = false;
@@ -47,6 +95,7 @@ struct RenderBackendVolumeStats {
 struct RenderBackendCapabilities {
   bool particles = false;
   bool particleLod = false;
+  bool particleGpuLod = false;
   bool velocityField = false;
   bool instancedObjects = false;
   bool lines = false;

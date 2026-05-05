@@ -412,7 +412,8 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
   ctx.memory.cpuRenderSceneBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle) +
     renderSystem.scene.particleLodProxy.size() * sizeof(RenderParticle) +
-    renderSystem.scene.velocityInstances.size() * sizeof(float);
+    renderSystem.scene.velocityInstances.size() * sizeof(float) +
+    EstimateParticleLodGpuTreeBytes(renderSystem.scene.particleLodGpu);
   ctx.memory.gpuParticleBufferBytes =
     renderSystem.scene.particles.size() * sizeof(RenderParticle);
   ctx.memory.cpuParticleLodTreeBytes =
@@ -939,6 +940,7 @@ void RunFrame(AppState& app,
                             derivedRebuild);
 
   const double currentTime = window.timeSeconds();
+  app.runtime.render.scheduling.currentTimeSeconds = currentTime;
   UpdateRenderInteractionActivity(app.runtime,
                                   static_cast<float>(currentTime));
   

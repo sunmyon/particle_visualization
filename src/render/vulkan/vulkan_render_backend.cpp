@@ -217,6 +217,20 @@ struct VulkanBuffer {
   VkDeviceSize size = 0;
 };
 
+struct VulkanParticleLodTreeBuffers {
+  VulkanBuffer nodeCenterRadius;
+  VulkanBuffer representativePosHsml;
+  VulkanBuffer representativeValue;
+  VulkanBuffer nodeMeta;
+  VulkanBuffer childA;
+  VulkanBuffer childB;
+  VulkanBuffer representativeMeta;
+  VulkanBuffer indices;
+  std::size_t nodeCount = 0;
+  std::size_t indexCount = 0;
+  RenderSceneVersion version = 0;
+};
+
 struct VulkanImage {
   VkImage image = VK_NULL_HANDLE;
   VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -718,6 +732,7 @@ public:
     destroyBuffer(stressParticleBuffer_);
     destroyBuffer(particleLodBuffer_);
     destroyBuffer(stressParticleLodBuffer_);
+    destroyParticleLodTreeBuffers();
     for (VulkanBuffer& buffer : visualBuffers_) {
       destroyBuffer(buffer);
     }
@@ -790,6 +805,7 @@ public:
                          stressParticleLodVersion_,
                          stressParticleLodCount_,
                          "vkMapMemory(stress particle LOD)");
+      syncParticleLodTree(scene);
     }
     syncSolidInstances(scene);
     syncLineVertices(scene);
@@ -1332,6 +1348,72 @@ private:
     std::memcpy(mapped, data, static_cast<std::size_t>(bytes));
     vkUnmapMemory(device_, buffer.memory);
     return true;
+  }
+
+  template <typename T>
+  bool uploadStorageVector(const std::vector<T>& values,
+                           VulkanBuffer& buffer,
+                           const char* label)
+  {
+    const VkDeviceSize bytes =
+      static_cast<VkDeviceSize>(values.size() * sizeof(T));
+    if (bytes == 0) {
+      destroyBuffer(buffer);
+      return true;
+    }
+    return uploadToBuffer(buffer,
+                          values.data(),
+                          bytes,
+                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                          label);
+  }
+
+  void syncParticleLodTree(const RenderSceneData& scene)
+  {
+    if (particleLodTreeBuffers_.version == scene.particleLodVersion) {
+      return;
+    }
+
+    const ParticleLodGpuTree& tree = scene.particleLodGpu;
+    if (!tree.valid || tree.nodeCenterRadius.empty()) {
+      destroyParticleLodTreeBuffers();
+      return;
+    }
+
+    bool ok = true;
+    ok &= uploadStorageVector(tree.nodeCenterRadius,
+                              particleLodTreeBuffers_.nodeCenterRadius,
+                              "vkMapMemory(particle LOD node center)");
+    ok &= uploadStorageVector(tree.representativePosHsml,
+                              particleLodTreeBuffers_.representativePosHsml,
+                              "vkMapMemory(particle LOD representative pos)");
+    ok &= uploadStorageVector(tree.representativeValue,
+                              particleLodTreeBuffers_.representativeValue,
+                              "vkMapMemory(particle LOD representative value)");
+    ok &= uploadStorageVector(tree.nodeMeta,
+                              particleLodTreeBuffers_.nodeMeta,
+                              "vkMapMemory(particle LOD node meta)");
+    ok &= uploadStorageVector(tree.childA,
+                              particleLodTreeBuffers_.childA,
+                              "vkMapMemory(particle LOD child A)");
+    ok &= uploadStorageVector(tree.childB,
+                              particleLodTreeBuffers_.childB,
+                              "vkMapMemory(particle LOD child B)");
+    ok &= uploadStorageVector(tree.representativeMeta,
+                              particleLodTreeBuffers_.representativeMeta,
+                              "vkMapMemory(particle LOD representative meta)");
+    ok &= uploadStorageVector(tree.indices,
+                              particleLodTreeBuffers_.indices,
+                              "vkMapMemory(particle LOD indices)");
+
+    if (!ok) {
+      destroyParticleLodTreeBuffers();
+      return;
+    }
+
+    particleLodTreeBuffers_.nodeCount = tree.nodeCenterRadius.size();
+    particleLodTreeBuffers_.indexCount = tree.indices.size();
+    particleLodTreeBuffers_.version = scene.particleLodVersion;
   }
 
   bool uploadSolidMesh(SolidMesh& mesh, const SolidMeshData& data)
@@ -2778,6 +2860,19 @@ private:
       vkFreeMemory(device_, buffer.memory, nullptr);
     }
     buffer = VulkanBuffer{};
+  }
+
+  void destroyParticleLodTreeBuffers()
+  {
+    destroyBuffer(particleLodTreeBuffers_.nodeCenterRadius);
+    destroyBuffer(particleLodTreeBuffers_.representativePosHsml);
+    destroyBuffer(particleLodTreeBuffers_.representativeValue);
+    destroyBuffer(particleLodTreeBuffers_.nodeMeta);
+    destroyBuffer(particleLodTreeBuffers_.childA);
+    destroyBuffer(particleLodTreeBuffers_.childB);
+    destroyBuffer(particleLodTreeBuffers_.representativeMeta);
+    destroyBuffer(particleLodTreeBuffers_.indices);
+    particleLodTreeBuffers_ = VulkanParticleLodTreeBuffers{};
   }
 
   void destroyImage(VulkanImage& image)
@@ -5416,6 +5511,7 @@ private:
   VulkanBuffer stressParticleBuffer_;
   VulkanBuffer particleLodBuffer_;
   VulkanBuffer stressParticleLodBuffer_;
+  VulkanParticleLodTreeBuffers particleLodTreeBuffers_;
   VulkanParticleFrameCache particleFrameCache_;
   std::array<VulkanBuffer, 2> visualBuffers_;
   VulkanImage colormapAtlas_;

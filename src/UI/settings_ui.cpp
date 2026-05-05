@@ -404,6 +404,119 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
     ImGui::TextDisabled("Current render backend does not draw particles.");
   }
   ImGui::SeparatorText("Rendering timings");
+  ImGui::TextDisabled("Particle drawing");
+  if (memory.timing.particleDrawActive) {
+    if (memory.timing.particleDrawCacheHit) {
+      if (memory.timing.particleDrawWallTimeKnown) {
+        ImGui::Text("Draw: cache hit (last %.3f ms, %.1f Hz)",
+                    memory.timing.particleDrawWallMs,
+                    memory.timing.particleDrawRefreshHz);
+      } else {
+        ImGui::Text("Draw: cache hit");
+      }
+    } else if (memory.timing.particleDrawWallTimeKnown) {
+      ImGui::Text("Draw: %.3f ms (%.1f Hz)",
+                  memory.timing.particleDrawWallMs,
+                  memory.timing.particleDrawRefreshHz);
+    } else {
+      ImGui::TextDisabled("Draw: waiting for timing");
+    }
+  } else {
+    ImGui::TextDisabled("Draw timing: inactive");
+  }
+  ImGui::Spacing();
+  ImGui::TextDisabled("Particle LOD update");
+  if (memory.timing.particleGpuLodActive) {
+    if (memory.timing.particleGpuLodCacheHit) {
+      if (memory.timing.particleGpuLodWallTimeKnown) {
+        ImGui::Text("GPU LOD: cache hit (last %.3f ms, %.1f Hz)",
+                    memory.timing.particleGpuLodWallMs,
+                    memory.timing.particleGpuLodRefreshHz);
+      } else {
+        ImGui::Text("GPU LOD: cache hit");
+      }
+    } else if (memory.timing.particleGpuLodUpdated &&
+               memory.timing.particleGpuLodWallTimeKnown) {
+      ImGui::Text("GPU LOD update: %.3f ms (%.1f Hz)",
+                  memory.timing.particleGpuLodWallMs,
+                  memory.timing.particleGpuLodRefreshHz);
+    } else {
+      ImGui::TextDisabled("GPU LOD: waiting for timing");
+    }
+    if (memory.timing.particleGpuLodDrawWallTimeKnown) {
+      ImGui::Text("GPU LOD draw: %.3f ms (%.1f Hz)",
+                  memory.timing.particleGpuLodDrawWallMs,
+                  memory.timing.particleGpuLodDrawRefreshHz);
+    }
+    if (memory.timing.particleGpuLodIcbGenerationTimeKnown) {
+      ImGui::Text("Range build: %.3f ms",
+                  memory.timing.particleGpuLodIcbGenerationMs);
+    }
+    if (memory.timing.particleGpuLodIcbDrawTimeKnown) {
+      ImGui::Text("Range draw encode: %.3f ms",
+                  memory.timing.particleGpuLodIcbDrawMs);
+    }
+    if (memory.timing.particleGpuLodNormalDrawTimeKnown) {
+      ImGui::Text("Normal fallback draw: %.3f ms",
+                  memory.timing.particleGpuLodNormalDrawMs);
+    }
+    if (memory.timing.particleGpuLodStatsKnown) {
+      ImGui::Text("Proxy nodes: %llu  Leaf ranges: %llu  Draw commands: %llu",
+                  static_cast<unsigned long long>(
+                    memory.timing.particleGpuLodAcceptedProxyNodes),
+                  static_cast<unsigned long long>(
+                    memory.timing.particleGpuLodAcceptedLeafRanges),
+                  static_cast<unsigned long long>(
+                    memory.timing.particleGpuLodGeneratedDrawCommands));
+      ImGui::Text("Leaf particles in ranges: %llu",
+                  static_cast<unsigned long long>(
+                    memory.timing.particleGpuLodLeafParticleCount));
+      ImGui::Text("Merged leaf ranges: %llu",
+                  static_cast<unsigned long long>(
+                    memory.timing.particleGpuLodMergedLeafRangeCount));
+      if (ImGui::TreeNode("Advanced LOD debug")) {
+        ImGui::Text("Visited nodes: %llu",
+                    static_cast<unsigned long long>(
+                      memory.timing.particleGpuLodVisitedNodes));
+        ImGui::Text("Expanded: %llu  Children: %llu  Frustum culled: %llu",
+                    static_cast<unsigned long long>(
+                      memory.timing.particleGpuLodExpandedNodes),
+                    static_cast<unsigned long long>(
+                      memory.timing.particleGpuLodAppendedChildren),
+                    static_cast<unsigned long long>(
+                      memory.timing.particleGpuLodFrustumCulledNodes));
+        ImGui::Text("Max leaf count: %u",
+                    memory.timing.particleGpuLodMaxLeafCount);
+        if (memory.timing.particleGpuLodLevelCount > 0 &&
+            ImGui::TreeNode("Level projected size")) {
+          ImGui::TextDisabled("level visited proxy leaf expanded min/avg/max px");
+          for (std::uint32_t level = 0;
+               level < memory.timing.particleGpuLodLevelCount;
+               ++level) {
+            const auto& stats = memory.timing.particleGpuLodLevels[level];
+            if (stats.visited == 0) {
+              continue;
+            }
+            ImGui::Text("%2u  %7u  %5u  %5u  %6u  %.2f / %.2f / %.2f",
+                        level,
+                        stats.visited,
+                        stats.proxy,
+                        stats.leaf,
+                        stats.expanded,
+                        stats.minProjectedPx,
+                        stats.avgProjectedPx,
+                        stats.maxProjectedPx);
+          }
+          ImGui::TreePop();
+        }
+        ImGui::TreePop();
+      }
+    }
+  } else {
+    ImGui::TextDisabled("GPU LOD timing: inactive");
+  }
+  ImGui::Spacing();
+  ImGui::TextDisabled("Volume rendering");
   if (memory.timing.volumeCacheUsed) {
     const char* cacheState = memory.timing.volumeCacheUpdated
       ? "updated"
@@ -555,47 +668,71 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
       static_cast<ParticleLodMode>(particleLodMode);
     dirty = true;
   }
-  dirty |= ImGui::Checkbox("Auto LOD on software renderer",
-                           &scheduling.autoParticleLodOnSoftwareRenderer);
-  dirty |= ImGui::InputFloat("LOD proxy fraction",
-                             &scheduling.particleLod.proxyFraction,
-                             0.05f,
-                             0.1f,
-                             "%.2f");
-  if (scheduling.particleLod.proxyFraction < 0.01f) {
-    scheduling.particleLod.proxyFraction = 0.01f;
-    dirty = true;
-  }
-  if (scheduling.particleLod.proxyFraction > 1.0f) {
-    scheduling.particleLod.proxyFraction = 1.0f;
-    dirty = true;
-  }
-  dirty |= ImGui::InputFloat("LOD theta",
-                             &scheduling.particleLod.theta,
-                             0.01f,
-                             0.05f,
-                             "%.3f");
-  if (scheduling.particleLod.theta < 0.01f) {
-    scheduling.particleLod.theta = 0.01f;
-    dirty = true;
-  }
-  dirty |= ImGui::InputFloat("LOD focus update distance",
-                             &scheduling.particleLod.focusUpdateDistance,
-                             0.01f,
-                             0.05f,
-                             "%.3f");
-  if (scheduling.particleLod.focusUpdateDistance < 0.0f) {
-    scheduling.particleLod.focusUpdateDistance = 0.0f;
-    dirty = true;
-  }
-  dirty |= ImGui::InputFloat("LOD proxy update rate [Hz]",
-                             &scheduling.particleLod.proxyUpdateRateHz,
-                             1.0f,
-                             5.0f,
-                             "%.1f");
-  if (scheduling.particleLod.proxyUpdateRateHz < 0.0f) {
-    scheduling.particleLod.proxyUpdateRateHz = 0.0f;
-    dirty = true;
+  if (backend.particleGpuLod) {
+    ImGui::TextDisabled("GPU LOD uses projected node size.");
+    dirty |= ImGui::InputFloat("LOD screen threshold [px]",
+                               &scheduling.particleLod.screenPixelThreshold,
+                               0.25f,
+                               1.0f,
+                               "%.2f");
+    if (scheduling.particleLod.screenPixelThreshold < 0.05f) {
+      scheduling.particleLod.screenPixelThreshold = 0.05f;
+      dirty = true;
+    }
+    dirty |= ImGui::InputFloat("LOD update rate [Hz]",
+                               &scheduling.particleLod.proxyUpdateRateHz,
+                               1.0f,
+                               5.0f,
+                               "%.1f");
+    if (scheduling.particleLod.proxyUpdateRateHz < 0.0f) {
+      scheduling.particleLod.proxyUpdateRateHz = 0.0f;
+      dirty = true;
+    }
+    ImGui::TextDisabled("Larger values draw fewer proxy particles.");
+    ImGui::TextDisabled("Update rate limits GPU LOD refresh while moving.");
+  } else {
+    dirty |= ImGui::Checkbox("Auto LOD on software renderer",
+                             &scheduling.autoParticleLodOnSoftwareRenderer);
+    dirty |= ImGui::InputFloat("LOD proxy fraction",
+                               &scheduling.particleLod.proxyFraction,
+                               0.05f,
+                               0.1f,
+                               "%.2f");
+    if (scheduling.particleLod.proxyFraction < 0.01f) {
+      scheduling.particleLod.proxyFraction = 0.01f;
+      dirty = true;
+    }
+    if (scheduling.particleLod.proxyFraction > 1.0f) {
+      scheduling.particleLod.proxyFraction = 1.0f;
+      dirty = true;
+    }
+    dirty |= ImGui::InputFloat("LOD theta",
+                               &scheduling.particleLod.theta,
+                               0.01f,
+                               0.05f,
+                               "%.3f");
+    if (scheduling.particleLod.theta < 0.01f) {
+      scheduling.particleLod.theta = 0.01f;
+      dirty = true;
+    }
+    dirty |= ImGui::InputFloat("LOD focus update distance",
+                               &scheduling.particleLod.focusUpdateDistance,
+                               0.01f,
+                               0.05f,
+                               "%.3f");
+    if (scheduling.particleLod.focusUpdateDistance < 0.0f) {
+      scheduling.particleLod.focusUpdateDistance = 0.0f;
+      dirty = true;
+    }
+    dirty |= ImGui::InputFloat("LOD proxy update rate [Hz]",
+                               &scheduling.particleLod.proxyUpdateRateHz,
+                               1.0f,
+                               5.0f,
+                               "%.1f");
+    if (scheduling.particleLod.proxyUpdateRateHz < 0.0f) {
+      scheduling.particleLod.proxyUpdateRateHz = 0.0f;
+      dirty = true;
+    }
   }
 
   int minNodeParticles =
@@ -621,7 +758,11 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
     dirty = true;
   }
   ImGui::TextDisabled("Tree settings rebuild the tree only when Apply is pressed.");
-  ImGui::TextDisabled("Theta/proxy settings reuse the tree and rebuild only the proxy.");
+  if (backend.particleGpuLod) {
+    ImGui::TextDisabled("Pixel threshold reuses the tree and updates GPU LOD.");
+  } else {
+    ImGui::TextDisabled("Theta/proxy settings reuse the tree and rebuild only the proxy.");
+  }
   if (!backend.particleLod) {
     ImGui::EndDisabled();
     ImGui::TextDisabled("Particle LOD is unsupported by the current backend.");

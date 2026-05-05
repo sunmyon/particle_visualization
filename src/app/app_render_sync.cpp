@@ -58,6 +58,8 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     rs.scene.particleLodSettings.proxyFraction !=
       scheduling.particleLod.proxyFraction ||
     rs.scene.particleLodSettings.theta != scheduling.particleLod.theta ||
+    rs.scene.particleLodSettings.screenPixelThreshold !=
+      scheduling.particleLod.screenPixelThreshold ||
     rs.scene.particleLodSettings.focusUpdateDistance !=
       scheduling.particleLod.focusUpdateDistance ||
     rs.scene.particleLodSettings.proxyUpdateRateHz !=
@@ -97,6 +99,8 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     if (rs.scene.particleLod.valid ||
         !rs.scene.particleLodProxy.empty()) {
       rs.scene.particleLod = ParticleLodTree{};
+      rs.scene.particleLodGpu = ParticleLodGpuTree{};
+      rs.scene.particleLodOrderedParticles.clear();
       rs.scene.particleLodProxy.clear();
       rs.scene.particleLodStressProxy.clear();
       ++rs.scene.particleLodVersion;
@@ -122,6 +126,11 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
     BuildParticleLodTree(rs.scene.particles,
                          scheduling.particleLod,
                          rs.scene.particleLod);
+    BuildParticleLodGpuTree(rs.scene.particleLod,
+                            rs.scene.particleLodGpu);
+    BuildParticleLodOrderedParticles(rs.scene.particles,
+                                     rs.scene.particleLod,
+                                     rs.scene.particleLodOrderedParticles);
   }
 
   if (lodFocusMoved) {
@@ -132,8 +141,20 @@ static ParticleRenderBuildResult UpdateParticleRenderSceneData(const ParticleRen
   const bool scheduledProxyRebuild =
     rs.scene.particleLodProxyRebuildPending &&
     (!scheduling.interactionActive || proxyUpdateIntervalElapsed);
+  const bool skipCpuProxyForGpuLod =
+    rs.backend && rs.backend->capabilities().particleGpuLod;
 
-  if (forceProxyRebuild || scheduledProxyRebuild) {
+  if (skipCpuProxyForGpuLod) {
+    rs.scene.particleLodSettings = scheduling.particleLod;
+    rs.scene.particleLodProxy.clear();
+    rs.scene.particleLodStressProxy.clear();
+    rs.scene.particleLodFocus = camera.cameraTarget;
+    rs.scene.particleLodLastProxyBuildTime = currentTime;
+    rs.scene.particleLodProxyRebuildPending = false;
+    if (forceProxyRebuild) {
+      ++rs.scene.particleLodVersion;
+    }
+  } else if (forceProxyRebuild || scheduledProxyRebuild) {
     std::vector<RenderParticle> nextProxy;
     const bool proxyOk =
       BuildParticleLodProxyDrawList(rs.scene.particles,

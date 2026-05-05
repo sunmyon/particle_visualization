@@ -14,12 +14,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <chrono>
+#include <limits>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -28,9 +32,10 @@ namespace {
 
 bool ShouldUseParticleLod(const RenderRuntimeState& render,
                           const std::vector<RenderParticle>& proxy,
-                          bool softwareRenderer)
+                          bool softwareRenderer,
+                          bool allowEmptyProxy = false)
 {
-  if (proxy.empty()) {
+  if (proxy.empty() && !allowEmptyProxy) {
     return false;
   }
 
@@ -45,6 +50,18 @@ bool ShouldUseParticleLod(const RenderRuntimeState& render,
       return true;
   }
   return false;
+}
+
+bool EnvFlagDisabled(const char* name)
+{
+  const char* value = std::getenv(name);
+  return value != nullptr && std::strcmp(value, "0") == 0;
+}
+
+bool EnvFlagEnabled(const char* name)
+{
+  const char* value = std::getenv(name);
+  return value != nullptr && std::strcmp(value, "0") != 0;
 }
 
 constexpr const char* kParticleShaderSource = R"(
@@ -82,7 +99,11 @@ struct ParticleUniforms {
   float4 typeParamsA[6]; // pointSize, valueMin, valueMax, useLog.
   float4 typeParamsB[6]; // periodic, hidden, colormapIndex, pad.
   float4 typeColors[6];
-  float4 misc; // pointScale, globalAlpha, colormapCount, pad.
+  float4 misc; // pointScale, globalAlpha, colormapCount, fixedLodDebugColor.
+};
+
+struct ParticleRangeUniforms {
+  uint maxLeafCount;
 };
 
 struct LineUniforms {
@@ -111,6 +132,55 @@ vertex ParticleVertexOut particleVertex(uint vertexId [[vertex_id]],
   float4 paramsA = uniforms.typeParamsA[type];
 
   ParticleVertexOut out;
+  out.position = uniforms.mvp * float4(float3(p.pos), 1.0);
+  out.pointSize = max(paramsA.x * uniforms.misc.x, 1.0);
+  out.valShow = p.valShow;
+  out.type = type;
+  return out;
+}
+
+vertex ParticleVertexOut particleIndexedVertex(
+  uint vertexId [[vertex_id]],
+  constant RenderParticle* particles [[buffer(0)]],
+  constant ParticleUniforms& uniforms [[buffer(1)]],
+  constant uint* indices [[buffer(2)]])
+{
+  RenderParticle p = particles[indices[vertexId]];
+  uint type = min(uint(p.type), 5u);
+  float4 paramsA = uniforms.typeParamsA[type];
+
+  ParticleVertexOut out;
+  out.position = uniforms.mvp * float4(float3(p.pos), 1.0);
+  out.pointSize = max(paramsA.x * uniforms.misc.x, 1.0);
+  out.valShow = p.valShow;
+  out.type = type;
+  return out;
+}
+
+vertex ParticleVertexOut particleRangeVertex(
+  uint vertexId [[vertex_id]],
+  constant RenderParticle* particles [[buffer(0)]],
+  constant ParticleUniforms& uniforms [[buffer(1)]],
+  constant uint4* leafRanges [[buffer(2)]],
+  constant ParticleRangeUniforms& rangeUniforms [[buffer(3)]])
+{
+  const uint maxLeafCount = max(rangeUniforms.maxLeafCount, 1u);
+  const uint rangeIndex = vertexId / maxLeafCount;
+  const uint localIndex = vertexId - rangeIndex * maxLeafCount;
+  const uint4 range = leafRanges[rangeIndex];
+
+  ParticleVertexOut out;
+  if (localIndex >= range.y) {
+    out.position = float4(2.0, 2.0, 0.0, 1.0);
+    out.pointSize = 0.0;
+    out.valShow = 0.0;
+    out.type = 0u;
+    return out;
+  }
+
+  RenderParticle p = particles[range.x + localIndex];
+  uint type = min(uint(p.type), 5u);
+  float4 paramsA = uniforms.typeParamsA[type];
   out.position = uniforms.mvp * float4(float3(p.pos), 1.0);
   out.pointSize = max(paramsA.x * uniforms.misc.x, 1.0);
   out.valShow = p.valShow;
@@ -150,6 +220,9 @@ fragment float4 particleFragment(ParticleVertexOut in [[stage_in]],
     normV = clamp(normV, 0.0, 1.0);
   }
 
+  if (uniforms.misc.w > 0.5) {
+    return float4(1.0, 0.0, 1.0, 1.0);
+  }
   float4 base = uniforms.typeColors[type];
   float cmapCount = max(uniforms.misc.z, 1.0);
   float cmapRow = clamp(paramsB.z, 0.0, cmapCount - 1.0);
@@ -250,6 +323,371 @@ fragment CacheFragmentOut particleCacheFragment(
   out.color = colorTexture.sample(colorSampler, in.uv);
   out.depth = depthTexture.sample(colorSampler, in.uv);
   return out;
+}
+
+struct ParticleLodComputeUniforms {
+  float4 cameraPosFocalPx;
+  float4 focusPosProtectRadius;
+  float4 lodParams;
+  float4 frustumPlanes[6];
+  uint nodeCount;
+  uint maxOutput;
+  uint maxLeafOutput;
+  uint queueCapacity;
+  uint threadsPerGroup;
+  uint levelIndex;
+  uint maxLevelStats;
+  uint maxLeafDrawCount;
+};
+
+float particleLodProjectedRadiusPx(uint nodeIndex,
+                                   constant float4* nodeCenterRadius,
+                                   constant ParticleLodComputeUniforms& uniforms)
+{
+  float4 centerRadius = nodeCenterRadius[nodeIndex];
+  float cameraDistance =
+    max(length(centerRadius.xyz - uniforms.cameraPosFocalPx.xyz), 1.0e-6);
+  return centerRadius.w * uniforms.cameraPosFocalPx.w / cameraDistance;
+}
+
+void particleLodRecordLevelStats(device atomic_uint* levelStats,
+                                 constant ParticleLodComputeUniforms& uniforms,
+                                 float projectedRadiusPx,
+                                 uint eventIndex)
+{
+  if (uniforms.levelIndex >= uniforms.maxLevelStats) {
+    return;
+  }
+  constexpr uint kFields = 8u;
+  constexpr uint kPxScale = 100u;
+  constexpr float kMaxRecordedPx = 10000.0f;
+  uint base = uniforms.levelIndex * kFields;
+
+  if (eventIndex == 0u) {
+    uint px = uint(clamp(projectedRadiusPx, 0.0f, kMaxRecordedPx) *
+                  float(kPxScale) + 0.5f);
+    atomic_fetch_add_explicit(&levelStats[base + 0u], 1u, memory_order_relaxed);
+    atomic_fetch_min_explicit(&levelStats[base + 4u], px, memory_order_relaxed);
+    atomic_fetch_max_explicit(&levelStats[base + 5u], px, memory_order_relaxed);
+    atomic_fetch_add_explicit(&levelStats[base + 6u], px, memory_order_relaxed);
+  } else if (eventIndex <= 3u) {
+    atomic_fetch_add_explicit(&levelStats[base + eventIndex],
+                              1u,
+                              memory_order_relaxed);
+  }
+}
+
+bool particleLodNodeSmall(uint nodeIndex,
+                          constant float4* nodeCenterRadius,
+                          constant ParticleLodComputeUniforms& uniforms)
+{
+  float4 centerRadius = nodeCenterRadius[nodeIndex];
+  float focusDistance =
+    length(centerRadius.xyz - uniforms.focusPosProtectRadius.xyz);
+  float projectedRadiusPx =
+    particleLodProjectedRadiusPx(nodeIndex, nodeCenterRadius, uniforms);
+  bool smallFromCamera = projectedRadiusPx < uniforms.lodParams.x;
+  if (uniforms.lodParams.z > 0.0f) {
+    smallFromCamera = projectedRadiusPx < uniforms.lodParams.x *
+                                           uniforms.lodParams.z;
+  }
+  bool outsideProtectedFocus =
+    focusDistance > uniforms.focusPosProtectRadius.w;
+  return smallFromCamera && outsideProtectedFocus;
+}
+
+bool particleLodNodeDefinitelyLarge(uint nodeIndex,
+                                    constant float4* nodeCenterRadius,
+                                    constant ParticleLodComputeUniforms& uniforms)
+{
+  float4 centerRadius = nodeCenterRadius[nodeIndex];
+  float cameraDistance =
+    max(length(centerRadius.xyz - uniforms.cameraPosFocalPx.xyz), 1.0e-6);
+  float projectedRadiusPx =
+    centerRadius.w * uniforms.cameraPosFocalPx.w / cameraDistance;
+  const float expandThreshold =
+    uniforms.lodParams.x * max(uniforms.lodParams.w, 1.0f);
+  return projectedRadiusPx > expandThreshold;
+}
+
+bool particleLodNodeOutsideFrustum(uint nodeIndex,
+                                   constant float4* nodeCenterRadius,
+                                   constant ParticleLodComputeUniforms& uniforms)
+{
+  float4 centerRadius = nodeCenterRadius[nodeIndex];
+  const float conservativeRadius =
+    centerRadius.w * max(uniforms.lodParams.y, 1.0f);
+  for (uint i = 0; i < 4u; ++i) {
+    float4 plane = uniforms.frustumPlanes[i];
+    if (dot(plane.xyz, centerRadius.xyz) + plane.w < -conservativeRadius) {
+      return true;
+    }
+  }
+  return false;
+}
+
+RenderParticle particleLodRepresentative(uint nodeIndex,
+                                         constant float4* representativePosHsml,
+                                         constant float4* representativeValue,
+                                         constant uint4* representativeMeta)
+{
+  float4 posHsml = representativePosHsml[nodeIndex];
+  uint4 meta = representativeMeta[nodeIndex];
+  RenderParticle p;
+  p.pos = packed_float3(posHsml.x, posHsml.y, posHsml.z);
+  p.type = uchar(meta.x);
+  p.flagStress = uchar(meta.y);
+  p.pad = ushort(0);
+  p.hsml = posHsml.w;
+  p.valShow = representativeValue[nodeIndex].x;
+  return p;
+}
+
+void particleLodAppend(device RenderParticle* outParticles,
+                       device RenderParticle* outStressParticles,
+                       device atomic_uint* counters,
+                       constant ParticleLodComputeUniforms& uniforms,
+                       RenderParticle particle)
+{
+  uint index = atomic_fetch_add_explicit(&counters[0], 1u, memory_order_relaxed);
+  if (index < uniforms.maxOutput) {
+    outParticles[index] = particle;
+  } else {
+    atomic_fetch_add_explicit(&counters[2], 1u, memory_order_relaxed);
+  }
+
+  if (particle.flagStress != 0) {
+    uint stressIndex =
+      atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
+    if (stressIndex < uniforms.maxLeafOutput) {
+      outStressParticles[stressIndex] = particle;
+    } else {
+      atomic_fetch_add_explicit(&counters[2], 1u, memory_order_relaxed);
+    }
+  }
+}
+
+kernel void particleLodResetQueueKernel(device atomic_uint* count [[buffer(0)]],
+                                        device uint* dispatchArgs [[buffer(1)]],
+                                        uint tid [[thread_position_in_grid]])
+{
+  if (tid != 0) {
+    return;
+  }
+  atomic_store_explicit(&count[0], 0u, memory_order_relaxed);
+  dispatchArgs[0] = 1u;
+  dispatchArgs[1] = 1u;
+  dispatchArgs[2] = 1u;
+}
+
+kernel void particleLodWriteDispatchArgsKernel(
+  device atomic_uint* count [[buffer(0)]],
+  device uint* dispatchArgs [[buffer(1)]],
+  constant ParticleLodComputeUniforms& uniforms [[buffer(2)]],
+  device atomic_uint* countToReset [[buffer(3)]],
+  uint tid [[thread_position_in_grid]])
+{
+  if (tid != 0) {
+    return;
+  }
+  uint n = atomic_load_explicit(&count[0], memory_order_relaxed);
+  uint tpg = max(uniforms.threadsPerGroup, 1u);
+  dispatchArgs[0] = (n + tpg - 1u) / tpg;
+  dispatchArgs[1] = 1u;
+  dispatchArgs[2] = 1u;
+  atomic_store_explicit(&countToReset[0], 0u, memory_order_relaxed);
+}
+
+kernel void particleLodFrontierKernel(
+  constant RenderParticle* particles [[buffer(0)]],
+  constant float4* nodeCenterRadius [[buffer(1)]],
+  constant float4* representativePosHsml [[buffer(2)]],
+  constant float4* representativeValue [[buffer(3)]],
+  constant uint4* nodeMeta [[buffer(4)]],
+  constant int4* childA [[buffer(5)]],
+  constant int4* childB [[buffer(6)]],
+  constant uint4* representativeMeta [[buffer(7)]],
+  constant uint* indices [[buffer(8)]],
+  device RenderParticle* proxyParticles [[buffer(9)]],
+  device atomic_uint* counters [[buffer(10)]],
+  constant ParticleLodComputeUniforms& uniforms [[buffer(11)]],
+  constant uint* activeQueue [[buffer(12)]],
+  device uint* nextQueue [[buffer(13)]],
+  constant uint* activeCount [[buffer(14)]],
+  device atomic_uint* nextCount [[buffer(15)]],
+  device uint4* leafRanges [[buffer(16)]],
+  device atomic_uint* levelStats [[buffer(17)]],
+  device uint* nodeFlags [[buffer(18)]],
+  uint activeIndex [[thread_position_in_grid]])
+{
+  uint nActive = activeCount[0];
+  if (activeIndex >= nActive) {
+    return;
+  }
+  atomic_fetch_add_explicit(&counters[4], 1u, memory_order_relaxed);
+  uint nodeIndex = activeQueue[activeIndex];
+  if (nodeIndex >= uniforms.nodeCount) {
+    return;
+  }
+  if (uniforms.lodParams.y > 0.5f &&
+      particleLodNodeOutsideFrustum(nodeIndex, nodeCenterRadius, uniforms)) {
+    atomic_fetch_add_explicit(&counters[5], 1u, memory_order_relaxed);
+    return;
+  }
+
+  uint4 meta = nodeMeta[nodeIndex];
+  bool isLeaf = meta.w == 0u;
+  float projectedRadiusPx =
+    particleLodProjectedRadiusPx(nodeIndex, nodeCenterRadius, uniforms);
+  particleLodRecordLevelStats(levelStats, uniforms, projectedRadiusPx, 0u);
+  bool isSmall = particleLodNodeSmall(nodeIndex, nodeCenterRadius, uniforms);
+  bool isDefinitelyLarge =
+    particleLodNodeDefinitelyLarge(nodeIndex, nodeCenterRadius, uniforms);
+
+  if (isSmall || (!isLeaf && !isDefinitelyLarge)) {
+    uint index =
+      atomic_fetch_add_explicit(&counters[0], 1u, memory_order_relaxed);
+    if (index < uniforms.maxOutput) {
+      proxyParticles[index] = particleLodRepresentative(nodeIndex,
+                                                        representativePosHsml,
+                                                        representativeValue,
+                                                        representativeMeta);
+    } else {
+      atomic_fetch_add_explicit(&counters[2], 1u, memory_order_relaxed);
+    }
+    atomic_fetch_add_explicit(&counters[6], 1u, memory_order_relaxed);
+    nodeFlags[nodeIndex] = 1u;
+    particleLodRecordLevelStats(levelStats, uniforms, projectedRadiusPx, 1u);
+    return;
+  }
+
+  if (isLeaf) {
+    uint rangeIndex =
+      atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
+    if (rangeIndex < uniforms.queueCapacity) {
+      leafRanges[rangeIndex] = uint4(meta.x, meta.y, 0u, 0u);
+      atomic_fetch_add_explicit(&counters[3], meta.y, memory_order_relaxed);
+      nodeFlags[nodeIndex] = 2u;
+    } else {
+      atomic_fetch_add_explicit(&counters[2], 1u, memory_order_relaxed);
+    }
+    atomic_fetch_add_explicit(&counters[7], 1u, memory_order_relaxed);
+    particleLodRecordLevelStats(levelStats, uniforms, projectedRadiusPx, 2u);
+    return;
+  }
+
+  atomic_fetch_add_explicit(&counters[8], 1u, memory_order_relaxed);
+  particleLodRecordLevelStats(levelStats, uniforms, projectedRadiusPx, 3u);
+  int4 ca = childA[nodeIndex];
+  int4 cb = childB[nodeIndex];
+  int childValues[8] = {ca.x, ca.y, ca.z, ca.w, cb.x, cb.y, cb.z, cb.w};
+  for (int i = 0; i < 8; ++i) {
+    if (childValues[i] < 0) {
+      continue;
+    }
+    uint write =
+      atomic_fetch_add_explicit(&nextCount[0], 1u, memory_order_relaxed);
+    if (write < uniforms.queueCapacity) {
+      nextQueue[write] = uint(childValues[i]);
+      atomic_fetch_add_explicit(&counters[9], 1u, memory_order_relaxed);
+    } else {
+      atomic_fetch_add_explicit(&counters[2], 1u, memory_order_relaxed);
+    }
+  }
+}
+
+bool particleLodAncestorSmall(uint nodeIndex,
+                              constant float4* nodeCenterRadius,
+                              constant uint4* representativeMeta,
+                              constant ParticleLodComputeUniforms& uniforms)
+{
+  uint parent = representativeMeta[nodeIndex].z;
+  for (uint guard = 0; guard < 64u; ++guard) {
+    if (parent == 0xffffffffu || parent >= uniforms.nodeCount) {
+      return false;
+    }
+    if (particleLodNodeSmall(parent, nodeCenterRadius, uniforms)) {
+      return true;
+    }
+    parent = representativeMeta[parent].z;
+  }
+  return false;
+}
+
+kernel void particleLodSinglePassKernel(
+  constant RenderParticle* particles [[buffer(0)]],
+  constant float4* nodeCenterRadius [[buffer(1)]],
+  constant float4* representativePosHsml [[buffer(2)]],
+  constant float4* representativeValue [[buffer(3)]],
+  constant uint4* nodeMeta [[buffer(4)]],
+  constant uint4* representativeMeta [[buffer(5)]],
+  constant uint* indices [[buffer(6)]],
+  device RenderParticle* outParticles [[buffer(7)]],
+  device RenderParticle* outStressParticles [[buffer(8)]],
+  device atomic_uint* counters [[buffer(9)]],
+  constant ParticleLodComputeUniforms& uniforms [[buffer(10)]],
+  uint nodeIndex [[thread_position_in_grid]])
+{
+  if (nodeIndex >= uniforms.nodeCount) {
+    return;
+  }
+  if (uniforms.lodParams.y > 0.5f &&
+      particleLodNodeOutsideFrustum(nodeIndex, nodeCenterRadius, uniforms)) {
+    return;
+  }
+  if (particleLodAncestorSmall(nodeIndex,
+                               nodeCenterRadius,
+                               representativeMeta,
+                               uniforms)) {
+    return;
+  }
+
+  uint4 meta = nodeMeta[nodeIndex];
+  const bool isLeaf = meta.w == 0u;
+  const bool isSmall = particleLodNodeSmall(nodeIndex,
+                                           nodeCenterRadius,
+                                           uniforms);
+  if (isSmall) {
+    particleLodAppend(outParticles,
+                      outStressParticles,
+                      counters,
+                      uniforms,
+                      particleLodRepresentative(nodeIndex,
+                                                representativePosHsml,
+                                                representativeValue,
+                                                representativeMeta));
+    return;
+  }
+
+  if (!isLeaf) {
+    return;
+  }
+  for (uint i = 0; i < meta.y; ++i) {
+    RenderParticle p = particles[indices[meta.x + i]];
+    particleLodAppend(outParticles,
+                      outStressParticles,
+                      counters,
+                      uniforms,
+                      p);
+  }
+}
+
+kernel void particleLodFinalizeKernel(
+  device atomic_uint* counters [[buffer(0)]],
+  device uint4* drawArgs [[buffer(1)]],
+  constant ParticleLodComputeUniforms& uniforms [[buffer(2)]],
+  uint tid [[thread_position_in_grid]])
+{
+  if (tid != 0) {
+    return;
+  }
+  uint particleCount =
+    min(atomic_load_explicit(&counters[0], memory_order_relaxed),
+        uniforms.maxOutput);
+  uint leafRangeCount =
+    atomic_load_explicit(&counters[1], memory_order_relaxed);
+  drawArgs[0] = uint4(particleCount, 1u, 0u, 0u);
+  drawArgs[1] = uint4(leafRangeCount, 1u, 0u, 0u);
 }
 
 struct VolumeUniforms {
@@ -667,6 +1105,26 @@ struct alignas(16) ParticleUniformsCpu {
   float misc[4] = {1.0f, 1.0f, 1.0f, 0.0f};
 };
 
+struct alignas(16) ParticleLodComputeUniformsCpu {
+  float cameraPosFocalPx[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  float focusPosProtectRadius[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float lodParams[4] = {0.75f, 0.0f, 0.0f, 0.0f};
+  float frustumPlanes[6][4] = {};
+  std::uint32_t nodeCount = 0;
+  std::uint32_t maxOutput = 0;
+  std::uint32_t maxLeafOutput = 0;
+  std::uint32_t queueCapacity = 0;
+  std::uint32_t threadsPerGroup = 1;
+  std::uint32_t levelIndex = 0;
+  std::uint32_t maxLevelStats = 0;
+  std::uint32_t maxLeafDrawCount = 1;
+};
+
+struct alignas(16) ParticleRangeUniformsCpu {
+  std::uint32_t maxLeafCount = 1;
+  std::uint32_t pad[3] = {};
+};
+
 struct alignas(16) LineUniformsCpu {
   float mvp[16] = {};
   float opacityScale = 1.0f;
@@ -1016,6 +1474,45 @@ bool ProjectWorldToImGui(const RenderFrameState& frame,
   return true;
 }
 
+void FillFrustumPlanes(const glm::mat4& clipFromWorld,
+                       float outPlanes[6][4])
+{
+  const glm::vec4 row0(clipFromWorld[0][0],
+                       clipFromWorld[1][0],
+                       clipFromWorld[2][0],
+                       clipFromWorld[3][0]);
+  const glm::vec4 row1(clipFromWorld[0][1],
+                       clipFromWorld[1][1],
+                       clipFromWorld[2][1],
+                       clipFromWorld[3][1]);
+  const glm::vec4 row2(clipFromWorld[0][2],
+                       clipFromWorld[1][2],
+                       clipFromWorld[2][2],
+                       clipFromWorld[3][2]);
+  const glm::vec4 row3(clipFromWorld[0][3],
+                       clipFromWorld[1][3],
+                       clipFromWorld[2][3],
+                       clipFromWorld[3][3]);
+  const glm::vec4 planes[6] = {
+    row3 + row0,
+    row3 - row0,
+    row3 + row1,
+    row3 - row1,
+    row3 + row2,
+    row3 - row2
+  };
+
+  for (int i = 0; i < 6; ++i) {
+    const glm::vec3 normal(planes[i]);
+    const float invLen =
+      1.0f / std::max(std::sqrt(glm::dot(normal, normal)), 1.0e-20f);
+    outPlanes[i][0] = planes[i].x * invLen;
+    outPlanes[i][1] = planes[i].y * invLen;
+    outPlanes[i][2] = planes[i].z * invLen;
+    outPlanes[i][3] = planes[i].w * invLen;
+  }
+}
+
 bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
 {
   for (int c = 0; c < 4; ++c) {
@@ -1026,6 +1523,157 @@ bool EqualMatrix(const glm::mat4& a, const glm::mat4& b)
     }
   }
   return true;
+}
+
+struct ParticleLodDrawRange {
+  std::uint32_t start = 0;
+  std::uint32_t count = 0;
+};
+
+constexpr std::size_t kMetalParticleLodMaxIcbCommands = 32768;
+constexpr std::size_t kMetalParticleLodTargetRangeDrawCommands = 2048;
+constexpr std::uint64_t kMetalParticleLodStableMergeGapParticles = 4096;
+constexpr double kMetalParticleLodNormalFallbackCoverage = 0.9;
+
+void SortAndMergeParticleLodRanges(std::vector<ParticleLodDrawRange>& ranges)
+{
+  std::sort(ranges.begin(),
+            ranges.end(),
+            [](const ParticleLodDrawRange& a,
+               const ParticleLodDrawRange& b) {
+              return a.start < b.start;
+            });
+
+  std::size_t write = 0;
+  for (const ParticleLodDrawRange& range : ranges) {
+    if (range.count == 0) {
+      continue;
+    }
+    if (write > 0) {
+      ParticleLodDrawRange& last = ranges[write - 1];
+      const std::uint64_t lastEnd =
+        static_cast<std::uint64_t>(last.start) +
+        static_cast<std::uint64_t>(last.count);
+      if (lastEnd >= range.start) {
+        const std::uint64_t rangeEnd =
+          static_cast<std::uint64_t>(range.start) +
+          static_cast<std::uint64_t>(range.count);
+        last.count =
+          static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(
+              std::numeric_limits<std::uint32_t>::max(),
+              std::max(lastEnd, rangeEnd) -
+                static_cast<std::uint64_t>(last.start)));
+        continue;
+      }
+    }
+    ranges[write++] = range;
+  }
+  ranges.resize(write);
+}
+
+void MergeSortedParticleLodRanges(std::vector<ParticleLodDrawRange>& ranges)
+{
+  std::size_t write = 0;
+  for (const ParticleLodDrawRange& range : ranges) {
+    if (range.count == 0) {
+      continue;
+    }
+    if (write > 0) {
+      ParticleLodDrawRange& last = ranges[write - 1];
+      const std::uint64_t lastEnd =
+        static_cast<std::uint64_t>(last.start) +
+        static_cast<std::uint64_t>(last.count);
+      if (lastEnd >= range.start) {
+        const std::uint64_t rangeEnd =
+          static_cast<std::uint64_t>(range.start) +
+          static_cast<std::uint64_t>(range.count);
+        last.count =
+          static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(
+              std::numeric_limits<std::uint32_t>::max(),
+              std::max(lastEnd, rangeEnd) -
+                static_cast<std::uint64_t>(last.start)));
+        continue;
+      }
+    }
+    ranges[write++] = range;
+  }
+  ranges.resize(write);
+}
+
+void MergeParticleLodRangeUnion(
+  const std::vector<ParticleLodDrawRange>& a,
+  const std::vector<ParticleLodDrawRange>& b,
+  std::vector<ParticleLodDrawRange>& out)
+{
+  out.clear();
+  out.reserve(a.size() + b.size());
+  std::merge(a.begin(),
+             a.end(),
+             b.begin(),
+             b.end(),
+             std::back_inserter(out),
+             [](const ParticleLodDrawRange& lhs,
+                const ParticleLodDrawRange& rhs) {
+               return lhs.start < rhs.start;
+             });
+  MergeSortedParticleLodRanges(out);
+}
+
+std::uint64_t CountParticleLodRangeVertices(
+  const std::vector<ParticleLodDrawRange>& ranges)
+{
+  std::uint64_t total = 0;
+  for (const ParticleLodDrawRange& range : ranges) {
+    total += range.count;
+  }
+  return total;
+}
+
+void CoalesceParticleLodRangesToBudget(
+  std::vector<ParticleLodDrawRange>& ranges,
+  std::size_t targetRangeCount,
+  std::uint64_t maxDrawnParticleCount)
+{
+  if (ranges.empty() || targetRangeCount == 0) {
+    return;
+  }
+
+  std::uint64_t drawnParticleCount = CountParticleLodRangeVertices(ranges);
+  std::vector<ParticleLodDrawRange> merged;
+  merged.reserve(std::min(ranges.size(), targetRangeCount));
+  ParticleLodDrawRange current = ranges.front();
+  for (std::size_t i = 1; i < ranges.size(); ++i) {
+    const ParticleLodDrawRange& next = ranges[i];
+    const std::uint64_t currentEnd =
+      static_cast<std::uint64_t>(current.start) + current.count;
+    const std::uint64_t gap =
+      next.start > currentEnd
+        ? static_cast<std::uint64_t>(next.start) - currentEnd
+        : 0u;
+    const std::uint64_t mergedEnd =
+      static_cast<std::uint64_t>(next.start) + next.count;
+    const std::uint64_t mergedCount =
+      mergedEnd - static_cast<std::uint64_t>(current.start);
+    const std::uint64_t extraDraw =
+      mergedCount -
+      static_cast<std::uint64_t>(current.count) -
+      static_cast<std::uint64_t>(next.count);
+    const bool canMerge =
+      gap <= kMetalParticleLodStableMergeGapParticles &&
+      drawnParticleCount + extraDraw <= maxDrawnParticleCount &&
+      mergedCount <= std::numeric_limits<std::uint32_t>::max();
+    if (canMerge) {
+      current.count = static_cast<std::uint32_t>(mergedCount);
+      drawnParticleCount += extraDraw;
+    } else {
+      merged.push_back(current);
+      current = next;
+    }
+  }
+  merged.push_back(current);
+  ranges.swap(merged);
 }
 
 bool EqualParticleTypeVisualConfig(const ParticleTypeVisualConfig& a,
@@ -1384,6 +2032,21 @@ struct MetalInstanceSet {
   RenderSceneVersion version = 0;
 };
 
+struct MetalParticleLodTreeBuffers {
+  id<MTLBuffer> nodeCenterRadius = nil;
+  id<MTLBuffer> representativePosHsml = nil;
+  id<MTLBuffer> representativeValue = nil;
+  id<MTLBuffer> nodeMeta = nil;
+  id<MTLBuffer> childA = nil;
+  id<MTLBuffer> childB = nil;
+  id<MTLBuffer> representativeMeta = nil;
+  id<MTLBuffer> indices = nil;
+  std::size_t nodeCount = 0;
+  std::size_t indexCount = 0;
+  std::uint32_t maxLeafCount = 1;
+  RenderSceneVersion version = 0;
+};
+
 #ifdef VOLUME_RENDERING
 struct MetalVolumeBuffers {
   id<MTLBuffer> nodeMin = nil;
@@ -1410,6 +2073,21 @@ struct MetalParticleFrameCache {
   ParticleVisualConfig visualConfig;
   bool valid = false;
 };
+
+struct MetalGpuParticleLodCache {
+  RenderSceneVersion version = 0;
+  glm::vec3 cameraPos{0.0f};
+  glm::vec3 cameraTarget{0.0f};
+  float cameraDistance = 0.0f;
+  float focalPx = 0.0f;
+  float theta = 0.0f;
+  float screenPixelThreshold = 0.0f;
+  double lastUpdateTime = -1.0;
+  bool valid = false;
+};
+
+constexpr std::size_t kParticleGpuLodLevelStatFields = 8;
+constexpr std::uint32_t kParticleGpuLodPxScale = 100;
 
 #ifdef VOLUME_RENDERING
 struct MetalVolumeFrameCache {
@@ -1617,6 +2295,10 @@ public:
     }
 
     id<MTLFunction> vertex = [library newFunctionWithName:@"particleVertex"];
+    id<MTLFunction> indexedVertex =
+      [library newFunctionWithName:@"particleIndexedVertex"];
+    id<MTLFunction> rangeVertex =
+      [library newFunctionWithName:@"particleRangeVertex"];
     id<MTLFunction> fragment =
       [library newFunctionWithName:@"particleFragment"];
     id<MTLFunction> lineVertex = [library newFunctionWithName:@"lineVertex"];
@@ -1630,13 +2312,23 @@ public:
       [library newFunctionWithName:@"colorCacheFragment"];
     id<MTLFunction> particleCacheFragment =
       [library newFunctionWithName:@"particleCacheFragment"];
+    id<MTLFunction> particleLodFrontier =
+      [library newFunctionWithName:@"particleLodFrontierKernel"];
+    id<MTLFunction> particleLodSinglePass =
+      [library newFunctionWithName:@"particleLodSinglePassKernel"];
+    id<MTLFunction> particleLodResetQueue =
+      [library newFunctionWithName:@"particleLodResetQueueKernel"];
+    id<MTLFunction> particleLodWriteDispatchArgs =
+      [library newFunctionWithName:@"particleLodWriteDispatchArgsKernel"];
+    id<MTLFunction> particleLodFinalize =
+      [library newFunctionWithName:@"particleLodFinalizeKernel"];
 #ifdef VOLUME_RENDERING
     id<MTLFunction> volumeVertex =
       [library newFunctionWithName:@"volumeVertex"];
     id<MTLFunction> volumeFragment =
       [library newFunctionWithName:@"volumeFragment"];
 #endif
-    if (!vertex || !fragment) {
+    if (!vertex || !indexedVertex || !rangeVertex || !fragment) {
       std::cerr << "Metal particle shader entry point missing." << std::endl;
       return;
     }
@@ -1650,6 +2342,15 @@ public:
     }
     if (!cacheVertex || !colorCacheFragment || !particleCacheFragment) {
       std::cerr << "Metal cache shader entry point missing." << std::endl;
+      return;
+    }
+    if (!particleLodFrontier ||
+        !particleLodSinglePass ||
+        !particleLodResetQueue ||
+        !particleLodWriteDispatchArgs ||
+        !particleLodFinalize) {
+      std::cerr << "Metal particle LOD compute entry point missing."
+                << std::endl;
       return;
     }
 #ifdef VOLUME_RENDERING
@@ -1677,6 +2378,28 @@ public:
       [device newRenderPipelineStateWithDescriptor:desc error:&error];
     if (!particlePipeline_) {
       std::cerr << "Metal particle pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+
+    desc.vertexFunction = indexedVertex;
+    particleIndexedPipeline_ =
+      [device newRenderPipelineStateWithDescriptor:desc error:&error];
+    if (!particleIndexedPipeline_) {
+      std::cerr << "Metal indexed particle pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+
+    desc.vertexFunction = rangeVertex;
+    particleRangePipeline_ =
+      [device newRenderPipelineStateWithDescriptor:desc error:&error];
+    if (!particleRangePipeline_) {
+      std::cerr << "Metal particle range pipeline creation failed: "
                 << (error ? [[error localizedDescription] UTF8String]
                           : "unknown error")
                 << std::endl;
@@ -1781,6 +2504,64 @@ public:
       return;
     }
 
+    particleLodFrontierPipeline_ =
+      [device newComputePipelineStateWithFunction:particleLodFrontier
+                                            error:&error];
+    if (!particleLodFrontierPipeline_) {
+      std::cerr << "Metal particle LOD frontier pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+    particleLodSinglePassPipeline_ =
+      [device newComputePipelineStateWithFunction:particleLodSinglePass
+                                            error:&error];
+    if (!particleLodSinglePassPipeline_) {
+      std::cerr << "Metal particle LOD single-pass pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+    particleLodResetQueuePipeline_ =
+      [device newComputePipelineStateWithFunction:particleLodResetQueue
+                                            error:&error];
+    if (!particleLodResetQueuePipeline_) {
+      std::cerr << "Metal particle LOD queue reset pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+    particleLodDispatchArgsPipeline_ =
+      [device newComputePipelineStateWithFunction:particleLodWriteDispatchArgs
+                                            error:&error];
+    if (!particleLodDispatchArgsPipeline_) {
+      std::cerr << "Metal particle LOD dispatch args pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+    particleLodFinalizePipeline_ =
+      [device newComputePipelineStateWithFunction:particleLodFinalize
+                                            error:&error];
+    if (!particleLodFinalizePipeline_) {
+      std::cerr << "Metal particle LOD finalize pipeline creation failed: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown error")
+                << std::endl;
+      return;
+    }
+    experimentalGpuParticleLod_ =
+      !EnvFlagDisabled("PARTICLE_VIS_GPU_PARTICLE_LOD") &&
+      !EnvFlagDisabled("PARTICLE_VIS_METAL_GPU_LOD");
+    if (experimentalGpuParticleLod_) {
+      std::cerr << "Metal experimental GPU particle LOD is enabled."
+                << std::endl;
+    }
+
 #ifdef VOLUME_RENDERING
     MTLRenderPipelineDescriptor* volumeDesc =
       [[MTLRenderPipelineDescriptor alloc] init];
@@ -1868,13 +2649,45 @@ public:
     }
     particleBuffer_ = nil;
     stressParticleBuffer_ = nil;
+    particleLodOrderedBuffer_ = nil;
     particleLodBuffer_ = nil;
     stressParticleLodBuffer_ = nil;
+    particleLodTreeBuffers_ = MetalParticleLodTreeBuffers{};
+    particleLodDrawRanges_.clear();
+    particleLodRangeIcb_ = nil;
+    particleLodRetiredRangeIcbs_.clear();
+    particleLodRangeIcbCapacity_ = 0;
+    particleLodRangeIcbCommandCount_ = 0;
+    particleLodRangeIcbValid_ = false;
+    particleLodNormalDrawFallback_ = false;
+    particleLodNeedsIcbBuild_ = false;
+    particleLodRangeDataReady_.store(false);
     particlePipeline_ = nil;
+    particleIndexedPipeline_ = nil;
+    particleRangePipeline_ = nil;
     linePipeline_ = nil;
     solidPipeline_ = nil;
     colorCachePipeline_ = nil;
     particleCachePipeline_ = nil;
+    particleLodFrontierPipeline_ = nil;
+    particleLodSinglePassPipeline_ = nil;
+    particleLodResetQueuePipeline_ = nil;
+    particleLodDispatchArgsPipeline_ = nil;
+    particleLodFinalizePipeline_ = nil;
+    gpuParticleLodBuffer_ = nil;
+    gpuStressParticleLodBuffer_ = nil;
+    gpuLeafRangeLodBuffer_ = nil;
+    gpuParticleLodNodeFlagBuffer_ = nil;
+    gpuParticleLodLevelStatsBuffer_ = nil;
+    gpuParticleLodCounterBuffer_ = nil;
+    gpuParticleLodIndirectBuffer_ = nil;
+    gpuParticleLodQueueA_ = nil;
+    gpuParticleLodQueueB_ = nil;
+    gpuParticleLodQueueCountA_ = nil;
+    gpuParticleLodQueueCountB_ = nil;
+    gpuParticleLodDispatchArgsA_ = nil;
+    gpuParticleLodDispatchArgsB_ = nil;
+    gpuParticleLodCache_ = MetalGpuParticleLodCache{};
 #ifdef VOLUME_RENDERING
     volumePipeline_ = nil;
 #endif
@@ -1911,12 +2724,22 @@ public:
     sphereMesh_ = MetalMesh{};
     particleCount_ = 0;
     stressParticleCount_ = 0;
+    particleLodOrderedCount_ = 0;
     particleLodCount_ = 0;
     stressParticleLodCount_ = 0;
+    gpuParticleLodCount_ = 0;
+    gpuStressParticleLodCount_ = 0;
+    gpuParticleLodCapacity_ = 0;
+    gpuStressParticleLodCapacity_ = 0;
+    gpuLeafRangeLodCapacity_ = 0;
+    gpuParticleLodNodeFlagCapacity_ = 0;
+    gpuParticleLodQueueCapacity_ = 0;
     particleVersion_ = 0;
     stressParticleVersion_ = 0;
+    particleLodOrderedVersion_ = 0;
     particleLodVersion_ = 0;
     stressParticleLodVersion_ = 0;
+    gpuParticleLodMismatchVersion_ = 0;
     velocityVersion_ = 0;
     velocityArrowScale_ = 0.0f;
     velocityUseLogScale_ = false;
@@ -1934,8 +2757,15 @@ public:
     useParticleLod_ =
       ShouldUseParticleLod(frame.runtime,
                            scene.particleLodProxy,
-                           false);
+                           false,
+                           experimentalGpuParticleLod_ &&
+                             scene.particleLodGpu.valid);
     if (useParticleLod_) {
+      syncParticleBuffer(scene.particleLodOrderedParticles,
+                         scene.particleLodVersion,
+                         particleLodOrderedBuffer_,
+                         particleLodOrderedVersion_,
+                         particleLodOrderedCount_);
       syncParticleBuffer(scene.particleLodProxy,
                          scene.particleLodVersion,
                          particleLodBuffer_,
@@ -1946,6 +2776,7 @@ public:
                          stressParticleLodBuffer_,
                          stressParticleLodVersion_,
                          stressParticleLodCount_);
+      syncParticleLodTree(scene);
     }
 #ifdef VOLUME_RENDERING
     syncVolume(scene);
@@ -1969,30 +2800,93 @@ public:
       return;
     }
     [encoder setViewport:viewport];
-#ifdef VOLUME_RENDERING
-    updateVolumeFrameCache(frame);
-    encoder = currentEncoder();
-    if (!encoder) {
-      return;
+    timing_.particleDrawActive = true;
+    timing_.particleDrawCacheHit = false;
+    bool particleDrawMeasured = false;
+    bool particleLodDrawMeasured = false;
+    const bool gpuLodActive = useParticleLod_ &&
+                              experimentalGpuParticleLod_ &&
+                              scene.particleLodGpu.valid;
+    bool gpuLodReady = false;
+    if (gpuLodActive) {
+      gpuLodReady = encodeGpuParticleLodProxy(frame, scene, false);
+      encoder = currentEncoder();
+      if (!encoder) {
+        return;
+      }
+      [encoder setViewport:viewport];
     }
-    [encoder setViewport:viewport];
-    if (frame.runtime.scheduling.cacheVolumeFrames) {
-      if (!drawCachedVolumeFrame(encoder, frame)) {
+    const bool lodParticlesOnlyDebug =
+      useParticleLod_ && EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_PARTICLES_ONLY");
+#ifdef VOLUME_RENDERING
+    const bool skipVolumeForLodDebug =
+      lodParticlesOnlyDebug ||
+      (useParticleLod_ && EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_DISABLE_VOLUME"));
+    if (skipVolumeForLodDebug) {
+      volumeFrameCache_.valid = false;
+    } else {
+      updateVolumeFrameCache(frame);
+      encoder = currentEncoder();
+      if (!encoder) {
+        return;
+      }
+      [encoder setViewport:viewport];
+      if (frame.runtime.scheduling.cacheVolumeFrames) {
+        if (!drawCachedVolumeFrame(encoder, frame)) {
+          drawVolume(encoder, frame, 1.0f);
+        }
+      } else {
+        volumeFrameCache_.valid = false;
         drawVolume(encoder, frame, 1.0f);
       }
-    } else {
-      volumeFrameCache_.valid = false;
-      drawVolume(encoder, frame, 1.0f);
     }
 #endif
 
+    std::chrono::steady_clock::time_point particleDrawStart;
+    auto beginParticleDrawTiming = [&]() {
+      particleDrawStart = std::chrono::steady_clock::now();
+    };
     if (useParticleLod_) {
       particleFrameCache_.valid = false;
-      drawParticleBuffer(encoder, particleLodBuffer_, particleLodCount_, frame);
-      drawParticleBuffer(encoder,
-                         stressParticleLodBuffer_,
-                         stressParticleLodCount_,
-                         frame);
+      if (gpuLodReady) {
+        encoder = currentEncoder();
+        if (!encoder) {
+          return;
+        }
+        [encoder setViewport:viewport];
+        beginParticleDrawTiming();
+        particleLodDrawMeasured = drawParticleLodIcb(encoder, frame);
+        if (!particleLodDrawMeasured) {
+          drawParticles(encoder, frame);
+          particleLodDrawMeasured = true;
+        }
+      } else if (gpuLodActive) {
+        encoder = currentEncoder();
+        if (encoder) {
+          [encoder setViewport:viewport];
+          beginParticleDrawTiming();
+          particleLodDrawMeasured = drawParticleLodIcb(encoder, frame);
+          if (!particleLodDrawMeasured) {
+            drawParticles(encoder, frame);
+            particleLodDrawMeasured = true;
+          }
+        }
+      } else if (!scene.particleLodProxy.empty()) {
+        beginParticleDrawTiming();
+        drawParticleBuffer(encoder,
+                           particleLodBuffer_,
+                           particleLodCount_,
+                           frame);
+        drawParticleBuffer(encoder,
+                           stressParticleLodBuffer_,
+                           stressParticleLodCount_,
+                           frame);
+        particleDrawMeasured = true;
+      } else {
+        beginParticleDrawTiming();
+        drawParticles(encoder, frame);
+        particleDrawMeasured = true;
+      }
     } else if (frame.runtime.scheduling.cacheParticleFrames &&
                !frame.runtime.scheduling.interactionActive) {
       updateParticleFrameCache(frame);
@@ -2002,7 +2896,11 @@ public:
       }
       [encoder setViewport:viewport];
       if (!drawParticleFrameCache(encoder)) {
+        beginParticleDrawTiming();
         drawParticles(encoder, frame);
+        particleDrawMeasured = true;
+      } else {
+        timing_.particleDrawCacheHit = true;
       }
       drawParticleBuffer(encoder,
                          stressParticleBuffer_,
@@ -2010,24 +2908,50 @@ public:
                          frame);
     } else {
       particleFrameCache_.valid = false;
+      beginParticleDrawTiming();
       drawParticles(encoder, frame);
       drawParticleBuffer(encoder,
                          stressParticleBuffer_,
                          stressParticleCount_,
                          frame);
+      particleDrawMeasured = true;
+    }
+    if (particleDrawMeasured) {
+      const auto particleDrawEnd = std::chrono::steady_clock::now();
+      timing_.particleDrawWallMs =
+        std::chrono::duration<double, std::milli>(
+          particleDrawEnd - particleDrawStart).count();
+      timing_.particleDrawWallTimeKnown = true;
+      timing_.particleDrawRefreshHz =
+        timing_.particleDrawWallMs > 0.0
+          ? 1000.0 / timing_.particleDrawWallMs
+          : 0.0;
+    }
+    if (particleLodDrawMeasured) {
+      const auto particleDrawEnd = std::chrono::steady_clock::now();
+      timing_.particleGpuLodDrawWallMs =
+        std::chrono::duration<double, std::milli>(
+          particleDrawEnd - particleDrawStart).count();
+      timing_.particleGpuLodDrawWallTimeKnown = true;
+      timing_.particleGpuLodDrawRefreshHz =
+        timing_.particleGpuLodDrawWallMs > 0.0
+          ? 1000.0 / timing_.particleGpuLodDrawWallMs
+          : 0.0;
     }
 
-    drawLineSet(encoder, velocityVertices_, frame, frame.runtime.velocity);
-    drawLineSet(encoder, cuboidVertices_, frame, frame.runtime.cuboids);
-    drawLineSet(encoder, lineVertices_, frame, frame.runtime.lines);
-    drawLineSet(encoder, polyhedronVertices_, frame, frame.runtime.polyhedra);
-    drawSolidSet(encoder, cubeMesh_, cubeInstances_, frame, frame.runtime.cubes);
-    drawSolidSet(encoder, diskMesh_, diskInstances_, frame, frame.runtime.disks);
-    drawSolidSet(encoder,
-                 sphereMesh_,
-                 ellipsoidInstances_,
-                 frame,
-                 frame.runtime.ellipsoids);
+    if (!lodParticlesOnlyDebug) {
+      drawLineSet(encoder, velocityVertices_, frame, frame.runtime.velocity);
+      drawLineSet(encoder, cuboidVertices_, frame, frame.runtime.cuboids);
+      drawLineSet(encoder, lineVertices_, frame, frame.runtime.lines);
+      drawLineSet(encoder, polyhedronVertices_, frame, frame.runtime.polyhedra);
+      drawSolidSet(encoder, cubeMesh_, cubeInstances_, frame, frame.runtime.cubes);
+      drawSolidSet(encoder, diskMesh_, diskInstances_, frame, frame.runtime.disks);
+      drawSolidSet(encoder,
+                   sphereMesh_,
+                   ellipsoidInstances_,
+                   frame,
+                   frame.runtime.ellipsoids);
+    }
 #ifdef ISO_CONTOUR
     drawSolidSet(encoder,
                  isoContourMesh_,
@@ -2058,6 +2982,7 @@ public:
     RenderBackendCapabilities caps;
     caps.particles = initialized_;
     caps.particleLod = initialized_;
+    caps.particleGpuLod = initialized_ && experimentalGpuParticleLod_;
     caps.velocityField = initialized_;
     caps.instancedObjects = initialized_;
     caps.lines = initialized_;
@@ -2499,6 +3424,156 @@ private:
                 vertexCount:count];
   }
 
+  void drawParticleBufferRange(id<MTLRenderCommandEncoder> encoder,
+                               id<MTLBuffer> buffer,
+                               std::size_t start,
+                               std::size_t count,
+                               const RenderFrameState& frame)
+  {
+    if (!particlePipeline_ || !buffer || count == 0) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    [encoder setRenderPipelineState:particlePipeline_];
+    [encoder setDepthStencilState:depthStencil_];
+    [encoder setVertexBuffer:buffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+                vertexStart:start
+                vertexCount:count];
+  }
+
+  void drawParticleBufferIndirect(id<MTLRenderCommandEncoder> encoder,
+                                  id<MTLBuffer> buffer,
+                                  id<MTLBuffer> indirectBuffer,
+                                  NSUInteger indirectOffset,
+                                  const RenderFrameState& frame)
+  {
+    if (!particlePipeline_ || !buffer || !indirectBuffer) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    [encoder setRenderPipelineState:particlePipeline_];
+    [encoder setDepthStencilState:depthStencil_];
+    [encoder setVertexBuffer:buffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+             indirectBuffer:indirectBuffer
+       indirectBufferOffset:indirectOffset];
+  }
+
+  void drawParticleBufferIndexedIndirect(id<MTLRenderCommandEncoder> encoder,
+                                         id<MTLBuffer> particleBuffer,
+                                         id<MTLBuffer> indexBuffer,
+                                         id<MTLBuffer> indirectBuffer,
+                                         NSUInteger indirectOffset,
+                                         const RenderFrameState& frame)
+  {
+    if (!particleIndexedPipeline_ || !particleBuffer || !indexBuffer ||
+        !indirectBuffer) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    if (EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_FIXED_COLOR")) {
+      uniforms.misc[3] = 1.0f;
+    }
+    [encoder setRenderPipelineState:particleIndexedPipeline_];
+    [encoder setDepthStencilState:
+               EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_DEPTH_ALWAYS")
+                 ? cacheDepthStencil_
+                 : depthStencil_];
+    [encoder setVertexBuffer:particleBuffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setVertexBuffer:indexBuffer offset:0 atIndex:2];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+             indirectBuffer:indirectBuffer
+       indirectBufferOffset:indirectOffset];
+  }
+
+  void drawParticleBufferIndexedRange(id<MTLRenderCommandEncoder> encoder,
+                                      id<MTLBuffer> particleBuffer,
+                                      id<MTLBuffer> indexBuffer,
+                                      std::size_t indexStart,
+                                      std::size_t count,
+                                      const RenderFrameState& frame)
+  {
+    if (!particleIndexedPipeline_ || !particleBuffer || !indexBuffer ||
+        count == 0) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    if (EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_FIXED_COLOR")) {
+      uniforms.misc[3] = 1.0f;
+    }
+    [encoder setRenderPipelineState:particleIndexedPipeline_];
+    [encoder setDepthStencilState:
+               EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_DEPTH_ALWAYS")
+                 ? cacheDepthStencil_
+                 : depthStencil_];
+    [encoder setVertexBuffer:particleBuffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setVertexBuffer:indexBuffer
+                       offset:indexStart * sizeof(std::uint32_t)
+                      atIndex:2];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+                vertexStart:0
+                vertexCount:count];
+  }
+
+  void drawParticleRangeBufferIndirect(id<MTLRenderCommandEncoder> encoder,
+                                       id<MTLBuffer> orderedParticleBuffer,
+                                       id<MTLBuffer> leafRangeBuffer,
+                                       std::uint32_t maxLeafCount,
+                                       id<MTLBuffer> indirectBuffer,
+                                       NSUInteger indirectOffset,
+                                       const RenderFrameState& frame)
+  {
+    if (!particleRangePipeline_ || !orderedParticleBuffer || !leafRangeBuffer ||
+        !indirectBuffer || maxLeafCount == 0) {
+      return;
+    }
+
+    ParticleUniformsCpu uniforms;
+    FillParticleUniforms(frame, uniforms);
+    ParticleRangeUniformsCpu rangeUniforms;
+    rangeUniforms.maxLeafCount = maxLeafCount;
+
+    [encoder setRenderPipelineState:particleRangePipeline_];
+    [encoder setDepthStencilState:depthStencil_];
+    [encoder setVertexBuffer:orderedParticleBuffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setVertexBuffer:leafRangeBuffer offset:0 atIndex:2];
+    [encoder setVertexBytes:&rangeUniforms
+                     length:sizeof(rangeUniforms)
+                    atIndex:3];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+    [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+    [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypePoint
+             indirectBuffer:indirectBuffer
+       indirectBufferOffset:indirectOffset];
+  }
+
   bool particleFrameCacheMatches(const RenderFrameState& frame) const
   {
     return particleFrameCache_.valid &&
@@ -2869,6 +3944,782 @@ private:
                        stressParticleCount_);
   }
 
+  bool ensureGpuParticleLodBuffers(std::size_t maxOutput,
+                                   std::size_t maxStressOutput)
+  {
+    if (!context_ || maxOutput == 0) {
+      return false;
+    }
+    id<MTLDevice> device =
+      (__bridge id<MTLDevice>)context_->device();
+    if (!device) {
+      return false;
+    }
+
+    if (!gpuParticleLodBuffer_ || gpuParticleLodCapacity_ < maxOutput) {
+      gpuParticleLodBuffer_ =
+        [device newBufferWithLength:maxOutput * sizeof(RenderParticle)
+                             options:MTLResourceStorageModeShared];
+      gpuParticleLodCapacity_ = gpuParticleLodBuffer_ ? maxOutput : 0;
+    }
+
+    const std::size_t stressCapacity = std::max<std::size_t>(1, maxStressOutput);
+    if (!gpuStressParticleLodBuffer_ ||
+        gpuStressParticleLodCapacity_ < stressCapacity) {
+      gpuStressParticleLodBuffer_ =
+        [device newBufferWithLength:stressCapacity * sizeof(RenderParticle)
+                             options:MTLResourceStorageModeShared];
+      gpuStressParticleLodCapacity_ =
+        gpuStressParticleLodBuffer_ ? stressCapacity : 0;
+    }
+
+    const std::size_t nodeCapacity =
+      std::max<std::size_t>(1, particleLodTreeBuffers_.nodeCount);
+    if (!gpuLeafRangeLodBuffer_ || gpuLeafRangeLodCapacity_ < nodeCapacity) {
+      gpuLeafRangeLodBuffer_ =
+        [device newBufferWithLength:nodeCapacity * sizeof(std::uint32_t) * 4u
+                             options:MTLResourceStorageModeShared];
+      gpuLeafRangeLodCapacity_ = gpuLeafRangeLodBuffer_ ? nodeCapacity : 0;
+    }
+    if (!gpuParticleLodNodeFlagBuffer_ ||
+        gpuParticleLodNodeFlagCapacity_ < nodeCapacity) {
+      gpuParticleLodNodeFlagBuffer_ =
+        [device newBufferWithLength:nodeCapacity * sizeof(std::uint32_t)
+                             options:MTLResourceStorageModeShared];
+      gpuParticleLodNodeFlagCapacity_ =
+        gpuParticleLodNodeFlagBuffer_ ? nodeCapacity : 0;
+    }
+    if (!gpuParticleLodCounterBuffer_) {
+      gpuParticleLodCounterBuffer_ =
+        [device newBufferWithLength:sizeof(std::uint32_t) * 10u
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodLevelStatsBuffer_) {
+      gpuParticleLodLevelStatsBuffer_ =
+        [device newBufferWithLength:
+                  sizeof(std::uint32_t) *
+                  RenderBackendTimingInfo::kMaxParticleGpuLodLevels *
+                  kParticleGpuLodLevelStatFields
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodIndirectBuffer_) {
+      gpuParticleLodIndirectBuffer_ =
+        [device newBufferWithLength:sizeof(std::uint32_t) * 4u * 2u
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodQueueA_ || gpuParticleLodQueueCapacity_ < nodeCapacity) {
+      gpuParticleLodQueueA_ =
+        [device newBufferWithLength:nodeCapacity * sizeof(std::uint32_t)
+                             options:MTLResourceStorageModeShared];
+      gpuParticleLodQueueB_ =
+        [device newBufferWithLength:nodeCapacity * sizeof(std::uint32_t)
+                             options:MTLResourceStorageModeShared];
+      gpuParticleLodQueueCapacity_ =
+        (gpuParticleLodQueueA_ && gpuParticleLodQueueB_) ? nodeCapacity : 0;
+    }
+    if (!gpuParticleLodQueueCountA_) {
+      gpuParticleLodQueueCountA_ =
+        [device newBufferWithLength:sizeof(std::uint32_t)
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodQueueCountB_) {
+      gpuParticleLodQueueCountB_ =
+        [device newBufferWithLength:sizeof(std::uint32_t)
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodDispatchArgsA_) {
+      gpuParticleLodDispatchArgsA_ =
+        [device newBufferWithLength:sizeof(std::uint32_t) * 3u
+                             options:MTLResourceStorageModeShared];
+    }
+    if (!gpuParticleLodDispatchArgsB_) {
+      gpuParticleLodDispatchArgsB_ =
+        [device newBufferWithLength:sizeof(std::uint32_t) * 3u
+                             options:MTLResourceStorageModeShared];
+    }
+
+    return gpuParticleLodBuffer_ &&
+           gpuStressParticleLodBuffer_ &&
+           gpuLeafRangeLodBuffer_ &&
+           gpuParticleLodNodeFlagBuffer_ &&
+           gpuParticleLodCounterBuffer_ &&
+           gpuParticleLodLevelStatsBuffer_ &&
+           gpuParticleLodIndirectBuffer_ &&
+           gpuParticleLodQueueA_ &&
+           gpuParticleLodQueueB_ &&
+           gpuParticleLodQueueCountA_ &&
+           gpuParticleLodQueueCountB_ &&
+           gpuParticleLodDispatchArgsA_ &&
+           gpuParticleLodDispatchArgsB_;
+  }
+
+  void updateGpuParticleLodStatsFromCounters()
+  {
+    if (!gpuParticleLodCounterBuffer_ || !gpuParticleLodLevelStatsBuffer_) {
+      timing_.particleGpuLodStatsKnown = false;
+      return;
+    }
+    const auto* counters =
+      static_cast<const std::uint32_t*>([gpuParticleLodCounterBuffer_ contents]);
+    if (!counters) {
+      timing_.particleGpuLodStatsKnown = false;
+      return;
+    }
+    timing_.particleGpuLodProxyCount = counters[0];
+    timing_.particleGpuLodLeafRangeCount = counters[1];
+    timing_.particleGpuLodVisitedNodes = counters[4];
+    timing_.particleGpuLodFrustumCulledNodes = counters[5];
+    timing_.particleGpuLodAcceptedProxyNodes = counters[6];
+    timing_.particleGpuLodAcceptedLeafRanges = counters[7];
+    timing_.particleGpuLodLeafParticleCount = counters[3];
+    timing_.particleGpuLodExpandedNodes = counters[8];
+    timing_.particleGpuLodAppendedChildren = counters[9];
+    timing_.particleGpuLodGeneratedDrawCommands =
+      particleLodNormalDrawFallback_
+        ? 1u
+        : (counters[0] > 0 ? 1u : 0u) +
+            static_cast<std::uint32_t>(particleLodRangeIcbCommandCount_);
+    timing_.particleGpuLodMaxLeafCount = particleLodTreeBuffers_.maxLeafCount;
+    timing_.particleGpuLodMergedLeafRangeCount =
+      static_cast<std::uint64_t>(particleLodRangeIcbCommandCount_);
+    const auto* levels = static_cast<const std::uint32_t*>(
+      [gpuParticleLodLevelStatsBuffer_ contents]);
+    timing_.particleGpuLodLevelCount = 0;
+    if (levels) {
+      for (std::size_t level = 0;
+           level < RenderBackendTimingInfo::kMaxParticleGpuLodLevels;
+           ++level) {
+        const std::size_t base = level * kParticleGpuLodLevelStatFields;
+        auto& dst = timing_.particleGpuLodLevels[level];
+        dst = RenderBackendTimingInfo::ParticleGpuLodLevelStats{};
+        dst.visited = levels[base + 0];
+        dst.proxy = levels[base + 1];
+        dst.leaf = levels[base + 2];
+        dst.expanded = levels[base + 3];
+        if (dst.visited > 0) {
+          const std::uint32_t minPx = levels[base + 4];
+          const std::uint32_t maxPx = levels[base + 5];
+          const std::uint32_t sumPx = levels[base + 6];
+          dst.minProjectedPx =
+            minPx == 0xffffffffu
+              ? 0.0f
+              : static_cast<float>(minPx) /
+                  static_cast<float>(kParticleGpuLodPxScale);
+          dst.maxProjectedPx =
+            static_cast<float>(maxPx) /
+            static_cast<float>(kParticleGpuLodPxScale);
+          dst.avgProjectedPx =
+            static_cast<float>(sumPx) /
+            static_cast<float>(kParticleGpuLodPxScale) /
+            static_cast<float>(dst.visited);
+          timing_.particleGpuLodLevelCount =
+            static_cast<std::uint32_t>(level + 1);
+        }
+      }
+    }
+    timing_.particleGpuLodStatsKnown = true;
+  }
+
+  void invalidateParticleLodIcb()
+  {
+    particleLodRangeIcbValid_ = false;
+    particleLodRangeIcbCommandCount_ = 0;
+    particleLodNormalDrawFallback_ = false;
+    particleLodNeedsIcbBuild_ = false;
+    particleLodPendingDrawRanges_.clear();
+    particleLodPreviousRawDrawRanges_.clear();
+    particleLodPendingRangeCount_ = 0;
+    particleLodPendingNormalDrawFallback_ = false;
+  }
+
+  bool ensureParticleLodRangeIcb(std::size_t commandCount)
+  {
+    if (!context_ || commandCount == 0) {
+      return false;
+    }
+    if (particleLodRangeIcb_ && particleLodRangeIcbCapacity_ >= commandCount) {
+      return true;
+    }
+
+    id<MTLDevice> device =
+      (__bridge id<MTLDevice>)context_->device();
+    MTLIndirectCommandBufferDescriptor* desc =
+      [[MTLIndirectCommandBufferDescriptor alloc] init];
+    desc.commandTypes = MTLIndirectCommandTypeDraw;
+    desc.inheritPipelineState = NO;
+    desc.inheritBuffers = YES;
+    desc.maxVertexBufferBindCount = 2;
+    desc.maxFragmentBufferBindCount = 2;
+    particleLodRangeIcb_ =
+      [device newIndirectCommandBufferWithDescriptor:desc
+                                     maxCommandCount:commandCount
+                                             options:0];
+    particleLodRangeIcbCapacity_ = particleLodRangeIcb_ ? commandCount : 0;
+    return particleLodRangeIcb_ != nil;
+  }
+
+  bool buildParticleLodRangeIcbFromGpuRanges(bool useTemporalUnion)
+  {
+    if (!gpuLeafRangeLodBuffer_ || !gpuParticleLodCounterBuffer_ ||
+        !particleLodOrderedBuffer_ || particleLodOrderedCount_ == 0) {
+      invalidateParticleLodIcb();
+      return false;
+    }
+
+    const auto buildStart = std::chrono::steady_clock::now();
+    updateGpuParticleLodStatsFromCounters();
+    const auto* counters =
+      static_cast<const std::uint32_t*>([gpuParticleLodCounterBuffer_ contents]);
+    const auto* rawRanges =
+      static_cast<const std::uint32_t*>([gpuLeafRangeLodBuffer_ contents]);
+    const auto* nodeFlags =
+      gpuParticleLodNodeFlagBuffer_
+        ? static_cast<const std::uint32_t*>(
+            [gpuParticleLodNodeFlagBuffer_ contents])
+        : nullptr;
+    const auto* nodeMeta =
+      particleLodTreeBuffers_.nodeMeta
+        ? static_cast<const std::uint32_t*>(
+            [particleLodTreeBuffers_.nodeMeta contents])
+        : nullptr;
+    if (!counters || !rawRanges) {
+      invalidateParticleLodIcb();
+      return false;
+    }
+
+    const std::size_t leafRangeCount =
+      std::min<std::size_t>(counters[1], gpuLeafRangeLodCapacity_);
+    const std::uint64_t coveredParticleCount = counters[3];
+    timing_.particleGpuLodLeafParticleCount = coveredParticleCount;
+
+    particleLodPendingDrawRanges_.clear();
+    particleLodPendingDrawRanges_.reserve(leafRangeCount);
+    bool rangesSorted = true;
+    std::uint32_t lastStart = 0;
+    bool hasLastStart = false;
+    if (nodeFlags && nodeMeta &&
+        gpuParticleLodNodeFlagCapacity_ >= particleLodTreeBuffers_.nodeCount) {
+      for (std::size_t i = 0; i < particleLodTreeBuffers_.nodeCount; ++i) {
+        if ((nodeFlags[i] & 2u) == 0u) {
+          continue;
+        }
+        const std::uint32_t start = nodeMeta[i * 4u + 0u];
+        const std::uint32_t count = nodeMeta[i * 4u + 1u];
+        if (count == 0 || start >= particleLodOrderedCount_) {
+          continue;
+        }
+        if (hasLastStart && start < lastStart) {
+          rangesSorted = false;
+        }
+        lastStart = start;
+        hasLastStart = true;
+        const std::size_t available = particleLodOrderedCount_ - start;
+        particleLodPendingDrawRanges_.push_back(
+          {start,
+           static_cast<std::uint32_t>(
+             std::min<std::size_t>(count, available))});
+      }
+    } else {
+      rangesSorted = false;
+      for (std::size_t i = 0; i < leafRangeCount; ++i) {
+        const std::uint32_t start = rawRanges[i * 4u + 0u];
+        const std::uint32_t count = rawRanges[i * 4u + 1u];
+        if (count == 0 || start >= particleLodOrderedCount_) {
+          continue;
+        }
+        const std::size_t available = particleLodOrderedCount_ - start;
+        particleLodPendingDrawRanges_.push_back(
+          {start,
+           static_cast<std::uint32_t>(
+             std::min<std::size_t>(count, available))});
+      }
+    }
+    if (rangesSorted) {
+      MergeSortedParticleLodRanges(particleLodPendingDrawRanges_);
+    } else {
+      SortAndMergeParticleLodRanges(particleLodPendingDrawRanges_);
+    }
+    std::vector<ParticleLodDrawRange> newRawRanges =
+      particleLodPendingDrawRanges_;
+    if (useTemporalUnion && !particleLodPreviousRawDrawRanges_.empty()) {
+      MergeParticleLodRangeUnion(newRawRanges,
+                                 particleLodPreviousRawDrawRanges_,
+                                 particleLodPendingDrawRanges_);
+    }
+    particleLodPreviousRawDrawRanges_.swap(newRawRanges);
+    const std::uint64_t maxDrawnParticleCount =
+      static_cast<std::uint64_t>(
+        kMetalParticleLodNormalFallbackCoverage *
+        static_cast<double>(particleCount_));
+    CoalesceParticleLodRangesToBudget(
+      particleLodPendingDrawRanges_,
+      kMetalParticleLodTargetRangeDrawCommands,
+      maxDrawnParticleCount);
+
+    const bool coveredAlmostAll =
+      particleCount_ > 0 &&
+      static_cast<double>(
+        CountParticleLodRangeVertices(particleLodPendingDrawRanges_)) >=
+        kMetalParticleLodNormalFallbackCoverage *
+          static_cast<double>(particleCount_);
+    const bool tooManyCommands =
+      particleLodPendingDrawRanges_.size() > kMetalParticleLodMaxIcbCommands;
+    particleLodPendingNormalDrawFallback_ = coveredAlmostAll || tooManyCommands;
+    particleLodPendingRangeCount_ = particleLodPendingDrawRanges_.size();
+
+    if (EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_USE_ICB") &&
+        !particleLodPendingNormalDrawFallback_ &&
+        !particleLodPendingDrawRanges_.empty()) {
+      particleLodRangeIcbValid_ = false;
+      particleLodRangeIcbCommandCount_ = 0;
+      if (particleLodRangeIcb_) {
+        particleLodRetiredRangeIcbs_.push_back(particleLodRangeIcb_);
+        if (particleLodRetiredRangeIcbs_.size() > 3) {
+          particleLodRetiredRangeIcbs_.erase(
+            particleLodRetiredRangeIcbs_.begin());
+        }
+        particleLodRangeIcb_ = nil;
+        particleLodRangeIcbCapacity_ = 0;
+      }
+      if (!ensureParticleLodRangeIcb(particleLodPendingDrawRanges_.size())) {
+        invalidateParticleLodIcb();
+        return false;
+      }
+      [particleLodRangeIcb_
+        resetWithRange:NSMakeRange(0, particleLodRangeIcbCapacity_)];
+      for (std::size_t i = 0; i < particleLodPendingDrawRanges_.size(); ++i) {
+        const ParticleLodDrawRange& range = particleLodPendingDrawRanges_[i];
+        id<MTLIndirectRenderCommand> command =
+          [particleLodRangeIcb_ indirectRenderCommandAtIndex:i];
+        [command setRenderPipelineState:particlePipeline_];
+        [command drawPrimitives:MTLPrimitiveTypePoint
+                    vertexStart:range.start
+                    vertexCount:range.count
+                  instanceCount:1
+                   baseInstance:0];
+      }
+    }
+
+    particleLodDrawRanges_.swap(particleLodPendingDrawRanges_);
+    particleLodNormalDrawFallback_ = particleLodPendingNormalDrawFallback_;
+    particleLodRangeIcbCommandCount_ = particleLodPendingRangeCount_;
+    particleLodRangeIcbValid_ =
+      EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_USE_ICB") &&
+      !particleLodNormalDrawFallback_ &&
+      particleLodRangeIcb_ &&
+      particleLodRangeIcbCommandCount_ > 0;
+
+    const auto buildEnd = std::chrono::steady_clock::now();
+    timing_.particleGpuLodIcbGenerationMs =
+      std::chrono::duration<double, std::milli>(
+        buildEnd - buildStart).count();
+    timing_.particleGpuLodIcbGenerationTimeKnown = true;
+    timing_.particleGpuLodMergedLeafRangeCount =
+      static_cast<std::uint64_t>(particleLodRangeIcbCommandCount_);
+    timing_.particleGpuLodGeneratedDrawCommands =
+      particleLodNormalDrawFallback_
+        ? 1u
+        : (timing_.particleGpuLodProxyCount > 0 ? 1u : 0u) +
+            static_cast<std::uint64_t>(particleLodRangeIcbCommandCount_);
+    particleLodNeedsIcbBuild_ = false;
+    return particleLodRangeIcbValid_ || particleLodNormalDrawFallback_;
+  }
+
+  bool drawParticleLodIcb(id<MTLRenderCommandEncoder> encoder,
+                          const RenderFrameState& frame)
+  {
+    if (!encoder) {
+      return false;
+    }
+    if (particleLodNormalDrawFallback_) {
+      const auto drawStart = std::chrono::steady_clock::now();
+      drawParticles(encoder, frame);
+      const auto drawEnd = std::chrono::steady_clock::now();
+      timing_.particleGpuLodNormalDrawMs =
+        std::chrono::duration<double, std::milli>(
+          drawEnd - drawStart).count();
+      timing_.particleGpuLodNormalDrawTimeKnown = true;
+      return true;
+    }
+
+    bool drew = false;
+    if (gpuParticleLodIndirectBuffer_) {
+      drawParticleBufferIndirect(encoder,
+                                 gpuParticleLodBuffer_,
+                                 gpuParticleLodIndirectBuffer_,
+                                 0,
+                                 frame);
+      drew = timing_.particleGpuLodProxyCount > 0;
+    }
+
+    const bool useIcb =
+      EnvFlagEnabled("PARTICLE_VIS_METAL_LOD_USE_ICB") &&
+      particleLodRangeIcbValid_ &&
+      particleLodRangeIcb_ &&
+      particleLodRangeIcbCommandCount_ > 0;
+    if (useIcb) {
+      ParticleUniformsCpu uniforms;
+      FillParticleUniforms(frame, uniforms);
+      const auto drawStart = std::chrono::steady_clock::now();
+      [encoder setRenderPipelineState:particlePipeline_];
+      [encoder setDepthStencilState:depthStencil_];
+      [encoder setVertexBuffer:particleLodOrderedBuffer_ offset:0 atIndex:0];
+      [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+      [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+      [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+      [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+      [encoder executeCommandsInBuffer:particleLodRangeIcb_
+                             withRange:NSMakeRange(
+                               0, particleLodRangeIcbCommandCount_)];
+      const auto drawEnd = std::chrono::steady_clock::now();
+      timing_.particleGpuLodIcbDrawMs =
+        std::chrono::duration<double, std::milli>(
+          drawEnd - drawStart).count();
+      timing_.particleGpuLodIcbDrawTimeKnown = true;
+      drew = true;
+    } else if (!particleLodDrawRanges_.empty()) {
+      ParticleUniformsCpu uniforms;
+      FillParticleUniforms(frame, uniforms);
+      const auto drawStart = std::chrono::steady_clock::now();
+      [encoder setRenderPipelineState:particlePipeline_];
+      [encoder setDepthStencilState:depthStencil_];
+      [encoder setVertexBuffer:particleLodOrderedBuffer_ offset:0 atIndex:0];
+      [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+      [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+      [encoder setFragmentTexture:colormapTexture_ atIndex:0];
+      [encoder setFragmentSamplerState:colormapSampler_ atIndex:0];
+      for (const ParticleLodDrawRange& range : particleLodDrawRanges_) {
+        if (range.count == 0) {
+          continue;
+        }
+        [encoder drawPrimitives:MTLPrimitiveTypePoint
+                    vertexStart:range.start
+                    vertexCount:range.count];
+      }
+      const auto drawEnd = std::chrono::steady_clock::now();
+      timing_.particleGpuLodIcbDrawMs =
+        std::chrono::duration<double, std::milli>(
+          drawEnd - drawStart).count();
+      timing_.particleGpuLodIcbDrawTimeKnown = true;
+      drew = true;
+    }
+    return drew && (particleLodNormalDrawFallback_ ||
+                    particleLodRangeIcbValid_ ||
+                    !particleLodDrawRanges_.empty() ||
+                    timing_.particleGpuLodProxyCount > 0);
+  }
+
+  bool gpuParticleLodCacheMatches(const RenderFrameState& frame,
+                                  const RenderSceneData& scene) const
+  {
+    return gpuParticleLodCache_.valid &&
+           gpuParticleLodCache_.version == scene.particleLodVersion &&
+           gpuParticleLodCache_.cameraPos == frame.camera.cameraPos &&
+           gpuParticleLodCache_.cameraTarget == frame.camera.cameraTarget &&
+           gpuParticleLodCache_.cameraDistance == frame.camera.distance &&
+           gpuParticleLodCache_.focalPx == frame.matrices.focalPx &&
+           gpuParticleLodCache_.theta == scene.particleLodSettings.theta &&
+           gpuParticleLodCache_.screenPixelThreshold ==
+             scene.particleLodSettings.screenPixelThreshold;
+  }
+
+  bool gpuParticleLodCanReuseDuringInteraction(const RenderFrameState& frame,
+                                               const RenderSceneData& scene) const
+  {
+    if (!gpuParticleLodCache_.valid ||
+        gpuParticleLodCache_.version != scene.particleLodVersion ||
+        !frame.runtime.scheduling.interactionActive) {
+      return false;
+    }
+    const float updateHz = scene.particleLodSettings.proxyUpdateRateHz;
+    if (updateHz <= 0.0f) {
+      return true;
+    }
+    const double minInterval = 1.0 / static_cast<double>(updateHz);
+    return frame.runtime.scheduling.currentTimeSeconds -
+             gpuParticleLodCache_.lastUpdateTime <
+           minInterval;
+  }
+
+  void markGpuParticleLodCacheValid(const RenderFrameState& frame,
+                                    const RenderSceneData& scene)
+  {
+    gpuParticleLodCache_.version = scene.particleLodVersion;
+    gpuParticleLodCache_.cameraPos = frame.camera.cameraPos;
+    gpuParticleLodCache_.cameraTarget = frame.camera.cameraTarget;
+    gpuParticleLodCache_.cameraDistance = frame.camera.distance;
+    gpuParticleLodCache_.focalPx = frame.matrices.focalPx;
+    gpuParticleLodCache_.theta = scene.particleLodSettings.theta;
+    gpuParticleLodCache_.screenPixelThreshold =
+      scene.particleLodSettings.screenPixelThreshold;
+    gpuParticleLodCache_.lastUpdateTime =
+      frame.runtime.scheduling.currentTimeSeconds;
+    gpuParticleLodCache_.valid = true;
+  }
+
+  bool encodeGpuParticleLodProxy(const RenderFrameState& frame,
+                                 const RenderSceneData& scene,
+                                 bool restartLoadExisting = true)
+  {
+    timing_.particleGpuLodActive = true;
+    timing_.particleGpuLodUpdated = false;
+    timing_.particleGpuLodCacheHit = false;
+    if (particleLodNeedsIcbBuild_ && particleLodRangeDataReady_.load()) {
+      buildParticleLodRangeIcbFromGpuRanges(
+        frame.runtime.scheduling.interactionActive);
+    }
+    if (!experimentalGpuParticleLod_ ||
+        !particleLodFrontierPipeline_ ||
+        !particleLodResetQueuePipeline_ ||
+        !particleLodDispatchArgsPipeline_ ||
+        !particleLodFinalizePipeline_ ||
+        !particleBuffer_ ||
+        !particleLodOrderedBuffer_ ||
+        !particleLodTreeBuffers_.nodeCenterRadius ||
+        !scene.particleLodGpu.valid ||
+        particleLodTreeBuffers_.nodeCount == 0) {
+      return false;
+    }
+
+    if (gpuParticleLodCacheMatches(frame, scene)) {
+      timing_.particleGpuLodCacheHit = true;
+      return true;
+    }
+    if (gpuParticleLodCanReuseDuringInteraction(frame, scene)) {
+      timing_.particleGpuLodCacheHit = true;
+      return true;
+    }
+    const auto lodStart = std::chrono::steady_clock::now();
+    const std::size_t maxOutput = particleCount_;
+    const std::size_t maxStressOutput =
+      std::max<std::size_t>(1, stressParticleCount_);
+    if (!ensureGpuParticleLodBuffers(maxOutput, maxStressOutput)) {
+      return false;
+    }
+    updateGpuParticleLodStatsFromCounters();
+
+    auto* counters =
+      static_cast<std::uint32_t*>([gpuParticleLodCounterBuffer_ contents]);
+    std::memset(counters, 0, sizeof(std::uint32_t) * 10u);
+    auto* levelStats =
+      static_cast<std::uint32_t*>([gpuParticleLodLevelStatsBuffer_ contents]);
+    if (levelStats) {
+      const std::size_t levelValueCount =
+        RenderBackendTimingInfo::kMaxParticleGpuLodLevels *
+        kParticleGpuLodLevelStatFields;
+      std::memset(levelStats, 0, sizeof(std::uint32_t) * levelValueCount);
+      for (std::size_t level = 0;
+           level < RenderBackendTimingInfo::kMaxParticleGpuLodLevels;
+           ++level) {
+        levelStats[level * kParticleGpuLodLevelStatFields + 4] = 0xffffffffu;
+      }
+    }
+    std::memset([gpuParticleLodIndirectBuffer_ contents],
+                0,
+                sizeof(std::uint32_t) * 4u * 2u);
+    std::memset([gpuParticleLodNodeFlagBuffer_ contents],
+                0,
+                gpuParticleLodNodeFlagCapacity_ * sizeof(std::uint32_t));
+    static_cast<std::uint32_t*>([gpuParticleLodQueueA_ contents])[0] = 0;
+    static_cast<std::uint32_t*>([gpuParticleLodQueueCountA_ contents])[0] = 1;
+    static_cast<std::uint32_t*>([gpuParticleLodQueueCountB_ contents])[0] = 0;
+    auto* dispatchA =
+      static_cast<std::uint32_t*>([gpuParticleLodDispatchArgsA_ contents]);
+    auto* dispatchB =
+      static_cast<std::uint32_t*>([gpuParticleLodDispatchArgsB_ contents]);
+    dispatchA[0] = 1;
+    dispatchA[1] = 1;
+    dispatchA[2] = 1;
+    dispatchB[0] = 1;
+    dispatchB[1] = 1;
+    dispatchB[2] = 1;
+
+    ParticleLodComputeUniformsCpu uniforms;
+    uniforms.cameraPosFocalPx[0] = frame.camera.cameraPos.x;
+    uniforms.cameraPosFocalPx[1] = frame.camera.cameraPos.y;
+    uniforms.cameraPosFocalPx[2] = frame.camera.cameraPos.z;
+    uniforms.cameraPosFocalPx[3] = frame.matrices.focalPx;
+    uniforms.focusPosProtectRadius[0] = frame.camera.cameraTarget.x;
+    uniforms.focusPosProtectRadius[1] = frame.camera.cameraTarget.y;
+    uniforms.focusPosProtectRadius[2] = frame.camera.cameraTarget.z;
+    uniforms.focusPosProtectRadius[3] = 0.0f;
+    uniforms.lodParams[0] =
+      std::max(0.05f, scene.particleLodSettings.screenPixelThreshold);
+    uniforms.lodParams[1] = 2.0f;
+    uniforms.lodParams[2] = 0.75f;
+    uniforms.lodParams[3] = 1.75f;
+    FillFrustumPlanes(frame.matrices.projection *
+                        frame.matrices.view *
+                        frame.matrices.model,
+                      uniforms.frustumPlanes);
+    uniforms.nodeCount =
+      static_cast<std::uint32_t>(particleLodTreeBuffers_.nodeCount);
+    uniforms.maxOutput = static_cast<std::uint32_t>(maxOutput);
+    uniforms.maxLeafOutput = static_cast<std::uint32_t>(maxOutput);
+    uniforms.queueCapacity =
+      static_cast<std::uint32_t>(gpuParticleLodQueueCapacity_);
+    const NSUInteger lodThreadsPerGroup =
+      std::max<NSUInteger>(1, particleLodFrontierPipeline_.threadExecutionWidth);
+    uniforms.threadsPerGroup =
+      static_cast<std::uint32_t>(lodThreadsPerGroup);
+    uniforms.maxLevelStats =
+      static_cast<std::uint32_t>(
+        RenderBackendTimingInfo::kMaxParticleGpuLodLevels);
+    uniforms.maxLeafDrawCount =
+      std::max<std::uint32_t>(1u, particleLodTreeBuffers_.maxLeafCount);
+
+    context_->endCurrentRenderCommandEncoder();
+    id<MTLCommandBuffer> commandBuffer = currentCommandBuffer();
+    if (!commandBuffer) {
+      return false;
+    }
+
+    const std::uint32_t maxPasses =
+      std::min<std::uint32_t>(
+        static_cast<std::uint32_t>(particleLodTreeBuffers_.nodeCount),
+        std::max<std::uint32_t>(
+          1u,
+          static_cast<std::uint32_t>(scene.particleLodSettings.maxDepth + 2)));
+
+    id<MTLBuffer> activeQueue = gpuParticleLodQueueA_;
+    id<MTLBuffer> nextQueue = gpuParticleLodQueueB_;
+    id<MTLBuffer> activeCount = gpuParticleLodQueueCountA_;
+    id<MTLBuffer> nextCount = gpuParticleLodQueueCountB_;
+    id<MTLBuffer> activeDispatchArgs = gpuParticleLodDispatchArgsA_;
+    id<MTLBuffer> nextDispatchArgs = gpuParticleLodDispatchArgsB_;
+
+    for (std::uint32_t pass = 0; pass < maxPasses; ++pass) {
+      uniforms.levelIndex = std::min<std::uint32_t>(
+        pass,
+        static_cast<std::uint32_t>(
+          RenderBackendTimingInfo::kMaxParticleGpuLodLevels - 1));
+      id<MTLComputeCommandEncoder> frontierEncoder =
+        [commandBuffer computeCommandEncoder];
+      if (!frontierEncoder) {
+        return false;
+      }
+      [frontierEncoder setComputePipelineState:particleLodFrontierPipeline_];
+      [frontierEncoder setBuffer:particleBuffer_ offset:0 atIndex:0];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.nodeCenterRadius
+                          offset:0
+                         atIndex:1];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.representativePosHsml
+                          offset:0
+                         atIndex:2];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.representativeValue
+                          offset:0
+                         atIndex:3];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.nodeMeta
+                          offset:0
+                         atIndex:4];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.childA
+                          offset:0
+                         atIndex:5];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.childB
+                          offset:0
+                         atIndex:6];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.representativeMeta
+                          offset:0
+                         atIndex:7];
+      [frontierEncoder setBuffer:particleLodTreeBuffers_.indices
+                          offset:0
+                         atIndex:8];
+      [frontierEncoder setBuffer:gpuParticleLodBuffer_ offset:0 atIndex:9];
+      [frontierEncoder setBuffer:gpuParticleLodCounterBuffer_
+                          offset:0
+                         atIndex:10];
+      [frontierEncoder setBytes:&uniforms length:sizeof(uniforms) atIndex:11];
+      [frontierEncoder setBuffer:activeQueue offset:0 atIndex:12];
+      [frontierEncoder setBuffer:nextQueue offset:0 atIndex:13];
+      [frontierEncoder setBuffer:activeCount offset:0 atIndex:14];
+      [frontierEncoder setBuffer:nextCount offset:0 atIndex:15];
+      [frontierEncoder setBuffer:gpuLeafRangeLodBuffer_ offset:0 atIndex:16];
+      [frontierEncoder setBuffer:gpuParticleLodLevelStatsBuffer_
+                          offset:0
+                         atIndex:17];
+      [frontierEncoder setBuffer:gpuParticleLodNodeFlagBuffer_
+                          offset:0
+                         atIndex:18];
+      [frontierEncoder dispatchThreadgroupsWithIndirectBuffer:activeDispatchArgs
+                                         indirectBufferOffset:0
+                                        threadsPerThreadgroup:
+                                          MTLSizeMake(lodThreadsPerGroup, 1, 1)];
+      [frontierEncoder endEncoding];
+
+      id<MTLComputeCommandEncoder> dispatchEncoder =
+        [commandBuffer computeCommandEncoder];
+      if (!dispatchEncoder) {
+        return false;
+      }
+      [dispatchEncoder setComputePipelineState:particleLodDispatchArgsPipeline_];
+      [dispatchEncoder setBuffer:nextCount offset:0 atIndex:0];
+      [dispatchEncoder setBuffer:nextDispatchArgs offset:0 atIndex:1];
+      [dispatchEncoder setBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+      [dispatchEncoder setBuffer:activeCount offset:0 atIndex:3];
+      [dispatchEncoder dispatchThreadgroups:MTLSizeMake(1, 1, 1)
+                      threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+      [dispatchEncoder endEncoding];
+
+      std::swap(activeQueue, nextQueue);
+      std::swap(activeCount, nextCount);
+      std::swap(activeDispatchArgs, nextDispatchArgs);
+    }
+
+    id<MTLComputeCommandEncoder> finalizeEncoder =
+      [commandBuffer computeCommandEncoder];
+    if (!finalizeEncoder) {
+      return false;
+    }
+    [finalizeEncoder setComputePipelineState:particleLodFinalizePipeline_];
+    [finalizeEncoder setBuffer:gpuParticleLodCounterBuffer_
+                        offset:0
+                       atIndex:0];
+    [finalizeEncoder setBuffer:gpuParticleLodIndirectBuffer_
+                        offset:0
+                       atIndex:1];
+    [finalizeEncoder setBytes:&uniforms
+                       length:sizeof(uniforms)
+                      atIndex:2];
+    [finalizeEncoder dispatchThreadgroups:MTLSizeMake(1, 1, 1)
+                    threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+    [finalizeEncoder endEncoding];
+
+    if (!context_->restartCurrentRenderCommandEncoder(restartLoadExisting,
+                                                      restartLoadExisting)) {
+      return false;
+    }
+    markGpuParticleLodCacheValid(frame, scene);
+    particleLodNeedsIcbBuild_ = true;
+    particleLodRangeDataReady_.store(false);
+    MetalRenderBackend* self = this;
+    [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+      self->particleLodRangeDataReady_.store(true);
+    }];
+    const auto lodEnd = std::chrono::steady_clock::now();
+    timing_.particleGpuLodWallMs =
+      std::chrono::duration<double, std::milli>(lodEnd - lodStart).count();
+    timing_.particleGpuLodWallTimeKnown = true;
+    timing_.particleGpuLodUpdated = true;
+    timing_.particleGpuLodRefreshHz =
+      timing_.particleGpuLodWallMs > 0.0
+        ? 1000.0 / timing_.particleGpuLodWallMs
+        : 0.0;
+    return true;
+  }
+
+  template <typename T>
+  id<MTLBuffer> makeSharedVectorBuffer(const std::vector<T>& values)
+  {
+    if (values.empty() || !context_) {
+      return nil;
+    }
+    id<MTLDevice> device =
+      (__bridge id<MTLDevice>)context_->device();
+    return [device newBufferWithBytes:values.data()
+                               length:values.size() * sizeof(T)
+                              options:MTLResourceStorageModeShared];
+  }
+
   void syncParticleBuffer(const std::vector<RenderParticle>& particles,
                           RenderSceneVersion version,
                           id<MTLBuffer>& buffer,
@@ -2893,12 +4744,62 @@ private:
                                 options:MTLResourceStorageModeShared];
   }
 
+  void syncParticleLodTree(const RenderSceneData& scene)
+  {
+    if (particleLodTreeBuffers_.version == scene.particleLodVersion) {
+      return;
+    }
+    invalidateParticleLodIcb();
+
+    const ParticleLodGpuTree& tree = scene.particleLodGpu;
+    if (!tree.valid || tree.nodeCenterRadius.empty()) {
+      particleLodTreeBuffers_ = MetalParticleLodTreeBuffers{};
+      return;
+    }
+
+    MetalParticleLodTreeBuffers next;
+    next.nodeCenterRadius = makeSharedVectorBuffer(tree.nodeCenterRadius);
+    next.representativePosHsml =
+      makeSharedVectorBuffer(tree.representativePosHsml);
+    next.representativeValue = makeSharedVectorBuffer(tree.representativeValue);
+    next.nodeMeta = makeSharedVectorBuffer(tree.nodeMeta);
+    next.childA = makeSharedVectorBuffer(tree.childA);
+    next.childB = makeSharedVectorBuffer(tree.childB);
+    next.representativeMeta = makeSharedVectorBuffer(tree.representativeMeta);
+    next.indices = makeSharedVectorBuffer(tree.indices);
+    next.nodeCount = tree.nodeCenterRadius.size();
+    next.indexCount = tree.indices.size();
+    next.maxLeafCount = std::max<std::uint32_t>(1u, tree.maxLeafCount);
+    next.version = scene.particleLodVersion;
+
+    if (!next.nodeCenterRadius ||
+        !next.representativePosHsml ||
+        !next.representativeValue ||
+        !next.nodeMeta ||
+        !next.childA ||
+        !next.childB ||
+        !next.representativeMeta ||
+        !next.indices) {
+      particleLodTreeBuffers_ = MetalParticleLodTreeBuffers{};
+      return;
+    }
+
+    particleLodTreeBuffers_ = next;
+  }
+
   MetalContext* context_ = nullptr;
   id<MTLRenderPipelineState> particlePipeline_ = nil;
+  id<MTLRenderPipelineState> particleIndexedPipeline_ = nil;
+  id<MTLRenderPipelineState> particleRangePipeline_ = nil;
   id<MTLRenderPipelineState> linePipeline_ = nil;
   id<MTLRenderPipelineState> solidPipeline_ = nil;
   id<MTLRenderPipelineState> colorCachePipeline_ = nil;
   id<MTLRenderPipelineState> particleCachePipeline_ = nil;
+  id<MTLComputePipelineState> particleLodFrontierPipeline_ = nil;
+  id<MTLComputePipelineState> particleLodSinglePassPipeline_ = nil;
+  id<MTLComputePipelineState> particleLodResetQueuePipeline_ = nil;
+  id<MTLComputePipelineState> particleLodDispatchArgsPipeline_ = nil;
+  id<MTLComputePipelineState> particleLodFinalizePipeline_ = nil;
 #ifdef VOLUME_RENDERING
   id<MTLRenderPipelineState> volumePipeline_ = nil;
 #endif
@@ -2913,8 +4814,28 @@ private:
   id<MTLSamplerState> colormapSampler_ = nil;
   id<MTLBuffer> particleBuffer_ = nil;
   id<MTLBuffer> stressParticleBuffer_ = nil;
+  id<MTLBuffer> particleLodOrderedBuffer_ = nil;
   id<MTLBuffer> particleLodBuffer_ = nil;
   id<MTLBuffer> stressParticleLodBuffer_ = nil;
+  id<MTLIndirectCommandBuffer> particleLodRangeIcb_ = nil;
+  std::vector<id<MTLIndirectCommandBuffer>> particleLodRetiredRangeIcbs_;
+  id<MTLBuffer> gpuParticleLodBuffer_ = nil;
+  id<MTLBuffer> gpuStressParticleLodBuffer_ = nil;
+  id<MTLBuffer> gpuLeafRangeLodBuffer_ = nil;
+  id<MTLBuffer> gpuParticleLodNodeFlagBuffer_ = nil;
+  id<MTLBuffer> gpuParticleLodLevelStatsBuffer_ = nil;
+  id<MTLBuffer> gpuParticleLodCounterBuffer_ = nil;
+  id<MTLBuffer> gpuParticleLodIndirectBuffer_ = nil;
+  id<MTLBuffer> gpuParticleLodQueueA_ = nil;
+  id<MTLBuffer> gpuParticleLodQueueB_ = nil;
+  id<MTLBuffer> gpuParticleLodQueueCountA_ = nil;
+  id<MTLBuffer> gpuParticleLodQueueCountB_ = nil;
+  id<MTLBuffer> gpuParticleLodDispatchArgsA_ = nil;
+  id<MTLBuffer> gpuParticleLodDispatchArgsB_ = nil;
+  MetalParticleLodTreeBuffers particleLodTreeBuffers_;
+  std::vector<ParticleLodDrawRange> particleLodDrawRanges_;
+  std::vector<ParticleLodDrawRange> particleLodPendingDrawRanges_;
+  std::vector<ParticleLodDrawRange> particleLodPreviousRawDrawRanges_;
   MetalLineVertexSet lineVertices_;
   MetalLineVertexSet cuboidVertices_;
   MetalLineVertexSet polyhedronVertices_;
@@ -2937,17 +4858,37 @@ private:
 #endif
   std::size_t particleCount_ = 0;
   std::size_t stressParticleCount_ = 0;
+  std::size_t particleLodOrderedCount_ = 0;
   std::size_t particleLodCount_ = 0;
   std::size_t stressParticleLodCount_ = 0;
+  std::size_t particleLodRangeIcbCapacity_ = 0;
+  std::size_t particleLodRangeIcbCommandCount_ = 0;
+  std::size_t particleLodPendingRangeCount_ = 0;
+  std::size_t gpuParticleLodCount_ = 0;
+  std::size_t gpuStressParticleLodCount_ = 0;
+  std::size_t gpuParticleLodCapacity_ = 0;
+  std::size_t gpuStressParticleLodCapacity_ = 0;
+  std::size_t gpuLeafRangeLodCapacity_ = 0;
+  std::size_t gpuParticleLodNodeFlagCapacity_ = 0;
+  std::size_t gpuParticleLodQueueCapacity_ = 0;
+  MetalGpuParticleLodCache gpuParticleLodCache_;
   RenderSceneVersion particleVersion_ = 0;
   RenderSceneVersion stressParticleVersion_ = 0;
+  RenderSceneVersion particleLodOrderedVersion_ = 0;
   RenderSceneVersion particleLodVersion_ = 0;
   RenderSceneVersion stressParticleLodVersion_ = 0;
+  RenderSceneVersion gpuParticleLodMismatchVersion_ = 0;
   RenderSceneVersion velocityVersion_ = 0;
   std::uint64_t previewVersion_ = 0;
   float velocityArrowScale_ = 0.0f;
   bool velocityUseLogScale_ = false;
   bool useParticleLod_ = false;
+  bool experimentalGpuParticleLod_ = false;
+  bool particleLodRangeIcbValid_ = false;
+  bool particleLodNormalDrawFallback_ = false;
+  bool particleLodPendingNormalDrawFallback_ = false;
+  bool particleLodNeedsIcbBuild_ = false;
+  std::atomic_bool particleLodRangeDataReady_{false};
   bool initialized_ = false;
   RenderBackendTimingInfo timing_;
   ProjectionPreviewUIState preview_;

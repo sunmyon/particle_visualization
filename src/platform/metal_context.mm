@@ -300,6 +300,9 @@ void* MetalContext::currentRenderCommandEncoder() const
 void MetalContext::endCurrentRenderCommandEncoder()
 {
   if (impl_->encoder) {
+    if (impl_->renderPass && impl_->renderPass.depthAttachment.texture) {
+      impl_->renderPass.depthAttachment.storeAction = MTLStoreActionStore;
+    }
     [impl_->encoder endEncoding];
     impl_->encoder = nil;
   }
@@ -313,6 +316,9 @@ bool MetalContext::restartCurrentRenderCommandEncoder(bool loadColor,
     return false;
   }
   if (impl_->encoder) {
+    if (impl_->renderPass.depthAttachment.texture) {
+      impl_->renderPass.depthAttachment.storeAction = MTLStoreActionStore;
+    }
     [impl_->encoder endEncoding];
     impl_->encoder = nil;
   }
@@ -329,7 +335,7 @@ bool MetalContext::restartCurrentRenderCommandEncoder(bool loadColor,
   auto* depth = impl_->renderPass.depthAttachment;
   depth.texture = impl_->depthTexture;
   depth.loadAction = loadDepth ? MTLLoadActionLoad : MTLLoadActionClear;
-  depth.storeAction = MTLStoreActionDontCare;
+  depth.storeAction = loadDepth ? MTLStoreActionStore : MTLStoreActionDontCare;
 
   impl_->encoder =
     [impl_->commandBuffer renderCommandEncoderWithDescriptor:impl_->renderPass];

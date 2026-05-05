@@ -62,6 +62,7 @@ struct RenderSchedulingState {
   ParticleLodSettings particleLod;
   float settleDelaySeconds = 0.15f;
   bool interactionActive = false;
+  double currentTimeSeconds = 0.0;
 };
 
 #ifdef VOLUME_RENDERING

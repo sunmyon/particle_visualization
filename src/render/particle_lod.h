@@ -19,6 +19,7 @@ struct ParticleLodSettings {
   std::uint32_t minNodeParticles = 256;
   std::uint32_t maxDepth = 18;
   float theta = 0.05f;
+  float screenPixelThreshold = 5.0f;
   float proxyFraction = 0.8f;
   float focusUpdateDistance = 0.05f;
   float proxyUpdateRateHz = 5.0f;
@@ -49,9 +50,30 @@ struct ParticleLodTree {
   bool valid = false;
 };
 
+struct ParticleLodGpuTree {
+  std::vector<glm::vec4> nodeCenterRadius;
+  std::vector<glm::vec4> representativePosHsml;
+  std::vector<glm::vec4> representativeValue;
+  std::vector<glm::uvec4> nodeMeta; // start, count, depth, child mask
+  std::vector<glm::ivec4> childA;
+  std::vector<glm::ivec4> childB;
+  std::vector<glm::uvec4> representativeMeta; // type, stress flag, parent, reserved
+  std::vector<std::uint32_t> indices;
+  std::uint32_t maxLeafCount = 0;
+  bool valid = false;
+};
+
 void BuildParticleLodTree(const std::vector<RenderParticle>& particles,
                           const ParticleLodSettings& settings,
                           ParticleLodTree& out);
+
+void BuildParticleLodGpuTree(const ParticleLodTree& tree,
+                             ParticleLodGpuTree& out);
+
+void BuildParticleLodOrderedParticles(
+  const std::vector<RenderParticle>& particles,
+  const ParticleLodTree& tree,
+  std::vector<RenderParticle>& out);
 
 bool BuildParticleLodProxyDrawList(const std::vector<RenderParticle>& particles,
                                    const ParticleLodTree& tree,
@@ -60,3 +82,4 @@ bool BuildParticleLodProxyDrawList(const std::vector<RenderParticle>& particles,
                                    std::vector<RenderParticle>& out);
 
 std::size_t EstimateParticleLodTreeBytes(const ParticleLodTree& tree);
+std::size_t EstimateParticleLodGpuTreeBytes(const ParticleLodGpuTree& tree);
