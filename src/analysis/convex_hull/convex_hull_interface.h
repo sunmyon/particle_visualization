@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 class IConvexHull {
 public:
   virtual ~IConvexHull() = default;

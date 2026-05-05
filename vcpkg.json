@@ -6,7 +6,6 @@
     "glfw3",
     { "name": "hdf5", "features": ["cpp"] },
     "glm",
-    "cgal",
     "zeromq",
     "cppzmq",
     "nlohmann-json",

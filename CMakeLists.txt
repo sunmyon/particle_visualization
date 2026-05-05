@@ -383,7 +383,7 @@ function(particle_vis_add_glfw_submodule_if_present)
 endfunction()
 
 foreach(_particle_vis_dep IN ITEMS
-    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua cgal)
+    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua)
   particle_vis_register_dependency_prefixes("${_particle_vis_dep}")
 endforeach()
 
@@ -492,15 +492,7 @@ if(GEOMETRICAL_ANALYSIS)
 endif()
 
 if(USE_CONVEX_HULL)
-  find_package(CGAL QUIET)
-  if(NOT TARGET CGAL::CGAL AND NOT CGAL_FOUND)
-    message(WARNING
-      "USE_CONVEX_HULL was enabled, but CGAL is not available. "
-      "Disabling USE_CONVEX_HULL for this build.")
-    set(USE_CONVEX_HULL OFF CACHE BOOL "Enable Convex Hull" FORCE)
-  else()
-    list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/convex_hull/convex_hull_generator.cpp)
-  endif()
+  list(APPEND SOURCES_CPP ${SRC_DIR}/analysis/convex_hull/convex_hull_generator.cpp)
 endif()
 
 if(STREAM_LINE)
@@ -734,11 +726,6 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
 	${EXTERNAL_DIR}/include
 	${EXTERNAL_DIR}
 )
-
-if(USE_CONVEX_HULL AND TARGET CGAL::CGAL)
-  target_link_libraries(${PROJECT_NAME} PRIVATE CGAL::CGAL)
-endif()
-
 
 #debug macro
 macro(target_link_libraries_report tgt scope)

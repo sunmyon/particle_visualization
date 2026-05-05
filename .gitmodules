@@ -34,18 +34,9 @@
 [submodule "external/submodules/vtk"]
 	path = external/submodules/vtk
 	url = https://github.com/Kitware/VTK.git
-[submodule "external/submodules/gmp"]
-	path = external/submodules/gmp
-	url = https://github.com/alisw/GMP.git
-[submodule "external/submodules/mpfr"]
-	path = external/submodules/mpfr
-	url = https://github.com/P-p-H-d/mpfr.git
 [submodule "external/submodules/lua"]
 	path = external/submodules/lua
 	url = https://github.com/lua/lua.git
-[submodule "external/submodules/cgal"]
-	path = external/submodules/cgal
-	url = https://github.com/CGAL/cgal.git
 [submodule "external/submodules/wayland"]
 	path = external/submodules/wayland
 	url = https://gitlab.freedesktop.org/wayland/wayland.git
