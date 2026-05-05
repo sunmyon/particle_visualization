@@ -16,6 +16,7 @@
 
 class HDF5Reader final : public IElementReader {
   H5::H5File file_;
+  std::string lastError_;
 
   size_t npart_ = 0;
   size_t blockSize_ = 1 << 16; // chunk read
@@ -32,6 +33,7 @@ public:
   size_t elementCount() const override { return npart_; }
 
   bool open(const std::string& path, HeaderInfo& header) override;
+  std::string lastError() const override { return lastError_; }
   void close() override;
 
   bool readRange(SimulationBlock& out,

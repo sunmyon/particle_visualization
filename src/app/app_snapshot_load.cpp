@@ -72,6 +72,7 @@ static SnapshotLoadParams BuildSnapshotLoadParams(const AppRuntimeState& runtime
   p.readFormat = fmt.readFormat;
   p.formatTokens = fmt.formatTokens;
   p.formatTokensHdf5 = fmt.formatTokensHdf5;
+  p.formatTokensGadget = fmt.formatTokensGadget;
   p.units = runtime.quantity.units;
   return p;
 }

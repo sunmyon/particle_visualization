@@ -48,6 +48,7 @@ std::size_t MakeSnapshotLoadSignature(const SnapshotLoadParams& params,
   HashValue(seed, static_cast<int>(params.readFormat));
   HashFieldSpecs(seed, params.formatTokens);
   HashFieldSpecs(seed, params.formatTokensHdf5);
+  HashFieldSpecs(seed, params.formatTokensGadget);
 
   HashValue(seed, params.units.length_cm);
   HashValue(seed, params.units.mass_g);

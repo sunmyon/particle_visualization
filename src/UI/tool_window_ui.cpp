@@ -1278,7 +1278,9 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                   quantity.toDisplay(QuantityId::Mass, p.mass),
                   p.position[0], p.position[1], p.position[2],
                   p.vel[0], p.vel[1], p.vel[2],
-                  p.supportRadius, p.density, p.temperature);
+                  quantity.toDisplay(QuantityId::Hsml, p.supportRadius),
+                  quantity.toDisplay(QuantityId::Density, p.density),
+                  quantity.toDisplay(QuantityId::Temperature, p.temperature));
 
     if (ImGui::Selectable(label, state.historySel == (int)i)) {
       state.historySel = (int)i;
@@ -1439,7 +1441,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
         std::snprintf(densityText,
                       sizeof(densityText),
                       "%.4g",
-                      result.filtered[i].density);
+                      quantity.toDisplay(QuantityId::Density, result.filtered[i].density));
         textCellCenterOnClick(densityText, particleId);
       }
       if (showTempColumn) {
@@ -1448,7 +1450,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
         std::snprintf(temperatureText,
                       sizeof(temperatureText),
                       "%.4g",
-                      result.filtered[i].temperature);
+                      quantity.toDisplay(QuantityId::Temperature, result.filtered[i].temperature));
         textCellCenterOnClick(temperatureText, particleId);
       }
 

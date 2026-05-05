@@ -80,9 +80,9 @@ inline QuantityUnitRule MakeDefaultQuantityUnitRule(QuantityId q, const UnitSyst
     break;
 
   case QuantityId::Density:
-    rule.baseFactor = units.mass_g / std::pow(units.length_cm, 3.0);
-    rule.expH = 2.0;
-    rule.expAPhysical = -3.0;
+    // SimulationElement::density is normalized at load time to nH-like
+    // number density, so display and color ranges should use it directly.
+    rule.baseFactor = 1.0;
     break;
 
   case QuantityId::PosX:

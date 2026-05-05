@@ -4,16 +4,13 @@
   "dependencies": [
     "eigen3",
     "glfw3",
-    "gmp",
     { "name": "hdf5", "features": ["cpp"] },
-    "mpfr",
     "glm",
     "cgal",
     "zeromq",
     "cppzmq",
     "nlohmann-json",
     "lua",
-    "nativefiledialog-extended",
-    "vtk"
+    "nativefiledialog-extended"
   ]
 }

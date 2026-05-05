@@ -16,6 +16,7 @@ struct PersistentSettings {
   
   std::vector<FieldSpec> formatTokens;
   std::vector<FieldSpec> formatTokensHdf5;
+  std::vector<FieldSpec> formatTokensGadget;
 
   ParticleVisualConfig visual;
   ParticleMaskConfig mask;

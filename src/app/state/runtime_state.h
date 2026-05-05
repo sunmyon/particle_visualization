@@ -493,6 +493,7 @@ struct SnapshotFormatState {
   FileFormat readFormat = FileFormat::Auto;
   std::vector<FieldSpec> formatTokens = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensHdf5 = MakeDefaultSnapshotFormatTokens();
+  std::vector<FieldSpec> formatTokensGadget = MakeDefaultGadgetFormatTokens();
 };
 
 struct FileNavigationRuntimeState {

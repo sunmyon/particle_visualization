@@ -85,6 +85,7 @@ bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, Simulatio
   
   simulationBlock_index = 0; // Or remove this later.
   particlesDirty = true;
+  velocityDirty = true;
   flagParticleIndexDirty = true;
 
   std::fprintf(stderr,

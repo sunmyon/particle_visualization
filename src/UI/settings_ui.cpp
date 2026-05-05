@@ -957,7 +957,10 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
 
   if (ImGui::Button("Edit Data Format")) {
 #ifdef HAVE_HDF5
-    if (input.useHDF5) {
+    const bool useHdf5FormatDialog =
+      format.readFormat == FileFormat::HDF5 ||
+      (format.readFormat == FileFormat::Auto && input.useHDF5);
+    if (useHdf5FormatDialog) {
       rt.request.openHDF5FormatDialogRequested = true;
     } else
 #endif

@@ -32,6 +32,9 @@ void ApplyConfigData(const ConfigData& config,
   format.readFormat = config.persistent.readFormat;
   format.formatTokens = config.persistent.formatTokens;
   format.formatTokensHdf5 = config.persistent.formatTokensHdf5;
+  if (!config.persistent.formatTokensGadget.empty()) {
+    format.formatTokensGadget = config.persistent.formatTokensGadget;
+  }
 
   visual = config.persistent.visual;
   mask = config.persistent.mask;

@@ -12,6 +12,7 @@ public:
 
   virtual bool open(const std::string& path, HeaderInfo& header) = 0;
   virtual void close() = 0;
+  virtual std::string lastError() const { return {}; }
 
   virtual size_t elementCount() const = 0;
 

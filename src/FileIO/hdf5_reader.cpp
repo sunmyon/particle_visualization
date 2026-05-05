@@ -436,6 +436,7 @@ bool HDF5Reader::readRange(SimulationBlock& out,
 }
 
 bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
+  lastError_.clear();
   const auto totalStart = Hdf5ProfileClock::now();
   // HDF5 files may omit /Parameters. Do not let units/comoving flags from the
   // previously loaded snapshot leak into this file.
@@ -458,11 +459,14 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     file_ = H5::H5File(path, H5F_ACC_RDONLY);
     fileOpenMs = elapsed_ms(t0);
   } catch (const H5::FileIException& e) {
-    std::cerr << "HDF5 open failed: " << e.getDetailMsg() << "\n";
+    lastError_ = "HDF5 open failed: " + e.getDetailMsg();
+    std::cerr << lastError_ << "\n";
     return false;
   } catch (const H5::Exception& e) {
+    lastError_ = "HDF5 open failed: " + e.getDetailMsg();
     return false;
   } catch (...) {
+    lastError_ = "HDF5 open failed with unknown exception";
     return false;
   }
 

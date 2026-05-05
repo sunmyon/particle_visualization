@@ -181,6 +181,35 @@ inline void ApplyDefaultFieldSpec(FieldSpec& spec) {
   }
 }
 
+inline std::vector<FieldSpec> MakeDefaultGadgetFormatTokens()
+{
+  std::vector<FieldSpec> tokens;
+  tokens.reserve(8);
+
+  auto push = [&](FieldKey key,
+                  DataType type,
+                  int count,
+                  const char* domainSource) {
+    FieldSpec spec;
+    spec.key = key;
+    spec.type = type;
+    spec.count = count;
+    spec.sourceName = domainSource;
+    tokens.push_back(std::move(spec));
+  };
+
+  push(FieldKey::Position,       DataType::Float, 3, "all:1");
+  push(FieldKey::Velocity,       DataType::Float, 3, "all:1");
+  push(FieldKey::ID,             DataType::Int32, 1, "all:1");
+  push(FieldKey::Mass,           DataType::Float, 1, "all:1");
+  push(FieldKey::InternalEnergy, DataType::Float, 1, "type0:1");
+  push(FieldKey::Density,        DataType::Float, 1, "type0:1");
+  push(FieldKey::H2Abundance,    DataType::Float, 1, "type0:1");
+  push(FieldKey::Hsml,           DataType::Float, 1, "type0:1");
+
+  return tokens;
+}
+
 
 inline constexpr FieldKey kAvailableFieldKeys[] = {
   FieldKey::Position,

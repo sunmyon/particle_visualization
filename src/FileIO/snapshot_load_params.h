@@ -23,5 +23,6 @@ struct SnapshotLoadParams {
   FileFormat readFormat = FileFormat::Auto;
   std::vector<FieldSpec> formatTokens;
   std::vector<FieldSpec> formatTokensHdf5;
+  std::vector<FieldSpec> formatTokensGadget;
   UnitSystem units;
 };

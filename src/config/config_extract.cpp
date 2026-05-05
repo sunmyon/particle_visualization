@@ -21,6 +21,7 @@ ConfigData ExtractConfigData(const FileNavigationRuntimeState& fileNav,
   config.persistent.readFormat = format.readFormat;
   config.persistent.formatTokens = format.formatTokens;
   config.persistent.formatTokensHdf5 = format.formatTokensHdf5;
+  config.persistent.formatTokensGadget = format.formatTokensGadget;
   config.persistent.visual = visual;
   config.persistent.mask = mask;
   config.persistent.desiredMax = desired_max;

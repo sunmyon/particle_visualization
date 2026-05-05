@@ -146,6 +146,40 @@ void InvalidateVolumeTreeAfterSnapshotLoad(AppRuntimeState& runtime,
 }
 #endif
 
+void ClearTransientFieldVisualsAfterUserSnapshotLoad(AppRuntimeState& runtime,
+                                                     AnalysisDerivedState& analysis)
+{
+  if (!runtime.snapshotLoad.result.loadedThisFrame ||
+      runtime.snapshotLoad.result.owner != SnapshotLoadOwner::UserNavigation) {
+    return;
+  }
+
+  runtime.render.velocity.show = false;
+  runtime.render.velocity.cpuUpdated = true;
+#ifdef STREAM_LINE
+  runtime.analysisRequests.streamlinePreview.updateRequested = false;
+  runtime.analysisRequests.streamlinePreview.clearRequested = true;
+  runtime.analysisRequests.streamlineBuild.runRequested = false;
+  runtime.analysisRequests.streamlineBuild.clearRequested = true;
+
+  analysis.streamlinePreview.valid = false;
+  analysis.streamlinePreview.cpuUpdated = true;
+  analysis.streamlineBuild = StreamlineBuildResultState{};
+  analysis.streamlineBuild.cpuUpdated = true;
+#else
+  (void)analysis;
+#endif
+
+#ifdef ISO_CONTOUR
+  runtime.analysisRequests.isoContour.runRequested = false;
+  runtime.analysisRequests.isoContour.applyRequested = false;
+  runtime.analysisRequests.isoContour.clearRequested = true;
+  analysis.isoContour.clear();
+  runtime.render.isocontour.show = false;
+  runtime.render.isocontour.cpuUpdated = true;
+#endif
+}
+
 void StartVolumeRenderMovieIfRequested(AppRuntimeState& runtime)
 {
   auto& movie = runtime.settings.request.renderSnapshotMovie;
@@ -576,8 +610,15 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                      tools.topParticlesResult,
                      topParticlesCtx);
   
-  DrawBinaryFormatDialog(tools.fileFormatDialog,
-                         runtime.settings.snapshotFormat.formatTokens);
+  if (runtime.settings.snapshotFormat.readFormat == FileFormat::Gadget) {
+    DrawBinaryFormatDialog(tools.fileFormatDialog,
+                           runtime.settings.snapshotFormat.formatTokensGadget,
+                           runtime.settings.snapshotFormat.readFormat);
+  } else {
+    DrawBinaryFormatDialog(tools.fileFormatDialog,
+                           runtime.settings.snapshotFormat.formatTokens,
+                           runtime.settings.snapshotFormat.readFormat);
+  }
 #ifdef HAVE_HDF5
   DrawHDF5FormatDialog(tools.fileFormatDialog,
                        runtime.settings.snapshotFormat.formatTokensHdf5);
@@ -663,8 +704,13 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
 #endif
 
   if (fileNavReq.openFormatDialogRequested) {
-    tools.fileFormatDialog.formatTokensEdit =
-      settings.snapshotFormat.formatTokens;
+    if (settings.snapshotFormat.readFormat == FileFormat::Gadget) {
+      tools.fileFormatDialog.formatTokensEdit =
+        settings.snapshotFormat.formatTokensGadget;
+    } else {
+      tools.fileFormatDialog.formatTokensEdit =
+        settings.snapshotFormat.formatTokens;
+    }
     windowCommands.open(WindowId::FileFormatDialog);
     fileNavReq.openFormatDialogRequested = false;
   }
@@ -918,6 +964,8 @@ void RunFrame(AppState& app,
   InvalidateVolumeTreeAfterSnapshotLoad(app.runtime,
                                         app.derived.analysis);
 #endif
+  ClearTransientFieldVisualsAfterUserSnapshotLoad(app.runtime,
+                                                  app.derived.analysis);
   ExecuteRequests(app.data,
                   app.runtime,
                   app.derived.analysis,

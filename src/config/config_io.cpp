@@ -46,7 +46,8 @@ static void saveTokenList(std::ofstream& outfile,
   for (size_t i = 0; i < tokens.size(); i++) {
     outfile << GetFieldKeyDisplayName(tokens[i].key) << ","
             << dataTypeToString(tokens[i].type) << ","
-            << tokens[i].count << "\n";
+            << tokens[i].count << ","
+            << tokens[i].sourceName << "\n";
   }
 }
 
@@ -62,16 +63,20 @@ static void loadTokenList(std::ifstream& infile,
     if (!std::getline(infile, line)) break;
 
     std::istringstream iss(line);
-    std::string tokenLabel, tokenType, tokenCountStr;
+    std::string tokenLabel, tokenType, tokenCountStr, sourceName;
     if (!std::getline(iss, tokenLabel, ',')) continue;
     if (!std::getline(iss, tokenType, ',')) continue;
-    if (!std::getline(iss, tokenCountStr)) continue;
+    if (!std::getline(iss, tokenCountStr, ',')) continue;
+    std::getline(iss, sourceName);
 
     FieldSpec ft;
     ft.key   = GetFieldKeyFromDisplayName(trim(tokenLabel));
     ft.type  = stringToDataType(trim(tokenType));
     ft.count = std::stoi(trim(tokenCountStr));
-    ft.sourceName = GetDefaultHDF5SourceName(ft.key);
+    sourceName = trim(sourceName);
+    ft.sourceName = sourceName.empty()
+      ? GetDefaultHDF5SourceName(ft.key)
+      : sourceName;
 
     outTokens.push_back(ft);
   }
@@ -125,6 +130,10 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
     else if (startsWith(line, "HDF5TokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("HDF5TokenCount=")));
       loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensHdf5);
+    }
+    else if (startsWith(line, "GadgetTokenCount=")) {
+      int tokenCount = std::stoi(line.substr(std::strlen("GadgetTokenCount=")));
+      loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensGadget);
     }
     else if (startsWith(line, "ParticleType")) {
       // ParticleType0_Size=...
@@ -263,6 +272,7 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
 
   saveTokenList(outfile, "TokenCount", config.persistent.formatTokens);
   saveTokenList(outfile, "HDF5TokenCount", config.persistent.formatTokensHdf5);
+  saveTokenList(outfile, "GadgetTokenCount", config.persistent.formatTokensGadget);
 
   for (int i = 0; i < 6; i++) {
     const auto& cfg = config.persistent.visual.types[i];

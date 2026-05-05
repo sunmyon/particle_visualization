@@ -64,6 +64,7 @@ void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
 {
   if (request.clearRequested) {
     result = StreamlinePreviewResultState{};
+    result.cpuUpdated = true;
     request.clearRequested = false;
     return;
   }
@@ -110,9 +111,7 @@ void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
                                    StreamlineBuildResultState& result)
 {
   if (request.clearRequested) {
-    result.lines.clear();
-    result.success = false;
-    result.message.clear();
+    result = StreamlineBuildResultState{};
     result.cpuUpdated = true;
     request.clearRequested = false;
     return;

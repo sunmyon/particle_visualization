@@ -383,7 +383,7 @@ function(particle_vis_add_glfw_submodule_if_present)
 endfunction()
 
 foreach(_particle_vis_dep IN ITEMS
-    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua cgal gmp mpfr)
+    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua cgal)
   particle_vis_register_dependency_prefixes("${_particle_vis_dep}")
 endforeach()
 

@@ -233,7 +233,7 @@ namespace {
 
     case FileFormat::Gadget:
       sel.reader = std::make_unique<GadgetBinaryReader>();
-      sel.format = params.formatTokens;
+      sel.format = params.formatTokensGadget;
       break;
 
     case FileFormat::Framed:
@@ -273,6 +273,10 @@ namespace {
 
     if (!sel.reader->open(sel.fullPath, header)) {
       std::cerr << "failed to open the file: " << sel.fullPath << "\n";
+      const std::string reason = sel.reader->lastError();
+      if (!reason.empty()) {
+        std::cerr << "  reason: " << reason << "\n";
+      }
       return false;
     }
 
@@ -285,9 +289,13 @@ namespace {
       ok = sel.reader->readAll(outBlock, sel.format);
     }
 
+    const std::string readError = ok ? std::string{} : sel.reader->lastError();
     sel.reader->close();
     if (!ok) {
       std::cerr << "Failed to read particle data: " << sel.fullPath << "\n";
+      if (!readError.empty()) {
+        std::cerr << "  reason: " << readError << "\n";
+      }
     }
     return ok;
   }
