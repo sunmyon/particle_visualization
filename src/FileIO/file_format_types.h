@@ -104,7 +104,7 @@ inline FieldKey GetFieldKeyFromDisplayName(std::string name) {
   return FieldKey::Unknown;
 }
 
-inline const char* GetDefaultHDF5SourceName(FieldKey key) {
+inline const char* GetDefaultHDF5DatasetName(FieldKey key) {
   switch (key) {
     case FieldKey::Position:          return "Coordinates";
     case FieldKey::Velocity:          return "Velocities";
@@ -128,6 +128,10 @@ inline const char* GetDefaultHDF5SourceName(FieldKey key) {
     case FieldKey::Dummy:             return "dummy";
     default:                          return "unknown";
   }
+}
+
+inline const char* GetDefaultHDF5SourceName(FieldKey key) {
+  return GetDefaultHDF5DatasetName(key);
 }
 
 inline void ApplyDefaultFieldSpec(FieldSpec& spec) {

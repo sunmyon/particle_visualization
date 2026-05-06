@@ -9,8 +9,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <fstream>
 #include <filesystem>
 #include <limits>
 #include <numeric>
@@ -1665,17 +1667,17 @@ bool IsTypePseudoField(FieldKey key)
 
 std::string OutputDatasetName(const FieldSpec& field)
 {
-  const char* defaultName = GetDefaultHDF5SourceName(field.key);
+  const char* defaultName = GetDefaultHDF5DatasetName(field.key);
   if (defaultName && std::strcmp(defaultName, "unknown") != 0 &&
       std::strcmp(defaultName, "dummy") != 0) {
     return defaultName;
   }
-  return field.sourceName;
+  return {};
 }
 
 std::string DefaultOutputDatasetName(FieldKey key)
 {
-  const char* name = GetDefaultHDF5SourceName(key);
+  const char* name = GetDefaultHDF5DatasetName(key);
   if (!name || std::strcmp(name, "unknown") == 0 ||
       std::strcmp(name, "dummy") == 0) {
     return {};
@@ -1695,9 +1697,6 @@ ActiveOutputField MakeActiveOutputField(const FieldSpec& field)
 {
   ActiveOutputField active;
   active.field = field;
-  active.sourceName = field.sourceName.empty()
-    ? DefaultOutputDatasetName(field.key)
-    : field.sourceName;
   active.outputName = OutputDatasetName(field);
   active.typeMask = 0x3fu;
   return active;
@@ -1705,7 +1704,8 @@ ActiveOutputField MakeActiveOutputField(const FieldSpec& field)
 
 ActiveOutputField MakeActiveOutputField(
   const SnapshotOutputFieldSpec& output,
-  const std::vector<FieldSpec>& inputFields)
+  const std::vector<FieldSpec>& inputFields,
+  bool sourceNameIsHdf5Dataset)
 {
   ActiveOutputField active;
   active.field.key = output.key;
@@ -1714,28 +1714,33 @@ ActiveOutputField MakeActiveOutputField(
   active.outputName = output.outputName.empty()
     ? DefaultOutputDatasetName(output.key)
     : output.outputName;
-  active.field.sourceName = active.outputName;
   active.missingPolicy = output.missingPolicy;
   active.defaultValues = output.defaultValues;
   active.typeMask = output.typeMask & 0x3fu;
 
-  if (const FieldSpec* input = FindInputField(inputFields, output.key)) {
-    active.sourceName = input->sourceName.empty()
-      ? DefaultOutputDatasetName(output.key)
-      : input->sourceName;
+  if (sourceNameIsHdf5Dataset) {
+    active.sourceName = DefaultOutputDatasetName(output.key);
+    if (const FieldSpec* input = FindInputField(inputFields, output.key)) {
+      active.sourceName = input->sourceName.empty()
+        ? DefaultOutputDatasetName(output.key)
+        : input->sourceName;
+    }
+    active.field.sourceName = active.sourceName;
   }
   return active;
 }
 
 std::vector<ActiveOutputField> BuildActiveOutputFields(
   const std::vector<FieldSpec>& inputFields,
-  const SnapshotOutputFormatConfig& outputFormat)
+  const SnapshotOutputFormatConfig& outputFormat,
+  bool sourceNameIsHdf5Dataset)
 {
   std::vector<ActiveOutputField> active;
   if (outputFormat.enabled) {
     active.reserve(outputFormat.fields.size());
     for (const SnapshotOutputFieldSpec& output : outputFormat.fields) {
-      ActiveOutputField field = MakeActiveOutputField(output, inputFields);
+      ActiveOutputField field =
+        MakeActiveOutputField(output, inputFields, sourceNameIsHdf5Dataset);
       if (field.outputName.empty() || field.outputName == "unknown" ||
           field.outputName == "dummy" || field.typeMask == 0) {
         continue;
@@ -1748,6 +1753,13 @@ std::vector<ActiveOutputField> BuildActiveOutputFields(
   active.reserve(inputFields.size());
   for (const FieldSpec& field : inputFields) {
     ActiveOutputField output = MakeActiveOutputField(field);
+    if (sourceNameIsHdf5Dataset) {
+      output.sourceName = field.sourceName.empty()
+        ? DefaultOutputDatasetName(field.key)
+        : field.sourceName;
+    } else {
+      output.field.sourceName.clear();
+    }
     if (output.outputName.empty() || output.outputName == "unknown" ||
         output.outputName == "dummy") {
       continue;
@@ -1793,7 +1805,7 @@ void EnsureActiveBackgroundField(std::vector<ActiveOutputField>& fields,
   if (key == FieldKey::Density) {
     spec.missingPolicy = SnapshotOutputMissingPolicy::FillDefault;
   }
-  fields.push_back(MakeActiveOutputField(spec, {}));
+  fields.push_back(MakeActiveOutputField(spec, {}, false));
 }
 
 void EnsureBackgroundGridOutputFields(std::vector<ActiveOutputField>& fields)
@@ -2534,6 +2546,1078 @@ void WriteLoadedIdDataset(H5::Group& outGroup,
   }
 }
 
+enum class GadgetExtractDomain {
+  Absolute,
+  All,
+  Type0,
+  Type0And5,
+  MassBlock
+};
+
+enum class GadgetExtractBlockKind {
+  Position,
+  Velocity,
+  ID,
+  Mass,
+  Field,
+  Skip
+};
+
+struct GadgetExtractBlock {
+  GadgetExtractBlockKind kind = GadgetExtractBlockKind::Field;
+  FieldSpec field;
+  GadgetExtractDomain domain = GadgetExtractDomain::Type0;
+  DataType skipType = DataType::Float;
+  int skipComponents = 1;
+  int skipRepeat = 1;
+};
+
+struct GadgetExtractHeader {
+  SourceHeader source;
+  std::array<std::uint32_t, 6> totalLowWord = {0, 0, 0, 0, 0, 0};
+  std::array<std::uint32_t, 6> totalHighWord = {0, 0, 0, 0, 0, 0};
+  std::size_t particleCount = 0;
+  std::size_t dataOffset = 0;
+};
+
+struct GadgetExtractSelection {
+  std::array<std::vector<std::uint64_t>, 6> keepByType;
+  std::vector<double> selectedOutputCoords;
+  std::vector<double> selectedGasOutputCoords;
+  std::vector<std::uint64_t> selectedGasLocalRows;
+};
+
+class GadgetExtractInput {
+public:
+  bool open(const std::string& path, GadgetExtractHeader& header, std::string& error)
+  {
+    file_.open(path, std::ios::binary);
+    if (!file_) {
+      error = "open failed: " + path;
+      return false;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!readBlock(raw, error)) {
+      error = "Gadget Header block: " + error;
+      return false;
+    }
+    if (raw.size() != 256) {
+      error = "Gadget Header block marker mismatch: got=" +
+              std::to_string(raw.size()) + " expected=256";
+      return false;
+    }
+
+    const std::uint8_t* p = raw.data();
+    auto readI32 = [&]() {
+      std::int32_t v = 0;
+      std::memcpy(&v, p, sizeof(v));
+      p += sizeof(v);
+      return v;
+    };
+    auto readU32 = [&]() {
+      std::uint32_t v = 0;
+      std::memcpy(&v, p, sizeof(v));
+      p += sizeof(v);
+      return v;
+    };
+    auto readF64 = [&]() {
+      double v = 0.0;
+      std::memcpy(&v, p, sizeof(v));
+      p += sizeof(v);
+      return v;
+    };
+
+    header = {};
+    for (int type = 0; type < 6; ++type) {
+      const std::int32_t n = readI32();
+      header.source.counts[type] = static_cast<std::size_t>(std::max<std::int32_t>(0, n));
+      header.particleCount += header.source.counts[type];
+    }
+    for (int type = 0; type < 6; ++type) {
+      header.source.massTable[type] = readF64();
+    }
+    header.source.time = readF64();
+    header.source.redshift = readF64();
+    header.source.hasRedshift = true;
+    header.source.flagSfr = readI32();
+    header.source.flagFeedback = readI32();
+    for (int type = 0; type < 6; ++type) {
+      header.totalLowWord[type] = readU32();
+    }
+    header.source.flagCooling = readI32();
+    (void)readI32(); // NumFilesPerSnapshot in the source; extract writes one file.
+    header.source.boxSize = readF64();
+    header.source.omega0 = readF64();
+    header.source.omegaLambda = readF64();
+    header.source.hubbleParam = readF64();
+    header.source.flagStellarAge = readI32();
+    header.source.flagMetals = readI32();
+    for (int type = 0; type < 6; ++type) {
+      header.totalHighWord[type] = readU32();
+    }
+    header.dataOffset = static_cast<std::size_t>(file_.tellg());
+    return true;
+  }
+
+  bool seekData(std::size_t offset, std::string& error)
+  {
+    file_.clear();
+    file_.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    if (!file_) {
+      error = "failed to seek to Gadget data offset=" + std::to_string(offset);
+      return false;
+    }
+    return true;
+  }
+
+  bool readBlock(std::vector<std::uint8_t>& bytes, std::string& error)
+  {
+    std::int32_t n = 0;
+    file_.read(reinterpret_cast<char*>(&n), sizeof(n));
+    if (!file_) {
+      error = "failed to read leading record marker";
+      return false;
+    }
+    if (n < 0) {
+      error = "negative record marker: " + std::to_string(n);
+      return false;
+    }
+    bytes.resize(static_cast<std::size_t>(n));
+    file_.read(reinterpret_cast<char*>(bytes.data()), n);
+    if (!file_) {
+      error = "failed to read record payload bytes=" + std::to_string(n);
+      return false;
+    }
+    std::int32_t tail = 0;
+    file_.read(reinterpret_cast<char*>(&tail), sizeof(tail));
+    if (!file_) {
+      error = "failed to read trailing record marker";
+      return false;
+    }
+    if (tail != n) {
+      error = "record marker mismatch head=" + std::to_string(n) +
+              " tail=" + std::to_string(tail);
+      return false;
+    }
+    return true;
+  }
+
+private:
+  std::ifstream file_;
+};
+
+std::string NormalizeGadgetToken(std::string value)
+{
+  value.erase(std::remove_if(value.begin(),
+                             value.end(),
+                             [](unsigned char c) {
+                               return std::isspace(c) || c == '_' ||
+                                      c == '-' || c == '/';
+                             }),
+              value.end());
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return value;
+}
+
+bool ParseGadgetDomainToken(const std::string& token, GadgetExtractDomain& domain)
+{
+  const std::string t = NormalizeGadgetToken(token);
+  if (t == "all" || t == "npart" || t == "particles") {
+    domain = GadgetExtractDomain::All;
+    return true;
+  }
+  if (t == "absolute" || t == "block" || t == "global") {
+    domain = GadgetExtractDomain::Absolute;
+    return true;
+  }
+  if (t == "gas" || t == "type0" || t == "ptype0") {
+    domain = GadgetExtractDomain::Type0;
+    return true;
+  }
+  if (t == "gasstar" || t == "type0and5" || t == "ptype0and5" ||
+      t == "0and5" || t == "type05") {
+    domain = GadgetExtractDomain::Type0And5;
+    return true;
+  }
+  return false;
+}
+
+bool ParseGadgetDataTypeToken(const std::string& token, DataType& type)
+{
+  const std::string t = NormalizeGadgetToken(token);
+  if (t == "float" || t == "float32" || t == "f32") {
+    type = DataType::Float;
+    return true;
+  }
+  if (t == "double" || t == "float64" || t == "f64") {
+    type = DataType::Double;
+    return true;
+  }
+  if (t == "int" || t == "int32" || t == "i32") {
+    type = DataType::Int32;
+    return true;
+  }
+  if (t == "int64" || t == "i64" || t == "long") {
+    type = DataType::Int64;
+    return true;
+  }
+  return false;
+}
+
+bool ParsePositiveGadgetInt(const std::string& token, int& value)
+{
+  if (token.empty()) return false;
+  char* end = nullptr;
+  const long parsed = std::strtol(token.c_str(), &end, 10);
+  if (!end || *end != '\0' || parsed <= 0 || parsed > 1000000) {
+    return false;
+  }
+  value = static_cast<int>(parsed);
+  return true;
+}
+
+GadgetExtractDomain DefaultGadgetExtractDomain(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::Position:
+  case FieldKey::Velocity:
+  case FieldKey::ID:
+  case FieldKey::Mass:
+    return GadgetExtractDomain::All;
+  default:
+    return GadgetExtractDomain::Type0;
+  }
+}
+
+void ParseGadgetSourceName(const std::string& text,
+                           GadgetExtractDomain fallback,
+                           bool allowAbsolute,
+                           GadgetExtractDomain& domain,
+                           int& repeat)
+{
+  domain = fallback;
+  repeat = 1;
+
+  const std::string normalized = NormalizeGadgetToken(text);
+  if (text.empty() || normalized == "unknown" || normalized == "dummy") {
+    return;
+  }
+
+  std::stringstream ss(text);
+  std::string domainPart;
+  std::string repeatPart;
+  if (!std::getline(ss, domainPart, ':')) return;
+
+  GadgetExtractDomain parsed = fallback;
+  if (!ParseGadgetDomainToken(domainPart, parsed)) return;
+  if (parsed == GadgetExtractDomain::Absolute && !allowAbsolute) {
+    parsed = fallback;
+  }
+  domain = parsed;
+
+  if (std::getline(ss, repeatPart, ':')) {
+    int parsedRepeat = 1;
+    if (ParsePositiveGadgetInt(repeatPart, parsedRepeat)) {
+      repeat = parsedRepeat;
+    }
+  }
+}
+
+bool IsGadgetExtractGasField(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::InternalEnergy:
+  case FieldKey::Temperature:
+  case FieldKey::Density:
+  case FieldKey::ElectronAbundance:
+  case FieldKey::H2Abundance:
+  case FieldKey::HDAbundance:
+  case FieldKey::J21:
+  case FieldKey::Gamma:
+  case FieldKey::Metallicity:
+  case FieldKey::Value:
+  case FieldKey::Value2:
+  case FieldKey::Bfield:
+  case FieldKey::Hsml:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool AppendGadgetExtractBlock(const FieldSpec& spec,
+                              std::vector<GadgetExtractBlock>& plan)
+{
+  GadgetExtractBlock block;
+  block.field = spec;
+  block.field.count = std::max(1, block.field.count);
+  switch (spec.key) {
+  case FieldKey::Position:
+    block.kind = GadgetExtractBlockKind::Position;
+    block.domain = GadgetExtractDomain::All;
+    plan.push_back(block);
+    return true;
+  case FieldKey::Velocity:
+    block.kind = GadgetExtractBlockKind::Velocity;
+    block.domain = GadgetExtractDomain::All;
+    plan.push_back(block);
+    return true;
+  case FieldKey::ID:
+    block.kind = GadgetExtractBlockKind::ID;
+    block.domain = GadgetExtractDomain::All;
+    plan.push_back(block);
+    return true;
+  case FieldKey::Mass:
+    block.kind = GadgetExtractBlockKind::Mass;
+    block.domain = GadgetExtractDomain::MassBlock;
+    plan.push_back(block);
+    return true;
+  case FieldKey::Dummy: {
+    block.kind = GadgetExtractBlockKind::Skip;
+    block.skipType = spec.type;
+    block.skipComponents = std::max(1, spec.count);
+    GadgetExtractDomain domain = GadgetExtractDomain::All;
+    int repeat = 1;
+    std::stringstream ss(spec.sourceName);
+    std::string part;
+    std::vector<std::string> parts;
+    while (std::getline(ss, part, ':')) parts.push_back(part);
+    if (parts.size() >= 4 && parts.size() <= 5 &&
+        (NormalizeGadgetToken(parts[0]) == "skip" ||
+         NormalizeGadgetToken(parts[0]) == "dummy")) {
+      if (!ParseGadgetDomainToken(parts[1], domain)) return false;
+      if (!ParseGadgetDataTypeToken(parts[2], block.skipType)) return false;
+      if (!ParsePositiveGadgetInt(parts[3], block.skipComponents)) return false;
+      if (parts.size() == 5 &&
+          !ParsePositiveGadgetInt(parts[4], repeat)) return false;
+    } else {
+      ParseGadgetSourceName(spec.sourceName,
+                            GadgetExtractDomain::All,
+                            true,
+                            domain,
+                            repeat);
+    }
+    block.domain = domain;
+    block.skipRepeat = std::max(1, repeat);
+    plan.push_back(block);
+    return true;
+  }
+  case FieldKey::Type:
+  case FieldKey::Unknown:
+    return true;
+  default:
+    if (!IsGadgetExtractGasField(spec.key)) return true;
+    block.kind = GadgetExtractBlockKind::Field;
+    ParseGadgetSourceName(spec.sourceName,
+                          DefaultGadgetExtractDomain(spec.key),
+                          false,
+                          block.domain,
+                          block.skipRepeat);
+    plan.push_back(block);
+    return true;
+  }
+}
+
+std::vector<GadgetExtractBlock>
+MakeGadgetExtractPlan(const std::vector<FieldSpec>& requestedFields)
+{
+  std::vector<FieldSpec> fields = requestedFields.empty()
+    ? MakeDefaultGadgetFormatTokens()
+    : requestedFields;
+  std::vector<GadgetExtractBlock> plan;
+  plan.reserve(fields.size() + 1);
+  for (const FieldSpec& field : fields) {
+    if (!AppendGadgetExtractBlock(field, plan)) {
+      throw std::runtime_error("invalid Gadget block specification: " +
+                               field.sourceName);
+    }
+  }
+  const bool hasPosition =
+    std::any_of(plan.begin(), plan.end(), [](const GadgetExtractBlock& block) {
+      return block.kind == GadgetExtractBlockKind::Position;
+    });
+  if (!hasPosition) {
+    FieldSpec pos;
+    pos.key = FieldKey::Position;
+    pos.type = DataType::Float;
+    pos.count = 3;
+    pos.sourceName = "all:1";
+    GadgetExtractBlock block;
+    block.kind = GadgetExtractBlockKind::Position;
+    block.field = pos;
+    block.domain = GadgetExtractDomain::All;
+    plan.insert(plan.begin(), block);
+  }
+  return plan;
+}
+
+std::size_t GadgetTypeOffset(const SourceHeader& source, int ptype)
+{
+  std::size_t offset = 0;
+  for (int type = 0; type < ptype && type < 6; ++type) {
+    offset += source.counts[type];
+  }
+  return offset;
+}
+
+std::size_t GadgetDomainCount(const SourceHeader& source,
+                              GadgetExtractDomain domain)
+{
+  switch (domain) {
+  case GadgetExtractDomain::Absolute:
+    return 1;
+  case GadgetExtractDomain::All:
+    return std::accumulate(source.counts.begin(),
+                           source.counts.end(),
+                           std::size_t{0});
+  case GadgetExtractDomain::Type0:
+    return source.counts[0];
+  case GadgetExtractDomain::Type0And5:
+    return source.counts[0] + source.counts[5];
+  case GadgetExtractDomain::MassBlock: {
+    std::size_t n = 0;
+    for (int type = 0; type < 6; ++type) {
+      if (source.counts[type] > 0 && source.massTable[type] == 0.0) {
+        n += source.counts[type];
+      }
+    }
+    return n;
+  }
+  }
+  return 0;
+}
+
+bool InferGadgetStorageType(std::size_t blockBytes,
+                            std::size_t nvalues,
+                            DataType requestedType,
+                            DataType& outType)
+{
+  if (nvalues == 0) {
+    outType = requestedType;
+    return blockBytes == 0;
+  }
+  if (blockBytes == nvalues * dataTypeSize(requestedType)) {
+    outType = requestedType;
+    return true;
+  }
+  if (blockBytes == nvalues * sizeof(float)) {
+    outType = DataType::Float;
+    return true;
+  }
+  if (blockBytes == nvalues * sizeof(double)) {
+    outType = DataType::Double;
+    return true;
+  }
+  if (blockBytes == nvalues * sizeof(std::int32_t)) {
+    outType = DataType::Int32;
+    return true;
+  }
+  if (blockBytes == nvalues * sizeof(std::int64_t)) {
+    outType = DataType::Int64;
+    return true;
+  }
+  return false;
+}
+
+double ReadGadgetDoubleValue(const std::vector<std::uint8_t>& block,
+                             DataType type,
+                             std::size_t index)
+{
+  switch (type) {
+  case DataType::Float:
+    return static_cast<double>(
+      reinterpret_cast<const float*>(block.data())[index]);
+  case DataType::Double:
+    return reinterpret_cast<const double*>(block.data())[index];
+  case DataType::Int32:
+    return static_cast<double>(
+      reinterpret_cast<const std::int32_t*>(block.data())[index]);
+  case DataType::Int64:
+    return static_cast<double>(
+      reinterpret_cast<const std::int64_t*>(block.data())[index]);
+  }
+  return 0.0;
+}
+
+std::uint64_t ReadGadgetUInt64Value(const std::vector<std::uint8_t>& block,
+                                    DataType type,
+                                    std::size_t index)
+{
+  switch (type) {
+  case DataType::Float:
+    return static_cast<std::uint64_t>(
+      reinterpret_cast<const float*>(block.data())[index]);
+  case DataType::Double:
+    return static_cast<std::uint64_t>(
+      reinterpret_cast<const double*>(block.data())[index]);
+  case DataType::Int32:
+    return static_cast<std::uint64_t>(
+      reinterpret_cast<const std::uint32_t*>(block.data())[index]);
+  case DataType::Int64:
+    return reinterpret_cast<const std::uint64_t*>(block.data())[index];
+  }
+  return 0;
+}
+
+std::vector<std::uint64_t> GadgetSourceRowsForType(
+  const SourceHeader& source,
+  const std::vector<std::uint64_t>& keep,
+  int ptype,
+  GadgetExtractDomain domain)
+{
+  std::vector<std::uint64_t> rows;
+  if (keep.empty()) return rows;
+  switch (domain) {
+  case GadgetExtractDomain::All: {
+    const std::uint64_t offset =
+      static_cast<std::uint64_t>(GadgetTypeOffset(source, ptype));
+    rows.reserve(keep.size());
+    for (std::uint64_t local : keep) rows.push_back(offset + local);
+    break;
+  }
+  case GadgetExtractDomain::Type0:
+    if (ptype == 0) rows = keep;
+    break;
+  case GadgetExtractDomain::Type0And5:
+    if (ptype == 0) {
+      rows = keep;
+    } else if (ptype == 5) {
+      const std::uint64_t offset = static_cast<std::uint64_t>(source.counts[0]);
+      rows.reserve(keep.size());
+      for (std::uint64_t local : keep) rows.push_back(offset + local);
+    }
+    break;
+  case GadgetExtractDomain::MassBlock:
+    if (source.massTable[ptype] == 0.0) {
+      std::uint64_t offset = 0;
+      for (int type = 0; type < ptype; ++type) {
+        if (source.counts[type] > 0 && source.massTable[type] == 0.0) {
+          offset += static_cast<std::uint64_t>(source.counts[type]);
+        }
+      }
+      rows.reserve(keep.size());
+      for (std::uint64_t local : keep) rows.push_back(offset + local);
+    }
+    break;
+  case GadgetExtractDomain::Absolute:
+    break;
+  }
+  return rows;
+}
+
+void ValidateGadgetBlockBytes(const GadgetExtractBlock& planBlock,
+                              const SourceHeader& source,
+                              const std::vector<std::uint8_t>& bytes,
+                              DataType& storageType)
+{
+  const std::size_t rows = GadgetDomainCount(source, planBlock.domain);
+  const std::size_t comps =
+    static_cast<std::size_t>(std::max(1, planBlock.field.count));
+  const std::size_t nvalues = rows * comps;
+  storageType = planBlock.field.type;
+  if (!InferGadgetStorageType(bytes.size(),
+                              nvalues,
+                              planBlock.field.type,
+                              storageType)) {
+    throw std::runtime_error("Gadget block size mismatch for " +
+                             std::string(GetFieldKeyDisplayName(planBlock.field.key)) +
+                             ": got=" + std::to_string(bytes.size()) +
+                             " nvalues=" + std::to_string(nvalues));
+  }
+}
+
+void SkipGadgetExtractBlock(GadgetExtractInput& input,
+                            const SourceHeader& source,
+                            const GadgetExtractBlock& planBlock)
+{
+  const std::size_t rows = GadgetDomainCount(source, planBlock.domain);
+  const std::size_t expectedBytes =
+    rows *
+    static_cast<std::size_t>(std::max(1, planBlock.skipComponents)) *
+    dataTypeSize(planBlock.skipType);
+  for (int i = 0; i < std::max(1, planBlock.skipRepeat); ++i) {
+    std::string error;
+    std::vector<std::uint8_t> bytes;
+    if (!input.readBlock(bytes, error)) {
+      throw std::runtime_error("failed to skip Gadget block: " + error);
+    }
+    if (bytes.size() != expectedBytes) {
+      throw std::runtime_error("Gadget skip block size mismatch: got=" +
+                               std::to_string(bytes.size()) +
+                               " expected=" + std::to_string(expectedBytes));
+    }
+  }
+}
+
+const GadgetExtractBlock* FindGadgetPlanBlock(
+  const std::vector<GadgetExtractBlock>& plan,
+  FieldKey key)
+{
+  for (const GadgetExtractBlock& block : plan) {
+    if ((block.kind == GadgetExtractBlockKind::Position && key == FieldKey::Position) ||
+        (block.kind == GadgetExtractBlockKind::Velocity && key == FieldKey::Velocity) ||
+        (block.kind == GadgetExtractBlockKind::ID && key == FieldKey::ID) ||
+        (block.kind == GadgetExtractBlockKind::Mass && key == FieldKey::Mass) ||
+        (block.kind == GadgetExtractBlockKind::Field && block.field.key == key)) {
+      return &block;
+    }
+  }
+  return nullptr;
+}
+
+ParametersInfo MakeParametersFromGadgetSource(
+  const SourceHeader& source,
+  const SnapshotExtractUnitConversion& conversion)
+{
+  ParametersInfo params;
+  params.unitLength = SafePositive(conversion.sourceUnitLengthCm, 3.0856775814913673e18);
+  params.unitMass = SafePositive(conversion.sourceUnitMassG, 1.98847e33);
+  params.unitVelocity = SafePositive(conversion.sourceUnitVelocityCmPerS, 1.0e5);
+  params.hubbleParam = SafePositive(source.hubbleParam,
+                                    SafePositive(conversion.sourceHubbleParam, 1.0));
+  params.comoving = 1;
+  params.flagDensityInCgs = 0;
+  params.flagBfieldInCgs = 0;
+  params.hasGroup = false;
+  params.hasUnitLength = false;
+  params.hasUnitMass = false;
+  params.hasUnitVelocity = false;
+  return ResolveSourceParameters(params, conversion);
+}
+
+GadgetExtractSelection BuildGadgetExtractSelection(
+  const SourceHeader& source,
+  const std::vector<std::uint8_t>& positionBytes,
+  DataType positionType,
+  const SnapshotExtractRegion& region,
+  double outputLengthScale,
+  const std::array<double, 3>& coordinateOrigin)
+{
+  GadgetExtractSelection selection;
+  const std::size_t totalRows =
+    std::accumulate(source.counts.begin(), source.counts.end(), std::size_t{0});
+  std::size_t global = 0;
+  for (int ptype = 0; ptype < 6; ++ptype) {
+    selection.keepByType[ptype].reserve(source.counts[ptype]);
+    for (std::size_t local = 0; local < source.counts[ptype]; ++local, ++global) {
+      if (global >= totalRows) break;
+      const double pos[3] = {
+        ReadGadgetDoubleValue(positionBytes, positionType, 3 * global + 0),
+        ReadGadgetDoubleValue(positionBytes, positionType, 3 * global + 1),
+        ReadGadgetDoubleValue(positionBytes, positionType, 3 * global + 2)
+      };
+      if (!InsideRegion(region, pos)) continue;
+      selection.keepByType[ptype].push_back(static_cast<std::uint64_t>(local));
+      const double x = (pos[0] - coordinateOrigin[0]) * outputLengthScale;
+      const double y = (pos[1] - coordinateOrigin[1]) * outputLengthScale;
+      const double z = (pos[2] - coordinateOrigin[2]) * outputLengthScale;
+      selection.selectedOutputCoords.push_back(x);
+      selection.selectedOutputCoords.push_back(y);
+      selection.selectedOutputCoords.push_back(z);
+      if (ptype == 0) {
+        selection.selectedGasLocalRows.push_back(static_cast<std::uint64_t>(local));
+        selection.selectedGasOutputCoords.push_back(x);
+        selection.selectedGasOutputCoords.push_back(y);
+        selection.selectedGasOutputCoords.push_back(z);
+      }
+    }
+  }
+  return selection;
+}
+
+std::vector<std::uint8_t> ReadGadgetPositionBlock(
+  const SnapshotExtractJob& job,
+  const GadgetExtractHeader& header,
+  const std::vector<GadgetExtractBlock>& plan,
+  DataType& storageType)
+{
+  GadgetExtractInput input;
+  std::string error;
+  GadgetExtractHeader ignoredHeader;
+  if (!input.open(job.inputPath, ignoredHeader, error)) {
+    throw std::runtime_error(error);
+  }
+  if (!input.seekData(header.dataOffset, error)) {
+    throw std::runtime_error(error);
+  }
+
+  for (const GadgetExtractBlock& block : plan) {
+    if (block.kind == GadgetExtractBlockKind::Skip) {
+      SkipGadgetExtractBlock(input, header.source, block);
+      continue;
+    }
+    if (block.kind == GadgetExtractBlockKind::Mass &&
+        GadgetDomainCount(header.source, GadgetExtractDomain::MassBlock) == 0) {
+      continue;
+    }
+    std::vector<std::uint8_t> bytes;
+    if (!input.readBlock(bytes, error)) {
+      throw std::runtime_error("failed to read Gadget position pass: " + error);
+    }
+    if (block.kind != GadgetExtractBlockKind::Position) {
+      continue;
+    }
+    GadgetExtractBlock positionBlock = block;
+    positionBlock.field.key = FieldKey::Position;
+    positionBlock.field.count = 3;
+    ValidateGadgetBlockBytes(positionBlock, header.source, bytes, storageType);
+    return bytes;
+  }
+  throw std::runtime_error("Gadget position block is missing from the format");
+}
+
+std::uint64_t MaxGadgetSelectedParticleId(
+  const SnapshotExtractJob& job,
+  const GadgetExtractHeader& header,
+  const std::vector<GadgetExtractBlock>& plan,
+  const std::array<std::vector<std::uint64_t>, 6>& keepByType)
+{
+  const GadgetExtractBlock* idBlock = FindGadgetPlanBlock(plan, FieldKey::ID);
+  if (!idBlock) {
+    return static_cast<std::uint64_t>(header.particleCount);
+  }
+
+  GadgetExtractInput input;
+  std::string error;
+  GadgetExtractHeader ignoredHeader;
+  if (!input.open(job.inputPath, ignoredHeader, error)) {
+    throw std::runtime_error(error);
+  }
+  if (!input.seekData(header.dataOffset, error)) {
+    throw std::runtime_error(error);
+  }
+
+  for (const GadgetExtractBlock& block : plan) {
+    if (block.kind == GadgetExtractBlockKind::Skip) {
+      SkipGadgetExtractBlock(input, header.source, block);
+      continue;
+    }
+    if (block.kind == GadgetExtractBlockKind::Mass &&
+        GadgetDomainCount(header.source, GadgetExtractDomain::MassBlock) == 0) {
+      continue;
+    }
+    std::vector<std::uint8_t> bytes;
+    if (!input.readBlock(bytes, error)) {
+      throw std::runtime_error("failed to read Gadget ID pass: " + error);
+    }
+    if (&block != idBlock) continue;
+    GadgetExtractBlock actual = block;
+    actual.field.count = 1;
+    DataType storageType = actual.field.type;
+    ValidateGadgetBlockBytes(actual, header.source, bytes, storageType);
+    std::uint64_t maxId = 0;
+    bool haveAny = false;
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      const std::vector<std::uint64_t> sourceRows =
+        GadgetSourceRowsForType(header.source,
+                                keepByType[ptype],
+                                ptype,
+                                GadgetExtractDomain::All);
+      for (std::uint64_t row : sourceRows) {
+        maxId = std::max(maxId,
+                         ReadGadgetUInt64Value(bytes,
+                                               storageType,
+                                               static_cast<std::size_t>(row)));
+        haveAny = true;
+      }
+    }
+    return haveAny
+      ? maxId
+      : static_cast<std::uint64_t>(header.particleCount);
+  }
+  return static_cast<std::uint64_t>(header.particleCount);
+}
+
+void AssignNearestGasRowsFromRawCoords(
+  const std::vector<double>& gasCoords,
+  const std::vector<std::uint64_t>& gasLocalRows,
+  BackgroundGridData& grid)
+{
+  if (grid.count == 0 || gasCoords.empty() || gasLocalRows.empty()) return;
+  const std::size_t gasCount = gasLocalRows.size();
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  for (std::size_t sourceIndex = 0; sourceIndex < gasCount; ++sourceIndex) {
+    const double x = gasCoords[3 * sourceIndex + 0];
+    const double y = gasCoords[3 * sourceIndex + 1];
+    const double z = gasCoords[3 * sourceIndex + 2];
+    const int ix = std::clamp(static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+                              0,
+                              grid.cells[0] - 1);
+    const int iy = std::clamp(static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+                              0,
+                              grid.cells[1] - 1);
+    const int iz = std::clamp(static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+                              0,
+                              grid.cells[2] - 1);
+    bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+  }
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  const int maxRadius = std::max({grid.cells[0], grid.cells[1], grid.cells[2]});
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int nx = grid.cells[0];
+    const int ny = grid.cells[1];
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    std::size_t bestSourceIndex = 0;
+    bool found = false;
+    for (int r = 0; r <= maxRadius && !found; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const double dx = gasCoords[3 * sourceIndex + 0] - gx;
+              const double dy = gasCoords[3 * sourceIndex + 1] - gy;
+              const double dz = gasCoords[3 * sourceIndex + 2] - gz;
+              const double dist2 = dx * dx + dy * dy + dz * dz;
+              if (dist2 < bestDist2) {
+                bestDist2 = dist2;
+                bestSourceIndex = sourceIndex;
+                found = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    grid.nearestGasRows[i] = gasLocalRows[bestSourceIndex];
+    nearestDist2[i] = bestDist2;
+  }
+  grid.hasNearestGasRows = true;
+}
+
+void CullBackgroundGridNearRawCoords(const std::vector<double>& coords,
+                                     BackgroundGridData& grid)
+{
+  if (grid.count == 0 || coords.empty()) return;
+  const std::size_t sourceCount = coords.size() / 3;
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  for (std::size_t sourceIndex = 0; sourceIndex < sourceCount; ++sourceIndex) {
+    const double x = coords[3 * sourceIndex + 0];
+    const double y = coords[3 * sourceIndex + 1];
+    const double z = coords[3 * sourceIndex + 2];
+    const int ix = std::clamp(static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+                              0,
+                              grid.cells[0] - 1);
+    const int iy = std::clamp(static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+                              0,
+                              grid.cells[1] - 1);
+    const int iz = std::clamp(static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+                              0,
+                              grid.cells[2] - 1);
+    bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+  }
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  const int nx = grid.cells[0];
+  const int ny = grid.cells[1];
+  const int maxSearchRadius = BackgroundGridCullSearchRadius(grid);
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    for (int r = 0; r <= maxSearchRadius; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const double dx = coords[3 * sourceIndex + 0] - gx;
+              const double dy = coords[3 * sourceIndex + 1] - gy;
+              const double dz = coords[3 * sourceIndex + 2] - gz;
+              bestDist2 = std::min(bestDist2, dx * dx + dy * dy + dz * dz);
+            }
+          }
+        }
+      }
+    }
+    nearestDist2[i] = bestDist2;
+  }
+  CompactBackgroundGridToEmptyCells(grid, nearestDist2);
+}
+
+void WriteGadgetRawDoubleDataset(H5::Group& outGroup,
+                                 const ActiveOutputField& outputField,
+                                 const GadgetExtractBlock& sourceBlock,
+                                 const SourceHeader& source,
+                                 const std::vector<std::uint8_t>& sourceBytes,
+                                 DataType storageType,
+                                 const std::vector<std::uint64_t>& keep,
+                                 int ptype,
+                                 const BackgroundGridData& backgroundGrid,
+                                 const SnapshotBackgroundGridConfig& background,
+                                 double valueScale,
+                                 const std::array<double, 3>& coordinateOrigin)
+{
+  const std::size_t backgroundRows = ptype == 0 ? backgroundGrid.count : 0;
+  const std::size_t outputRows = keep.size() + backgroundRows;
+  DatasetShape shape = ShapeForFieldSpec(outputField.field, outputRows);
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputField.outputName,
+                                        NativeTypeForOutputField(outputField.field),
+                                        shape,
+                                        outputRows);
+  const std::size_t outputComps =
+    static_cast<std::size_t>(std::max<hsize_t>(hsize_t{1}, shape.components));
+  const std::size_t sourceComps =
+    static_cast<std::size_t>(std::max(1, sourceBlock.field.count));
+  const std::vector<double> defaults = ExpandedDefaultValues(outputField);
+  const std::vector<std::uint64_t> sourceRows =
+    GadgetSourceRowsForType(source, keep, ptype, sourceBlock.domain);
+
+  std::vector<double> rows(keep.size() * outputComps, 0.0);
+  for (std::size_t i = 0; i < sourceRows.size(); ++i) {
+    const std::uint64_t sourceRow = sourceRows[i];
+    for (std::size_t c = 0; c < outputComps; ++c) {
+      double value = c < sourceComps
+        ? ReadGadgetDoubleValue(sourceBytes,
+                                storageType,
+                                static_cast<std::size_t>(sourceRow) * sourceComps + c)
+        : defaults[std::min(c, defaults.size() - 1)];
+      if (outputField.field.key == FieldKey::Position && c < 3) {
+        value -= coordinateOrigin[c];
+      }
+      if (c < sourceComps) value *= valueScale;
+      rows[i * outputComps + c] = value;
+    }
+  }
+  if (!rows.empty()) {
+    WriteDoubleRows(dst, shape, 0, keep.size(), rows);
+  }
+  if (backgroundRows > 0 && FieldUsesBackgroundGrid(outputField.field.key)) {
+    std::vector<double> nearestRows;
+    if (FieldUsesNearestBackgroundValue(outputField.field.key) &&
+        backgroundGrid.hasNearestGasRows &&
+        backgroundGrid.nearestGasRows.size() == backgroundGrid.count &&
+        sourceBlock.domain == GadgetExtractDomain::Type0) {
+      nearestRows.assign(backgroundGrid.count * outputComps, 0.0);
+      for (std::size_t i = 0; i < backgroundGrid.count; ++i) {
+        const std::uint64_t sourceRow = backgroundGrid.nearestGasRows[i];
+        for (std::size_t c = 0; c < std::min(outputComps, sourceComps); ++c) {
+          nearestRows[i * outputComps + c] =
+            ReadGadgetDoubleValue(sourceBytes,
+                                  storageType,
+                                  static_cast<std::size_t>(sourceRow) *
+                                    sourceComps + c) * valueScale;
+        }
+      }
+    }
+    const std::vector<double> backgroundRowsData =
+      BackgroundDoubleRows(outputField.field,
+                           backgroundGrid,
+                           background,
+                           nearestRows);
+    WriteDoubleRows(dst, shape, keep.size(), backgroundGrid.count, backgroundRowsData);
+  }
+}
+
+void WriteGadgetRawIdDataset(H5::Group& outGroup,
+                             const ActiveOutputField& outputField,
+                             const GadgetExtractBlock& sourceBlock,
+                             const SourceHeader& source,
+                             const std::vector<std::uint8_t>& sourceBytes,
+                             DataType storageType,
+                             const std::vector<std::uint64_t>& keep,
+                             int ptype,
+                             const BackgroundGridData& backgroundGrid,
+                             const SnapshotParticleIdTransform& idTransform)
+{
+  const std::size_t backgroundRows = ptype == 0 ? backgroundGrid.count : 0;
+  const std::size_t outputRows = keep.size() + backgroundRows;
+  DatasetShape shape = ShapeForFieldSpec(outputField.field, outputRows);
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputField.outputName,
+                                        H5::PredType::NATIVE_UINT64,
+                                        shape,
+                                        outputRows);
+  const std::vector<std::uint64_t> sourceRows =
+    GadgetSourceRowsForType(source, keep, ptype, sourceBlock.domain);
+  std::vector<std::uint64_t> ids(sourceRows.size(), 0);
+  for (std::size_t i = 0; i < sourceRows.size(); ++i) {
+    ids[i] = ApplyParticleIdTransform(
+      ReadGadgetUInt64Value(sourceBytes,
+                            storageType,
+                            static_cast<std::size_t>(sourceRows[i])),
+      idTransform);
+  }
+  if (!ids.empty()) {
+    WriteUInt64Rows(dst, shape, 0, ids.size(), ids);
+  }
+  if (backgroundRows > 0) {
+    const std::vector<std::uint64_t> backgroundIds = BackgroundIdRows(backgroundGrid);
+    WriteUInt64Rows(dst, shape, keep.size(), backgroundGrid.count, backgroundIds);
+  }
+}
+
+void WriteGadgetConstantMassDataset(H5::Group& outGroup,
+                                    const ActiveOutputField& outputField,
+                                    double mass,
+                                    const std::vector<std::uint64_t>& keep,
+                                    int ptype,
+                                    const BackgroundGridData& backgroundGrid,
+                                    const SnapshotBackgroundGridConfig& background)
+{
+  const std::size_t backgroundRows = ptype == 0 ? backgroundGrid.count : 0;
+  const std::size_t outputRows = keep.size() + backgroundRows;
+  DatasetShape shape = ShapeForFieldSpec(outputField.field, outputRows);
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputField.outputName,
+                                        NativeTypeForOutputField(outputField.field),
+                                        shape,
+                                        outputRows);
+  FillExistingRowsForMissingDataset(dst, outputField.field, shape, keep.size(), mass);
+  if (backgroundRows > 0) {
+    const std::vector<double> backgroundRowsData =
+      BackgroundDoubleRows(outputField.field,
+                           backgroundGrid,
+                           background,
+                           {});
+    WriteDoubleRows(dst, shape, keep.size(), backgroundGrid.count, backgroundRowsData);
+  }
+}
+
 } // namespace
 
 std::vector<FieldSpec> MakeDefaultSnapshotExtractFields()
@@ -2714,7 +3798,7 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
 
     std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields);
     std::vector<ActiveOutputField> outputFields =
-      BuildActiveOutputFields(fields, job.outputFormat);
+      BuildActiveOutputFields(fields, job.outputFormat, true);
     if (backgroundGrid.count > 0) {
       EnsureBackgroundGridOutputFields(outputFields);
     }
@@ -2918,6 +4002,380 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
   return report;
 }
 
+SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob& job)
+{
+  SnapshotExtractReport report;
+  std::string extractContext = "initializing Gadget raw extract";
+  try {
+    extractContext = "validating paths";
+    if (job.inputPath.empty()) {
+      throw std::runtime_error("inputPath is empty");
+    }
+    if (job.outputPath.empty()) {
+      throw std::runtime_error("outputPath is empty");
+    }
+    std::filesystem::path outPath(job.outputPath);
+    if (outPath.has_parent_path()) {
+      std::filesystem::create_directories(outPath.parent_path());
+    }
+
+    extractContext = "building Gadget block plan";
+    const std::vector<GadgetExtractBlock> plan =
+      MakeGadgetExtractPlan(job.fields);
+
+    extractContext = "opening Gadget input '" + job.inputPath + "'";
+    GadgetExtractInput headerInput;
+    GadgetExtractHeader gadgetHeader;
+    std::string error;
+    if (!headerInput.open(job.inputPath, gadgetHeader, error)) {
+      throw std::runtime_error(error);
+    }
+    SourceHeader sourceHeader = gadgetHeader.source;
+    sourceHeader.flagDoublePrecision = 1;
+    report.sourceCounts = sourceHeader.counts;
+    report.sourceParticles = gadgetHeader.particleCount;
+
+    SnapshotExtractUnitConversion conversion = job.unitConversion;
+    ParametersInfo sourceParameters =
+      MakeParametersFromGadgetSource(sourceHeader, conversion);
+    if (conversion.enabled) {
+      conversion.sourceScaleFactor =
+        SafePositive(conversion.sourceScaleFactor, sourceHeader.time);
+      conversion.scaleFactor =
+        SafePositive(conversion.scaleFactor, conversion.sourceScaleFactor);
+      conversion.unitLengthCm =
+        SafePositive(conversion.unitLengthCm, sourceParameters.unitLength);
+      conversion.unitMassG =
+        SafePositive(conversion.unitMassG, sourceParameters.unitMass);
+      conversion.unitVelocityCmPerS =
+        SafePositive(conversion.unitVelocityCmPerS, sourceParameters.unitVelocity);
+      conversion.hubbleParam =
+        SafePositive(conversion.hubbleParam, sourceParameters.hubbleParam);
+    }
+    const ParametersInfo outputParameters =
+      ApplyUnitConversionToParameters(sourceParameters, conversion);
+    const double outputLengthScale =
+      conversion.enabled
+        ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
+          ComovingLengthScale(conversion)
+        : 1.0;
+    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
+
+    extractContext = "reading Gadget Coordinates for region selection";
+    DataType positionType = DataType::Float;
+    std::vector<std::uint8_t> positionBytes =
+      ReadGadgetPositionBlock(job, gadgetHeader, plan, positionType);
+    GadgetExtractSelection selection =
+      BuildGadgetExtractSelection(sourceHeader,
+                                  positionBytes,
+                                  positionType,
+                                  job.region,
+                                  outputLengthScale,
+                                  coordinateOrigin);
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      report.selectedCounts[ptype] = selection.keepByType[ptype].size();
+      report.extractedCounts[ptype] = report.selectedCounts[ptype];
+    }
+    report.selectedParticles =
+      std::accumulate(report.selectedCounts.begin(),
+                      report.selectedCounts.end(),
+                      std::size_t{0});
+    report.extractedParticles = report.selectedParticles;
+
+    SnapshotBackgroundGridConfig background = job.backgroundGrid;
+    extractContext = "assigning Gadget background IDs";
+    const std::uint64_t backgroundFirstId =
+      FirstBackgroundParticleId(
+        MaxGadgetSelectedParticleId(job,
+                                    gadgetHeader,
+                                    plan,
+                                    selection.keepByType),
+        job.particleIdTransform);
+
+    extractContext = "building Gadget background grid";
+    BackgroundGridData backgroundGrid =
+      BuildBackgroundGrid(job.region,
+                          background,
+                          outputLengthScale,
+                          backgroundFirstId);
+    AssignNearestGasRowsFromRawCoords(selection.selectedGasOutputCoords,
+                                      selection.selectedGasLocalRows,
+                                      backgroundGrid);
+    CullBackgroundGridNearRawCoords(selection.selectedOutputCoords,
+                                    backgroundGrid);
+    report.backgroundParticles = backgroundGrid.count;
+    report.suggestedMeanVolume =
+      backgroundGrid.count > 0 ? backgroundGrid.cellVolume : 0.0;
+    report.suggestedReferenceGasPartMass =
+      report.suggestedMeanVolume * background.density;
+    report.extractedCounts[0] += backgroundGrid.count;
+    report.extractedParticles += backgroundGrid.count;
+
+    extractContext = "opening output file '" + job.outputPath + "'";
+    H5::H5File output(job.outputPath, H5F_ACC_TRUNC);
+    std::array<double, 6> outputMassTable = sourceHeader.massTable;
+    const double outputMassScale = conversion.enabled
+      ? UnitChangeScale(sourceParameters.unitMass, conversion.unitMassG)
+      : 1.0;
+    for (double& mass : outputMassTable) {
+      if (mass != 0.0) mass *= outputMassScale;
+    }
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      if (report.extractedCounts[ptype] == 0) {
+        outputMassTable[ptype] = 0.0;
+      }
+    }
+
+    std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields.empty()
+      ? MakeDefaultGadgetFormatTokens()
+      : job.fields);
+    std::vector<ActiveOutputField> outputFields =
+      BuildActiveOutputFields(fields, job.outputFormat, false);
+    if (backgroundGrid.count > 0) {
+      EnsureBackgroundGridOutputFields(outputFields);
+    }
+
+    std::array<H5::Group, 6> groups;
+    std::array<bool, 6> groupCreated = {false, false, false, false, false, false};
+    auto ensureGroup = [&](int ptype) -> H5::Group& {
+      if (!groupCreated[ptype]) {
+        groups[ptype] = output.createGroup(PartGroupName(ptype));
+        groupCreated[ptype] = true;
+      }
+      return groups[ptype];
+    };
+
+    auto findOutputField = [&](FieldKey key) -> const ActiveOutputField* {
+      for (const ActiveOutputField& field : outputFields) {
+        if (field.field.key == key) return &field;
+      }
+      return nullptr;
+    };
+
+    std::vector<std::uint8_t> sourceBytes;
+    GadgetExtractInput dataInput;
+    GadgetExtractHeader ignoredHeader;
+    extractContext = "reopening Gadget input for dataset copy";
+    if (!dataInput.open(job.inputPath, ignoredHeader, error)) {
+      throw std::runtime_error(error);
+    }
+    if (!dataInput.seekData(gadgetHeader.dataOffset, error)) {
+      throw std::runtime_error(error);
+    }
+
+    bool copiedMassDataset = false;
+    for (std::size_t blockIndex = 0; blockIndex < plan.size(); ++blockIndex) {
+      const GadgetExtractBlock& planBlock = plan[blockIndex];
+      if (planBlock.kind == GadgetExtractBlockKind::Skip) {
+        extractContext = "skipping Gadget dummy block";
+        SkipGadgetExtractBlock(dataInput, sourceHeader, planBlock);
+        continue;
+      }
+      if (planBlock.kind == GadgetExtractBlockKind::Mass &&
+          GadgetDomainCount(sourceHeader, GadgetExtractDomain::MassBlock) == 0) {
+        continue;
+      }
+
+      extractContext = "reading Gadget block " +
+                       std::string(GetFieldKeyDisplayName(planBlock.field.key));
+      if (!dataInput.readBlock(sourceBytes, error)) {
+        throw std::runtime_error("failed to read Gadget block: " + error);
+      }
+
+      FieldKey outputKey = planBlock.field.key;
+      if (planBlock.kind == GadgetExtractBlockKind::Position) {
+        outputKey = FieldKey::Position;
+      } else if (planBlock.kind == GadgetExtractBlockKind::Velocity) {
+        outputKey = FieldKey::Velocity;
+      } else if (planBlock.kind == GadgetExtractBlockKind::ID) {
+        outputKey = FieldKey::ID;
+      } else if (planBlock.kind == GadgetExtractBlockKind::Mass) {
+        outputKey = FieldKey::Mass;
+      }
+      const ActiveOutputField* outputField = findOutputField(outputKey);
+      if (!outputField) continue;
+      if (outputField->outputName.empty() ||
+          outputField->outputName == "unknown" ||
+          outputField->outputName == "dummy") {
+        continue;
+      }
+
+      GadgetExtractBlock actual = planBlock;
+      actual.field.key = outputKey;
+      if (outputKey == FieldKey::Position ||
+          outputKey == FieldKey::Velocity) {
+        actual.field.count = 3;
+        actual.domain = GadgetExtractDomain::All;
+      } else if (outputKey == FieldKey::ID) {
+        actual.field.count = 1;
+        actual.domain = GadgetExtractDomain::All;
+      } else if (outputKey == FieldKey::Mass) {
+        actual.field.count = 1;
+        actual.domain = GadgetExtractDomain::MassBlock;
+      }
+      DataType storageType = actual.field.type;
+      ValidateGadgetBlockBytes(actual, sourceHeader, sourceBytes, storageType);
+
+      const double valueScale =
+        DatasetValueScale(outputKey, sourceParameters, conversion);
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        if (!OutputFieldAppliesToType(*outputField, ptype)) continue;
+        if (outputKey == FieldKey::Mass &&
+            sourceHeader.massTable[ptype] != 0.0) {
+          continue;
+        }
+        const auto& keep = selection.keepByType[ptype];
+        const std::size_t backgroundRows =
+          ptype == 0 ? backgroundGrid.count : std::size_t{0};
+        if (keep.empty() && backgroundRows == 0) continue;
+
+        H5::Group& outGroup = ensureGroup(ptype);
+        if (outputKey == FieldKey::ID) {
+          extractContext = "writing Gadget ParticleIDs";
+          WriteGadgetRawIdDataset(outGroup,
+                                  *outputField,
+                                  actual,
+                                  sourceHeader,
+                                  sourceBytes,
+                                  storageType,
+                                  keep,
+                                  ptype,
+                                  backgroundGrid,
+                                  job.particleIdTransform);
+        } else {
+          extractContext = "writing Gadget dataset " + outputField->outputName;
+          WriteGadgetRawDoubleDataset(outGroup,
+                                      *outputField,
+                                      actual,
+                                      sourceHeader,
+                                      sourceBytes,
+                                      storageType,
+                                      keep,
+                                      ptype,
+                                      backgroundGrid,
+                                      background,
+                                      valueScale,
+                                      coordinateOrigin);
+        }
+        ++report.copiedDatasets;
+        if (outputKey == FieldKey::Mass) {
+          outputMassTable[ptype] = 0.0;
+        }
+      }
+      copiedMassDataset = copiedMassDataset || outputKey == FieldKey::Mass;
+    }
+
+    const ActiveOutputField* massOutput = findOutputField(FieldKey::Mass);
+    if (massOutput) {
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        const auto& keep = selection.keepByType[ptype];
+        const std::size_t backgroundRows =
+          ptype == 0 ? backgroundGrid.count : std::size_t{0};
+        if (keep.empty() && backgroundRows == 0) continue;
+        if (copiedMassDataset && sourceHeader.massTable[ptype] == 0.0) continue;
+        if (sourceHeader.massTable[ptype] == 0.0 && backgroundRows == 0) continue;
+        H5::Group& outGroup = ensureGroup(ptype);
+        extractContext = "writing Gadget constant Masses";
+        WriteGadgetConstantMassDataset(outGroup,
+                                       *massOutput,
+                                       sourceHeader.massTable[ptype] *
+                                         outputMassScale,
+                                       keep,
+                                       ptype,
+                                       backgroundGrid,
+                                       background);
+        outputMassTable[ptype] = 0.0;
+        ++report.copiedDatasets;
+      }
+    }
+
+    if (backgroundGrid.count > 0) {
+      for (const ActiveOutputField& outputField : outputFields) {
+        if (!FieldCanBeSynthesizedForBackgroundGrid(outputField.field.key)) {
+          continue;
+        }
+        if (FindGadgetPlanBlock(plan, outputField.field.key)) {
+          continue;
+        }
+        const auto& keep = selection.keepByType[0];
+        if (backgroundGrid.count == 0) continue;
+        H5::Group& outGroup = ensureGroup(0);
+        if (LinkExists(outGroup.getId(), outputField.outputName)) continue;
+        DatasetShape shape =
+          ShapeForFieldSpec(outputField.field, keep.size() + backgroundGrid.count);
+        H5::DataSet dst = CreateOutputDataset(outGroup,
+                                              outputField.outputName,
+                                              NativeTypeForOutputField(outputField.field),
+                                              shape,
+                                              keep.size() + backgroundGrid.count);
+        FillRowsWithDefaultValue(dst, outputField, shape, 0, keep.size());
+        if (outputField.field.key == FieldKey::ID) {
+          const std::vector<std::uint64_t> ids = BackgroundIdRows(backgroundGrid);
+          WriteUInt64Rows(dst, shape, keep.size(), backgroundGrid.count, ids);
+        } else {
+          const std::vector<double> rows =
+            BackgroundDoubleRows(outputField.field,
+                                 backgroundGrid,
+                                 background,
+                                 {});
+          WriteDoubleRows(dst, shape, keep.size(), backgroundGrid.count, rows);
+        }
+        ++report.copiedDatasets;
+      }
+    }
+
+    if (job.copyHeader) {
+      extractContext = "writing Header";
+      WriteHeader(output,
+                  sourceHeader,
+                  outputParameters,
+                  job.region,
+                  outputLengthScale,
+                  report.extractedCounts,
+                  outputMassTable);
+    }
+    if (job.copyParameters) {
+      extractContext = "writing Parameters";
+      WriteParameters(output, outputParameters, conversion);
+    }
+
+    std::ostringstream oss;
+    oss << "selected " << report.selectedParticles << " / "
+        << report.sourceParticles << " source particles";
+    if (report.backgroundParticles > 0) {
+      oss << "; added particles=" << report.backgroundParticles;
+    }
+    oss << "; wrote " << report.extractedParticles
+        << " particles to " << job.outputPath;
+    if (report.suggestedMeanVolume > 0.0) {
+      oss << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
+          << "\nSuggested value for ReferenceGasPartMass="
+          << report.suggestedReferenceGasPartMass;
+    }
+    if (job.particleIdTransform.offsetEnabled &&
+        job.particleIdTransform.offset > 0) {
+      oss << "\nParticleIDs offset=+" << job.particleIdTransform.offset;
+    }
+    if (conversion.enabled) {
+      oss << " (unit conversion enabled)";
+    }
+    report.message = oss.str();
+    report.ok = true;
+  } catch (const H5::Exception& e) {
+    report.ok = false;
+    report.message = "Gadget raw extract error while " + extractContext + ": " +
+                     e.getDetailMsg();
+  } catch (const std::exception& e) {
+    report.ok = false;
+    report.message = "Gadget raw extract error while " + extractContext + ": " +
+                     e.what();
+  } catch (...) {
+    report.ok = false;
+    report.message = "unknown Gadget raw extract error while " + extractContext;
+  }
+  return report;
+}
+
 SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
   const SnapshotExtractJob& job,
   const SimulationBlock& block,
@@ -3016,7 +4474,7 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
 
     std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields);
     std::vector<ActiveOutputField> outputFields =
-      BuildActiveOutputFields(fields, job.outputFormat);
+      BuildActiveOutputFields(fields, job.outputFormat, false);
     if (backgroundGrid.count > 0) {
       EnsureBackgroundGridOutputFields(outputFields);
     }
@@ -3177,6 +4635,14 @@ std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields()
 }
 
 SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob&)
+{
+  SnapshotExtractReport report;
+  report.ok = false;
+  report.message = "HDF5 support is disabled";
+  return report;
+}
+
+SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob&)
 {
   SnapshotExtractReport report;
   report.ok = false;

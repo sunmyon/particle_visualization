@@ -416,12 +416,17 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
       settings.snapshotFormat.readFormat == FileFormat::HDF5 ||
       (settings.snapshotFormat.readFormat == FileFormat::Auto &&
        settings.fileNavigation.input.useHDF5);
+    const bool useGadgetExtract =
+      settings.snapshotFormat.readFormat == FileFormat::Gadget;
 #else
     const bool useHdf5Extract = false;
+    const bool useGadgetExtract = false;
 #endif
     SnapshotExtractReport report;
     if (useHdf5Extract) {
       report = ExtractHdf5SnapshotRegion(req.snapshotExtractJob);
+    } else if (useGadgetExtract) {
+      report = ExtractGadgetSnapshotRegionToHdf5(req.snapshotExtractJob);
     } else {
       SnapshotLoadedExtractMetadata metadata;
       metadata.time = settings.fileNavigation.current.loadedTime;

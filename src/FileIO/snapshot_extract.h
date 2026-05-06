@@ -127,6 +127,7 @@ std::vector<FieldSpec> MakeDefaultSnapshotExtractFields();
 std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields();
 
 SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job);
+SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob& job);
 SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
   const SnapshotExtractJob& job,
   const SimulationBlock& block,
