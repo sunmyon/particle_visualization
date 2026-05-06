@@ -1196,11 +1196,13 @@ void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
           continue;
         }
         const pos_val& p = filtered[static_cast<size_t>(label)];
-        double hsml = p.hsml;
-        double vol = hsml * hsml * hsml;
-        double weight = p.mass / vol;
+        double weight = 1.0;
         if (map.flagDensityWeight == true)
           weight *= p.density;
+        if (!(weight > 0.0) || !std::isfinite(weight) ||
+            !std::isfinite(static_cast<double>(p.val))) {
+          continue;
+        }
         value += p.val * weight;
         weightSum += weight;
       }

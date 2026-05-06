@@ -262,8 +262,7 @@ kernel void voronoiIntegrate(
     }
 
     ProjectionParticle p = particles[label];
-    float hsml = max(p.hsml, 1.0e-30);
-    float weight = p.mass / max(hsml * hsml * hsml, 1.0e-30);
+    float weight = 1.0;
     if (uniforms.densityWeight != 0u) {
       weight *= p.density;
     }
