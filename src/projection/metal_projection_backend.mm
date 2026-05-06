@@ -453,7 +453,7 @@ id<MTLDevice> CreateProjectionDevice()
 }
 
 bool CompilePipeline(id<MTLDevice> device,
-                     id<MTLComputePipelineState>& pipeline)
+                     __strong id<MTLComputePipelineState>& pipeline)
 {
   if (pipeline) {
     return true;
@@ -493,7 +493,7 @@ bool CompilePipeline(id<MTLDevice> device,
 
 bool CompileNamedPipeline(id<MTLDevice> device,
                           NSString* name,
-                          id<MTLComputePipelineState>& pipeline)
+                          __strong id<MTLComputePipelineState>& pipeline)
 {
   if (pipeline) {
     return true;

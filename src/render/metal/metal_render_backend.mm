@@ -3342,7 +3342,7 @@ private:
     return (__bridge id<MTLCommandBuffer>)context_->currentCommandBuffer();
   }
 
-  bool ensureTexture(id<MTLTexture>& texture,
+  bool ensureTexture(__strong id<MTLTexture>& texture,
                      MTLPixelFormat format,
                      int width,
                      int height,
@@ -4722,7 +4722,7 @@ private:
 
   void syncParticleBuffer(const std::vector<RenderParticle>& particles,
                           RenderSceneVersion version,
-                          id<MTLBuffer>& buffer,
+                          __strong id<MTLBuffer>& buffer,
                           RenderSceneVersion& uploadedVersion,
                           std::size_t& count)
   {

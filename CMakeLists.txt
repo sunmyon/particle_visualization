@@ -714,9 +714,18 @@ if(PARTICLE_VIS_ENABLE_VULKAN_RENDER_BACKEND)
   endif()
 endif()
 
+if(APPLE AND PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
+  enable_language(OBJCXX)
+  set(PARTICLE_VIS_METAL_ARC_SOURCES
+    ${SRC_DIR}/platform/metal_context.mm
+    ${SRC_DIR}/render/metal/metal_render_backend.mm
+    ${SRC_DIR}/projection/metal_projection_backend.mm)
+  set_source_files_properties(${PARTICLE_VIS_METAL_ARC_SOURCES}
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+endif()
+
 if(PARTICLE_VIS_ENABLE_METAL_RENDER_BACKEND)
   if(APPLE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
-    enable_language(OBJCXX)
     target_sources(${PROJECT_NAME} PRIVATE
       ${SRC_DIR}/platform/metal_context.mm
       ${SRC_DIR}/render/metal/metal_render_backend.mm
