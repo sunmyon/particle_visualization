@@ -512,7 +512,8 @@ void SubmitPythonBridgeRequest(SettingsPythonBridgeEdit& edit,
 
 void SubmitProjectionMovieRequest(SettingsProjectionMovieEdit& edit,
                                   bool& dirty,
-                                  ProjectionMovieRequestState& request)
+                                  ProjectionMovieRequestState& request,
+                                  const ProjectionMapParams* projectionMapParams)
 {
   if (!dirty && !edit.generateClicked && !edit.cancelClicked) return;
 
@@ -546,6 +547,11 @@ void SubmitProjectionMovieRequest(SettingsProjectionMovieEdit& edit,
     request.restoreCameraOnFinish = edit.restoreCameraOnFinish;
   }
 
+  if (edit.generateClicked && projectionMapParams) {
+    request.projectionParams = *projectionMapParams;
+    request.hasProjectionParams = true;
+  }
+
   request.runRequested = edit.generateClicked;
   request.cancelRequested = edit.cancelClicked;
 
@@ -556,7 +562,8 @@ void SubmitProjectionMovieRequest(SettingsProjectionMovieEdit& edit,
 }
 
 void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
-                                    AnalysisRequestState& requests)
+                                    AnalysisRequestState& requests,
+                                    const ProjectionMapParams* projectionMapParams)
 {
   SubmitStellarDensityRequest(edit.stellarDensity,
                               edit.stellarDensityDirty,
@@ -617,5 +624,6 @@ void SubmitSettingsAnalysisRequests(SettingsAnalysisEditState& edit,
 
   SubmitProjectionMovieRequest(edit.projectionMovie,
                                edit.projectionMovieDirty,
-                               requests.projectionMovie);
+                               requests.projectionMovie,
+                               projectionMapParams);
 }

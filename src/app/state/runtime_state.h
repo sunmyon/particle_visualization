@@ -305,6 +305,8 @@ struct ProjectionMovieRequestState {
   char outputFileFormat[255] = "image_%04d.png";
   char outputFolderPath[255] = "./output";
   char outputMovieName[255] = "output.mp4";
+  bool hasProjectionParams = false;
+  ProjectionMapParams projectionParams;
 
   bool faceOn = false; // legacy toggle (maps to face-on angular-momentum view)
   bool alignToAngularMomentum = false;

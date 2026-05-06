@@ -44,20 +44,10 @@ namespace {
     return value ? "yes" : "no";
   }
 
-  float fast_cbrt_positive_float(float x)
+  float support_radius_from_volume(double volume)
   {
-    if (!(x > 0.0f)) return 0.0f;
-    if (!std::isfinite(x)) return x;
-
-    uint32_t bits = 0;
-    std::memcpy(&bits, &x, sizeof(bits));
-    bits = bits / 3u + 709921077u;
-
-    float y = 0.0f;
-    std::memcpy(&y, &bits, sizeof(y));
-    y = (2.0f * y + x / (y * y)) * (1.0f / 3.0f);
-    y = (2.0f * y + x / (y * y)) * (1.0f / 3.0f);
-    return y;
+    if (!(volume > 0.0) || !std::isfinite(volume)) return 0.0f;
+    return static_cast<float>(std::cbrt(volume));
   }
 
   size_t inferCountFromDataset(H5::H5File& f, int ptype, const std::string& dsName) {
@@ -918,7 +908,7 @@ void HDF5Reader::dispatch_opened_field_chunk_(SimulationBlock& out,
         case FieldKey::Volume:
           for (size_t j = 0; j < ctx.nread; ++j) {
             out.particles[ctx.outBase + j].supportRadius =
-              fast_cbrt_positive_float(src[j]);
+              support_radius_from_volume(src[j]);
           }
           return;
         default:
@@ -974,7 +964,7 @@ void HDF5Reader::dispatch_opened_field_chunk_(SimulationBlock& out,
         case FieldKey::Volume:
           for (size_t j = 0; j < ctx.nread; ++j) {
             out.particles[ctx.outBase + j].supportRadius =
-              fast_cbrt_positive_float(static_cast<float>(src[j]));
+              support_radius_from_volume(src[j]);
           }
           return;
         default:
@@ -1269,20 +1259,36 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
       continue;
     }
 
-    const std::string dsName = fl.spec.sourceName;
-    bool found = false;
+    const FieldKey requestedKey = fl.ftype;
+    const std::string requestedName = fl.spec.sourceName;
 
-    for (int ptype = 0; ptype < 6; ++ptype) {
-      if (flag_skip_DM_ && ptype == 1) continue;
+    auto bindDataset = [&](FieldKey key, const std::string& dsName) {
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        if (flag_skip_DM_ && ptype == 1) continue;
 
-      try {
-        H5SilenceErrors quiet(ptype >= 1);
-        H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
-        update_layout_from_hdf5(fl, ds);
-        found = true;
-        break;
-      } catch (...) {
+        try {
+          H5SilenceErrors quiet(ptype >= 1);
+          H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
+          FieldLayout candidate = fl;
+          candidate.ftype = key;
+          candidate.spec.key = key;
+          candidate.spec.sourceName = dsName;
+          update_layout_from_hdf5(candidate, ds);
+          fl = candidate;
+          return true;
+        } catch (...) {
+        }
       }
+
+      return false;
+    };
+
+    bool found = bindDataset(requestedKey, requestedName);
+    if (!found &&
+        requestedKey == FieldKey::Hsml &&
+        requestedName == GetDefaultHDF5DatasetName(FieldKey::Hsml)) {
+      found = bindDataset(FieldKey::Volume,
+                          GetDefaultHDF5DatasetName(FieldKey::Volume));
     }
 
     fl.present = found;

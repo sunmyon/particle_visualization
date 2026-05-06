@@ -263,7 +263,9 @@ static bool PrepareProjectionMovieExecution(ProjectionMovieExecutionContext& ctx
     ctx.runtime.params = ctx.request;
     ctx.runtime.params.runRequested = false;
     ctx.runtime.params.cancelRequested = false;
-    ctx.runtime.projectionParams = ctx.baseParams;
+    ctx.runtime.projectionParams = ctx.request.hasProjectionParams
+      ? ctx.request.projectionParams
+      : ctx.baseParams;
     std::snprintf(ctx.runtime.projectionParams.folderPath,
                   sizeof(ctx.runtime.projectionParams.folderPath),
                   "%s",

@@ -972,8 +972,15 @@ void RunFrame(AppState& app,
   ExecutePostSnapshotLoadPhase(app.data,
                                app.runtime,
                                app.view.camera);
+  ProjectionMapParams projectionMovieParams =
+    app.runtime.analysisTools.projectionMap.params;
+  if (app.runtime.analysisRequests.projectionMapRequest.paramsChanged) {
+    projectionMovieParams =
+      app.runtime.analysisRequests.projectionMapRequest.params;
+  }
   SubmitSettingsAnalysisRequests(app.ui.settings.analysisEdit,
-                                 app.runtime.analysisRequests);
+                                 app.runtime.analysisRequests,
+                                 &projectionMovieParams);
   UpdateVolumeRenderMovieAfterSnapshotLoad(app.runtime);
 #ifdef VOLUME_RENDERING
   InvalidateVolumeTreeAfterSnapshotLoad(app.runtime,
