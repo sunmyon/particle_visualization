@@ -116,9 +116,8 @@ void BuildCubeRenderData(const CubeManager& manager,
 
   for (const auto& c : cubes) {
     InstancedSolidItem item;
-    item.model = glm::translate(glm::mat4(1.0f), c.center);
-    item.model = glm::scale(item.model, glm::vec3(c.halfSize));
-    item.color = glm::vec3(1.0f);
+    item.model = c.modelMatrix();
+    item.color = c.color;
     item.opacity = c.opacity;
 
     out.push_back(item);
