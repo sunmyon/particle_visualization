@@ -1175,16 +1175,22 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
                          "%.12g");
     state.radius = std::max(0.0, state.radius);
   } else {
-    previewChanged |=
-      ImGui::InputScalarN("half size (source code units)##snapshot_extract",
-                          ImGuiDataType_Double,
-                          state.halfSize,
-                          3,
-                          nullptr,
-                          nullptr,
-                          "%.12g");
-    for (double& v : state.halfSize) {
-      v = std::max(0.0, v);
+    double boxSize[3] = {
+      2.0 * std::max(0.0, state.halfSize[0]),
+      2.0 * std::max(0.0, state.halfSize[1]),
+      2.0 * std::max(0.0, state.halfSize[2])
+    };
+    if (ImGui::InputScalarN("box size (source code units)##snapshot_extract",
+                            ImGuiDataType_Double,
+                            boxSize,
+                            3,
+                            nullptr,
+                            nullptr,
+                            "%.12g")) {
+      for (int axis = 0; axis < 3; ++axis) {
+        state.halfSize[axis] = 0.5 * std::max(0.0, boxSize[axis]);
+      }
+      previewChanged = true;
     }
   }
   if (previewChanged) {
