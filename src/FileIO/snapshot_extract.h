@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,11 @@ struct SnapshotBackgroundGridConfig {
   double density = 1.0e-30;
 };
 
+struct SnapshotParticleIdTransform {
+  bool offsetEnabled = false;
+  std::uint64_t offset = 0;
+};
+
 enum class SnapshotOutputMissingPolicy {
   Omit = 0,
   FillDefault = 1,
@@ -80,6 +86,7 @@ struct SnapshotExtractJob {
   SnapshotExtractUnitMode unitMode = SnapshotExtractUnitMode::PreserveRaw;
   SnapshotExtractUnitConversion unitConversion;
   SnapshotBackgroundGridConfig backgroundGrid;
+  SnapshotParticleIdTransform particleIdTransform;
   std::vector<FieldSpec> fields;
   SnapshotOutputFormatConfig outputFormat;
   bool copyHeader = true;

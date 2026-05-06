@@ -573,6 +573,8 @@ struct SnapshotExtractUiState {
   bool addBackgroundGrid = false;
   int backgroundCellsPerAxis = 16;
   double backgroundDensity = 1.0e-30;
+  bool offsetParticleIds = false;
+  std::uint64_t particleIdOffset = 1;
   bool showUnitWindow = false;
   int comovingMode = static_cast<int>(SnapshotExtractComovingMode::Preserve);
   double targetUnitLengthCm = 3.0856775814913673e18;

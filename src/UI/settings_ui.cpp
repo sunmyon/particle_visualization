@@ -1208,6 +1208,26 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
   ImGui::SameLine();
   ImGui::Checkbox("copy Parameters##snapshot_extract", &state.copyParameters);
 
+  if (ImGui::TreeNodeEx("Particle IDs##snapshot_extract",
+                        ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Checkbox("offset ParticleIDs##snapshot_extract",
+                    &state.offsetParticleIds);
+    ImGui::BeginDisabled(!state.offsetParticleIds);
+    std::uint64_t idOffset = state.particleIdOffset;
+    if (ImGui::InputScalar("ID offset##snapshot_extract",
+                           ImGuiDataType_U64,
+                           &idOffset,
+                           nullptr,
+                           nullptr,
+                           "%llu")) {
+      state.particleIdOffset = idOffset;
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled(
+      "Output ParticleIDs are written as input ID + offset. Use +1 for Gadget IDs that may contain 0.");
+    ImGui::TreePop();
+  }
+
   if (ImGui::TreeNodeEx("Background grid##snapshot_extract",
                         ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::Checkbox("add background grid##snapshot_extract", &state.addBackgroundGrid);
@@ -1385,6 +1405,8 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
     job.backgroundGrid.enabled = state.addBackgroundGrid;
     job.backgroundGrid.cellsPerAxis = state.backgroundCellsPerAxis;
     job.backgroundGrid.density = state.backgroundDensity;
+    job.particleIdTransform.offsetEnabled = state.offsetParticleIds;
+    job.particleIdTransform.offset = state.particleIdOffset;
     job.fields = ExtractFieldsForCurrentFormat(fileNav, format);
     job.outputFormat = format.outputFormat;
     if (job.outputFormat.fields.empty()) {

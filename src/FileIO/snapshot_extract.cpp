@@ -593,6 +593,29 @@ DatasetShape ShapeForFieldSpec(const FieldSpec& field,
   return shape;
 }
 
+std::uint64_t ApplyParticleIdTransform(std::uint64_t id,
+                                       const SnapshotParticleIdTransform& transform)
+{
+  if (!transform.offsetEnabled || transform.offset == 0) {
+    return id;
+  }
+  if (id > std::numeric_limits<std::uint64_t>::max() - transform.offset) {
+    throw std::overflow_error("ParticleID offset overflows uint64");
+  }
+  return id + transform.offset;
+}
+
+std::uint64_t FirstBackgroundParticleId(std::uint64_t maxSelectedId,
+                                        const SnapshotParticleIdTransform& transform)
+{
+  const std::uint64_t transformedMax =
+    ApplyParticleIdTransform(maxSelectedId, transform);
+  if (transformedMax == std::numeric_limits<std::uint64_t>::max()) {
+    throw std::overflow_error("background ParticleID start overflows uint64");
+  }
+  return transformedMax + 1u;
+}
+
 void ReadRawRows(H5::DataSet& ds,
                  const H5::DataType& memType,
                  const DatasetShape& shape,
@@ -748,7 +771,8 @@ void CopyDatasetWithKeepList(H5::H5File& input,
                              const std::vector<std::uint64_t>& keep,
                              std::size_t outputRowCount,
                              double valueScale,
-                             const std::array<double, 3>& coordinateOrigin)
+                             const std::array<double, 3>& coordinateOrigin,
+                             const SnapshotParticleIdTransform& idTransform)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
   DatasetShape shape = GetDatasetShape(src);
@@ -758,14 +782,22 @@ void CopyDatasetWithKeepList(H5::H5File& input,
 
   H5::DataType dataType = src.getDataType();
   const bool transformCoordinates = key == FieldKey::Position;
+  const bool transformParticleIds = key == FieldKey::ID &&
+                                    idTransform.offsetEnabled;
   DatasetShape outputShape = shape;
   if (transformCoordinates) {
     outputShape.rowBytes =
       sizeof(double) * static_cast<std::size_t>(outputShape.components);
+  } else if (transformParticleIds) {
+    outputShape.rowBytes =
+      sizeof(std::uint64_t) * static_cast<std::size_t>(outputShape.components);
   }
-  H5::DataType outputType = transformCoordinates
-    ? H5::DataType(H5::PredType::NATIVE_DOUBLE)
-    : dataType;
+  H5::DataType outputType = dataType;
+  if (transformCoordinates) {
+    outputType = H5::DataType(H5::PredType::NATIVE_DOUBLE);
+  } else if (transformParticleIds) {
+    outputType = H5::DataType(H5::PredType::NATIVE_UINT64);
+  }
   H5::DataSet dst = CreateOutputDataset(outGroup,
                                         outputName,
                                         outputType,
@@ -781,6 +813,8 @@ void CopyDatasetWithKeepList(H5::H5File& input,
   std::vector<std::uint8_t> packed;
   std::vector<double> doubleChunk;
   std::vector<double> doublePacked;
+  std::vector<std::uint64_t> idChunk;
+  std::vector<std::uint64_t> idPacked;
   std::size_t keepCursor = 0;
   std::size_t outCursor = 0;
   while (keepCursor < keep.size()) {
@@ -794,7 +828,21 @@ void CopyDatasetWithKeepList(H5::H5File& input,
       ++keepEnd;
     }
 
-    if (transformCoordinates || scaleValues) {
+    if (transformParticleIds) {
+      ReadUInt64Rows(src, shape, chunkBegin, chunkEnd - chunkBegin, idChunk);
+      const std::size_t components = static_cast<std::size_t>(shape.components);
+      idPacked.resize((keepEnd - keepCursor) * components);
+      for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+        const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+        const std::size_t outLocal = k - keepCursor;
+        for (std::size_t c = 0; c < components; ++c) {
+          idPacked[outLocal * components + c] =
+            ApplyParticleIdTransform(idChunk[local * components + c],
+                                     idTransform);
+        }
+      }
+      WriteUInt64Rows(dst, outputShape, outCursor, keepEnd - keepCursor, idPacked);
+    } else if (transformCoordinates || scaleValues) {
       ReadDoubleRows(src, shape, chunkBegin, chunkEnd - chunkBegin, doubleChunk);
       const std::size_t components = static_cast<std::size_t>(shape.components);
       doublePacked.resize((keepEnd - keepCursor) * components);
@@ -835,7 +883,8 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
                                           const std::vector<std::uint64_t>& keep,
                                           std::size_t outputRowCount,
                                           double valueScale,
-                                          const std::array<double, 3>& coordinateOrigin)
+                                          const std::array<double, 3>& coordinateOrigin,
+                                          const SnapshotParticleIdTransform& idTransform)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
   DatasetShape sourceShape = GetDatasetShape(src);
@@ -885,8 +934,12 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
         for (std::size_t c = 0; c < outputComps; ++c) {
           idPacked[outLocal * outputComps + c] =
             c < sourceComps
-              ? idChunk[local * sourceComps + c]
-              : static_cast<std::uint64_t>(defaults[std::min(c, defaults.size() - 1)]);
+              ? ApplyParticleIdTransform(idChunk[local * sourceComps + c],
+                                         idTransform)
+              : ApplyParticleIdTransform(
+                  static_cast<std::uint64_t>(
+                    defaults[std::min(c, defaults.size() - 1)]),
+                  idTransform);
         }
       }
       WriteUInt64Rows(dst, outputShape, outCursor, keepEnd - keepCursor, idPacked);
@@ -2412,7 +2465,8 @@ void WriteLoadedIdDataset(H5::Group& outGroup,
                           const FieldSpec& field,
                           const SimulationBlock& block,
                           const std::vector<std::size_t>& keep,
-                          const BackgroundGridData& backgroundGrid)
+                          const BackgroundGridData& backgroundGrid,
+                          const SnapshotParticleIdTransform& idTransform)
 {
   const std::size_t outputRows = keep.size() + backgroundGrid.count;
   DatasetShape shape = ShapeForFieldSpec(field, outputRows);
@@ -2423,7 +2477,8 @@ void WriteLoadedIdDataset(H5::Group& outGroup,
                                         outputRows);
   std::vector<std::uint64_t> ids(keep.size(), 0);
   for (std::size_t i = 0; i < keep.size(); ++i) {
-    ids[i] = block.particleId(keep[i]);
+    ids[i] = ApplyParticleIdTransform(block.particleId(keep[i]),
+                                      idTransform);
   }
   if (!ids.empty()) {
     WriteUInt64Rows(dst, shape, 0, keep.size(), ids);
@@ -2565,7 +2620,10 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "assigning background grid IDs";
     const std::uint64_t backgroundFirstId =
-      MaxSelectedParticleId(input, sourceHeader, keepByType) + 1u;
+      FirstBackgroundParticleId(MaxSelectedParticleId(input,
+                                                      sourceHeader,
+                                                      keepByType),
+                                job.particleIdTransform);
     extractContext = "building background grid";
     BackgroundGridData backgroundGrid =
       BuildBackgroundGrid(job.region,
@@ -2722,7 +2780,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                                keep,
                                                outputRows,
                                                valueScale,
-                                               coordinateOrigin);
+                                               coordinateOrigin,
+                                               job.particleIdTransform);
         } else {
           CopyDatasetWithKeepList(input,
                                   outGroup,
@@ -2733,7 +2792,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                   keep,
                                   outputRows,
                                   valueScale,
-                                  coordinateOrigin);
+                                  coordinateOrigin,
+                                  job.particleIdTransform);
         }
         if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
           extractContext = "appending background rows to " +
@@ -2786,6 +2846,10 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
           << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
           << "\nSuggested value for ReferenceGasPartMass="
           << report.suggestedReferenceGasPartMass;
+    }
+    if (job.particleIdTransform.offsetEnabled &&
+        job.particleIdTransform.offset > 0) {
+      oss << "\nParticleIDs offset=+" << job.particleIdTransform.offset;
     }
     if (conversion.enabled) {
       oss << " (unit conversion enabled)";
@@ -2868,7 +2932,9 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
       BuildBackgroundGrid(job.region,
                           background,
                           outputLengthScale,
-                          MaxLoadedSelectedParticleId(block, keepByType) + 1u);
+                          FirstBackgroundParticleId(
+                            MaxLoadedSelectedParticleId(block, keepByType),
+                            job.particleIdTransform));
     AssignNearestGasRowsFromLoadedBlock(block,
                                         keepByType[0],
                                         outputLengthScale,
@@ -2976,7 +3042,13 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
           continue;
         }
         if (field.key == FieldKey::ID) {
-          WriteLoadedIdDataset(outGroup, outputName, field, block, keep, groupBackground);
+          WriteLoadedIdDataset(outGroup,
+                               outputName,
+                               field,
+                               block,
+                               keep,
+                               groupBackground,
+                               job.particleIdTransform);
         } else {
           const double valueScale =
             DatasetValueScale(field.key, sourceParameters, conversion);
@@ -3020,6 +3092,10 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
           << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
           << "\nSuggested value for ReferenceGasPartMass="
           << report.suggestedReferenceGasPartMass;
+    }
+    if (job.particleIdTransform.offsetEnabled &&
+        job.particleIdTransform.offset > 0) {
+      oss << "\nParticleIDs offset=+" << job.particleIdTransform.offset;
     }
     report.message = oss.str();
     report.ok = true;
