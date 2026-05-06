@@ -10,7 +10,7 @@ class ImGuiBackend {
 public:
   virtual ~ImGuiBackend() = default;
   virtual bool init() = 0;
-  virtual void newFrame(int width, int height) = 0;
+  virtual bool newFrame(int width, int height) = 0;
   virtual void render() = 0;
   virtual void shutdown() = 0;
 };
@@ -35,6 +35,6 @@ std::unique_ptr<ImGuiBackend> CreateGlfwMetalImGuiBackend(
   MetalContext& context);
 
 void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend);
-void BeginImGuiFrame(int width, int height);
+bool BeginImGuiFrame(int width, int height);
 void EndImGuiFrame();
 void ShutdownImGuiContext();

@@ -45,11 +45,12 @@ public:
     return true;
   }
 
-  void newFrame(int width, int height) override
+  bool newFrame(int width, int height) override
   {
     ImGui_ImplOpenGL3_NewFrame();
     setDisplaySize(width, height);
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -128,11 +129,12 @@ public:
     return true;
   }
 
-  void newFrame(int width, int height) override
+  bool newFrame(int width, int height) override
   {
     ImGui_ImplVulkan_NewFrame();
     setDisplaySize(width, height);
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -201,11 +203,12 @@ public:
     return true;
   }
 
-  void newFrame(int /*width*/, int /*height*/) override
+  bool newFrame(int /*width*/, int /*height*/) override
   {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -276,11 +279,12 @@ public:
     return true;
   }
 
-  void newFrame(int /*width*/, int /*height*/) override
+  bool newFrame(int /*width*/, int /*height*/) override
   {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -347,16 +351,17 @@ public:
     return true;
   }
 
-  void newFrame(int width, int height) override
+  bool newFrame(int width, int height) override
   {
     if (!context_->beginFrame(width, height)) {
       frameReady_ = false;
-      return;
+      return false;
     }
     frameReady_ = true;
     context_->newImGuiFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -426,13 +431,13 @@ public:
     return true;
   }
 
-  void newFrame(int width, int height) override
+  bool newFrame(int width, int height) override
   {
     width_ = width;
     height_ = height;
     if (!context_->beginFrame(width, height)) {
       frameReady_ = false;
-      return;
+      return false;
     }
     frameReady_ = true;
     context_->newImGuiFrame();
@@ -440,6 +445,7 @@ public:
     io.DisplaySize = ImVec2(static_cast<float>(width),
                             static_cast<float>(height));
     ImGui::NewFrame();
+    return true;
   }
 
   void render() override
@@ -577,11 +583,12 @@ void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend)
   g_backend = std::move(backend);
 }
 
-void BeginImGuiFrame(int width, int height)
+bool BeginImGuiFrame(int width, int height)
 {
   if (g_backend) {
-    g_backend->newFrame(width, height);
+    return g_backend->newFrame(width, height);
   }
+  return false;
 }
 
 void EndImGuiFrame()

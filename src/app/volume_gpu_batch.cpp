@@ -521,8 +521,10 @@ int RunVolumeGpuBatchFromJson(const char* path)
         std::cerr << "volume gpu batch frame " << (i + 1)
                   << "/" << frames << "\n";
         platform.window().pollEvents();
-        BeginImGuiFrame(platform.window().framebufferWidth(),
-                        platform.window().framebufferHeight());
+        if (!BeginImGuiFrame(platform.window().framebufferWidth(),
+                             platform.window().framebufferHeight())) {
+          continue;
+        }
 
         UpdateRenderFrameInput(app.renderFrameInput,
                                batchViewport,

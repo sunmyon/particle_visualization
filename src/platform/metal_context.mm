@@ -33,6 +33,7 @@ struct MetalContext::Impl {
   int depthHeight = 0;
   int headlessWidth = 0;
   int headlessHeight = 0;
+  int drawableFailureCount = 0;
   bool headless = false;
   bool initializedGlfwForHeadless = false;
 };
@@ -105,6 +106,9 @@ bool MetalContext::initFromWindow(NativeWindowHandle window)
   impl_->layer.device = impl_->device;
   impl_->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
   impl_->layer.framebufferOnly = NO;
+  if (@available(macOS 10.13.2, *)) {
+    impl_->layer.maximumDrawableCount = 2;
+  }
 
   NSView* contentView = nsWindow.contentView;
   contentView.wantsLayer = YES;
@@ -374,8 +378,14 @@ bool MetalContext::beginFrame(int width, int height)
       CGSizeMake(static_cast<CGFloat>(width), static_cast<CGFloat>(height));
     impl_->drawable = [impl_->layer nextDrawable];
     if (!impl_->drawable) {
+      if ((impl_->drawableFailureCount++ % 120) == 0) {
+        std::cerr << "Metal: CAMetalLayer nextDrawable returned nil"
+                  << " size=" << width << "x" << height
+                  << " (skipping frame)" << std::endl;
+      }
       return false;
     }
+    impl_->drawableFailureCount = 0;
   }
 
   impl_->commandBuffer = [impl_->commandQueue commandBuffer];

@@ -729,14 +729,14 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
   }
 }
 
-static void BeginFrame(AppRuntimeState& runtime, WindowContext& window)
+static bool BeginFrame(AppRuntimeState& runtime, WindowContext& window)
 {
   float currentFrame = static_cast<float>(window.timeSeconds());
   float deltaTime = runtime.interaction.beginFrame(currentFrame);
   (void)deltaTime;
 
   window.pollEvents();
-  BeginImGuiFrame(window.framebufferWidth(), window.framebufferHeight());
+  return BeginImGuiFrame(window.framebufferWidth(), window.framebufferHeight());
 }
 
 static void UpdateRenderInteractionActivity(AppRuntimeState& runtime,
@@ -897,7 +897,9 @@ void RunFrame(AppState& app,
               WindowContext& window,
               IFramePresenter& presenter)
 {
-  BeginFrame(app.runtime, window);
+  if (!BeginFrame(app.runtime, window)) {
+    return;
+  }
   StartVolumeRenderMovieIfRequested(app.runtime);
   UpdateVolumeRenderMovieBeforeCapture(app.runtime);
   const bool captureRenderSnapshot =
