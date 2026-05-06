@@ -135,6 +135,9 @@ struct SourceHeader {
   double omegaLambda = 0.0;
   double omegaBaryon = 0.0;
   double hubbleParam = 1.0;
+  double unitLength = 0.0;
+  double unitMass = 0.0;
+  double unitVelocity = 0.0;
   int flagSfr = 0;
   int flagCooling = 0;
   int flagStellarAge = 0;
@@ -145,6 +148,9 @@ struct SourceHeader {
   std::string gitCommit = "unknown";
   std::string gitDate = "unknown";
   bool hasRedshift = false;
+  bool hasUnitLength = false;
+  bool hasUnitMass = false;
+  bool hasUnitVelocity = false;
 };
 
 std::size_t InferCount(H5::H5File& file, int ptype)
@@ -178,6 +184,15 @@ SourceHeader ReadSourceHeader(H5::H5File& file)
     (void)ReadScalarAttribute(group, "OmegaLambda", H5::PredType::NATIVE_DOUBLE, header.omegaLambda);
     (void)ReadScalarAttribute(group, "OmegaBaryon", H5::PredType::NATIVE_DOUBLE, header.omegaBaryon);
     (void)ReadScalarAttribute(group, "HubbleParam", H5::PredType::NATIVE_DOUBLE, header.hubbleParam);
+    header.hasUnitLength =
+      ReadScalarAttribute(group, "UnitLength_in_cm", H5::PredType::NATIVE_DOUBLE, header.unitLength);
+    header.hasUnitMass =
+      ReadScalarAttribute(group, "UnitMass_in_g", H5::PredType::NATIVE_DOUBLE, header.unitMass);
+    header.hasUnitVelocity =
+      ReadScalarAttribute(group,
+                          "UnitVelocity_in_cm_per_s",
+                          H5::PredType::NATIVE_DOUBLE,
+                          header.unitVelocity);
     (void)ReadScalarAttribute(group, "Flag_Sfr", H5::PredType::NATIVE_INT, header.flagSfr);
     (void)ReadScalarAttribute(group, "Flag_Cooling", H5::PredType::NATIVE_INT, header.flagCooling);
     (void)ReadScalarAttribute(group, "Flag_StellarAge", H5::PredType::NATIVE_INT, header.flagStellarAge);
@@ -236,20 +251,41 @@ struct ParametersInfo {
   int flagDensityInCgs = 1;
   int flagBfieldInCgs = 1;
   bool hasGroup = false;
+  bool hasUnitLength = false;
+  bool hasUnitMass = false;
+  bool hasUnitVelocity = false;
 };
 
-ParametersInfo ReadParameters(H5::H5File& file)
+ParametersInfo ReadParameters(H5::H5File& file, const SourceHeader& header)
 {
   ParametersInfo params;
+  if (header.hasUnitLength) {
+    params.unitLength = header.unitLength;
+    params.hasUnitLength = true;
+  }
+  if (header.hasUnitMass) {
+    params.unitMass = header.unitMass;
+    params.hasUnitMass = true;
+  }
+  if (header.hasUnitVelocity) {
+    params.unitVelocity = header.unitVelocity;
+    params.hasUnitVelocity = true;
+  }
   try {
     H5::Group group = file.openGroup("/Parameters");
     params.hasGroup = true;
-    (void)ReadScalarAttribute(group, "UnitLength_in_cm", H5::PredType::NATIVE_DOUBLE, params.unitLength);
-    (void)ReadScalarAttribute(group, "UnitMass_in_g", H5::PredType::NATIVE_DOUBLE, params.unitMass);
-    (void)ReadScalarAttribute(group,
-                              "UnitVelocity_in_cm_per_s",
-                              H5::PredType::NATIVE_DOUBLE,
-                              params.unitVelocity);
+    params.hasUnitLength =
+      ReadScalarAttribute(group, "UnitLength_in_cm", H5::PredType::NATIVE_DOUBLE, params.unitLength) ||
+      params.hasUnitLength;
+    params.hasUnitMass =
+      ReadScalarAttribute(group, "UnitMass_in_g", H5::PredType::NATIVE_DOUBLE, params.unitMass) ||
+      params.hasUnitMass;
+    params.hasUnitVelocity =
+      ReadScalarAttribute(group,
+                          "UnitVelocity_in_cm_per_s",
+                          H5::PredType::NATIVE_DOUBLE,
+                          params.unitVelocity) ||
+      params.hasUnitVelocity;
     (void)ReadScalarAttribute(group, "HubbleParam", H5::PredType::NATIVE_DOUBLE, params.hubbleParam);
     (void)ReadScalarAttribute(group, "ComovingIntegrationOn", H5::PredType::NATIVE_INT, params.comoving);
     (void)ReadScalarAttribute(group, "FlagDensityInCgs", H5::PredType::NATIVE_INT, params.flagDensityInCgs);
@@ -303,11 +339,17 @@ ParametersInfo ResolveSourceParameters(ParametersInfo params,
                                        const SnapshotExtractUnitConversion& conversion)
 {
   if (!conversion.enabled) return params;
-  if (!params.hasGroup) {
+  if (!params.hasUnitLength) {
     params.unitLength = SafePositive(conversion.sourceUnitLengthCm, params.unitLength);
+  }
+  if (!params.hasUnitMass) {
     params.unitMass = SafePositive(conversion.sourceUnitMassG, params.unitMass);
+  }
+  if (!params.hasUnitVelocity) {
     params.unitVelocity =
       SafePositive(conversion.sourceUnitVelocityCmPerS, params.unitVelocity);
+  }
+  if (!params.hasGroup) {
     params.hubbleParam = SafePositive(conversion.sourceHubbleParam, params.hubbleParam);
     params.flagDensityInCgs = 0;
     params.flagBfieldInCgs = 0;
@@ -1947,6 +1989,9 @@ ParametersInfo MakeParametersFromLoadedMetadata(
   params.flagDensityInCgs = 1;
   params.flagBfieldInCgs = 1;
   params.hasGroup = true;
+  params.hasUnitLength = true;
+  params.hasUnitMass = true;
+  params.hasUnitVelocity = true;
   return params;
 }
 
@@ -2568,7 +2613,7 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
     extractContext = "reading source header";
     SourceHeader sourceHeader = ReadSourceHeader(input);
     extractContext = "reading source parameters";
-    ParametersInfo parameters = ReadParameters(input);
+    ParametersInfo parameters = ReadParameters(input, sourceHeader);
     SnapshotExtractUnitConversion conversion = job.unitConversion;
     if (conversion.enabled) {
       conversion.sourceScaleFactor =
@@ -2610,12 +2655,14 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
       extractContext = "building keep list for PartType" + std::to_string(ptype);
       keepByType[ptype] =
         BuildKeepList(input, ptype, sourceHeader.counts[ptype], job.region);
-      report.extractedCounts[ptype] = keepByType[ptype].size();
+      report.selectedCounts[ptype] = keepByType[ptype].size();
+      report.extractedCounts[ptype] = report.selectedCounts[ptype];
     }
-    report.extractedParticles =
-      std::accumulate(report.extractedCounts.begin(),
-                      report.extractedCounts.end(),
+    report.selectedParticles =
+      std::accumulate(report.selectedCounts.begin(),
+                      report.selectedCounts.end(),
                       std::size_t{0});
+    report.extractedParticles = report.selectedParticles;
 
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "assigning background grid IDs";
@@ -2836,14 +2883,15 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
     }
 
     std::ostringstream oss;
-    oss << "extracted " << report.extractedParticles << " / "
-        << report.sourceParticles << " particles to " << job.outputPath;
+    oss << "selected " << report.selectedParticles << " / "
+        << report.sourceParticles << " source particles";
     if (report.backgroundParticles > 0) {
-      oss << " (background grid=" << report.backgroundParticles << ")";
+      oss << "; added particles=" << report.backgroundParticles;
     }
+    oss << "; wrote " << report.extractedParticles
+        << " particles to " << job.outputPath;
     if (report.suggestedMeanVolume > 0.0) {
-      oss << "\nadded particles=" << report.backgroundParticles
-          << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
+      oss << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
           << "\nSuggested value for ReferenceGasPartMass="
           << report.suggestedReferenceGasPartMass;
     }
@@ -2919,12 +2967,14 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
     extractContext = "selecting loaded particles";
     const auto keepByType = BuildLoadedKeepLists(block, job.region);
     for (int ptype = 0; ptype < 6; ++ptype) {
-      report.extractedCounts[ptype] = keepByType[ptype].size();
+      report.selectedCounts[ptype] = keepByType[ptype].size();
+      report.extractedCounts[ptype] = report.selectedCounts[ptype];
     }
-    report.extractedParticles =
-      std::accumulate(report.extractedCounts.begin(),
-                      report.extractedCounts.end(),
+    report.selectedParticles =
+      std::accumulate(report.selectedCounts.begin(),
+                      report.selectedCounts.end(),
                       std::size_t{0});
+    report.extractedParticles = report.selectedParticles;
 
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "building loaded background grid";
@@ -3082,14 +3132,15 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
     }
 
     std::ostringstream oss;
-    oss << "exported loaded snapshot " << report.extractedParticles << " / "
-        << report.sourceParticles << " particles to " << job.outputPath;
+    oss << "selected " << report.selectedParticles << " / "
+        << report.sourceParticles << " source particles";
     if (report.backgroundParticles > 0) {
-      oss << " (background grid=" << report.backgroundParticles << ")";
+      oss << "; added particles=" << report.backgroundParticles;
     }
+    oss << "; wrote " << report.extractedParticles
+        << " particles to " << job.outputPath;
     if (report.suggestedMeanVolume > 0.0) {
-      oss << "\nadded particles=" << report.backgroundParticles
-          << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
+      oss << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
           << "\nSuggested value for ReferenceGasPartMass="
           << report.suggestedReferenceGasPartMass;
     }

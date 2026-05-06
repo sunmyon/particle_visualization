@@ -441,10 +441,16 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
     }
     req.snapshotExtractMessage = report.message;
     if (report.ok) {
-      char counts[256];
+      char counts[512];
       std::snprintf(counts,
                     sizeof(counts),
-                    " types=[%zu,%zu,%zu,%zu,%zu,%zu], datasets=%zu",
+                    " selectedTypes=[%zu,%zu,%zu,%zu,%zu,%zu], outputTypes=[%zu,%zu,%zu,%zu,%zu,%zu], datasets=%zu",
+                    report.selectedCounts[0],
+                    report.selectedCounts[1],
+                    report.selectedCounts[2],
+                    report.selectedCounts[3],
+                    report.selectedCounts[4],
+                    report.selectedCounts[5],
                     report.extractedCounts[0],
                     report.extractedCounts[1],
                     report.extractedCounts[2],

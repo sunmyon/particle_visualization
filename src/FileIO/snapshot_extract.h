@@ -97,8 +97,10 @@ struct SnapshotExtractReport {
   bool ok = false;
   std::string message;
   std::array<std::size_t, 6> sourceCounts = {0, 0, 0, 0, 0, 0};
+  std::array<std::size_t, 6> selectedCounts = {0, 0, 0, 0, 0, 0};
   std::array<std::size_t, 6> extractedCounts = {0, 0, 0, 0, 0, 0};
   std::size_t sourceParticles = 0;
+  std::size_t selectedParticles = 0;
   std::size_t extractedParticles = 0;
   std::size_t backgroundParticles = 0;
   double suggestedMeanVolume = 0.0;
