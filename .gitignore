@@ -18,6 +18,7 @@ cmake-vtk-debug.log
 ffmpeg_frames/
 output/
 render_snapshots/
+*.hdf5
 
 /.vcpkg-cache/
 example/data/

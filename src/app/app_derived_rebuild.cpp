@@ -136,6 +136,32 @@ static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumRe
 }
 #endif
 
+static bool RebuildSnapshotExtractRegionDerivedState(SnapshotExtractPreviewState& result,
+                                                     CubeManager& cubes,
+                                                     EllipsoidManager& ellipsoids)
+{
+  if (!result.cpuUpdated) {
+    return false;
+  }
+
+  cubes.clearGroup("snapshot_extract_region");
+  ellipsoids.clearGroup("snapshot_extract_region");
+
+  if (result.valid) {
+    if (result.regionKind == SnapshotExtractRegionKind::Sphere) {
+      EllipsoidObject sphere = result.sphere;
+      sphere.tag = "snapshot_extract_region";
+      ellipsoids.add(sphere);
+    } else {
+      CubeObject box = result.box;
+      box.tag = "snapshot_extract_region";
+      cubes.add(box);
+    }
+  }
+
+  return true;
+}
+
 #ifdef USE_CONVEX_HULL
 static DerivedLayerUpdate RebuildConvexHullDerivedState(const ConvexHullRuntimeState& convexState,
                                                         bool requested,
@@ -252,8 +278,19 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
   }
 #endif
 
+  if (RebuildSnapshotExtractRegionDerivedState(
+        derived.analysis.snapshotExtractPreview,
+        derived.scene.cube,
+        derived.scene.ellipsoid)) {
+    rebuild.cube.changed = true;
+    rebuild.ellipsoid.changed = true;
+  }
+
   if (rebuild.cube.changed) {
     rebuild.cube.visible = derived.scene.cube.show();
+  }
+  if (rebuild.ellipsoid.changed) {
+    rebuild.ellipsoid.visible = derived.scene.ellipsoid.show();
   }
 
   rebuild.particleLabelsUpdated =
@@ -315,6 +352,10 @@ void AcknowledgeDerivedRebuild(SimulationDataset& particles,
   }
 #endif
 
+  if (rebuild.cube.changed || rebuild.ellipsoid.changed) {
+    derived.analysis.snapshotExtractPreview.cpuUpdated = false;
+  }
+
   if (rebuild.particleLabelsUpdated) {
     particles.flagParticleIndexDirty = false;
   }
@@ -335,12 +376,15 @@ void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
   }
 #endif
 
-#if defined(STREAM_LINE) || defined(POWER_SPECTRUM)
   if (rebuild.cube.changed) {
     render.cubes.show = rebuild.cube.visible;
     render.cubes.cpuUpdated = true;
   }
-#endif
+
+  if (rebuild.ellipsoid.changed) {
+    render.ellipsoids.show = rebuild.ellipsoid.visible;
+    render.ellipsoids.cpuUpdated = true;
+  }
 
 #ifdef STREAM_LINE
   if (rebuild.line.changed) {

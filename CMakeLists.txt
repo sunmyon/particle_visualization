@@ -26,6 +26,15 @@ if(NOT MSVC)
 endif()
 
 # ===== Options, corresponding to the old Makefile options =====
+# vcpkg manifest features provide the dependency sets for these options:
+#   hdf5          -> HAVE_HDF5 / CLUMP_DATA_READ
+#   lua           -> USE_LUA
+#   python-bridge -> PYTHON_BRIDGE
+#   geometry      -> GEOMETRICAL_ANALYSIS / STREAM_LINE
+#   power-spectrum-> POWER_SPECTRUM
+# Default CMake options intentionally keep the full-featured build behavior.
+# For a lightweight build, disable the corresponding CMake options and use
+# vcpkg with --x-no-default-features or explicit --x-feature selections.
 option(DEBUG_MODE          "Enable debug mode"                   ON)
 option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
@@ -57,6 +66,9 @@ option(AUTO_DISABLE_HDF5_ON_MISSING_CXX
   ON)
 option(AUTO_DISABLE_LUA_ON_MISSING_DEPS
   "Automatically disable USE_LUA when Lua development files are unavailable"
+  ON)
+option(AUTO_DISABLE_POWER_SPECTRUM_ON_MISSING_FFTW
+  "Automatically disable POWER_SPECTRUM when FFTW3 is unavailable"
   ON)
 
 set(USE_MMAP_DEFAULT ON)
@@ -253,7 +265,11 @@ endif()
 find_package(PkgConfig QUIET)
 
 if(POWER_SPECTRUM)
-  pkg_check_modules(FFTW3_PC QUIET IMPORTED_TARGET fftw3)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(FFTW3_PC QUIET IMPORTED_TARGET fftw3)
+  else()
+    set(FFTW3_PC_FOUND FALSE)
+  endif()
   if(FFTW3_PC_FOUND)
     set(FFTW3_INCLUDE_DIRS "${FFTW3_PC_INCLUDE_DIRS}")
     if(TARGET PkgConfig::FFTW3_PC)
@@ -271,6 +287,12 @@ if(POWER_SPECTRUM)
   endif()
 
   if(NOT FFTW3_INCLUDE_DIRS OR NOT FFTW3_LIBRARIES)
+    if(NOT AUTO_DISABLE_POWER_SPECTRUM_ON_MISSING_FFTW)
+      message(FATAL_ERROR
+        "POWER_SPECTRUM was enabled, but FFTW3 is not available. "
+        "Install/load FFTW3, enable the vcpkg power-spectrum feature, "
+        "or configure with -DPOWER_SPECTRUM=OFF.")
+    endif()
     message(WARNING
       "POWER_SPECTRUM was enabled, but FFTW3 is not available. "
       "Disabling POWER_SPECTRUM for this build.")
@@ -463,6 +485,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/data/halo_store.cpp
   ${SRC_DIR}/data/quantity_catalog_builder.cpp
   ${SRC_DIR}/FileIO/hdf5_reader.cpp
+  ${SRC_DIR}/FileIO/snapshot_extract.cpp
   ${SRC_DIR}/FileIO/snapshot_io_service.cpp
   ${SRC_DIR}/UI/file_format_dialog.cpp
   ${SRC_DIR}/FileIO/snapshot_loader.cpp

@@ -2,14 +2,54 @@
   "name": "particle-visualization",
   "version-string": "0.0.1",
   "dependencies": [
-    "eigen3",
     "glfw3",
-    { "name": "hdf5", "features": ["cpp"] },
     "glm",
-    "zeromq",
-    "cppzmq",
-    "nlohmann-json",
-    "lua",
     "nativefiledialog-extended"
-  ]
+  ],
+  "default-features": [
+    "hdf5",
+    "lua",
+    "python-bridge",
+    "geometry",
+    "power-spectrum"
+  ],
+  "features": {
+    "hdf5": {
+      "description": "Enable HDF5 snapshot, halo, clump, and extract IO.",
+      "dependencies": [
+        {
+          "name": "hdf5",
+          "features": [
+            "cpp"
+          ]
+        }
+      ]
+    },
+    "lua": {
+      "description": "Enable Lua expressions for projection map customization.",
+      "dependencies": [
+        "lua"
+      ]
+    },
+    "python-bridge": {
+      "description": "Enable Python/ZeroMQ bridge and remote frame/input tools.",
+      "dependencies": [
+        "zeromq",
+        "cppzmq",
+        "nlohmann-json"
+      ]
+    },
+    "geometry": {
+      "description": "Enable Eigen-backed geometrical analysis and streamline tools.",
+      "dependencies": [
+        "eigen3"
+      ]
+    },
+    "power-spectrum": {
+      "description": "Enable FFTW-backed Fourier power spectrum analysis.",
+      "dependencies": [
+        "fftw3"
+      ]
+    }
+  }
 }

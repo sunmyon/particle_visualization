@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -22,6 +23,122 @@
 #include <unordered_set>
 
 namespace {
+
+  void applyInputDensityInterpretation(const HeaderInfo& header,
+                                       SimulationBlock& outBlock)
+  {
+    if (header.flag_hdf5) {
+      return;
+    }
+
+    const double factor =
+      InputDensityToInternalNHFactor(header.input_density_unit,
+                                     header.UnitMass_in_g,
+                                     header.UnitLength_in_cm,
+                                     header.HubbleParam,
+                                     header.time,
+                                     header.flag_comoving);
+    if (!std::isfinite(factor) || factor <= 0.0 || factor == 1.0) {
+      return;
+    }
+
+    for (auto& p : outBlock.particles) {
+      p.density = static_cast<float>(static_cast<double>(p.density) * factor);
+    }
+  }
+
+  void applyInputTemperatureInterpretation(const HeaderInfo& header,
+                                           SimulationBlock& outBlock)
+  {
+    if (header.flag_hdf5) {
+      return;
+    }
+
+    const double factor =
+      InputInternalEnergyToTemperatureFactor(header.input_temperature_unit,
+                                             header.UnitVelocity_in_cm_per_s);
+    if (!std::isfinite(factor) || factor <= 0.0 || factor == 1.0) {
+      return;
+    }
+
+    for (auto& p : outBlock.particles) {
+      p.temperature =
+        static_cast<float>(static_cast<double>(p.temperature) * factor);
+    }
+  }
+
+  void applyInputMagneticFieldInterpretation(const HeaderInfo& header,
+                                             SimulationBlock& outBlock)
+  {
+    if (header.flag_hdf5) {
+      return;
+    }
+
+    const double factor =
+      InputMagneticFieldToGaussFactor(header.input_magnetic_field_unit,
+                                      header.UnitMass_in_g,
+                                      header.UnitLength_in_cm,
+                                      header.UnitVelocity_in_cm_per_s,
+                                      header.HubbleParam,
+                                      header.time,
+                                      header.flag_comoving);
+    if (!std::isfinite(factor) || factor <= 0.0 || factor == 1.0) {
+      return;
+    }
+
+    auto it = outBlock.soa.find(kBfieldKey);
+    if (it == outBlock.soa.end()) {
+      return;
+    }
+    SoAField& f = it->second;
+    const size_t nvalues = outBlock.particles.size() * static_cast<size_t>(f.comps);
+    if (f.type == DataType::Float) {
+      float* values = reinterpret_cast<float*>(f.bytes.data());
+      const float fac = static_cast<float>(factor);
+      for (size_t i = 0; i < nvalues; ++i) {
+        values[i] *= fac;
+      }
+    } else if (f.type == DataType::Double) {
+      double* values = reinterpret_cast<double*>(f.bytes.data());
+      for (size_t i = 0; i < nvalues; ++i) {
+        values[i] *= factor;
+      }
+    }
+  }
+
+  void finalizeQuantityStorageMetadata(const HeaderInfo& header,
+                                       SimulationBlock& outBlock)
+  {
+    outBlock.quantityStorage.position = StoredQuantityUnit::CodeUnit;
+    outBlock.quantityStorage.velocity = StoredQuantityUnit::CodeUnit;
+    outBlock.quantityStorage.mass = StoredQuantityUnit::CodeUnit;
+    outBlock.quantityStorage.density = StoredQuantityUnit::InternalStandard;
+    outBlock.quantityStorage.temperature = StoredQuantityUnit::InternalStandard;
+    outBlock.quantityStorage.magneticField = StoredQuantityUnit::InternalStandard;
+    outBlock.quantityStorage.inputDensityUnit = header.input_density_unit;
+    outBlock.quantityStorage.inputTemperatureUnit = header.input_temperature_unit;
+    outBlock.quantityStorage.inputMagneticFieldUnit =
+      header.input_magnetic_field_unit;
+    outBlock.quantityStorage.inputComoving = header.flag_comoving;
+    outBlock.quantityStorage.densityToInternalFactor =
+      InputDensityToInternalNHFactor(header.input_density_unit,
+                                     header.UnitMass_in_g,
+                                     header.UnitLength_in_cm,
+                                     header.HubbleParam,
+                                     header.time,
+                                     header.flag_comoving);
+    outBlock.quantityStorage.temperatureToInternalFactor =
+      InputInternalEnergyToTemperatureFactor(header.input_temperature_unit,
+                                             header.UnitVelocity_in_cm_per_s);
+    outBlock.quantityStorage.magneticFieldToInternalFactor =
+      InputMagneticFieldToGaussFactor(header.input_magnetic_field_unit,
+                                      header.UnitMass_in_g,
+                                      header.UnitLength_in_cm,
+                                      header.UnitVelocity_in_cm_per_s,
+                                      header.HubbleParam,
+                                      header.time,
+                                      header.flag_comoving);
+  }
   using SnapshotLoadClock = std::chrono::steady_clock;
 
   struct ReaderSelection {
@@ -261,6 +378,10 @@ namespace {
     header.UnitMass_in_g            = params.units.mass_g;
     header.UnitVelocity_in_cm_per_s = params.units.velocity_cm_per_s;
     header.HubbleParam              = params.units.hubble;
+    header.flag_comoving            = params.units.useComovingCoordinate;
+    header.input_density_unit       = params.inputDensityUnit;
+    header.input_temperature_unit   = params.inputTemperatureUnit;
+    header.input_magnetic_field_unit = params.inputMagneticFieldUnit;
 
     if (!sel.reader) {
       return false;
@@ -291,6 +412,12 @@ namespace {
 
     const std::string readError = ok ? std::string{} : sel.reader->lastError();
     sel.reader->close();
+    if (ok) {
+      applyInputDensityInterpretation(header, outBlock);
+      applyInputTemperatureInterpretation(header, outBlock);
+      applyInputMagneticFieldInterpretation(header, outBlock);
+      finalizeQuantityStorageMetadata(header, outBlock);
+    }
     if (!ok) {
       std::cerr << "Failed to read particle data: " << sel.fullPath << "\n";
       if (!readError.empty()) {
@@ -457,6 +584,10 @@ bool SnapshotLoader::readFile(int fileNumber,
   header.UnitMass_in_g            = params.units.mass_g;
   header.UnitVelocity_in_cm_per_s = params.units.velocity_cm_per_s;
   header.HubbleParam              = params.units.hubble;
+  header.flag_comoving            = params.units.useComovingCoordinate;
+  header.input_density_unit       = params.inputDensityUnit;
+  header.input_temperature_unit   = params.inputTemperatureUnit;
+  header.input_magnetic_field_unit = params.inputMagneticFieldUnit;
 
   ReaderSelection sel = makeReaderSelection(params, fileNumber);
   if (!sel.reader) {

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "FileIO/snapshot_extract.h"
 #include "convex_hull_state.h"
 #include "image/rgb_image.h"
 #include "render/scene_objects.h"
@@ -109,6 +110,14 @@ struct Histogram2DResultState {
   Histogram2DResult result;
 };
 
+struct SnapshotExtractPreviewState {
+  bool valid = false;
+  bool cpuUpdated = false;
+  SnapshotExtractRegionKind regionKind = SnapshotExtractRegionKind::Box;
+  CubeObject box;
+  EllipsoidObject sphere;
+};
+
 #ifdef POWER_SPECTRUM
 struct PowerSpectrumResultState {
   bool computed = false;
@@ -171,6 +180,7 @@ struct AnalysisDerivedState {
   
   RadialProfileResultState radial;
   Histogram2DResultState hist2D;
+  SnapshotExtractPreviewState snapshotExtractPreview;
 #ifdef POWER_SPECTRUM
   PowerSpectrumResultState powerSpectrum;
 #endif

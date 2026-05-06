@@ -1285,6 +1285,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
     if (ImGui::Selectable(label, state.historySel == (int)i)) {
       state.historySel = (int)i;
       request.centerParticleId = particleId;
+      request.centerParticleIndex = static_cast<size_t>(-1);
       request.centerParticleRequested = true;
     }
   }
@@ -1293,6 +1294,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
     if (state.historySel >= 0 &&
         state.historySel < static_cast<int>(result.historyIds.size())) {
       request.centerParticleId = result.historyIds[state.historySel];
+      request.centerParticleIndex = static_cast<size_t>(-1);
       request.followParticleRequested = true;
     }
   }
@@ -1368,10 +1370,16 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   if (showDensityColumn) ++topParticleColumnCount;
   if (showTempColumn) ++topParticleColumnCount;
 
-  auto textCellCenterOnClick = [&](const char* text, int64_t particleId) {
-    ImGui::TextUnformatted(text);
-    if (ImGui::IsItemClicked()) {
+  auto textCellCenterOnClick = [&](const char* text,
+                                   int64_t particleId,
+                                   size_t particleIndex) {
+    const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    if (ImGui::Selectable(text,
+                          false,
+                          ImGuiSelectableFlags_AllowItemOverlap,
+                          ImVec2(width, 0.0f))) {
       request.centerParticleId = particleId;
+      request.centerParticleIndex = particleIndex;
       request.centerParticleRequested = true;
     }
   };
@@ -1404,6 +1412,10 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
     for (int i = 0; i < count; i++) {
       const int64_t particleId =
         (static_cast<size_t>(i) < result.filteredIds.size()) ? result.filteredIds[i] : -1;
+      const size_t particleIndex =
+        (static_cast<size_t>(i) < result.filteredIndices.size())
+          ? result.filteredIndices[i]
+          : static_cast<size_t>(-1);
       const float sortValue =
         (static_cast<size_t>(i) < result.filteredSortValues.size())
           ? result.filteredSortValues[i]
@@ -1418,12 +1430,12 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
       char idLabel[64];
       std::snprintf(idLabel, sizeof(idLabel), "%lld",
                     static_cast<long long>(particleId));
-      textCellCenterOnClick(idLabel, particleId);
+      textCellCenterOnClick(idLabel, particleId, particleIndex);
 
       ImGui::TableSetColumnIndex(1);
       char sortText[64];
       std::snprintf(sortText, sizeof(sortText), "%.4g", displaySortValue);
-      textCellCenterOnClick(sortText, particleId);
+      textCellCenterOnClick(sortText, particleId, particleIndex);
 
       int column = 2;
       if (showMassColumn) {
@@ -1433,7 +1445,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                       sizeof(massText),
                       "%.4g",
                       quantity.toDisplay(QuantityId::Mass, result.filtered[i].mass));
-        textCellCenterOnClick(massText, particleId);
+        textCellCenterOnClick(massText, particleId, particleIndex);
       }
       if (showDensityColumn) {
         ImGui::TableSetColumnIndex(column++);
@@ -1442,7 +1454,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                       sizeof(densityText),
                       "%.4g",
                       quantity.toDisplay(QuantityId::Density, result.filtered[i].density));
-        textCellCenterOnClick(densityText, particleId);
+        textCellCenterOnClick(densityText, particleId, particleIndex);
       }
       if (showTempColumn) {
         ImGui::TableSetColumnIndex(column++);
@@ -1451,7 +1463,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                       sizeof(temperatureText),
                       "%.4g",
                       quantity.toDisplay(QuantityId::Temperature, result.filtered[i].temperature));
-        textCellCenterOnClick(temperatureText, particleId);
+        textCellCenterOnClick(temperatureText, particleId, particleIndex);
       }
 
       ImGui::TableSetColumnIndex(column++);
@@ -1462,7 +1474,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                     result.filtered[i].position[0],
                     result.filtered[i].position[1],
                     result.filtered[i].position[2]);
-      textCellCenterOnClick(posText, particleId);
+      textCellCenterOnClick(posText, particleId, particleIndex);
 
       ImGui::TableSetColumnIndex(column++);
       char velText[128];
@@ -1472,7 +1484,7 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
                     result.filtered[i].vel[0],
                     result.filtered[i].vel[1],
                     result.filtered[i].vel[2]);
-      textCellCenterOnClick(velText, particleId);
+      textCellCenterOnClick(velText, particleId, particleIndex);
 
       ImGui::TableSetColumnIndex(column++);
       if (ImGui::SmallButton("Copy")) {

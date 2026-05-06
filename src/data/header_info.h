@@ -1,4 +1,7 @@
 #pragma once
+
+#include "core/input_density_units.h"
+
 struct HeaderInfo
 {
   int npart = 0;
@@ -19,6 +22,11 @@ struct HeaderInfo
   bool   flag_density_in_cgs = false;
   bool   flag_B_in_cgs = false;
   bool   flag_hdf5 = false;
+  InputDensityUnit input_density_unit = InputDensityUnit::CodeMassDensity;
+  InputTemperatureUnit input_temperature_unit =
+    InputTemperatureUnit::CodeInternalEnergy;
+  InputMagneticFieldUnit input_magnetic_field_unit =
+    InputMagneticFieldUnit::CodeMagneticField;
 
   bool   has_redshift = false;
 };

@@ -7,6 +7,7 @@
 
 #include "simulation_element.h"
 #include "data/sample_coordinates.h"
+#include "core/input_density_units.h"
 #include "core/physics_constants.h"
 #include "core/quantity.h"
 #include <vector>
@@ -24,6 +25,7 @@ struct SimulationBlock {
   // ---- SoA fields (optional) ----
   // key = field label (e.g. "Bfield")
   std::unordered_map<std::string, SoAField> soa;
+  QuantityStorageMetadata quantityStorage;
 
   std::unordered_map<uint64_t, size_t> id2index;
   bool id2indexDirty = true;
@@ -52,6 +54,7 @@ struct SimulationBlock {
     id2index.clear();
     id2indexDirty = true;
     worldToRenderScale = 1.0f;
+    quantityStorage = QuantityStorageMetadata{};
   }
 
   bool hasParticleIds() const

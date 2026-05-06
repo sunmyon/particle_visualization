@@ -15,6 +15,8 @@
 #include "render/particle_visual_config.h"
 #include "projection/projection_map_tool_state.h"
 #include "FileIO/file_format_types.h"
+#include "core/input_density_units.h"
+#include "FileIO/snapshot_extract.h"
 
 enum class SnapshotLoadOwner : uint8_t {
   None = 0,
@@ -494,6 +496,11 @@ struct SnapshotFormatState {
   std::vector<FieldSpec> formatTokens = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensHdf5 = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensGadget = MakeDefaultGadgetFormatTokens();
+  InputDensityUnit inputDensityUnit = InputDensityUnit::CodeMassDensity;
+  InputTemperatureUnit inputTemperatureUnit =
+    InputTemperatureUnit::CodeInternalEnergy;
+  InputMagneticFieldUnit inputMagneticFieldUnit =
+    InputMagneticFieldUnit::CodeMagneticField;
 };
 
 struct FileNavigationRuntimeState {
@@ -544,6 +551,28 @@ struct RenderSnapshotMovieState {
   std::string message;
 };
 
+struct SnapshotExtractUiState {
+  int regionKind = static_cast<int>(SnapshotExtractRegionKind::Box);
+  float center[3] = {0.0f, 0.0f, 0.0f};
+  float halfSize[3] = {500.0f, 500.0f, 500.0f};
+  float radius = 500.0f;
+  bool showRegion = false;
+  char outputPath[512] = "extract_snapshot.hdf5";
+  bool copyHeader = true;
+  bool copyParameters = true;
+  bool addBackgroundGrid = false;
+  int backgroundCellsPerAxis = 16;
+  double backgroundDensity = 1.0e-30;
+  bool showUnitWindow = false;
+  int comovingMode = static_cast<int>(SnapshotExtractComovingMode::Preserve);
+  double targetUnitLengthCm = 3.0856775814913673e18;
+  double targetUnitMassG = 1.98847e33;
+  double targetUnitVelocityCmPerS = 1.0e5;
+  double targetHubbleParam = 1.0;
+  double targetScaleFactor = 1.0;
+  std::string unitDefaultsSourcePath;
+};
+
 struct SettingsActionRequestState {
   bool normalizeRequested = false;
   bool particleRenderDirtyRequested = false;
@@ -574,6 +603,12 @@ struct SettingsActionRequestState {
   bool renderSnapshotShowParticleLabels = true;
   bool renderSnapshotShowTimeLabel = true;
   RenderSnapshotMovieState renderSnapshotMovie;
+
+  SnapshotExtractUiState snapshotExtract;
+  bool snapshotExtractRequested = false;
+  bool snapshotExtractPreviewRequested = false;
+  SnapshotExtractJob snapshotExtractJob;
+  std::string snapshotExtractMessage;
 };
 
 struct SettingsRuntimeState {

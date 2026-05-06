@@ -35,6 +35,9 @@ void ApplyConfigData(const ConfigData& config,
   if (!config.persistent.formatTokensGadget.empty()) {
     format.formatTokensGadget = config.persistent.formatTokensGadget;
   }
+  format.inputDensityUnit = config.persistent.inputDensityUnit;
+  format.inputTemperatureUnit = config.persistent.inputTemperatureUnit;
+  format.inputMagneticFieldUnit = config.persistent.inputMagneticFieldUnit;
 
   visual = config.persistent.visual;
   mask = config.persistent.mask;

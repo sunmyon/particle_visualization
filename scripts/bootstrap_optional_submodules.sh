@@ -6,22 +6,20 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 submodule_root="${repo_root}/external/submodules"
 build_root="${submodule_root}/_build"
 install_root="${submodule_root}/_install"
-with_heavy=0with_wayland=0
+with_wayland=0
 usage() {
   cat <<'EOF'
-Usage: ./scripts/bootstrap_optional_submodules.sh [--with-heavy] [--with-wayland] [dep ...]
+Usage: ./scripts/bootstrap_optional_submodules.sh [--with-wayland] [dep ...]
 
 Adds optional dependencies as git submodules under external/submodules and
 builds/installs supported dependencies into external/submodules/_install.
 
 Flags:
-  --with-heavy    Also build heavy deps (hdf5, vtk, cgal)
   --with-wayland  Build Wayland + xkbcommon stack locally and enable GLFW
                   Wayland backend. Requires Python 3 (pip) for meson/ninja.
 
 Examples:
   ./scripts/bootstrap_optional_submodules.sh
-  ./scripts/bootstrap_optional_submodules.sh --with-heavy
   ./scripts/bootstrap_optional_submodules.sh --with-wayland glfw
   ./scripts/bootstrap_optional_submodules.sh glfw eigen glm
 EOF
@@ -29,10 +27,6 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --with-heavy)
-      with_heavy=1
-      shift
-      ;;
     --with-wayland)
       with_wayland=1
       shift
@@ -55,18 +49,13 @@ declare -A repos=(
   [cppzmq]="https://github.com/zeromq/cppzmq.git"
   [libzmq]="https://github.com/zeromq/libzmq.git"
   [hdf5]="https://github.com/HDFGroup/hdf5.git"
-  [vtk]="https://github.com/Kitware/VTK.git"
-  [gmp]="https://github.com/alisw/GMP.git"
-  [mpfr]="https://github.com/P-p-H-d/mpfr.git"
   [lua]="https://github.com/lua/lua.git"
-  [cgal]="https://github.com/CGAL/cgal.git"
   [wayland]="https://gitlab.freedesktop.org/wayland/wayland.git"
   [wayland-protocols]="https://gitlab.freedesktop.org/wayland/wayland-protocols.git"
   [xkbcommon]="https://github.com/xkbcommon/libxkbcommon.git"
 )
 
-declare -a default_deps=(glfw glm eigen nlohmann_json cppzmq libzmq gmp mpfr lua)
-declare -a heavy_deps=(hdf5 vtk cgal)
+declare -a default_deps=(glfw glm eigen nlohmann_json cppzmq libzmq lua)
 declare -a wayland_deps=(wayland wayland-protocols xkbcommon)
 
 append_dep_once() {
@@ -84,21 +73,7 @@ if [[ $# -gt 0 ]]; then
   deps=("$@")
 else
   deps=("${default_deps[@]}")
-  if [[ ${with_heavy} -eq 1 ]]; then
-    deps+=("${heavy_deps[@]}")
-  fi
 fi
-
-# Dependency closure for local builds.
-for dep in "${deps[@]}"; do
-  if [[ "${dep}" == "mpfr" ]]; then
-    append_dep_once gmp
-  fi
-  if [[ "${dep}" == "cgal" ]]; then
-    append_dep_once gmp
-    append_dep_once mpfr
-  fi
-done
 
 # When --with-wayland is set, inject Wayland stack before glfw.
 if [[ ${with_wayland} -eq 1 ]]; then
@@ -256,19 +231,6 @@ build_cmake_dep() {
         -DHDF5_BUILD_EXAMPLES=OFF
       )
       ;;
-    vtk)
-      cmake_args+=(
-        -DBUILD_TESTING=OFF
-        -DVTK_BUILD_TESTING=OFF
-        -DVTK_GROUP_ENABLE_Qt=NO
-      )
-      ;;
-    cgal)
-      cmake_args+=(
-        -DBUILD_TESTING=OFF
-        -DCMAKE_PREFIX_PATH="${install_root}/gmp;${install_root}/mpfr"
-      )
-      ;;
   esac
 
   cmake "${cmake_args[@]}"
@@ -338,52 +300,6 @@ build_meson_dep() {
   meson install -C "${dep_build}"
 }
 
-build_gmp() {
-  local src_dir="${submodule_root}/gmp"
-  local dep_build="${build_root}/gmp"
-  local dep_install="${install_root}/gmp"
-
-  ensure_autotools_configure "${src_dir}"
-
-  mkdir -p "${dep_build}"
-  if [[ ! -f "${dep_build}/Makefile" ]]; then
-    (
-      cd "${dep_build}"
-      MAKEINFO=true "${src_dir}/configure" --prefix="${dep_install}" --enable-cxx >"${dep_build}/configure.log" 2>&1
-    )
-  fi
-
-  make -C "${dep_build}" MAKEINFO=true -j "$(nproc)"
-  make -C "${dep_build}" MAKEINFO=true install
-}
-
-build_mpfr() {
-  local src_dir="${submodule_root}/mpfr"
-  local dep_build="${build_root}/mpfr"
-  local dep_install="${install_root}/mpfr"
-  local gmp_install="${install_root}/gmp"
-
-  if [[ ! -d "${gmp_install}" ]]; then
-    echo "MPFR requires GMP. Build GMP first." >&2
-    return 1
-  fi
-
-  ensure_autotools_configure "${src_dir}"
-
-  mkdir -p "${dep_build}"
-  if [[ ! -f "${dep_build}/Makefile" ]]; then
-    (
-      cd "${dep_build}"
-      MAKEINFO=true "${src_dir}/configure" \
-        --prefix="${dep_install}" \
-        --with-gmp="${gmp_install}" >"${dep_build}/configure.log" 2>&1
-    )
-  fi
-
-  make -C "${dep_build}" MAKEINFO=true -j "$(nproc)"
-  make -C "${dep_build}" MAKEINFO=true install
-}
-
 build_lua() {
   local src_dir="${submodule_root}/lua"
   local dep_install="${install_root}/lua"
@@ -416,31 +332,11 @@ done
 
 for dep in "${deps[@]}"; do
   case "${dep}" in
-    gmp)
-      build_gmp
-      ;;
-    mpfr)
-      build_mpfr
-      ;;
     lua)
       build_lua
       ;;
     wayland|wayland-protocols|xkbcommon)
       build_meson_dep "${dep}"
-      ;;
-    hdf5|vtk)
-      if [[ ${with_heavy} -eq 1 ]]; then
-        build_cmake_dep "${dep}"
-      else
-        echo "Leaving ${dep} checked out only. Re-run with --with-heavy to build/install it." >&2
-      fi
-      ;;
-    cgal)
-      if [[ ${with_heavy} -eq 1 ]]; then
-        build_cmake_dep "${dep}"
-      else
-        echo "Leaving ${dep} checked out only. Re-run with --with-heavy to build/install it." >&2
-      fi
       ;;
     *)
       build_cmake_dep "${dep}"

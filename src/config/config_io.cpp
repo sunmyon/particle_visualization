@@ -135,6 +135,32 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
       int tokenCount = std::stoi(line.substr(std::strlen("GadgetTokenCount=")));
       loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensGadget);
     }
+    else if (startsWith(line, "InputDensityUnit=")) {
+      const int unit = std::stoi(line.substr(std::strlen("InputDensityUnit=")));
+      if (unit >= static_cast<int>(InputDensityUnit::CodeMassDensity) &&
+          unit <= static_cast<int>(InputDensityUnit::MassDensityCgs)) {
+        outConfig.persistent.inputDensityUnit =
+          static_cast<InputDensityUnit>(unit);
+      }
+    }
+    else if (startsWith(line, "InputTemperatureUnit=")) {
+      const int unit =
+        std::stoi(line.substr(std::strlen("InputTemperatureUnit=")));
+      if (unit >= static_cast<int>(InputTemperatureUnit::Kelvin) &&
+          unit <= static_cast<int>(InputTemperatureUnit::CodeInternalEnergy)) {
+        outConfig.persistent.inputTemperatureUnit =
+          static_cast<InputTemperatureUnit>(unit);
+      }
+    }
+    else if (startsWith(line, "InputMagneticFieldUnit=")) {
+      const int unit =
+        std::stoi(line.substr(std::strlen("InputMagneticFieldUnit=")));
+      if (unit >= static_cast<int>(InputMagneticFieldUnit::Gauss) &&
+          unit <= static_cast<int>(InputMagneticFieldUnit::CodeMagneticField)) {
+        outConfig.persistent.inputMagneticFieldUnit =
+          static_cast<InputMagneticFieldUnit>(unit);
+      }
+    }
     else if (startsWith(line, "ParticleType")) {
       // ParticleType0_Size=...
       size_t pos = line.find('_');
@@ -273,6 +299,12 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
   saveTokenList(outfile, "TokenCount", config.persistent.formatTokens);
   saveTokenList(outfile, "HDF5TokenCount", config.persistent.formatTokensHdf5);
   saveTokenList(outfile, "GadgetTokenCount", config.persistent.formatTokensGadget);
+  outfile << "InputDensityUnit="
+          << static_cast<int>(config.persistent.inputDensityUnit) << "\n";
+  outfile << "InputTemperatureUnit="
+          << static_cast<int>(config.persistent.inputTemperatureUnit) << "\n";
+  outfile << "InputMagneticFieldUnit="
+          << static_cast<int>(config.persistent.inputMagneticFieldUnit) << "\n";
 
   for (int i = 0; i < 6; i++) {
     const auto& cfg = config.persistent.visual.types[i];

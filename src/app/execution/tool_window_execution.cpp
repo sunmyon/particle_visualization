@@ -47,6 +47,14 @@ SimulationElement* FindParticleById(SimulationDataset& particles, int64_t partic
   return &particles.simulationBlock.particles[index];
 }
 
+SimulationElement* FindParticleByIndex(SimulationDataset& particles, size_t index)
+{
+  if (index >= particles.simulationBlock.particles.size()) {
+    return nullptr;
+  }
+  return &particles.simulationBlock.particles[index];
+}
+
 float TopParticleSortValue(const SimulationBlock& block,
                            const SimulationElement& p,
                            size_t index,
@@ -86,6 +94,21 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   auto centerCameraOnParticle = [&](int64_t particleId) {
     const SimulationElement* p = FindParticleById(particles, particleId);
     if (!p) return;
+
+    const float distance = glm::length(camera.cameraPos - camera.cameraTarget);
+    const glm::vec3 direction =
+      camera.cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+    camera.cameraTarget =
+      renderPosition(*p, particles.simulationBlock.worldToRenderScale);
+    camera.cameraPos = camera.cameraTarget - direction * distance;
+  };
+
+  auto centerCameraOnParticleIndex = [&](size_t particleIndex, int64_t fallbackId) {
+    const SimulationElement* p = FindParticleByIndex(particles, particleIndex);
+    if (!p) {
+      centerCameraOnParticle(fallbackId);
+      return;
+    }
 
     const float distance = glm::length(camera.cameraPos - camera.cameraTarget);
     const glm::vec3 direction =
@@ -171,6 +194,7 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   if (req.refreshFilteredRequested) {
     result.filtered.clear();
     result.filteredIds.clear();
+    result.filteredIndices.clear();
     result.filteredSortValues.clear();
     result.filteredCandidateCount = 0;
     result.filteredSortQuantity = req.sortQuantity;
@@ -223,10 +247,12 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     std::sort(heap.begin(), heap.end(), better);
     result.filtered.reserve(heap.size());
     result.filteredIds.reserve(heap.size());
+    result.filteredIndices.reserve(heap.size());
     result.filteredSortValues.reserve(heap.size());
     for (const TopCandidate& cand : heap) {
       result.filtered.push_back(particles.simulationBlock.particles[cand.index]);
       result.filteredIds.push_back(cand.id);
+      result.filteredIndices.push_back(cand.index);
       result.filteredSortValues.push_back(cand.value);
     }
 
@@ -234,9 +260,10 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
   }
 
   if (req.centerParticleRequested) {
-    centerCameraOnParticle(req.centerParticleId);
+    centerCameraOnParticleIndex(req.centerParticleIndex, req.centerParticleId);
     req.centerParticleRequested = false;
     req.centerParticleId = -1;
+    req.centerParticleIndex = static_cast<size_t>(-1);
   }
 
   if (req.followParticleRequested) {

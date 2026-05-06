@@ -7,42 +7,9 @@
 [submodule "external/ImGuiFileDialog"]
 	path = external/ImGuiFileDialog
 	url = https://github.com/aiekick/ImGuiFileDialog.git
-[submodule "external/cloudy"]
-	path = external/cloudy
-	url = https://gitlab.nublado.org/cloudy/cloudy.git
 [submodule "external/submodules/glfw"]
 	path = external/submodules/glfw
 	url = https://github.com/glfw/glfw.git
-[submodule "external/submodules/glm"]
-	path = external/submodules/glm
-	url = https://github.com/g-truc/glm.git
-[submodule "external/submodules/eigen"]
-	path = external/submodules/eigen
-	url = https://gitlab.com/libeigen/eigen.git
-[submodule "external/submodules/nlohmann_json"]
-	path = external/submodules/nlohmann_json
-	url = https://github.com/nlohmann/json.git
-[submodule "external/submodules/cppzmq"]
-	path = external/submodules/cppzmq
-	url = https://github.com/zeromq/cppzmq.git
-[submodule "external/submodules/libzmq"]
-	path = external/submodules/libzmq
-	url = https://github.com/zeromq/libzmq.git
-[submodule "external/submodules/hdf5"]
-	path = external/submodules/hdf5
-	url = https://github.com/HDFGroup/hdf5.git
-[submodule "external/submodules/vtk"]
-	path = external/submodules/vtk
-	url = https://github.com/Kitware/VTK.git
 [submodule "external/submodules/lua"]
 	path = external/submodules/lua
 	url = https://github.com/lua/lua.git
-[submodule "external/submodules/wayland"]
-	path = external/submodules/wayland
-	url = https://gitlab.freedesktop.org/wayland/wayland.git
-[submodule "external/submodules/wayland-protocols"]
-	path = external/submodules/wayland-protocols
-	url = https://gitlab.freedesktop.org/wayland/wayland-protocols.git
-[submodule "external/submodules/xkbcommon"]
-	path = external/submodules/xkbcommon
-	url = https://github.com/xkbcommon/libxkbcommon.git

@@ -338,6 +338,7 @@ private:
   {
     out.clear();
     out.resize(npart_);
+    initializeGadgetParticleDefaults_(out);
 
     for (const FieldSpec& spec : fields) {
       const DestKind dest = getDestKind(spec.key);
@@ -346,6 +347,21 @@ private:
       f.type = spec.type;
       f.comps = spec.count;
       f.resize(npart_);
+    }
+  }
+
+  void initializeGadgetParticleDefaults_(SimulationBlock& out) const
+  {
+    size_t global = 0;
+    for (int type = 0; type < 6; ++type) {
+      const int count = std::max(0, counts_[type]);
+      for (int j = 0; j < count && global < out.particles.size(); ++j, ++global) {
+        SimulationElement& p = out.particles[global];
+        p.type = static_cast<uint8_t>(type);
+        p.mass = (massTable_[type] > 0.0)
+          ? static_cast<float>(massTable_[type])
+          : 0.0f;
+      }
     }
   }
 
@@ -516,6 +532,11 @@ private:
     size_t massCursor = 0;
     for (int type = 0; type < 6; ++type) {
       for (int j = 0; j < counts_[type]; ++j, ++global) {
+        if (global >= out.particles.size()) {
+          lastGadgetError_ =
+            "Mass/type assignment exceeded output particle count";
+          return false;
+        }
         SimulationElement& p = out.particles[global];
         p.type = static_cast<uint8_t>(type);
         if (massTable_[type] > 0.0) {
@@ -1408,6 +1429,41 @@ private:
     return actual;
   }
 
+  static bool inferGadgetFieldStorageType_(size_t blockBytes,
+                                           size_t nvalues,
+                                           DataType requestedType,
+                                           DataType& outType)
+  {
+    if (nvalues == 0) return false;
+
+    const size_t requestedBytes = nvalues * dataTypeSize(requestedType);
+    if (blockBytes == requestedBytes) {
+      // A 4-byte Gadget field can be float or int32, and an 8-byte field can be
+      // double or int64. Size alone is ambiguous, so preserve the explicit UI
+      // format choice when it matches the record marker.
+      outType = requestedType;
+      return true;
+    }
+
+    if (blockBytes == nvalues * sizeof(float)) {
+      outType = DataType::Float;
+      return true;
+    }
+    if (blockBytes == nvalues * sizeof(double)) {
+      outType = DataType::Double;
+      return true;
+    }
+    if (blockBytes == nvalues * sizeof(int32_t)) {
+      outType = DataType::Int32;
+      return true;
+    }
+    if (blockBytes == nvalues * sizeof(int64_t)) {
+      outType = DataType::Int64;
+      return true;
+    }
+    return false;
+  }
+
   GadgetFieldBlockReadResult readGadgetFieldBlock_(SimulationBlock& out,
                                                    const GadgetBlockField& field)
   {
@@ -1426,10 +1482,11 @@ private:
     const size_t comps = static_cast<size_t>(actual.count);
     const size_t nvalues = domainCount * comps;
 
-    if (block.size() != nvalues * sizeof(float) &&
-        block.size() != nvalues * sizeof(double) &&
-        block.size() != nvalues * sizeof(int32_t) &&
-        block.size() != nvalues * sizeof(int64_t)) {
+    DataType storageType = actual.type;
+    if (!inferGadgetFieldStorageType_(block.size(),
+                                      nvalues,
+                                      actual.type,
+                                      storageType)) {
       file_.clear();
       file_.seekg(before, std::ios::beg);
       lastGadgetError_ =
@@ -1446,10 +1503,7 @@ private:
       return GadgetFieldBlockReadResult::Mismatch;
     }
 
-    if (block.size() == nvalues * sizeof(double)) actual.type = DataType::Double;
-    else if (block.size() == nvalues * sizeof(int32_t)) actual.type = DataType::Int32;
-    else if (block.size() == nvalues * sizeof(int64_t)) actual.type = DataType::Int64;
-    else actual.type = DataType::Float;
+    actual.type = storageType;
 
     FieldLayout fl;
     fl.spec = actual;

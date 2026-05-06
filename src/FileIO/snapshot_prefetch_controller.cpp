@@ -49,6 +49,9 @@ std::size_t MakeSnapshotLoadSignature(const SnapshotLoadParams& params,
   HashFieldSpecs(seed, params.formatTokens);
   HashFieldSpecs(seed, params.formatTokensHdf5);
   HashFieldSpecs(seed, params.formatTokensGadget);
+  HashValue(seed, static_cast<int>(params.inputDensityUnit));
+  HashValue(seed, static_cast<int>(params.inputTemperatureUnit));
+  HashValue(seed, static_cast<int>(params.inputMagneticFieldUnit));
 
   HashValue(seed, params.units.length_cm);
   HashValue(seed, params.units.mass_g);

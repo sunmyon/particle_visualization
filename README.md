@@ -1,25 +1,16 @@
 # particle_visualization
 
-## Data Model / データモデル
+## Data Model
 
 The core data model treats particles and mesh cells as spatial samples. Mesh
 connectivity is intentionally not part of the common model; cell-centered mesh
 data can be analyzed and rendered through position, support radius, and field
 arrays.
 
-現在の core data model は、粒子と mesh cell を「空間サンプル」として共通に
-扱います。mesh connectivity は共通モデルには含めず、cell center・代表半径・
-field array によって近似的な解析/描画を行います。
-
 This keeps the common path lightweight for particle data, SPH-like data, and
 cell-centered mesh outputs such as Voronoi/Arepo-style snapshots. Explicit mesh
 topology should remain optional and feature-specific, for example for a future
 structured-grid or exact mesh-surface tool.
-
-この方針により、粒子データ、SPH 的なデータ、Voronoi/Arepo 形式の cell
-centered output を同じ軽量な経路で扱えます。明示的な mesh topology は、将来
-structured grid や厳密な mesh surface 表示が必要になった場合の optional な
-機能として扱います。
 
 ## Clone
 
@@ -28,14 +19,55 @@ git clone --recurse-submodules <repo_url>
 git submodule update --init --recursive
 ```
 
+The repository keeps small vendored UI/header libraries as submodules
+(`imgui`, `stb`, `ImGuiFileDialog`) plus fallback checkouts for `glfw` and
+`lua`. Heavy science dependencies such as CGAL, GMP, MPFR, and VTK are not
+submodules.
+
+## License
+
+This project is distributed under the MIT License. See `LICENSE`.
+
+Bundled third-party libraries keep their own licenses in `external/`.
+
+## Debug Notes
+
+Design/debug notes for backend-specific pitfalls are kept under `docs/`.
+Useful starting points:
+
+- `docs/metal-projection-debug-notes.md`
+- `docs/projection-gpu-backends.md`
+- `docs/particle-lod-debug-notes.md`
+
+## Dependency Policy
+
+Recommended dependency sources:
+
+- macOS: prefer Homebrew.
+- Linux workstation or cluster: prefer system packages, environment modules, or
+  vcpkg.
+- Submodules: fallback/vendor path only, mainly for small UI dependencies and
+  GLFW/Lua on systems where packages are unavailable.
+- OpenGL, Vulkan, and Metal are platform/SDK capabilities detected by CMake;
+  they are not vcpkg manifest dependencies.
+
 ## Dependencies
 
 ### macOS
 
+For macOS, Homebrew is the primary path. This avoids mixing Apple Silicon
+`arm64` builds with older `/usr/local` `x86_64` libraries.
+
 ```bash
-brew install glfw
-brew install glm
-brew install hdf5
+brew install cmake pkg-config
+brew install glfw glm hdf5 lua
+brew install zeromq cppzmq nlohmann-json eigen fftw
+```
+
+Metal rendering uses the system SDK. Vulkan rendering on macOS needs MoltenVK:
+
+```bash
+brew install vulkan-headers vulkan-loader vulkan-tools molten-vk
 ```
 
 ### Ubuntu
@@ -196,28 +228,65 @@ cmake --build --preset linux-headless-gcc
 ./scripts/launch_particle_vis.sh headless
 ```
 
-## Optional Dependency Submodules
+## Dependencies
 
-The project can prefer optional dependencies from `external/submodules/` before system packages.
-Use the bootstrap script to add and optionally build local submodule-based dependencies:
+The default build includes the optional science and bridge features used during normal development: HDF5 IO, Lua projection expressions, the Python/ZeroMQ bridge, Eigen-backed geometry/streamline tools, and FFTW-backed power-spectrum analysis.
+
+The vcpkg manifest keeps the hard core small:
+
+- `glfw3`
+- `glm`
+- `nativefiledialog-extended`
+
+Optional dependency groups are exposed as manifest features:
+
+- `hdf5`: HDF5 snapshot, halo, clump, and extract IO.
+- `lua`: Lua expressions for projection map customization.
+- `python-bridge`: ZeroMQ/cppzmq/nlohmann-json bridge and remote frame/input tools.
+- `geometry`: Eigen-backed geometrical analysis and streamline tools.
+- `power-spectrum`: FFTW-backed Fourier power spectrum analysis.
+
+These features are listed in `default-features`, so a normal vcpkg manifest install remains full-featured:
 
 ```bash
-./scripts/bootstrap_optional_submodules.sh
+vcpkg install --x-manifest-root=.
 ```
 
-To also build heavier CMake dependencies such as HDF5 and VTK into `external/submodules/_install/`:
+For a lightweight dependency install, disable default manifest features:
 
 ```bash
-./scripts/bootstrap_optional_submodules.sh --with-heavy
+vcpkg install --x-manifest-root=. --x-no-default-features
 ```
 
-For GUI readiness on this Linux system, bootstrap GLFW (builds with X11 backend by default):
+To install only selected optional features:
+
+```bash
+vcpkg install --x-manifest-root=. --x-no-default-features --x-feature=hdf5
+```
+
+Match the dependency set with CMake options. A lightweight CMake configure can disable optional subsystems explicitly:
+
+```bash
+cmake -S . -B build-core \
+  -DHAVE_HDF5=OFF \
+  -DUSE_LUA=OFF \
+  -DPYTHON_BRIDGE=OFF \
+  -DGEOMETRICAL_ANALYSIS=OFF \
+  -DSTREAM_LINE=OFF \
+  -DPOWER_SPECTRUM=OFF
+```
+
+OpenGL, Vulkan, and Metal are not vcpkg manifest dependencies. They remain platform/SDK capabilities detected by CMake.
+
+### Optional Dependency Submodules
+
+The project can still prefer optional dependencies from `external/submodules/` before system packages when a local source checkout is present. This is mainly useful for GLFW on Linux systems where the system package is unavailable:
 
 ```bash
 ./scripts/bootstrap_optional_submodules.sh glfw
 ```
 
-For Wayland-enabled GLFW (GPU node or Wayland-capable system):
+For Wayland-enabled GLFW:
 
 ```bash
 ./scripts/bootstrap_optional_submodules.sh --with-wayland glfw
@@ -226,41 +295,9 @@ For Wayland-enabled GLFW (GPU node or Wayland-capable system):
 The default X11 backend works on any node with `DISPLAY` set, using local stub headers for the handful of missing `-devel` packages (`Xinerama`, `XInput2`, `Xkb`). All symbols are resolved at runtime via `dlopen`.
 Use `--with-wayland` to build the Wayland backend instead, for use with the `linux-gui-wayland` preset.
 
-### Tested Bootstrap Workflow (Linux)
-
-The following command was validated in this repository to build and install local `gmp`, `mpfr`, `lua`, and `cgal` under `external/submodules/_install/`:
-
-```bash
-./scripts/bootstrap_optional_submodules.sh --with-heavy gmp mpfr lua cgal
-```
-
-Installed outputs are expected in:
-
-```text
-external/submodules/_install/gmp
-external/submodules/_install/mpfr
-external/submodules/_install/lua
-external/submodules/_install/cgal
-```
-
-Notes:
-
-- MPFR may print an `install-info` warning for `mpfr.info` on systems without texinfo docs generation. This is non-fatal in the current workflow.
-- Lua from the git submodule is installed from its upstream `makefile` build products (no upstream `make install` target).
-
-After bootstrapping, validate configure/build:
-
-```bash
-cmake --preset linux-headless-gcc
-cmake --build build-headless-local -j "$(nproc)"
-```
-
-For GUI preset validation:
-
-```bash
-cmake --preset linux-gui-gcc
-cmake --build --preset linux-gui-gcc
-```
+CGAL, GMP, MPFR, and VTK are intentionally not managed as submodules. Geometry
+and isosurface code should use the current lightweight in-tree implementations
+or package-manager dependencies.
 
 > **Tip:** When switching between presets or compiler modules, clear the preset's CMake cache directory first:
 >

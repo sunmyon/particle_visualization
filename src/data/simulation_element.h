@@ -8,7 +8,16 @@
 
 class SimulationElement {
 public:
-  SimulationElement() noexcept {}
+  SimulationElement() noexcept
+    : position{0.0f, 0.0f, 0.0f},
+      vel{0.0f, 0.0f, 0.0f},
+      supportRadius(0.0f),
+      density(0.0f),
+      temperature(0.0f),
+      mass(0.0f),
+      type(0)
+  {
+  }
   
   float position[3]; // Coordinates read from the file.
   float vel[3];

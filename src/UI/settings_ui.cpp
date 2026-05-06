@@ -55,6 +55,11 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       SnapshotFormatState& format,
                                       bool isLoading,
                                       WindowCommandQueue& windowCommands);
+static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
+                                       const SnapshotFormatState& format,
+                                       const SettingsCameraView& camera,
+                                       const UnitSystem& units,
+                                       SettingsActionRequestState& request);
 static void DrawNormalizationSection(NormalizationContext& ctx,
 				     SettingsActionRequestState& req);
 static void DrawSinkIdSection(const SettingsCameraView& camera,
@@ -107,6 +112,11 @@ void ShowSettingsUI(SettingsUIState& ui,
                             settings.snapshotFormat,
                             view.snapshotLoading,
                             windowCommands);
+  DrawSnapshotExtractSection(settings.fileNavigation,
+                             settings.snapshotFormat,
+                             view.camera,
+                             settings.request.unitsDraft,
+                             settings.request);
   DrawNormalizationSection(settings.normalization, settings.request);
   DrawSinkIdSection(view.camera, settings.request);
   DrawCameraPlacementSection(settings, view.camera);
@@ -980,12 +990,363 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     format.readFormat = static_cast<FileFormat>(fmtIdx);
   }
 
+  ImGui::SeparatorText("Input field interpretation");
+  ImGui::TextDisabled(
+    "Used when the file does not provide enough metadata. HDF5/AREPO metadata overrides this when available.");
+  ImGui::TextDisabled(
+    "If a field is marked as code-unit, conversion uses Code units / load defaults.");
+  int densityUnitIndex = static_cast<int>(format.inputDensityUnit);
+  static const char* DensityUnitNames[] = {
+    "code mass density",
+    "nH [cm^-3]",
+    "mass density [g cm^-3]"
+  };
+  if (ImGui::Combo("Input density unit",
+                   &densityUnitIndex,
+                   DensityUnitNames,
+                   IM_ARRAYSIZE(DensityUnitNames))) {
+    format.inputDensityUnit =
+      static_cast<InputDensityUnit>(std::clamp(densityUnitIndex, 0, 2));
+  }
+  int temperatureUnitIndex = static_cast<int>(format.inputTemperatureUnit);
+  static const char* TemperatureUnitNames[] = {
+    "temperature [K]",
+    "code internal energy"
+  };
+  if (ImGui::Combo("Input thermal field",
+                   &temperatureUnitIndex,
+                   TemperatureUnitNames,
+                   IM_ARRAYSIZE(TemperatureUnitNames))) {
+    format.inputTemperatureUnit =
+      static_cast<InputTemperatureUnit>(std::clamp(temperatureUnitIndex, 0, 1));
+  }
+  int magneticFieldUnitIndex = static_cast<int>(format.inputMagneticFieldUnit);
+  static const char* MagneticFieldUnitNames[] = {
+    "B [Gauss]",
+    "code magnetic field"
+  };
+  if (ImGui::Combo("Input magnetic field unit",
+                   &magneticFieldUnitIndex,
+                   MagneticFieldUnitNames,
+                   IM_ARRAYSIZE(MagneticFieldUnitNames))) {
+    format.inputMagneticFieldUnit =
+      static_cast<InputMagneticFieldUnit>(
+        std::clamp(magneticFieldUnitIndex, 0, 1));
+  }
+  ImGui::TextDisabled(
+    "Positions, masses, velocities, and smoothing lengths remain stored in code units.");
+
   if (ImGui::Button("Mask Settings...")) {
     windowCommands.open(WindowId::Mask);
   }
 
   if (ImGui::Button("Generate test data")) {
     rt.request.generateTestDataRequested = true;
+  }
+}
+
+static void SyncSnapshotExtractUnitDefaults(SnapshotExtractUiState& state,
+                                            const FileNavigationRuntimeState& fileNav,
+                                            const UnitSystem& units)
+{
+  const std::string sourcePath = fileNav.input.filePath;
+  if (state.unitDefaultsSourcePath == sourcePath) return;
+  state.unitDefaultsSourcePath = sourcePath;
+  state.targetUnitLengthCm = units.length_cm;
+  state.targetUnitMassG = units.mass_g;
+  state.targetUnitVelocityCmPerS = units.velocity_cm_per_s;
+  state.targetHubbleParam = units.hubble;
+  state.targetScaleFactor =
+    std::max(1.0e-30, fileNav.current.loadedScaleFactor);
+}
+
+static double SnapshotExtractPreviewLengthScale(const SnapshotExtractUiState& state,
+                                                const UnitSystem& units)
+{
+  const double sourceLength = std::max(1.0e-30, units.length_cm);
+  const double targetLength = std::max(1.0e-30, state.targetUnitLengthCm);
+  double scale = sourceLength / targetLength;
+  const double a = std::max(1.0e-30, state.targetScaleFactor);
+  const auto mode = static_cast<SnapshotExtractComovingMode>(state.comovingMode);
+  if (mode == SnapshotExtractComovingMode::ComovingToPhysical) {
+    scale *= a;
+  } else if (mode == SnapshotExtractComovingMode::PhysicalToComoving) {
+    scale /= a;
+  }
+  return scale;
+}
+
+static double SnapshotExtractBackgroundMeanVolume(const SnapshotExtractUiState& state,
+                                                  const UnitSystem& units)
+{
+  const int n = std::clamp(state.backgroundCellsPerAxis, 1, 512);
+  const double lengthScale = SnapshotExtractPreviewLengthScale(state, units);
+  double dx = 0.0;
+  double dy = 0.0;
+  double dz = 0.0;
+  if (state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)) {
+    const double side = 2.0 * std::max(0.0f, state.radius) * lengthScale;
+    dx = dy = dz = side / static_cast<double>(n);
+  } else {
+    dx = 2.0 * std::max(0.0f, state.halfSize[0]) * lengthScale /
+         static_cast<double>(n);
+    dy = 2.0 * std::max(0.0f, state.halfSize[1]) * lengthScale /
+         static_cast<double>(n);
+    dz = 2.0 * std::max(0.0f, state.halfSize[2]) * lengthScale /
+         static_cast<double>(n);
+  }
+  if (!(dx > 0.0 && dy > 0.0 && dz > 0.0)) return 0.0;
+  return dx * dy * dz;
+}
+
+static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
+                                       const SnapshotFormatState& format,
+                                       const SettingsCameraView& camera,
+                                       const UnitSystem& units,
+                                       SettingsActionRequestState& request)
+{
+  if (!ImGui::CollapsingHeader("Extract Snapshot"))
+    return;
+
+  auto& state = request.snapshotExtract;
+  SyncSnapshotExtractUnitDefaults(state, fileNav, units);
+  ImGui::TextDisabled("Raw HDF5 extract: rereads the source file and writes selected rows.");
+
+  bool previewChanged = false;
+  const char* regionKinds[] = {"box", "sphere"};
+  previewChanged |=
+    ImGui::Combo("region shape##snapshot_extract",
+                 &state.regionKind,
+                 regionKinds,
+                 IM_ARRAYSIZE(regionKinds));
+  previewChanged |=
+    ImGui::Checkbox("show extract region##snapshot_extract", &state.showRegion);
+
+  if (ImGui::SmallButton("camera center##snapshot_extract")) {
+    for (int axis = 0; axis < 3; ++axis) {
+      state.center[axis] = camera.originalTarget[axis];
+    }
+    previewChanged = true;
+  }
+  previewChanged |=
+    ImGui::InputFloat3("center (original)##snapshot_extract",
+                       state.center,
+                       "%.6g");
+  if (state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)) {
+    previewChanged |=
+      ImGui::InputFloat("radius (original)##snapshot_extract",
+                        &state.radius,
+                        0.0f,
+                        0.0f,
+                        "%.6g");
+    state.radius = std::max(0.0f, state.radius);
+  } else {
+    previewChanged |=
+      ImGui::InputFloat3("half size (original)##snapshot_extract",
+                         state.halfSize,
+                         "%.6g");
+    for (float& v : state.halfSize) {
+      v = std::max(0.0f, v);
+    }
+  }
+  if (previewChanged) {
+    request.snapshotExtractPreviewRequested = true;
+  }
+
+  ImGui::InputText("output HDF5##snapshot_extract",
+                   state.outputPath,
+                   IM_ARRAYSIZE(state.outputPath));
+  ImGui::Checkbox("copy Header##snapshot_extract", &state.copyHeader);
+  ImGui::SameLine();
+  ImGui::Checkbox("copy Parameters##snapshot_extract", &state.copyParameters);
+
+  if (ImGui::TreeNodeEx("Background grid##snapshot_extract",
+                        ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Checkbox("add background grid##snapshot_extract", &state.addBackgroundGrid);
+    ImGui::BeginDisabled(!state.addBackgroundGrid);
+    ImGui::PushItemWidth(90.0f);
+    ImGui::InputInt("N##snapshot_extract_bg",
+                    &state.backgroundCellsPerAxis,
+                    0,
+                    0);
+    state.backgroundCellsPerAxis =
+      std::clamp(state.backgroundCellsPerAxis, 1, 512);
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+    ImGui::TextUnformatted("for N^3 cells");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(150.0f);
+    ImGui::InputDouble("density##snapshot_extract_bg",
+                       &state.backgroundDensity,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    ImGui::PopItemWidth();
+    ImGui::TextDisabled(
+      "IDs are assigned as max selected ParticleID + 1, +2, ...");
+    ImGui::TextDisabled(
+      "Velocity, B, metallicity, J21, H2, and thermal fields are copied from the nearest selected gas cell when available.");
+    ImGui::TextDisabled("Density is manual and interpreted in the output code units above.");
+    const int n = std::clamp(state.backgroundCellsPerAxis, 1, 512);
+    const std::size_t candidateCount =
+      static_cast<std::size_t>(n) * static_cast<std::size_t>(n) *
+      static_cast<std::size_t>(n);
+    const double meanVolume =
+      SnapshotExtractBackgroundMeanVolume(state, units);
+    const double referenceMass = meanVolume * state.backgroundDensity;
+    ImGui::Text("candidate particles=%zu", candidateCount);
+    ImGui::Text("Suggested value for MeanVolume=%.8g", meanVolume);
+    ImGui::Text("Suggested value for ReferenceGasPartMass=%.8g",
+                referenceMass);
+    ImGui::TextDisabled(
+      "Actual added particles are printed after excluding cells within 0.5 grid spacing of selected gas.");
+    ImGui::EndDisabled();
+    ImGui::TreePop();
+  }
+
+  ImGui::Text("source: %s", fileNav.input.filePath);
+  if (ImGui::Button("Unit conversion...##snapshot_extract")) {
+    state.showUnitWindow = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("output units are always written");
+
+  if (state.showUnitWindow) {
+    ImGui::Begin("Snapshot extract unit conversion",
+                 &state.showUnitWindow,
+                 ImGuiWindowFlags_AlwaysAutoResize);
+    const char* modes[] = {
+      "preserve comoving flag",
+      "comoving -> physical",
+      "physical -> comoving"
+    };
+    const int previousMode = state.comovingMode;
+    if (ImGui::Combo("comoving conversion##snapshot_extract_units",
+                     &state.comovingMode,
+                     modes,
+                     IM_ARRAYSIZE(modes)) &&
+        state.comovingMode != static_cast<int>(SnapshotExtractComovingMode::Preserve)) {
+      state.targetScaleFactor =
+        std::max(1.0e-30, fileNav.current.loadedScaleFactor);
+    }
+    if (previousMode == static_cast<int>(SnapshotExtractComovingMode::Preserve) &&
+        state.comovingMode != previousMode) {
+      state.targetScaleFactor =
+        std::max(1.0e-30, fileNav.current.loadedScaleFactor);
+    }
+    ImGui::InputDouble("scale factor a##snapshot_extract_units",
+                       &state.targetScaleFactor,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    state.targetScaleFactor = std::max(1.0e-30, state.targetScaleFactor);
+    ImGui::SeparatorText("Target code units");
+    ImGui::TextDisabled("Source units are the loaded file Parameters; if absent, current Units are used.");
+    ImGui::InputDouble("UnitLength_in_cm##snapshot_extract_units",
+                       &state.targetUnitLengthCm,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Mpc##snapshot_extract_units")) {
+      state.targetUnitLengthCm = 3.0856775814913673e24;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("kpc##snapshot_extract_units")) {
+      state.targetUnitLengthCm = 3.0856775814913673e21;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("pc##snapshot_extract_units")) {
+      state.targetUnitLengthCm = 3.0856775814913673e18;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("au##snapshot_extract_units")) {
+      state.targetUnitLengthCm = 1.495978707e13;
+    }
+    ImGui::InputDouble("UnitMass_in_g##snapshot_extract_units",
+                       &state.targetUnitMassG,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("1e10 Msun##snapshot_extract_units")) {
+      state.targetUnitMassG = 1.98847e43;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Msun##snapshot_extract_units")) {
+      state.targetUnitMassG = 1.98847e33;
+    }
+    ImGui::InputDouble("UnitVelocity_in_cm_per_s##snapshot_extract_units",
+                       &state.targetUnitVelocityCmPerS,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    ImGui::InputDouble("HubbleParam##snapshot_extract_units",
+                       &state.targetHubbleParam,
+                       0.0,
+                       0.0,
+                       "%.8g");
+    state.targetUnitLengthCm = std::max(1.0e-30, state.targetUnitLengthCm);
+    state.targetUnitMassG = std::max(1.0e-30, state.targetUnitMassG);
+    state.targetUnitVelocityCmPerS =
+      std::max(1.0e-30, state.targetUnitVelocityCmPerS);
+    state.targetHubbleParam = std::max(1.0e-30, state.targetHubbleParam);
+    if (ImGui::SmallButton("Use current Units##snapshot_extract_units")) {
+      state.unitDefaultsSourcePath.clear();
+      SyncSnapshotExtractUnitDefaults(state, fileNav, units);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Use loaded a##snapshot_extract_units")) {
+      state.targetScaleFactor =
+        std::max(1.0e-30, fileNav.current.loadedScaleFactor);
+    }
+    ImGui::TextWrapped("Coordinates, BoxSize, Hsml, Volume, Masses, Velocities, "
+                       "Density, InternalEnergy, and MagneticField are converted "
+                       "from the source Units to the target Units above.");
+    ImGui::End();
+  }
+
+  if (ImGui::Button("Extract HDF5 snapshot##snapshot_extract")) {
+    SnapshotExtractJob job;
+    job.inputPath = fileNav.input.filePath;
+    job.outputPath = state.outputPath;
+    job.region.kind =
+      state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)
+        ? SnapshotExtractRegionKind::Sphere
+        : SnapshotExtractRegionKind::Box;
+    for (int axis = 0; axis < 3; ++axis) {
+      job.region.center[axis] = state.center[axis];
+      job.region.halfSize[axis] = state.halfSize[axis];
+    }
+    job.region.radius = state.radius;
+    job.copyHeader = state.copyHeader;
+    job.copyParameters = state.copyParameters;
+    job.unitConversion.enabled = true;
+    job.unitConversion.sourceUnitLengthCm = units.length_cm;
+    job.unitConversion.sourceUnitMassG = units.mass_g;
+    job.unitConversion.sourceUnitVelocityCmPerS = units.velocity_cm_per_s;
+    job.unitConversion.sourceHubbleParam = units.hubble;
+    job.unitConversion.sourceScaleFactor = fileNav.current.loadedScaleFactor;
+    job.unitConversion.comovingMode =
+      static_cast<SnapshotExtractComovingMode>(state.comovingMode);
+    job.unitConversion.unitLengthCm = state.targetUnitLengthCm;
+    job.unitConversion.unitMassG = state.targetUnitMassG;
+    job.unitConversion.unitVelocityCmPerS = state.targetUnitVelocityCmPerS;
+    job.unitConversion.hubbleParam = state.targetHubbleParam;
+    job.unitConversion.scaleFactor = state.targetScaleFactor;
+    job.backgroundGrid.enabled = state.addBackgroundGrid;
+    job.backgroundGrid.cellsPerAxis = state.backgroundCellsPerAxis;
+    job.backgroundGrid.density = state.backgroundDensity;
+    job.fields = format.formatTokensHdf5.empty()
+      ? MakeDefaultSnapshotExtractFields()
+      : format.formatTokensHdf5;
+    request.snapshotExtractJob = std::move(job);
+    request.snapshotExtractRequested = true;
+    request.snapshotExtractMessage = "Extract requested...";
+  }
+
+  if (!request.snapshotExtractMessage.empty()) {
+    ImGui::TextWrapped("%s", request.snapshotExtractMessage.c_str());
   }
 }
 
@@ -2185,7 +2546,11 @@ static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
   auto& req = rt.request;
   bool unitChanged = false;
   auto& units = req.unitsDraft;
-  if (ImGui::CollapsingHeader("Units")) {
+  if (ImGui::CollapsingHeader("Code units / load defaults")) {
+    ImGui::TextDisabled(
+      "These values are the code units used to interpret code-unit fields.");
+    ImGui::TextDisabled(
+      "Changing them rescales loaded density/T/B when those fields came from code units.");
     unitChanged |= ImGui::InputDouble("UnitLength_in_cm",
                                       &units.length_cm,
                                       0., 0., "%g");
@@ -2220,6 +2585,7 @@ static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
       units.setMassTo1e10Solar();
       unitChanged = true;
     }
+
   }
 
   if (unitChanged) {

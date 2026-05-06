@@ -22,6 +22,7 @@
 #include "app/state/snapshot_state_sync.h"
 #include "app/execution/snapshot_sequence_job.h"
 #include "app/app_visibility_actions.h"
+#include "FileIO/snapshot_extract.h"
 #include "app/app_data_actions.h"
 #include "data/simulation_dataset.h"
 #include "data/sample_coordinates.h"
@@ -32,6 +33,114 @@
 #include "render/scene_objects.h"
 
 namespace {
+double SafeScaleFactorFromCurrent(const SnapshotCurrentState& current,
+                                  bool interpretAsComoving)
+{
+  if (interpretAsComoving &&
+      std::isfinite(current.loadedTime) &&
+      current.loadedTime > 0.0) {
+    return current.loadedTime;
+  }
+  if (std::isfinite(current.loadedScaleFactor) &&
+      current.loadedScaleFactor > 0.0) {
+    return current.loadedScaleFactor;
+  }
+  if (std::isfinite(current.loadedTime) && current.loadedTime > 0.0) {
+    return current.loadedTime;
+  }
+  return 1.0;
+}
+
+bool ValidRescaleFactor(double oldFactor, double newFactor, double& ratio)
+{
+  if (!std::isfinite(oldFactor) || oldFactor <= 0.0 ||
+      !std::isfinite(newFactor) || newFactor <= 0.0) {
+    return false;
+  }
+  ratio = newFactor / oldFactor;
+  return std::isfinite(ratio) && ratio > 0.0 && ratio != 1.0;
+}
+
+void RescaleLoadedInternalQuantitiesForUnitChange(SimulationBlock& block,
+                                                 const UnitSystem& newUnits,
+                                                 double scaleFactor)
+{
+  auto& storage = block.quantityStorage;
+
+  const bool inputComoving = newUnits.useComovingCoordinate;
+
+  double ratio = 1.0;
+  if (storage.density == StoredQuantityUnit::InternalStandard) {
+    const double newFactor =
+      InputDensityToInternalNHFactor(storage.inputDensityUnit,
+                                     newUnits.mass_g,
+                                     newUnits.length_cm,
+                                     newUnits.hubble,
+                                     scaleFactor,
+                                     inputComoving);
+    if (ValidRescaleFactor(storage.densityToInternalFactor,
+                           newFactor,
+                           ratio)) {
+      for (auto& p : block.particles) {
+        p.density =
+          static_cast<float>(static_cast<double>(p.density) * ratio);
+      }
+    }
+    storage.densityToInternalFactor = newFactor;
+  }
+
+  if (storage.temperature == StoredQuantityUnit::InternalStandard) {
+    const double newFactor =
+      InputInternalEnergyToTemperatureFactor(storage.inputTemperatureUnit,
+                                             newUnits.velocity_cm_per_s);
+    if (ValidRescaleFactor(storage.temperatureToInternalFactor,
+                           newFactor,
+                           ratio)) {
+      for (auto& p : block.particles) {
+        p.temperature =
+          static_cast<float>(static_cast<double>(p.temperature) * ratio);
+      }
+    }
+    storage.temperatureToInternalFactor = newFactor;
+  }
+
+  if (storage.magneticField == StoredQuantityUnit::InternalStandard) {
+    const double newFactor =
+      InputMagneticFieldToGaussFactor(storage.inputMagneticFieldUnit,
+                                      newUnits.mass_g,
+                                      newUnits.length_cm,
+                                      newUnits.velocity_cm_per_s,
+                                      newUnits.hubble,
+                                      scaleFactor,
+                                      inputComoving);
+    if (ValidRescaleFactor(storage.magneticFieldToInternalFactor,
+                           newFactor,
+                           ratio)) {
+      auto it = block.soa.find(kBfieldKey);
+      if (it != block.soa.end()) {
+        SoAField& field = it->second;
+        const size_t nvalues =
+          block.particles.size() * static_cast<size_t>(field.comps);
+        if (field.type == DataType::Float) {
+          float* values = reinterpret_cast<float*>(field.bytes.data());
+          const float fac = static_cast<float>(ratio);
+          for (size_t i = 0; i < nvalues; ++i) {
+            values[i] *= fac;
+          }
+        } else if (field.type == DataType::Double) {
+          double* values = reinterpret_cast<double*>(field.bytes.data());
+          for (size_t i = 0; i < nvalues; ++i) {
+            values[i] *= ratio;
+          }
+        }
+      }
+    }
+    storage.magneticFieldToInternalFactor = newFactor;
+  }
+
+  storage.inputComoving = inputComoving;
+}
+
 void RescaleCameraForNormalizationChange(CameraContext& camera,
                                          float oldWorldToRenderScale,
                                          float newWorldToRenderScale)
@@ -51,6 +160,49 @@ void RescaleCameraForNormalizationChange(CameraContext& camera,
   camera.cameraTarget *= ratio;
   camera.cameraPos *= ratio;
   camera.distance *= ratio;
+}
+
+void UpdateSnapshotExtractPreview(const SimulationDataset& particles,
+                                  const SettingsActionRequestState& request,
+                                  SnapshotExtractPreviewState& preview)
+{
+  const auto& state = request.snapshotExtract;
+  const float worldToRender =
+    particles.simulationBlock.worldToRenderScale > 0.0f
+      ? particles.simulationBlock.worldToRenderScale
+      : 1.0f;
+
+  preview.valid = state.showRegion;
+  preview.regionKind =
+    state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)
+      ? SnapshotExtractRegionKind::Sphere
+      : SnapshotExtractRegionKind::Box;
+
+  const glm::vec3 center =
+    worldToRender * glm::vec3(state.center[0], state.center[1], state.center[2]);
+
+  CubeObject box;
+  box.center = center;
+  box.halfSize = worldToRender * glm::vec3(state.halfSize[0],
+                                           state.halfSize[1],
+                                           state.halfSize[2]);
+  box.orientation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+  box.color = glm::vec3(1.0f, 0.75f, 0.2f);
+  box.opacity = 0.18f;
+  box.tag = "snapshot_extract_region";
+  preview.box = box;
+
+  EllipsoidObject sphere;
+  sphere.position = center;
+  sphere.radii = glm::vec3(worldToRender * state.radius);
+  sphere.orientation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+  sphere.color = glm::vec3(1.0f, 0.75f, 0.2f);
+  sphere.opacity = 0.18f;
+  sphere.renderMode = EllipsoidRenderMode::Solid;
+  sphere.tag = "snapshot_extract_region";
+  preview.sphere = sphere;
+
+  preview.cpuUpdated = true;
 }
 
 #ifdef VOLUME_RENDERING
@@ -183,11 +335,20 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
   }
 
   if (req.applyUnitsRequested) {
+    const double scaleFactor =
+      SafeScaleFactorFromCurrent(settings.fileNavigation.current,
+                                 req.unitsDraft.useComovingCoordinate);
+    RescaleLoadedInternalQuantitiesForUnitChange(particles.simulationBlock,
+                                                 req.unitsDraft,
+                                                 scaleFactor);
     quantity.units = req.unitsDraft;
     quantity.units.updateDerived();
     req.unitConversionRebuildRequested = true;
     req.applyUnitsRequested = false;
     req.unitsDraftDirty = false;
+    particles.particlesDirty = true;
+    particles.velocityDirty = true;
+    post.refreshTopParticles = true;
   }
 
   if (req.normalizeRequested) {
@@ -240,6 +401,58 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
       : UnitSpace::Physical;
     quantity.rebuildConversion(settings.fileNavigation.current.loadedScaleFactor);
     req.unitConversionRebuildRequested = false;
+  }
+
+  if (req.snapshotExtractPreviewRequested) {
+    UpdateSnapshotExtractPreview(particles,
+                                 req,
+                                 analysis.snapshotExtractPreview);
+    req.snapshotExtractPreviewRequested = false;
+  }
+
+  if (req.snapshotExtractRequested) {
+#ifdef HAVE_HDF5
+    const bool useHdf5Extract =
+      settings.snapshotFormat.readFormat == FileFormat::HDF5 ||
+      (settings.snapshotFormat.readFormat == FileFormat::Auto &&
+       settings.fileNavigation.input.useHDF5);
+#else
+    const bool useHdf5Extract = false;
+#endif
+    SnapshotExtractReport report;
+    if (useHdf5Extract) {
+      report = ExtractHdf5SnapshotRegion(req.snapshotExtractJob);
+    } else {
+      SnapshotLoadedExtractMetadata metadata;
+      metadata.time = settings.fileNavigation.current.loadedTime;
+      metadata.redshift = settings.fileNavigation.current.loadedRedshift;
+      metadata.hubbleParam = quantity.units.hubble;
+      metadata.unitLengthCm = quantity.units.length_cm;
+      metadata.unitMassG = quantity.units.mass_g;
+      metadata.unitVelocityCmPerS = quantity.units.velocity_cm_per_s;
+      metadata.comoving = quantity.units.useComovingCoordinate;
+      report = ExtractLoadedSnapshotRegionToHdf5(req.snapshotExtractJob,
+                                                particles.simulationBlock,
+                                                metadata);
+    }
+    req.snapshotExtractMessage = report.message;
+    if (report.ok) {
+      char counts[256];
+      std::snprintf(counts,
+                    sizeof(counts),
+                    " types=[%zu,%zu,%zu,%zu,%zu,%zu], datasets=%zu",
+                    report.extractedCounts[0],
+                    report.extractedCounts[1],
+                    report.extractedCounts[2],
+                    report.extractedCounts[3],
+                    report.extractedCounts[4],
+                    report.extractedCounts[5],
+                    report.copiedDatasets);
+      req.snapshotExtractMessage += counts;
+    } else {
+      req.snapshotExtractMessage = "Extract failed: " + req.snapshotExtractMessage;
+    }
+    req.snapshotExtractRequested = false;
   }
 }
 

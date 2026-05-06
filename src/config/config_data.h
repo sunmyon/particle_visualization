@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "FileIO/file_format_types.h"
+#include "core/input_density_units.h"
 #include "core/units.h"
 #include "data/particle_mask_config.h"
 #include "render/particle_visual_config.h"
@@ -17,6 +18,11 @@ struct PersistentSettings {
   std::vector<FieldSpec> formatTokens;
   std::vector<FieldSpec> formatTokensHdf5;
   std::vector<FieldSpec> formatTokensGadget;
+  InputDensityUnit inputDensityUnit = InputDensityUnit::CodeMassDensity;
+  InputTemperatureUnit inputTemperatureUnit =
+    InputTemperatureUnit::CodeInternalEnergy;
+  InputMagneticFieldUnit inputMagneticFieldUnit =
+    InputMagneticFieldUnit::CodeMagneticField;
 
   ParticleVisualConfig visual;
   ParticleMaskConfig mask;

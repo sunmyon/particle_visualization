@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <deque>
 #include <string>
 #include <vector>
@@ -123,6 +124,7 @@ struct TopParticlesRequestState {
 
   int64_t queryParticleId = -1;
   int64_t centerParticleId = -1;
+  size_t centerParticleIndex = static_cast<size_t>(-1);
 
   bool selectedTypes[6] = {false, false, false, false, false, false};
 
@@ -153,6 +155,7 @@ struct TopParticlesResultState {
   std::deque<int64_t> historyIds;
   std::vector<SimulationElement> filtered;
   std::vector<int64_t> filteredIds;
+  std::vector<size_t> filteredIndices;
   std::vector<float> filteredSortValues;
   size_t filteredCandidateCount = 0;
   QuantityId filteredSortQuantity = QuantityId::Mass;

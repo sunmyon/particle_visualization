@@ -630,19 +630,28 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   header.npart     = (int)npart_;
   header.flag_hdf5 = true;
     
-  factor_density_ = 1.;
-  if(header.flag_density_in_cgs == false){
-    factor_density_ = header.HubbleParam * header.HubbleParam * header.UnitMass_in_g / pow(header.UnitLength_in_cm, 3) / physics_constants::proton_mass_cgs;
-    if(header.flag_comoving)
-      factor_density_ /= pow(header.time, 3);
-  }
+  header.input_density_unit = header.flag_density_in_cgs
+    ? InputDensityUnit::NumberDensityNH
+    : InputDensityUnit::CodeMassDensity;
+  header.input_temperature_unit = InputTemperatureUnit::Kelvin;
+  header.input_magnetic_field_unit = header.flag_B_in_cgs
+    ? InputMagneticFieldUnit::Gauss
+    : InputMagneticFieldUnit::CodeMagneticField;
+  factor_density_ = InputDensityToInternalNHFactor(header.input_density_unit,
+                                                   header.UnitMass_in_g,
+                                                   header.UnitLength_in_cm,
+                                                   header.HubbleParam,
+                                                   header.time,
+                                                   header.flag_comoving);
 
-  factor_Bfield_ = 1.;
-  if(header.flag_B_in_cgs == false){
-    factor_Bfield_ = sqrt(header.UnitMass_in_g / header.UnitLength_in_cm) / (header.UnitLength_in_cm / header.UnitVelocity_in_cm_per_s / header.HubbleParam);
-    if(header.flag_comoving)
-      factor_Bfield_ /= pow(header.time, 2);
-  }
+  factor_Bfield_ = InputMagneticFieldToGaussFactor(
+    header.input_magnetic_field_unit,
+    header.UnitMass_in_g,
+    header.UnitLength_in_cm,
+    header.UnitVelocity_in_cm_per_s,
+    header.HubbleParam,
+    header.time,
+    header.flag_comoving);
 
   factor_IntEnergy_ = header.UnitVelocity_in_cm_per_s*header.UnitVelocity_in_cm_per_s * physics_constants::proton_mass_cgs / physics_constants::boltzmann_cgs;    
 

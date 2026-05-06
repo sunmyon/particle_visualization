@@ -16,6 +16,16 @@ bool IsFixedGadgetBlock(FieldKey key)
          key == FieldKey::Type;
 }
 
+bool IsGadgetIdLikeBlock(FieldKey key)
+{
+  return key == FieldKey::ID || key == FieldKey::Type;
+}
+
+bool IsGadgetFloatingBlock(FieldKey key)
+{
+  return key != FieldKey::Dummy && !IsGadgetIdLikeBlock(key);
+}
+
 int GadgetDomainIndexOr(const std::string& sourceName, int fallback)
 {
   const size_t sep = sourceName.find(':');
@@ -63,6 +73,47 @@ void ApplyGadgetBlockDefaults(FieldSpec& spec)
   } else {
     spec.sourceName = "type0:1";
   }
+}
+
+void SetAllGadgetFloatingTypes(std::vector<FieldSpec>& tokens, DataType type)
+{
+  for (FieldSpec& spec : tokens) {
+    if (!IsGadgetIdLikeBlock(spec.key)) {
+      spec.type = type;
+    }
+  }
+}
+
+bool DrawGadgetTypeCombo(FieldSpec& spec)
+{
+  if (!ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
+    return false;
+  }
+
+  bool changed = false;
+  for (int n = 0; n < kNumDataTypeChoices; ++n) {
+    const DataType type = kDataTypeChoices[n].type;
+
+    if (IsGadgetFloatingBlock(spec.key) &&
+        type != DataType::Float &&
+        type != DataType::Double) {
+      continue;
+    }
+    if (IsGadgetIdLikeBlock(spec.key) &&
+        type != DataType::Int32 &&
+        type != DataType::Int64) {
+      continue;
+    }
+
+    const bool selected = spec.type == type;
+    if (ImGui::Selectable(kDataTypeChoices[n].name, selected)) {
+      spec.type = type;
+      changed = true;
+    }
+    if (selected) ImGui::SetItemDefaultFocus();
+  }
+  ImGui::EndCombo();
+  return changed;
 }
 
 bool HandleGadgetIndexDragDrop(std::vector<FieldSpec>& tokens, int rowIndex)
@@ -150,14 +201,15 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
     state.formatTokensEdit = MakeDefaultGadgetFormatTokens();
   }
   ImGui::SameLine();
-  if (ImGui::Button("Add block")) {
-    FieldSpec spec;
-    spec.key = FieldKey::Density;
-    ApplyGadgetBlockDefaults(spec);
-    state.formatTokensEdit.push_back(std::move(spec));
+  if (ImGui::Button("All float")) {
+    SetAllGadgetFloatingTypes(state.formatTokensEdit, DataType::Float);
   }
   ImGui::SameLine();
-  if (ImGui::Button("Add skip/dummy")) {
+  if (ImGui::Button("All double")) {
+    SetAllGadgetFloatingTypes(state.formatTokensEdit, DataType::Double);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Add field/skip")) {
     FieldSpec spec;
     spec.key = FieldKey::Dummy;
     ApplyGadgetBlockDefaults(spec);
@@ -169,7 +221,7 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable)) {
     ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
-    ImGui::TableSetupColumn("Block", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Field / skip", ImGuiTableColumnFlags_WidthFixed, 140.0f);
     ImGui::TableSetupColumn("Domain", ImGuiTableColumnFlags_WidthFixed, 110.0f);
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
     ImGui::TableSetupColumn("Components/element", ImGuiTableColumnFlags_WidthFixed, 130.0f);
@@ -232,21 +284,7 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
       }
 
       ImGui::TableNextColumn();
-      if (spec.key == FieldKey::Dummy) {
-        if (ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
-          for (int n = 0; n < kNumDataTypeChoices; ++n) {
-            DataType type = kDataTypeChoices[n].type;
-            const bool selected = spec.type == type;
-            if (ImGui::Selectable(kDataTypeChoices[n].name, selected)) {
-              spec.type = type;
-            }
-            if (selected) ImGui::SetItemDefaultFocus();
-          }
-          ImGui::EndCombo();
-        }
-      } else {
-        ImGui::TextUnformatted(GetDataTypeDisplayName(spec.type));
-      }
+      DrawGadgetTypeCombo(spec);
 
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1);
