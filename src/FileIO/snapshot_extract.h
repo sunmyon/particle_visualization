@@ -106,6 +106,7 @@ struct SnapshotLoadedExtractMetadata {
   double boxSize = 0.0;
   double omega0 = 0.0;
   double omegaLambda = 0.0;
+  double omegaBaryon = 0.0;
   double hubbleParam = 1.0;
   double unitLengthCm = 3.0856775814913673e18;
   double unitMassG = 1.98847e33;

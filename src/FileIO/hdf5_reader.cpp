@@ -499,7 +499,25 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
     (void)HDF5Utils::readAttributeScalar(hg, "BoxSize", header.boxSize);
     (void)HDF5Utils::readAttributeScalar(hg, "Omega0", header.Omega0);
     (void)HDF5Utils::readAttributeScalar(hg, "OmegaLambda", header.OmegaLambda);
+    (void)HDF5Utils::readAttributeScalar(hg, "OmegaBaryon", header.OmegaBaryon);
     (void)HDF5Utils::readAttributeScalar(hg, "HubbleParam", header.HubbleParam);
+    double headerUnitLength = header.UnitLength_in_cm;
+    if (HDF5Utils::readAttributeScalar(hg, "UnitLength_in_cm", headerUnitLength) &&
+        std::isfinite(headerUnitLength) && headerUnitLength > 0.0) {
+      header.UnitLength_in_cm = headerUnitLength;
+    }
+    double headerUnitMass = header.UnitMass_in_g;
+    if (HDF5Utils::readAttributeScalar(hg, "UnitMass_in_g", headerUnitMass) &&
+        std::isfinite(headerUnitMass) && headerUnitMass > 0.0) {
+      header.UnitMass_in_g = headerUnitMass;
+    }
+    double headerUnitVelocity = header.UnitVelocity_in_cm_per_s;
+    if (HDF5Utils::readAttributeScalar(hg,
+                                       "UnitVelocity_in_cm_per_s",
+                                       headerUnitVelocity) &&
+        std::isfinite(headerUnitVelocity) && headerUnitVelocity > 0.0) {
+      header.UnitVelocity_in_cm_per_s = headerUnitVelocity;
+    }
 
     double z = 0.0;
     if (HDF5Utils::readAttributeScalar(hg, "Redshift", z)) {

@@ -194,6 +194,10 @@ static void UpdateSnapshotCurrentState(const HeaderInfo& header,
                                        SnapshotCurrentState& current)
 {
   current.loadedTime = header.time;
+  current.loadedBoxSize = header.boxSize;
+  current.loadedOmega0 = header.Omega0;
+  current.loadedOmegaLambda = header.OmegaLambda;
+  current.loadedOmegaBaryon = header.OmegaBaryon;
   current.useComovingCoordinates = units.useComovingCoordinate;
 
   double scaleFactor = 1.0;

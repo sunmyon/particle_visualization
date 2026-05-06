@@ -457,6 +457,10 @@ struct SnapshotCurrentState {
   double loadedTime = 0.0;
   double loadedScaleFactor = 1.0;
   double loadedRedshift = 0.0;
+  double loadedBoxSize = 0.0;
+  double loadedOmega0 = 0.0;
+  double loadedOmegaLambda = 0.0;
+  double loadedOmegaBaryon = 0.0;
   double loadedCosmicTime = 0.0;
   bool hasCosmicTime = false;
   bool useComovingCoordinates = false;

@@ -11,6 +11,7 @@ struct HeaderInfo
   int    NumPart_ThisFile[6] = {0, 0, 0, 0, 0, 0}; // "NumPart_Total" attribute, expected as a 6-element array.
   double Omega0 = 0.0;
   double OmegaLambda = 0.0;
+  double OmegaBaryon = 0.0;
   double HubbleParam = 1.0;     // "HubbleParam"
   double massTable[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // "MassTable", expected as a 6-element array.
 

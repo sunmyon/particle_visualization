@@ -57,6 +57,18 @@ void WriteScalarAttribute(H5::Group& group,
   attr.write(type, &value);
 }
 
+void WriteStringAttribute(H5::Group& group,
+                          const std::string& name,
+                          const std::string& value)
+{
+  if (group.attrExists(name)) group.removeAttr(name);
+  H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
+  H5::DataSpace scalar(H5S_SCALAR);
+  H5::Attribute attr = group.createAttribute(name, type, scalar);
+  const std::string text = value.empty() ? std::string("unknown") : value;
+  attr.write(type, text);
+}
+
 template<typename T, std::size_t N>
 void WriteArrayAttribute(H5::Group& group,
                          const std::string& name,
@@ -98,6 +110,21 @@ bool ReadScalarAttribute(H5::Group& group,
   return true;
 }
 
+bool ReadStringAttribute(H5::Group& group,
+                         const std::string& name,
+                         std::string& value)
+{
+  if (!group.attrExists(name)) return false;
+  H5::Attribute attr = group.openAttribute(name);
+  try {
+    H5::StrType type = attr.getStrType();
+    attr.read(type, value);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 struct SourceHeader {
   std::array<std::size_t, 6> counts = {0, 0, 0, 0, 0, 0};
   std::array<double, 6> massTable = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
@@ -106,7 +133,17 @@ struct SourceHeader {
   double boxSize = 0.0;
   double omega0 = 0.0;
   double omegaLambda = 0.0;
+  double omegaBaryon = 0.0;
   double hubbleParam = 1.0;
+  int flagSfr = 0;
+  int flagCooling = 0;
+  int flagStellarAge = 0;
+  int flagMetals = 0;
+  int flagFeedback = 0;
+  int flagDoublePrecision = 0;
+  int compositionVectorLength = 0;
+  std::string gitCommit = "unknown";
+  std::string gitDate = "unknown";
   bool hasRedshift = false;
 };
 
@@ -139,7 +176,20 @@ SourceHeader ReadSourceHeader(H5::H5File& file)
     (void)ReadScalarAttribute(group, "BoxSize", H5::PredType::NATIVE_DOUBLE, header.boxSize);
     (void)ReadScalarAttribute(group, "Omega0", H5::PredType::NATIVE_DOUBLE, header.omega0);
     (void)ReadScalarAttribute(group, "OmegaLambda", H5::PredType::NATIVE_DOUBLE, header.omegaLambda);
+    (void)ReadScalarAttribute(group, "OmegaBaryon", H5::PredType::NATIVE_DOUBLE, header.omegaBaryon);
     (void)ReadScalarAttribute(group, "HubbleParam", H5::PredType::NATIVE_DOUBLE, header.hubbleParam);
+    (void)ReadScalarAttribute(group, "Flag_Sfr", H5::PredType::NATIVE_INT, header.flagSfr);
+    (void)ReadScalarAttribute(group, "Flag_Cooling", H5::PredType::NATIVE_INT, header.flagCooling);
+    (void)ReadScalarAttribute(group, "Flag_StellarAge", H5::PredType::NATIVE_INT, header.flagStellarAge);
+    (void)ReadScalarAttribute(group, "Flag_Metals", H5::PredType::NATIVE_INT, header.flagMetals);
+    (void)ReadScalarAttribute(group, "Flag_Feedback", H5::PredType::NATIVE_INT, header.flagFeedback);
+    (void)ReadScalarAttribute(group, "Flag_DoublePrecision", H5::PredType::NATIVE_INT, header.flagDoublePrecision);
+    (void)ReadScalarAttribute(group,
+                              "Composition_vector_length",
+                              H5::PredType::NATIVE_INT,
+                              header.compositionVectorLength);
+    (void)ReadStringAttribute(group, "Git_commit", header.gitCommit);
+    (void)ReadStringAttribute(group, "Git_date", header.gitDate);
     header.hasRedshift =
       ReadScalarAttribute(group, "Redshift", H5::PredType::NATIVE_DOUBLE, header.redshift);
     (void)ReadArrayAttribute(group,
@@ -349,6 +399,21 @@ double ComputeExtractBoxSize(const SnapshotExtractRegion& region,
   }
   if (size <= 0.0) size = fallback;
   return size * lengthScale;
+}
+
+std::array<double, 3> RegionLowerCorner(const SnapshotExtractRegion& region)
+{
+  std::array<double, 3> lo{};
+  if (region.kind == SnapshotExtractRegionKind::Sphere) {
+    for (int axis = 0; axis < 3; ++axis) {
+      lo[axis] = region.center[axis] - region.radius;
+    }
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      lo[axis] = region.center[axis] - region.halfSize[axis];
+    }
+  }
+  return lo;
 }
 
 void ReadCoordinateChunk(H5::DataSet& coordinates,
@@ -677,11 +742,13 @@ void ReadUInt64Rows(H5::DataSet& ds,
 void CopyDatasetWithKeepList(H5::H5File& input,
                              H5::Group& outGroup,
                              int ptype,
+                             FieldKey key,
                              const std::string& sourceName,
                              const std::string& outputName,
                              const std::vector<std::uint64_t>& keep,
                              std::size_t outputRowCount,
-                             double valueScale)
+                             double valueScale,
+                             const std::array<double, 3>& coordinateOrigin)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
   DatasetShape shape = GetDatasetShape(src);
@@ -690,7 +757,20 @@ void CopyDatasetWithKeepList(H5::H5File& input,
   }
 
   H5::DataType dataType = src.getDataType();
-  H5::DataSet dst = CreateOutputDataset(outGroup, outputName, dataType, shape, outputRowCount);
+  const bool transformCoordinates = key == FieldKey::Position;
+  DatasetShape outputShape = shape;
+  if (transformCoordinates) {
+    outputShape.rowBytes =
+      sizeof(double) * static_cast<std::size_t>(outputShape.components);
+  }
+  H5::DataType outputType = transformCoordinates
+    ? H5::DataType(H5::PredType::NATIVE_DOUBLE)
+    : dataType;
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputName,
+                                        outputType,
+                                        outputShape,
+                                        outputRowCount);
   if (keep.empty()) return;
   const bool scaleValues =
     std::isfinite(valueScale) &&
@@ -714,7 +794,7 @@ void CopyDatasetWithKeepList(H5::H5File& input,
       ++keepEnd;
     }
 
-    if (scaleValues) {
+    if (transformCoordinates || scaleValues) {
       ReadDoubleRows(src, shape, chunkBegin, chunkEnd - chunkBegin, doubleChunk);
       const std::size_t components = static_cast<std::size_t>(shape.components);
       doublePacked.resize((keepEnd - keepCursor) * components);
@@ -722,11 +802,14 @@ void CopyDatasetWithKeepList(H5::H5File& input,
         const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
         const std::size_t outLocal = k - keepCursor;
         for (std::size_t c = 0; c < components; ++c) {
-          doublePacked[outLocal * components + c] =
-            doubleChunk[local * components + c] * valueScale;
+          double value = doubleChunk[local * components + c];
+          if (transformCoordinates && c < 3) {
+            value -= coordinateOrigin[c];
+          }
+          doublePacked[outLocal * components + c] = value * valueScale;
         }
       }
-      WriteDoubleRows(dst, shape, outCursor, keepEnd - keepCursor, doublePacked);
+      WriteDoubleRows(dst, outputShape, outCursor, keepEnd - keepCursor, doublePacked);
     } else {
       ReadRawRows(src, dataType, shape, chunkBegin, chunkEnd - chunkBegin, srcChunk);
       packed.resize((keepEnd - keepCursor) * shape.rowBytes);
@@ -737,7 +820,7 @@ void CopyDatasetWithKeepList(H5::H5File& input,
                     shape.rowBytes);
       }
 
-      WriteRawRows(dst, dataType, shape, outCursor, keepEnd - keepCursor, packed);
+      WriteRawRows(dst, dataType, outputShape, outCursor, keepEnd - keepCursor, packed);
     }
     outCursor += keepEnd - keepCursor;
     keepCursor = keepEnd;
@@ -751,7 +834,8 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
                                           const ActiveOutputField& outputField,
                                           const std::vector<std::uint64_t>& keep,
                                           std::size_t outputRowCount,
-                                          double valueScale)
+                                          double valueScale,
+                                          const std::array<double, 3>& coordinateOrigin)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
   DatasetShape sourceShape = GetDatasetShape(src);
@@ -813,9 +897,13 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
         const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
         const std::size_t outLocal = k - keepCursor;
         for (std::size_t c = 0; c < outputComps; ++c) {
-          const double value = c < sourceComps
-            ? doubleChunk[local * sourceComps + c] * valueScale
+          double value = c < sourceComps
+            ? doubleChunk[local * sourceComps + c]
             : defaults[std::min(c, defaults.size() - 1)];
+          if (outputField.field.key == FieldKey::Position && c < 3) {
+            value -= coordinateOrigin[c];
+          }
+          if (c < sourceComps) value *= valueScale;
           doublePacked[outLocal * outputComps + c] = value;
         }
       }
@@ -897,23 +985,24 @@ BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
   const int ny = n;
   const int nz = n;
 
-  std::array<double, 3> lo{};
-  std::array<double, 3> hi{};
+  const std::array<double, 3> sourceLo = RegionLowerCorner(region);
+  std::array<double, 3> sourceHi{};
   if (region.kind == SnapshotExtractRegionKind::Sphere) {
     for (int axis = 0; axis < 3; ++axis) {
-      lo[axis] = (region.center[axis] - region.radius) * lengthScale;
-      hi[axis] = (region.center[axis] + region.radius) * lengthScale;
+      sourceHi[axis] = region.center[axis] + region.radius;
     }
   } else {
     for (int axis = 0; axis < 3; ++axis) {
-      lo[axis] = (region.center[axis] - region.halfSize[axis]) * lengthScale;
-      hi[axis] = (region.center[axis] + region.halfSize[axis]) * lengthScale;
+      sourceHi[axis] = region.center[axis] + region.halfSize[axis];
     }
   }
 
-  const double dx = (hi[0] - lo[0]) / static_cast<double>(nx);
-  const double dy = (hi[1] - lo[1]) / static_cast<double>(ny);
-  const double dz = (hi[2] - lo[2]) / static_cast<double>(nz);
+  const double dx = (sourceHi[0] - sourceLo[0]) * lengthScale /
+                    static_cast<double>(nx);
+  const double dy = (sourceHi[1] - sourceLo[1]) * lengthScale /
+                    static_cast<double>(ny);
+  const double dz = (sourceHi[2] - sourceLo[2]) * lengthScale /
+                    static_cast<double>(nz);
   if (!(dx > 0.0 && dy > 0.0 && dz > 0.0)) return grid;
 
   grid.count = static_cast<std::size_t>(nx) *
@@ -925,16 +1014,16 @@ BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
   grid.cellLength = std::cbrt(grid.cellVolume);
   grid.firstId = firstId;
   grid.cells = {nx, ny, nz};
-  grid.lo = lo;
+  grid.lo = {0.0, 0.0, 0.0};
   grid.cellSize = {dx, dy, dz};
 
   std::size_t cursor = 0;
   for (int iz = 0; iz < nz; ++iz) {
-    const double z = lo[2] + (static_cast<double>(iz) + 0.5) * dz;
+    const double z = (static_cast<double>(iz) + 0.5) * dz;
     for (int iy = 0; iy < ny; ++iy) {
-      const double y = lo[1] + (static_cast<double>(iy) + 0.5) * dy;
+      const double y = (static_cast<double>(iy) + 0.5) * dy;
       for (int ix = 0; ix < nx; ++ix) {
-        const double x = lo[0] + (static_cast<double>(ix) + 0.5) * dx;
+        const double x = (static_cast<double>(ix) + 0.5) * dx;
         grid.coordinates[3 * cursor + 0] = x;
         grid.coordinates[3 * cursor + 1] = y;
         grid.coordinates[3 * cursor + 2] = z;
@@ -971,6 +1060,7 @@ int BackgroundGridCullSearchRadius(const BackgroundGridData& grid)
 void AssignNearestGasRows(H5::H5File& input,
                           const std::vector<std::uint64_t>& gasKeep,
                           double lengthScale,
+                          const std::array<double, 3>& coordinateOrigin,
                           BackgroundGridData& grid)
 {
   if (grid.count == 0 || gasKeep.empty()) return;
@@ -1002,12 +1092,15 @@ void AssignNearestGasRows(H5::H5File& input,
     ReadDoubleRows(coords, shape, chunkBegin, chunkEnd - chunkBegin, coordChunk);
     for (std::size_t k = keepCursor; k < keepEnd; ++k) {
       const std::size_t local = static_cast<std::size_t>(gasKeep[k]) - chunkBegin;
-      const double x = coordChunk[local * static_cast<std::size_t>(shape.components) + 0] *
-                       lengthScale;
-      const double y = coordChunk[local * static_cast<std::size_t>(shape.components) + 1] *
-                       lengthScale;
-      const double z = coordChunk[local * static_cast<std::size_t>(shape.components) + 2] *
-                       lengthScale;
+      const double x =
+        (coordChunk[local * static_cast<std::size_t>(shape.components) + 0] -
+         coordinateOrigin[0]) * lengthScale;
+      const double y =
+        (coordChunk[local * static_cast<std::size_t>(shape.components) + 1] -
+         coordinateOrigin[1]) * lengthScale;
+      const double z =
+        (coordChunk[local * static_cast<std::size_t>(shape.components) + 2] -
+         coordinateOrigin[2]) * lengthScale;
       const std::size_t sourceIndex = sourceRows.size();
       sourceRows.push_back(gasKeep[k]);
       sourceCoords.push_back(x);
@@ -1092,6 +1185,7 @@ void CullBackgroundGridNearSelectedParticles(
   H5::H5File& input,
   const std::array<std::vector<std::uint64_t>, 6>& keepByType,
   double lengthScale,
+  const std::array<double, 3>& coordinateOrigin,
   BackgroundGridData& grid)
 {
   if (grid.count == 0) return;
@@ -1125,14 +1219,14 @@ void CullBackgroundGridNearSelectedParticles(
       for (std::size_t k = keepCursor; k < keepEnd; ++k) {
         const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
         const double x =
-          coordChunk[local * static_cast<std::size_t>(shape.components) + 0] *
-          lengthScale;
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 0] -
+           coordinateOrigin[0]) * lengthScale;
         const double y =
-          coordChunk[local * static_cast<std::size_t>(shape.components) + 1] *
-          lengthScale;
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 1] -
+           coordinateOrigin[1]) * lengthScale;
         const double z =
-          coordChunk[local * static_cast<std::size_t>(shape.components) + 2] *
-          lengthScale;
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 2] -
+           coordinateOrigin[2]) * lengthScale;
         const std::size_t sourceIndex = sourceCoords.size() / 3;
         sourceCoords.push_back(x);
         sourceCoords.push_back(y);
@@ -1643,16 +1737,18 @@ void WriteHeader(H5::H5File& output,
   WriteScalarAttribute(header, "OriginalBoxSize", H5::PredType::NATIVE_DOUBLE, source.boxSize);
   WriteScalarAttribute(header, "Omega0", H5::PredType::NATIVE_DOUBLE, source.omega0);
   WriteScalarAttribute(header, "OmegaLambda", H5::PredType::NATIVE_DOUBLE, source.omegaLambda);
+  WriteScalarAttribute(header, "OmegaBaryon", H5::PredType::NATIVE_DOUBLE, source.omegaBaryon);
   WriteScalarAttribute(header,
                        "HubbleParam",
                        H5::PredType::NATIVE_DOUBLE,
                        outputParameters.hubbleParam);
 
   const int extractRegionShape = region.kind == SnapshotExtractRegionKind::Sphere ? 1 : 0;
+  const std::array<double, 3> coordinateOrigin = RegionLowerCorner(region);
   std::array<double, 3> outputCenter = region.center;
   std::array<double, 3> outputHalfSize = region.halfSize;
   for (int axis = 0; axis < 3; ++axis) {
-    outputCenter[axis] *= lengthScale;
+    outputCenter[axis] = (outputCenter[axis] - coordinateOrigin[axis]) * lengthScale;
     outputHalfSize[axis] *= lengthScale;
   }
   const double outputRadius = region.radius * lengthScale;
@@ -1690,12 +1786,34 @@ void WriteHeader(H5::H5File& output,
                        lengthScale);
 
   constexpr int one = 1;
-  constexpr int zero = 0;
   WriteScalarAttribute(header, "NumFilesPerSnapshot", H5::PredType::NATIVE_INT, one);
-  WriteScalarAttribute(header, "Flag_Sfr", H5::PredType::NATIVE_INT, zero);
-  WriteScalarAttribute(header, "Flag_Cooling", H5::PredType::NATIVE_INT, zero);
-  WriteScalarAttribute(header, "Flag_StellarAge", H5::PredType::NATIVE_INT, zero);
-  WriteScalarAttribute(header, "Flag_Metals", H5::PredType::NATIVE_INT, zero);
+  WriteScalarAttribute(header, "Flag_Sfr", H5::PredType::NATIVE_INT, source.flagSfr);
+  WriteScalarAttribute(header, "Flag_Cooling", H5::PredType::NATIVE_INT, source.flagCooling);
+  WriteScalarAttribute(header, "Flag_StellarAge", H5::PredType::NATIVE_INT, source.flagStellarAge);
+  WriteScalarAttribute(header, "Flag_Metals", H5::PredType::NATIVE_INT, source.flagMetals);
+  WriteScalarAttribute(header, "Flag_Feedback", H5::PredType::NATIVE_INT, source.flagFeedback);
+  WriteScalarAttribute(header,
+                       "Flag_DoublePrecision",
+                       H5::PredType::NATIVE_INT,
+                       source.flagDoublePrecision);
+  WriteScalarAttribute(header,
+                       "Composition_vector_length",
+                       H5::PredType::NATIVE_INT,
+                       source.compositionVectorLength);
+  WriteStringAttribute(header, "Git_commit", source.gitCommit);
+  WriteStringAttribute(header, "Git_date", source.gitDate);
+  WriteScalarAttribute(header,
+                       "UnitLength_in_cm",
+                       H5::PredType::NATIVE_DOUBLE,
+                       outputParameters.unitLength);
+  WriteScalarAttribute(header,
+                       "UnitMass_in_g",
+                       H5::PredType::NATIVE_DOUBLE,
+                       outputParameters.unitMass);
+  WriteScalarAttribute(header,
+                       "UnitVelocity_in_cm_per_s",
+                       H5::PredType::NATIVE_DOUBLE,
+                       outputParameters.unitVelocity);
 }
 
 void WriteParameters(H5::H5File& output,
@@ -1752,6 +1870,7 @@ SourceHeader MakeSourceHeaderFromLoadedBlock(
   header.boxSize = metadata.boxSize;
   header.omega0 = metadata.omega0;
   header.omegaLambda = metadata.omegaLambda;
+  header.omegaBaryon = metadata.omegaBaryon;
   header.hubbleParam = metadata.hubbleParam;
   header.hasRedshift = true;
   for (const SimulationElement& p : block.particles) {
@@ -1814,6 +1933,7 @@ void AssignNearestGasRowsFromLoadedBlock(
   const SimulationBlock& block,
   const std::vector<std::size_t>& gasKeep,
   double lengthScale,
+  const std::array<double, 3>& coordinateOrigin,
   BackgroundGridData& grid)
 {
   if (grid.count == 0 || gasKeep.empty()) return;
@@ -1821,9 +1941,12 @@ void AssignNearestGasRowsFromLoadedBlock(
   std::vector<std::vector<std::size_t>> bins(grid.count);
   for (std::size_t sourceIndex = 0; sourceIndex < gasKeep.size(); ++sourceIndex) {
     const SimulationElement& p = block.particles[gasKeep[sourceIndex]];
-    const double x = static_cast<double>(p.position[0]) * lengthScale;
-    const double y = static_cast<double>(p.position[1]) * lengthScale;
-    const double z = static_cast<double>(p.position[2]) * lengthScale;
+    const double x = (static_cast<double>(p.position[0]) - coordinateOrigin[0]) *
+                     lengthScale;
+    const double y = (static_cast<double>(p.position[1]) - coordinateOrigin[1]) *
+                     lengthScale;
+    const double z = (static_cast<double>(p.position[2]) - coordinateOrigin[2]) *
+                     lengthScale;
     const int ix = std::clamp(static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
                               0,
                               grid.cells[0] - 1);
@@ -1872,9 +1995,15 @@ void AssignNearestGasRowsFromLoadedBlock(
             const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
             for (std::size_t sourceIndex : bin) {
               const SimulationElement& p = block.particles[gasKeep[sourceIndex]];
-              const double dx = static_cast<double>(p.position[0]) * lengthScale - gx;
-              const double dy = static_cast<double>(p.position[1]) * lengthScale - gy;
-              const double dz = static_cast<double>(p.position[2]) * lengthScale - gz;
+              const double dx =
+                (static_cast<double>(p.position[0]) - coordinateOrigin[0]) *
+                lengthScale - gx;
+              const double dy =
+                (static_cast<double>(p.position[1]) - coordinateOrigin[1]) *
+                lengthScale - gy;
+              const double dz =
+                (static_cast<double>(p.position[2]) - coordinateOrigin[2]) *
+                lengthScale - gz;
               const double dist2 = dx * dx + dy * dy + dz * dz;
               if (dist2 < bestDist2) {
                 bestDist2 = dist2;
@@ -1896,6 +2025,7 @@ void CullBackgroundGridNearLoadedParticles(
   const SimulationBlock& block,
   const std::array<std::vector<std::size_t>, 6>& keepByType,
   double lengthScale,
+  const std::array<double, 3>& coordinateOrigin,
   BackgroundGridData& grid)
 {
   if (grid.count == 0) return;
@@ -1906,9 +2036,12 @@ void CullBackgroundGridNearLoadedParticles(
     for (std::size_t particleIndex : keep) {
       if (particleIndex >= block.particles.size()) continue;
       const SimulationElement& p = block.particles[particleIndex];
-      const double x = static_cast<double>(p.position[0]) * lengthScale;
-      const double y = static_cast<double>(p.position[1]) * lengthScale;
-      const double z = static_cast<double>(p.position[2]) * lengthScale;
+      const double x = (static_cast<double>(p.position[0]) - coordinateOrigin[0]) *
+                       lengthScale;
+      const double y = (static_cast<double>(p.position[1]) - coordinateOrigin[1]) *
+                       lengthScale;
+      const double z = (static_cast<double>(p.position[2]) - coordinateOrigin[2]) *
+                       lengthScale;
       const std::size_t sourceIndex = sourceIndices.size();
       sourceIndices.push_back(particleIndex);
       const int ix = std::clamp(static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
@@ -1960,9 +2093,15 @@ void CullBackgroundGridNearLoadedParticles(
             const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
             for (std::size_t sourceIndex : bin) {
               const SimulationElement& p = block.particles[sourceIndices[sourceIndex]];
-              const double dx = static_cast<double>(p.position[0]) * lengthScale - gx;
-              const double dy = static_cast<double>(p.position[1]) * lengthScale - gy;
-              const double dz = static_cast<double>(p.position[2]) * lengthScale - gz;
+              const double dx =
+                (static_cast<double>(p.position[0]) - coordinateOrigin[0]) *
+                lengthScale - gx;
+              const double dy =
+                (static_cast<double>(p.position[1]) - coordinateOrigin[1]) *
+                lengthScale - gy;
+              const double dz =
+                (static_cast<double>(p.position[2]) - coordinateOrigin[2]) *
+                lengthScale - gz;
               const double dist2 = dx * dx + dy * dy + dz * dz;
               if (dist2 < bestDist2) {
                 bestDist2 = dist2;
@@ -2132,7 +2271,8 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
                               const std::vector<std::size_t>& keep,
                               const BackgroundGridData& backgroundGrid,
                               const SnapshotBackgroundGridConfig& background,
-                              double valueScale)
+                              double valueScale,
+                              const std::array<double, 3>& coordinateOrigin)
 {
   const std::size_t backgroundRows = backgroundGrid.count;
   const std::size_t outputRows = keep.size() + backgroundRows;
@@ -2151,7 +2291,8 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
     switch (field.key) {
     case FieldKey::Position:
       for (std::size_t c = 0; c < std::min<std::size_t>(3, comps); ++c) {
-        rows[row * comps + c] = static_cast<double>(p.position[c]) * valueScale;
+        rows[row * comps + c] =
+          (static_cast<double>(p.position[c]) - coordinateOrigin[c]) * valueScale;
       }
       break;
     case FieldKey::Velocity:
@@ -2402,6 +2543,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
+    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
+    sourceHeader.flagDoublePrecision = 1;
 
     report.sourceCounts = sourceHeader.counts;
     report.sourceParticles =
@@ -2430,11 +2573,16 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                           outputLengthScale,
                           backgroundFirstId);
     extractContext = "assigning nearest gas rows for background grid";
-    AssignNearestGasRows(input, keepByType[0], outputLengthScale, backgroundGrid);
+    AssignNearestGasRows(input,
+                         keepByType[0],
+                         outputLengthScale,
+                         coordinateOrigin,
+                         backgroundGrid);
     extractContext = "culling occupied background grid cells";
     CullBackgroundGridNearSelectedParticles(input,
                                             keepByType,
                                             outputLengthScale,
+                                            coordinateOrigin,
                                             backgroundGrid);
     report.backgroundParticles = backgroundGrid.count;
     report.suggestedMeanVolume =
@@ -2573,16 +2721,19 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                                outputField,
                                                keep,
                                                outputRows,
-                                               valueScale);
+                                               valueScale,
+                                               coordinateOrigin);
         } else {
           CopyDatasetWithKeepList(input,
                                   outGroup,
                                   ptype,
+                                  field.key,
                                   sourceName,
                                   outputName,
                                   keep,
                                   outputRows,
-                                  valueScale);
+                                  valueScale,
+                                  coordinateOrigin);
         }
         if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
           extractContext = "appending background rows to " +
@@ -2695,6 +2846,8 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
+    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
+    sourceHeader.flagDoublePrecision = 1;
 
     report.sourceCounts = sourceHeader.counts;
     report.sourceParticles = block.particles.size();
@@ -2719,11 +2872,13 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
     AssignNearestGasRowsFromLoadedBlock(block,
                                         keepByType[0],
                                         outputLengthScale,
+                                        coordinateOrigin,
                                         backgroundGrid);
     extractContext = "culling loaded occupied background grid cells";
     CullBackgroundGridNearLoadedParticles(block,
                                           keepByType,
                                           outputLengthScale,
+                                          coordinateOrigin,
                                           backgroundGrid);
     report.backgroundParticles = backgroundGrid.count;
     report.suggestedMeanVolume =
@@ -2832,7 +2987,8 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
                                    keep,
                                    groupBackground,
                                    background,
-                                   valueScale);
+                                   valueScale,
+                                   coordinateOrigin);
         }
         ++report.copiedDatasets;
       }

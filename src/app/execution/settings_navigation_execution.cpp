@@ -426,6 +426,10 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
       SnapshotLoadedExtractMetadata metadata;
       metadata.time = settings.fileNavigation.current.loadedTime;
       metadata.redshift = settings.fileNavigation.current.loadedRedshift;
+      metadata.boxSize = settings.fileNavigation.current.loadedBoxSize;
+      metadata.omega0 = settings.fileNavigation.current.loadedOmega0;
+      metadata.omegaLambda = settings.fileNavigation.current.loadedOmegaLambda;
+      metadata.omegaBaryon = settings.fileNavigation.current.loadedOmegaBaryon;
       metadata.hubbleParam = quantity.units.hubble;
       metadata.unitLengthCm = quantity.units.length_cm;
       metadata.unitMassG = quantity.units.mass_g;
