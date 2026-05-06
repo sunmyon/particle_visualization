@@ -1114,14 +1114,14 @@ static double SnapshotExtractBackgroundMeanVolume(const SnapshotExtractUiState& 
   double dy = 0.0;
   double dz = 0.0;
   if (state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)) {
-    const double side = 2.0 * std::max(0.0f, state.radius) * lengthScale;
+    const double side = 2.0 * std::max(0.0, state.radius) * lengthScale;
     dx = dy = dz = side / static_cast<double>(n);
   } else {
-    dx = 2.0 * std::max(0.0f, state.halfSize[0]) * lengthScale /
+    dx = 2.0 * std::max(0.0, state.halfSize[0]) * lengthScale /
          static_cast<double>(n);
-    dy = 2.0 * std::max(0.0f, state.halfSize[1]) * lengthScale /
+    dy = 2.0 * std::max(0.0, state.halfSize[1]) * lengthScale /
          static_cast<double>(n);
-    dz = 2.0 * std::max(0.0f, state.halfSize[2]) * lengthScale /
+    dz = 2.0 * std::max(0.0, state.halfSize[2]) * lengthScale /
          static_cast<double>(n);
   }
   if (!(dx > 0.0 && dy > 0.0 && dz > 0.0)) return 0.0;
@@ -1140,6 +1140,7 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
   auto& state = request.snapshotExtract;
   SyncSnapshotExtractUnitDefaults(state, fileNav, units);
   ImGui::TextDisabled("Raw HDF5 extract: rereads the source file and writes selected rows.");
+  ImGui::TextDisabled("Region selection is evaluated in source code coordinates before output unit conversion.");
 
   bool previewChanged = false;
   const char* regionKinds[] = {"box", "sphere"};
@@ -1158,24 +1159,32 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
     previewChanged = true;
   }
   previewChanged |=
-    ImGui::InputFloat3("center (original)##snapshot_extract",
-                       state.center,
-                       "%.6g");
+    ImGui::InputScalarN("center (source code units)##snapshot_extract",
+                        ImGuiDataType_Double,
+                        state.center,
+                        3,
+                        nullptr,
+                        nullptr,
+                        "%.12g");
   if (state.regionKind == static_cast<int>(SnapshotExtractRegionKind::Sphere)) {
     previewChanged |=
-      ImGui::InputFloat("radius (original)##snapshot_extract",
-                        &state.radius,
-                        0.0f,
-                        0.0f,
-                        "%.6g");
-    state.radius = std::max(0.0f, state.radius);
+      ImGui::InputDouble("radius (source code units)##snapshot_extract",
+                         &state.radius,
+                         0.0,
+                         0.0,
+                         "%.12g");
+    state.radius = std::max(0.0, state.radius);
   } else {
     previewChanged |=
-      ImGui::InputFloat3("half size (original)##snapshot_extract",
-                         state.halfSize,
-                         "%.6g");
-    for (float& v : state.halfSize) {
-      v = std::max(0.0f, v);
+      ImGui::InputScalarN("half size (source code units)##snapshot_extract",
+                          ImGuiDataType_Double,
+                          state.halfSize,
+                          3,
+                          nullptr,
+                          nullptr,
+                          "%.12g");
+    for (double& v : state.halfSize) {
+      v = std::max(0.0, v);
     }
   }
   if (previewChanged) {

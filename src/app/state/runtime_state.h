@@ -559,9 +559,9 @@ struct RenderSnapshotMovieState {
 
 struct SnapshotExtractUiState {
   int regionKind = static_cast<int>(SnapshotExtractRegionKind::Box);
-  float center[3] = {0.0f, 0.0f, 0.0f};
-  float halfSize[3] = {500.0f, 500.0f, 500.0f};
-  float radius = 500.0f;
+  double center[3] = {0.0, 0.0, 0.0};
+  double halfSize[3] = {500.0, 500.0, 500.0};
+  double radius = 500.0;
   bool showRegion = false;
   char outputPath[512] = "extract_snapshot.hdf5";
   bool copyHeader = true;
