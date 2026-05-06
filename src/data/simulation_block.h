@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <array>
 
 #include "simulation_element.h"
@@ -25,6 +26,9 @@ struct SimulationBlock {
   // ---- SoA fields (optional) ----
   // key = field label (e.g. "Bfield")
   std::unordered_map<std::string, SoAField> soa;
+  // FieldKey display names that were actually present in the source/read path.
+  std::unordered_set<std::string> loadedFieldNames;
+  std::unordered_map<std::string, uint8_t> loadedFieldTypeMask;
   QuantityStorageMetadata quantityStorage;
 
   std::unordered_map<uint64_t, size_t> id2index;
@@ -51,6 +55,8 @@ struct SimulationBlock {
     particles.clear();
     aosExt.bytes.clear();
     soa.clear();
+    loadedFieldNames.clear();
+    loadedFieldTypeMask.clear();
     id2index.clear();
     id2indexDirty = true;
     worldToRenderScale = 1.0f;
@@ -66,6 +72,44 @@ struct SimulationBlock {
             it->second.type == DataType::Int64) &&
            it->second.bytes.size() ==
              particles.size() * dataTypeSize(it->second.type);
+  }
+
+  void markLoadedField(const char* name)
+  {
+    if (name && *name) {
+      loadedFieldNames.insert(name);
+      loadedFieldTypeMask[name] |= 0x3fu;
+    }
+  }
+
+  void markLoadedFieldForType(const char* name, int ptype)
+  {
+    if (!name || !*name || ptype < 0 || ptype >= 6) return;
+    loadedFieldNames.insert(name);
+    loadedFieldTypeMask[name] |= static_cast<uint8_t>(1u << ptype);
+  }
+
+  void markLoadedFieldForTypeMask(const char* name, uint8_t typeMask)
+  {
+    if (!name || !*name || typeMask == 0) return;
+    loadedFieldNames.insert(name);
+    loadedFieldTypeMask[name] |= static_cast<uint8_t>(typeMask & 0x3fu);
+  }
+
+  bool hasLoadedField(const char* name) const
+  {
+    if (!name || !*name) return false;
+    return loadedFieldNames.find(name) != loadedFieldNames.end();
+  }
+
+  bool hasLoadedFieldForType(const char* name, int ptype) const
+  {
+    if (!name || !*name || ptype < 0 || ptype >= 6) return false;
+    auto it = loadedFieldTypeMask.find(name);
+    if (it == loadedFieldTypeMask.end()) {
+      return hasLoadedField(name);
+    }
+    return (it->second & static_cast<uint8_t>(1u << ptype)) != 0;
   }
 
   void ensureParticleIdStorage(DataType type = DataType::Int64)

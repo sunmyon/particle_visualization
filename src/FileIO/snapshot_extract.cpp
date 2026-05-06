@@ -412,6 +412,7 @@ struct BackgroundGridData {
   std::vector<double> coordinates;
   std::vector<std::uint64_t> nearestGasRows;
   std::size_t count = 0;
+  bool hasNearestGasRows = false;
   double cellVolume = 0.0;
   double cellLength = 0.0;
   std::uint64_t firstId = 1;
@@ -443,6 +444,7 @@ void CompactBackgroundGridToEmptyCells(BackgroundGridData& grid,
   grid.coordinates.swap(compactCoords);
   grid.nearestGasRows.swap(compactNearest);
   grid.count = grid.nearestGasRows.size();
+  if (grid.count == 0) grid.hasNearestGasRows = false;
 }
 
 DatasetShape GetDatasetShape(H5::DataSet& ds)
@@ -738,8 +740,24 @@ bool FieldUsesBackgroundGrid(FieldKey key)
   case FieldKey::Volume:
   case FieldKey::Bfield:
   case FieldKey::Metallicity:
+  case FieldKey::ElectronAbundance:
   case FieldKey::H2Abundance:
+  case FieldKey::HDAbundance:
   case FieldKey::J21:
+  case FieldKey::Gamma:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool FieldCanBeSynthesizedForBackgroundGrid(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::Position:
+  case FieldKey::ID:
+  case FieldKey::Mass:
+  case FieldKey::Density:
     return true;
   default:
     return false;
@@ -754,8 +772,11 @@ bool FieldUsesNearestBackgroundValue(FieldKey key)
   case FieldKey::Temperature:
   case FieldKey::Bfield:
   case FieldKey::Metallicity:
+  case FieldKey::ElectronAbundance:
   case FieldKey::H2Abundance:
+  case FieldKey::HDAbundance:
   case FieldKey::J21:
+  case FieldKey::Gamma:
     return true;
   default:
     return false;
@@ -831,6 +852,19 @@ std::size_t BackgroundGridFlatIndex(const BackgroundGridData& grid,
   return (static_cast<std::size_t>(iz) * static_cast<std::size_t>(grid.cells[1]) +
           static_cast<std::size_t>(iy)) * static_cast<std::size_t>(grid.cells[0]) +
          static_cast<std::size_t>(ix);
+}
+
+int BackgroundGridCullSearchRadius(const BackgroundGridData& grid)
+{
+  const double minDist = 0.5 * grid.cellLength;
+  int radius = 1;
+  for (double cellSize : grid.cellSize) {
+    if (cellSize > 0.0) {
+      radius = std::max(radius,
+                        static_cast<int>(std::ceil(minDist / cellSize)));
+    }
+  }
+  return std::min(radius, std::max({grid.cells[0], grid.cells[1], grid.cells[2]}));
 }
 
 void AssignNearestGasRows(H5::H5File& input,
@@ -950,6 +984,126 @@ void AssignNearestGasRows(H5::H5File& input,
     grid.nearestGasRows[i] = sourceRows[bestSourceIndex];
     nearestDist2[i] = bestDist2;
   }
+  grid.hasNearestGasRows = true;
+}
+
+void CullBackgroundGridNearSelectedParticles(
+  H5::H5File& input,
+  const std::array<std::vector<std::uint64_t>, 6>& keepByType,
+  double lengthScale,
+  BackgroundGridData& grid)
+{
+  if (grid.count == 0) return;
+
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  std::vector<double> sourceCoords;
+
+  for (int ptype = 0; ptype < 6; ++ptype) {
+    const auto& keep = keepByType[ptype];
+    if (keep.empty()) continue;
+
+    const std::string coordPath = DatasetPath(ptype, "Coordinates");
+    if (!DatasetExists(input, coordPath)) continue;
+    H5::DataSet coords = input.openDataSet(coordPath);
+    DatasetShape shape = GetDatasetShape(coords);
+    if (shape.components < 3 || shape.sourceRows <= keep.back()) continue;
+
+    std::vector<double> coordChunk;
+    std::size_t keepCursor = 0;
+    while (keepCursor < keep.size()) {
+      const std::size_t chunkBegin =
+        static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
+                                 kExtractChunkSize);
+      const std::size_t chunkEnd =
+        std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                              static_cast<std::size_t>(shape.sourceRows));
+      std::size_t keepEnd = keepCursor;
+      while (keepEnd < keep.size() && keep[keepEnd] < chunkEnd) ++keepEnd;
+
+      ReadDoubleRows(coords, shape, chunkBegin, chunkEnd - chunkBegin, coordChunk);
+      for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+        const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+        const double x =
+          coordChunk[local * static_cast<std::size_t>(shape.components) + 0] *
+          lengthScale;
+        const double y =
+          coordChunk[local * static_cast<std::size_t>(shape.components) + 1] *
+          lengthScale;
+        const double z =
+          coordChunk[local * static_cast<std::size_t>(shape.components) + 2] *
+          lengthScale;
+        const std::size_t sourceIndex = sourceCoords.size() / 3;
+        sourceCoords.push_back(x);
+        sourceCoords.push_back(y);
+        sourceCoords.push_back(z);
+
+        const int ix = std::clamp(
+          static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+          0,
+          grid.cells[0] - 1);
+        const int iy = std::clamp(
+          static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+          0,
+          grid.cells[1] - 1);
+        const int iz = std::clamp(
+          static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+          0,
+          grid.cells[2] - 1);
+        bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+      }
+      keepCursor = keepEnd;
+    }
+  }
+
+  if (sourceCoords.empty()) return;
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  const int nx = grid.cells[0];
+  const int ny = grid.cells[1];
+  const int maxSearchRadius = BackgroundGridCullSearchRadius(grid);
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    for (int r = 0; r <= maxSearchRadius; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const double dx = sourceCoords[3 * sourceIndex + 0] - gx;
+              const double dy = sourceCoords[3 * sourceIndex + 1] - gy;
+              const double dz = sourceCoords[3 * sourceIndex + 2] - gz;
+              const double dist2 = dx * dx + dy * dy + dz * dz;
+              if (dist2 < bestDist2) {
+                bestDist2 = dist2;
+              }
+            }
+          }
+        }
+      }
+    }
+    nearestDist2[i] = bestDist2;
+  }
   CompactBackgroundGridToEmptyCells(grid, nearestDist2);
 }
 
@@ -1002,6 +1156,7 @@ std::vector<double> ReadNearestBackgroundRows(H5::H5File& input,
                                               double valueScale)
 {
   if (!FieldUsesNearestBackgroundValue(field.key) ||
+      !grid.hasNearestGasRows ||
       grid.nearestGasRows.size() != grid.count) {
     return {};
   }
@@ -1090,8 +1245,11 @@ std::vector<double> BackgroundDoubleRows(const FieldSpec& field,
     case FieldKey::InternalEnergy:
     case FieldKey::Temperature:
     case FieldKey::Metallicity:
+    case FieldKey::ElectronAbundance:
     case FieldKey::H2Abundance:
+    case FieldKey::HDAbundance:
     case FieldKey::J21:
+    case FieldKey::Gamma:
       if (nearestRows.size() == rows.size()) {
         for (std::size_t c = 0; c < comps; ++c) {
           rows[i * comps + c] = nearestRows[i * comps + c];
@@ -1325,18 +1483,9 @@ void EnsureExtractField(std::vector<FieldSpec>& fields, FieldKey key)
 void EnsureBackgroundGridFields(std::vector<FieldSpec>& fields)
 {
   EnsureExtractField(fields, FieldKey::Position);
-  EnsureExtractField(fields, FieldKey::Velocity);
   EnsureExtractField(fields, FieldKey::ID);
   EnsureExtractField(fields, FieldKey::Mass);
   EnsureExtractField(fields, FieldKey::Density);
-  EnsureExtractField(fields, FieldKey::InternalEnergy);
-  EnsureExtractField(fields, FieldKey::Temperature);
-  EnsureExtractField(fields, FieldKey::Hsml);
-  EnsureExtractField(fields, FieldKey::Volume);
-  EnsureExtractField(fields, FieldKey::Bfield);
-  EnsureExtractField(fields, FieldKey::Metallicity);
-  EnsureExtractField(fields, FieldKey::H2Abundance);
-  EnsureExtractField(fields, FieldKey::J21);
 }
 
 SourceHeader MakeSourceHeaderFromLoadedBlock(
@@ -1486,6 +1635,91 @@ void AssignNearestGasRowsFromLoadedBlock(
     grid.nearestGasRows[i] = static_cast<std::uint64_t>(gasKeep[bestSourceIndex]);
     nearestDist2[i] = bestDist2;
   }
+  grid.hasNearestGasRows = true;
+}
+
+void CullBackgroundGridNearLoadedParticles(
+  const SimulationBlock& block,
+  const std::array<std::vector<std::size_t>, 6>& keepByType,
+  double lengthScale,
+  BackgroundGridData& grid)
+{
+  if (grid.count == 0) return;
+
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  std::vector<std::size_t> sourceIndices;
+  for (const auto& keep : keepByType) {
+    for (std::size_t particleIndex : keep) {
+      if (particleIndex >= block.particles.size()) continue;
+      const SimulationElement& p = block.particles[particleIndex];
+      const double x = static_cast<double>(p.position[0]) * lengthScale;
+      const double y = static_cast<double>(p.position[1]) * lengthScale;
+      const double z = static_cast<double>(p.position[2]) * lengthScale;
+      const std::size_t sourceIndex = sourceIndices.size();
+      sourceIndices.push_back(particleIndex);
+      const int ix = std::clamp(static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+                                0,
+                                grid.cells[0] - 1);
+      const int iy = std::clamp(static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+                                0,
+                                grid.cells[1] - 1);
+      const int iz = std::clamp(static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+                                0,
+                                grid.cells[2] - 1);
+      bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+    }
+  }
+
+  if (sourceIndices.empty()) return;
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  const int nx = grid.cells[0];
+  const int ny = grid.cells[1];
+  const int maxSearchRadius = BackgroundGridCullSearchRadius(grid);
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    for (int r = 0; r <= maxSearchRadius; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const SimulationElement& p = block.particles[sourceIndices[sourceIndex]];
+              const double dx = static_cast<double>(p.position[0]) * lengthScale - gx;
+              const double dy = static_cast<double>(p.position[1]) * lengthScale - gy;
+              const double dz = static_cast<double>(p.position[2]) * lengthScale - gz;
+              const double dist2 = dx * dx + dy * dy + dz * dz;
+              if (dist2 < bestDist2) {
+                bestDist2 = dist2;
+              }
+            }
+          }
+        }
+      }
+    }
+    nearestDist2[i] = bestDist2;
+  }
   CompactBackgroundGridToEmptyCells(grid, nearestDist2);
 }
 
@@ -1497,6 +1731,7 @@ std::vector<double> LoadedBackgroundNearestRows(
   double valueScale)
 {
   if (!FieldUsesNearestBackgroundValue(field.key) ||
+      !grid.hasNearestGasRows ||
       grid.nearestGasRows.size() != grid.count) {
     return {};
   }
@@ -1532,6 +1767,13 @@ std::vector<double> LoadedBackgroundNearestRows(
         rows[i * comps] = static_cast<double>(value) * valueScale;
       }
       break;
+    case FieldKey::ElectronAbundance:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::ElectronAbundance, source, value);
+        rows[i * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
     case FieldKey::H2Abundance:
       {
         float value = 0.0f;
@@ -1539,10 +1781,24 @@ std::vector<double> LoadedBackgroundNearestRows(
         rows[i * comps] = static_cast<double>(value) * valueScale;
       }
       break;
+    case FieldKey::HDAbundance:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::HDAbundance, source, value);
+        rows[i * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
     case FieldKey::J21:
       {
         float value = 0.0f;
         (void)block.readSoAAs(soa_views::J21, source, value);
+        rows[i * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
+    case FieldKey::Gamma:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::Gamma, source, value);
         rows[i * comps] = static_cast<double>(value) * valueScale;
       }
       break;
@@ -1570,6 +1826,49 @@ void WriteLoadedBackgroundRows(H5::DataSet& dst,
   const std::vector<double> rows =
     BackgroundDoubleRows(field, grid, config, nearestRows);
   WriteDoubleRows(dst, shape, begin, grid.count, rows);
+}
+
+bool LoadedFieldAvailable(const SimulationBlock& block, FieldKey key, int ptype)
+{
+  auto sourceMarked = [&](FieldKey fieldKey) {
+    return block.loadedFieldNames.empty() ||
+           block.hasLoadedFieldForType(GetFieldKeyDisplayName(fieldKey), ptype);
+  };
+
+  switch (key) {
+  case FieldKey::Position:
+  case FieldKey::Velocity:
+  case FieldKey::Density:
+  case FieldKey::Temperature:
+  case FieldKey::InternalEnergy:
+  case FieldKey::Hsml:
+  case FieldKey::Volume:
+    return sourceMarked(key);
+  case FieldKey::ID:
+    return sourceMarked(key) && block.hasParticleIds();
+  case FieldKey::Mass:
+    return true;
+  case FieldKey::Bfield:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::Bfield);
+  case FieldKey::Metallicity:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::Metallicity);
+  case FieldKey::ElectronAbundance:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::ElectronAbundance);
+  case FieldKey::H2Abundance:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::H2Abundance);
+  case FieldKey::HDAbundance:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::HDAbundance);
+  case FieldKey::J21:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::J21);
+  case FieldKey::Gamma:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::Gamma);
+  case FieldKey::Value:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::Val1);
+  case FieldKey::Value2:
+    return sourceMarked(key) && block.hasSoAAs(soa_views::Val2);
+  default:
+    return false;
+  }
 }
 
 void WriteLoadedDoubleDataset(H5::Group& outGroup,
@@ -1634,10 +1933,24 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
         rows[row * comps] = static_cast<double>(value) * valueScale;
       }
       break;
+    case FieldKey::ElectronAbundance:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::ElectronAbundance, index, value);
+        rows[row * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
     case FieldKey::H2Abundance:
       {
         float value = 0.0f;
         (void)block.readSoAAs(soa_views::H2Abundance, index, value);
+        rows[row * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
+    case FieldKey::HDAbundance:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::HDAbundance, index, value);
         rows[row * comps] = static_cast<double>(value) * valueScale;
       }
       break;
@@ -1648,8 +1961,32 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
         rows[row * comps] = static_cast<double>(value) * valueScale;
       }
       break;
+    case FieldKey::Gamma:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::Gamma, index, value);
+        rows[row * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
+    case FieldKey::Value:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::Val1, index, value);
+        rows[row * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
+    case FieldKey::Value2:
+      {
+        float value = 0.0f;
+        (void)block.readSoAAs(soa_views::Val2, index, value);
+        rows[row * comps] = static_cast<double>(value) * valueScale;
+      }
+      break;
     case FieldKey::Volume:
-      rows[row * comps] = 0.0;
+      rows[row * comps] =
+        static_cast<double>(p.supportRadius) *
+        static_cast<double>(p.supportRadius) *
+        static_cast<double>(p.supportRadius) * valueScale;
       break;
     default:
       break;
@@ -1813,6 +2150,11 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                           backgroundFirstId);
     extractContext = "assigning nearest gas rows for background grid";
     AssignNearestGasRows(input, keepByType[0], outputLengthScale, backgroundGrid);
+    extractContext = "culling occupied background grid cells";
+    CullBackgroundGridNearSelectedParticles(input,
+                                            keepByType,
+                                            outputLengthScale,
+                                            backgroundGrid);
     report.backgroundParticles = backgroundGrid.count;
     report.suggestedMeanVolume =
       backgroundGrid.count > 0 ? backgroundGrid.cellVolume : 0.0;
@@ -1861,7 +2203,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
 
         const std::string sourcePath = DatasetPath(ptype, sourceName);
         if (!DatasetExists(input, sourcePath)) {
-          if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
+          if (backgroundRows > 0 &&
+              FieldCanBeSynthesizedForBackgroundGrid(field.key)) {
             const std::string outputName = OutputDatasetName(field);
             extractContext = "creating background-only dataset " +
                              PartGroupName(ptype) + "/" + outputName +
@@ -2051,6 +2394,11 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
                                         keepByType[0],
                                         outputLengthScale,
                                         backgroundGrid);
+    extractContext = "culling loaded occupied background grid cells";
+    CullBackgroundGridNearLoadedParticles(block,
+                                          keepByType,
+                                          outputLengthScale,
+                                          backgroundGrid);
     report.backgroundParticles = backgroundGrid.count;
     report.suggestedMeanVolume =
       backgroundGrid.count > 0 ? backgroundGrid.cellVolume : 0.0;
@@ -2091,6 +2439,12 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
         if (IsTypePseudoField(field.key)) continue;
         const std::string outputName = OutputDatasetName(field);
         if (outputName.empty() || outputName == "unknown" || outputName == "dummy") {
+          continue;
+        }
+        if (!LoadedFieldAvailable(block, field.key, ptype) &&
+            !(backgroundRows > 0 &&
+              FieldCanBeSynthesizedForBackgroundGrid(field.key))) {
+          ++report.skippedDatasets;
           continue;
         }
 

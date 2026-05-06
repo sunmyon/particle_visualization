@@ -82,6 +82,7 @@ static inline DestKind getDestKind(FieldKey key, bool flag_hdf5 = false) {
     case FieldKey::H2Abundance:
     case FieldKey::HDAbundance:
     case FieldKey::J21:
+    case FieldKey::Gamma:
     case FieldKey::Value:
     case FieldKey::Value2:
     case FieldKey::ID:
@@ -100,6 +101,7 @@ static inline const char* getSoAKey(FieldKey key) {
     case FieldKey::H2Abundance:       return "H2Abundance";
     case FieldKey::HDAbundance:       return "HDAbundance";
     case FieldKey::J21:               return "J21";
+    case FieldKey::Gamma:             return "Gamma";
     case FieldKey::Value:             return "Val1";
     case FieldKey::Value2:            return "Val2";
     case FieldKey::ID:                return kParticleIdKey;

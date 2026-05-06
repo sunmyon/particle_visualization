@@ -92,6 +92,9 @@ inline void initOutputBlock(SimulationBlock& out,
   out.resize(count);
 
   for (const auto& fl : layout.fields) {
+    if (fl.dest != DestKind::Ignore) {
+      out.markLoadedField(GetFieldKeyDisplayName(fl.spec.key));
+    }
     if (fl.dest != DestKind::SoA) continue;
     auto& f = out.soa[fl.soaKey];
     f.type = fl.spec.type;

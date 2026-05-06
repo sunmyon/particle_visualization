@@ -79,6 +79,31 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
                                 WindowCommandQueue& windowCommands,
                                 SettingsActionRequestState& settingsReq);
 
+static std::vector<FieldSpec> ExtractFieldsForCurrentFormat(
+  const FileNavigationRuntimeState& fileNav,
+  const SnapshotFormatState& format)
+{
+  switch (format.readFormat) {
+  case FileFormat::HDF5:
+    return format.formatTokensHdf5.empty()
+      ? MakeDefaultSnapshotExtractFields()
+      : format.formatTokensHdf5;
+  case FileFormat::Gadget:
+    return format.formatTokensGadget;
+  case FileFormat::Binary:
+  case FileFormat::Framed:
+    return format.formatTokens;
+  case FileFormat::Auto:
+  default:
+    if (fileNav.input.useHDF5) {
+      return format.formatTokensHdf5.empty()
+        ? MakeDefaultSnapshotExtractFields()
+        : format.formatTokensHdf5;
+    }
+    return format.formatTokens;
+  }
+}
+
 static void DrawRenderingSection(const QuantityState& quantity,
 				 SettingsAnalysisEditState& edit,
                                  const AnalysisJobRuntimeState& jobs,
@@ -1337,9 +1362,7 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
     job.backgroundGrid.enabled = state.addBackgroundGrid;
     job.backgroundGrid.cellsPerAxis = state.backgroundCellsPerAxis;
     job.backgroundGrid.density = state.backgroundDensity;
-    job.fields = format.formatTokensHdf5.empty()
-      ? MakeDefaultSnapshotExtractFields()
-      : format.formatTokensHdf5;
+    job.fields = ExtractFieldsForCurrentFormat(fileNav, format);
     request.snapshotExtractJob = std::move(job);
     request.snapshotExtractRequested = true;
     request.snapshotExtractMessage = "Extract requested...";

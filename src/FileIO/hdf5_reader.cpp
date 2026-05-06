@@ -249,6 +249,11 @@ bool HDF5Reader::readRange(SimulationBlock& out,
     std::vector<OpenedField> opened;
     if (!build_opened_fields_for_ptype_(ptype, layout, opened))
       return false;
+    for (const OpenedField& of : opened) {
+      if (of.fl) {
+        out.markLoadedFieldForType(GetFieldKeyDisplayName(of.fl->ftype), ptype);
+      }
+    }
     const double openMs = elapsed_ms(openStart);
     totalOpenDatasetMs += openMs;
 

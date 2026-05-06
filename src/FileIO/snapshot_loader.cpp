@@ -435,6 +435,11 @@ namespace {
     dst.particles.insert(dst.particles.end(),
                          std::make_move_iterator(src.particles.begin()),
                          std::make_move_iterator(src.particles.end()));
+    dst.loadedFieldNames.insert(src.loadedFieldNames.begin(),
+                                src.loadedFieldNames.end());
+    for (const auto& kv : src.loadedFieldTypeMask) {
+      dst.loadedFieldTypeMask[kv.first] |= kv.second;
+    }
 
     if (src.aosExt.stride > 0) {
       if (dst.aosExt.stride == 0) {

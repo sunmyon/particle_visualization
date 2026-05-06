@@ -96,6 +96,7 @@ static constexpr const char* kElectronAbundanceKey = "ElectronAbundance";
 static constexpr const char* kH2AbundanceKey = "H2Abundance";
 static constexpr const char* kHDAbundanceKey = "HDAbundance";
 static constexpr const char* kJ21Key = "J21";
+static constexpr const char* kGammaKey = "Gamma";
 static constexpr const char* kVal1Key = "Val1";
 static constexpr const char* kVal2Key = "Val2";
 static constexpr const char* kParticleIdKey = "ParticleID";
@@ -112,6 +113,7 @@ namespace soa_views {
   inline constexpr SoAView<float,1> H2Abundance{ kH2AbundanceKey };
   inline constexpr SoAView<float,1> HDAbundance{ kHDAbundanceKey };
   inline constexpr SoAView<float,1> J21{ kJ21Key };
+  inline constexpr SoAView<float,1> Gamma{ kGammaKey };
   inline constexpr SoAView<float,1> Val1{ kVal1Key };
   inline constexpr SoAView<float,1> Val2{ kVal2Key };
   inline constexpr SoAView<int64_t,1> ParticleID{ kParticleIdKey };

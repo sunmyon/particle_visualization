@@ -336,18 +336,10 @@ private:
 
   void initAllOutput_(SimulationBlock& out, const std::vector<FieldSpec>& fields)
   {
+    (void)fields;
     out.clear();
     out.resize(npart_);
     initializeGadgetParticleDefaults_(out);
-
-    for (const FieldSpec& spec : fields) {
-      const DestKind dest = getDestKind(spec.key);
-      if (dest != DestKind::SoA) continue;
-      auto& f = out.soa[getSoAKey(spec.key)];
-      f.type = spec.type;
-      f.comps = spec.count;
-      f.resize(npart_);
-    }
   }
 
   void initializeGadgetParticleDefaults_(SimulationBlock& out) const
@@ -371,6 +363,8 @@ private:
   {
     out.clear();
     out.resize(count);
+    out.loadedFieldNames = source.loadedFieldNames;
+    out.loadedFieldTypeMask = source.loadedFieldTypeMask;
     for (const auto& kv : source.soa) {
       auto& f = out.soa[kv.first];
       f.type = kv.second.type;
@@ -1141,24 +1135,32 @@ private:
           prefixGadgetBlockError_(blockIndex, block, offset);
           return false;
         }
+        out.markLoadedFieldForTypeMask(GetFieldKeyDisplayName(FieldKey::Position),
+                                       gadgetDomainTypeMask_(GadgetFieldDomain::All));
         break;
       case GadgetBinaryBlockKind::Velocity:
         if (!readVelocities_(out)) {
           prefixGadgetBlockError_(blockIndex, block, offset);
           return false;
         }
+        out.markLoadedFieldForTypeMask(GetFieldKeyDisplayName(FieldKey::Velocity),
+                                       gadgetDomainTypeMask_(GadgetFieldDomain::All));
         break;
       case GadgetBinaryBlockKind::ID:
         if (!readIds_(out)) {
           prefixGadgetBlockError_(blockIndex, block, offset);
           return false;
         }
+        out.markLoadedFieldForTypeMask(GetFieldKeyDisplayName(FieldKey::ID),
+                                       gadgetDomainTypeMask_(GadgetFieldDomain::All));
         break;
       case GadgetBinaryBlockKind::Mass:
         if (!readMasses_(out)) {
           prefixGadgetBlockError_(blockIndex, block, offset);
           return false;
         }
+        out.markLoadedFieldForTypeMask(GetFieldKeyDisplayName(FieldKey::Mass),
+                                       gadgetDomainTypeMask_(GadgetFieldDomain::All));
         coreBlocksComplete = true;
         break;
       case GadgetBinaryBlockKind::Skip:
@@ -1173,7 +1175,12 @@ private:
       case GadgetBinaryBlockKind::Field: {
         const GadgetFieldBlockReadResult status =
           readGadgetFieldBlock_(out, block.field);
-        if (status == GadgetFieldBlockReadResult::Ok) break;
+        if (status == GadgetFieldBlockReadResult::Ok) {
+          out.markLoadedFieldForTypeMask(
+            GetFieldKeyDisplayName(block.field.spec.key),
+            gadgetDomainTypeMask_(block.field.domain));
+          break;
+        }
         if (status == GadgetFieldBlockReadResult::MissingOptionalTail) {
           if (!coreBlocksComplete) {
             prefixGadgetBlockError_(blockIndex, block, offset);
@@ -1393,6 +1400,30 @@ private:
     case GadgetFieldDomain::Type0And5:
       return static_cast<size_t>(std::max(0, counts_[0])) +
              static_cast<size_t>(std::max(0, counts_[5]));
+    }
+    return 0;
+  }
+
+  uint8_t gadgetDomainTypeMask_(GadgetFieldDomain domain) const
+  {
+    switch (domain) {
+    case GadgetFieldDomain::Absolute:
+      return counts_[0] > 0 ? uint8_t{0x01u} : uint8_t{0x00u};
+    case GadgetFieldDomain::All: {
+      uint8_t mask = 0;
+      for (int type = 0; type < 6; ++type) {
+        if (counts_[type] > 0) mask |= static_cast<uint8_t>(1u << type);
+      }
+      return mask;
+    }
+    case GadgetFieldDomain::Type0:
+      return counts_[0] > 0 ? uint8_t{0x01u} : uint8_t{0x00u};
+    case GadgetFieldDomain::Type0And5: {
+      uint8_t mask = 0;
+      if (counts_[0] > 0) mask |= uint8_t{0x01u};
+      if (counts_[5] > 0) mask |= uint8_t{0x20u};
+      return mask;
+    }
     }
     return 0;
   }
