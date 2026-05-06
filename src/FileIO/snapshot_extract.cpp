@@ -421,6 +421,17 @@ struct BackgroundGridData {
   std::array<double, 3> cellSize = {0.0, 0.0, 0.0};
 };
 
+struct ActiveOutputField {
+  FieldSpec field;
+  std::string sourceName;
+  std::string outputName;
+  SnapshotOutputMissingPolicy missingPolicy = SnapshotOutputMissingPolicy::Omit;
+  std::vector<double> defaultValues;
+  unsigned int typeMask = 0x3fu;
+};
+
+std::vector<double> ExpandedDefaultValues(const ActiveOutputField& field);
+
 void CompactBackgroundGridToEmptyCells(BackgroundGridData& grid,
                                        const std::vector<double>& nearestDist2)
 {
@@ -496,6 +507,13 @@ H5::PredType NativeTypeForDataType(DataType type)
   case DataType::Int64:  return H5::PredType::NATIVE_INT64;
   }
   return H5::PredType::NATIVE_DOUBLE;
+}
+
+H5::PredType NativeTypeForOutputField(const FieldSpec& field)
+{
+  return field.key == FieldKey::ID
+    ? H5::PredType::NATIVE_UINT64
+    : NativeTypeForDataType(field.type);
 }
 
 DatasetShape ShapeForFieldSpec(const FieldSpec& field,
@@ -721,6 +739,89 @@ void CopyDatasetWithKeepList(H5::H5File& input,
 
       WriteRawRows(dst, dataType, shape, outCursor, keepEnd - keepCursor, packed);
     }
+    outCursor += keepEnd - keepCursor;
+    keepCursor = keepEnd;
+  }
+}
+
+void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
+                                          H5::Group& outGroup,
+                                          int ptype,
+                                          const std::string& sourceName,
+                                          const ActiveOutputField& outputField,
+                                          const std::vector<std::uint64_t>& keep,
+                                          std::size_t outputRowCount,
+                                          double valueScale)
+{
+  H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
+  DatasetShape sourceShape = GetDatasetShape(src);
+  if (!keep.empty() && sourceShape.sourceRows <= keep.back()) {
+    throw std::runtime_error("dataset '" + sourceName + "' is shorter than the keep list");
+  }
+
+  DatasetShape outputShape =
+    ShapeForFieldSpec(outputField.field, outputRowCount);
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputField.outputName,
+                                        NativeTypeForOutputField(outputField.field),
+                                        outputShape,
+                                        outputRowCount);
+  if (keep.empty()) return;
+
+  const std::size_t sourceComps =
+    static_cast<std::size_t>(std::max<hsize_t>(hsize_t{1}, sourceShape.components));
+  const std::size_t outputComps =
+    static_cast<std::size_t>(std::max<hsize_t>(hsize_t{1}, outputShape.components));
+  const std::vector<double> defaults = ExpandedDefaultValues(outputField);
+
+  std::vector<double> doubleChunk;
+  std::vector<double> doublePacked;
+  std::vector<std::uint64_t> idChunk;
+  std::vector<std::uint64_t> idPacked;
+  std::size_t keepCursor = 0;
+  std::size_t outCursor = 0;
+  while (keepCursor < keep.size()) {
+    const std::size_t chunkBegin =
+      static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
+                               kExtractChunkSize);
+    const std::size_t chunkEnd =
+      std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                            static_cast<std::size_t>(sourceShape.sourceRows));
+    std::size_t keepEnd = keepCursor;
+    while (keepEnd < keep.size() && keep[keepEnd] < chunkEnd) {
+      ++keepEnd;
+    }
+
+    if (outputField.field.key == FieldKey::ID) {
+      ReadUInt64Rows(src, sourceShape, chunkBegin, chunkEnd - chunkBegin, idChunk);
+      idPacked.resize((keepEnd - keepCursor) * outputComps);
+      for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+        const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+        const std::size_t outLocal = k - keepCursor;
+        for (std::size_t c = 0; c < outputComps; ++c) {
+          idPacked[outLocal * outputComps + c] =
+            c < sourceComps
+              ? idChunk[local * sourceComps + c]
+              : static_cast<std::uint64_t>(defaults[std::min(c, defaults.size() - 1)]);
+        }
+      }
+      WriteUInt64Rows(dst, outputShape, outCursor, keepEnd - keepCursor, idPacked);
+    } else {
+      ReadDoubleRows(src, sourceShape, chunkBegin, chunkEnd - chunkBegin, doubleChunk);
+      doublePacked.resize((keepEnd - keepCursor) * outputComps);
+      for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+        const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+        const std::size_t outLocal = k - keepCursor;
+        for (std::size_t c = 0; c < outputComps; ++c) {
+          const double value = c < sourceComps
+            ? doubleChunk[local * sourceComps + c] * valueScale
+            : defaults[std::min(c, defaults.size() - 1)];
+          doublePacked[outLocal * outputComps + c] = value;
+        }
+      }
+      WriteDoubleRows(dst, outputShape, outCursor, keepEnd - keepCursor, doublePacked);
+    }
+
     outCursor += keepEnd - keepCursor;
     keepCursor = keepEnd;
   }
@@ -1325,6 +1426,49 @@ void FillExistingRowsForMissingDataset(H5::DataSet& dst,
   WriteDoubleRows(dst, shape, 0, count, rows);
 }
 
+std::vector<double> ExpandedDefaultValues(const ActiveOutputField& field)
+{
+  const std::size_t comps =
+    static_cast<std::size_t>(std::max(1, field.field.count));
+  std::vector<double> values(comps, 0.0);
+  for (std::size_t c = 0; c < comps && c < field.defaultValues.size(); ++c) {
+    values[c] = field.defaultValues[c];
+  }
+  return values;
+}
+
+void FillRowsWithDefaultValue(H5::DataSet& dst,
+                              const ActiveOutputField& field,
+                              const DatasetShape& shape,
+                              std::size_t begin,
+                              std::size_t count)
+{
+  if (count == 0) return;
+  const std::size_t comps =
+    static_cast<std::size_t>(std::max<hsize_t>(hsize_t{1}, shape.components));
+  if (field.field.key == FieldKey::ID) {
+    std::vector<std::uint64_t> rows(count * comps, 0);
+    const std::vector<double> defaults = ExpandedDefaultValues(field);
+    for (std::size_t i = 0; i < count; ++i) {
+      for (std::size_t c = 0; c < comps; ++c) {
+        rows[i * comps + c] =
+          static_cast<std::uint64_t>(defaults[std::min(c, defaults.size() - 1)]);
+      }
+    }
+    WriteUInt64Rows(dst, shape, begin, count, rows);
+    return;
+  }
+
+  std::vector<double> rows(count * comps, 0.0);
+  const std::vector<double> defaults = ExpandedDefaultValues(field);
+  for (std::size_t i = 0; i < count; ++i) {
+    for (std::size_t c = 0; c < comps; ++c) {
+      rows[i * comps + c] = defaults[std::min(c, defaults.size() - 1)];
+    }
+  }
+  WriteDoubleRows(dst, shape, begin, count, rows);
+}
+
 bool IsTypePseudoField(FieldKey key)
 {
   return key == FieldKey::Type || key == FieldKey::Dummy || key == FieldKey::Unknown;
@@ -1338,6 +1482,137 @@ std::string OutputDatasetName(const FieldSpec& field)
     return defaultName;
   }
   return field.sourceName;
+}
+
+std::string DefaultOutputDatasetName(FieldKey key)
+{
+  const char* name = GetDefaultHDF5SourceName(key);
+  if (!name || std::strcmp(name, "unknown") == 0 ||
+      std::strcmp(name, "dummy") == 0) {
+    return {};
+  }
+  return name;
+}
+
+const FieldSpec* FindInputField(const std::vector<FieldSpec>& fields, FieldKey key)
+{
+  for (const FieldSpec& field : fields) {
+    if (field.key == key) return &field;
+  }
+  return nullptr;
+}
+
+ActiveOutputField MakeActiveOutputField(const FieldSpec& field)
+{
+  ActiveOutputField active;
+  active.field = field;
+  active.sourceName = field.sourceName.empty()
+    ? DefaultOutputDatasetName(field.key)
+    : field.sourceName;
+  active.outputName = OutputDatasetName(field);
+  active.typeMask = 0x3fu;
+  return active;
+}
+
+ActiveOutputField MakeActiveOutputField(
+  const SnapshotOutputFieldSpec& output,
+  const std::vector<FieldSpec>& inputFields)
+{
+  ActiveOutputField active;
+  active.field.key = output.key;
+  active.field.type = output.type;
+  active.field.count = std::max(1, output.count);
+  active.outputName = output.outputName.empty()
+    ? DefaultOutputDatasetName(output.key)
+    : output.outputName;
+  active.field.sourceName = active.outputName;
+  active.missingPolicy = output.missingPolicy;
+  active.defaultValues = output.defaultValues;
+  active.typeMask = output.typeMask & 0x3fu;
+
+  if (const FieldSpec* input = FindInputField(inputFields, output.key)) {
+    active.sourceName = input->sourceName.empty()
+      ? DefaultOutputDatasetName(output.key)
+      : input->sourceName;
+  }
+  return active;
+}
+
+std::vector<ActiveOutputField> BuildActiveOutputFields(
+  const std::vector<FieldSpec>& inputFields,
+  const SnapshotOutputFormatConfig& outputFormat)
+{
+  std::vector<ActiveOutputField> active;
+  if (outputFormat.enabled) {
+    active.reserve(outputFormat.fields.size());
+    for (const SnapshotOutputFieldSpec& output : outputFormat.fields) {
+      ActiveOutputField field = MakeActiveOutputField(output, inputFields);
+      if (field.outputName.empty() || field.outputName == "unknown" ||
+          field.outputName == "dummy" || field.typeMask == 0) {
+        continue;
+      }
+      active.push_back(std::move(field));
+    }
+    return active;
+  }
+
+  active.reserve(inputFields.size());
+  for (const FieldSpec& field : inputFields) {
+    ActiveOutputField output = MakeActiveOutputField(field);
+    if (output.outputName.empty() || output.outputName == "unknown" ||
+        output.outputName == "dummy") {
+      continue;
+    }
+    active.push_back(std::move(output));
+  }
+  return active;
+}
+
+bool OutputFieldAppliesToType(const ActiveOutputField& field, int ptype)
+{
+  return ptype >= 0 && ptype < 6 &&
+         (field.typeMask & static_cast<unsigned int>(1u << ptype)) != 0;
+}
+
+SnapshotOutputFieldSpec MakeDefaultOutputField(FieldKey key,
+                                               unsigned int typeMask)
+{
+  SnapshotOutputFieldSpec field;
+  field.key = key;
+  FieldSpec defaults;
+  defaults.key = key;
+  ApplyDefaultFieldSpec(defaults);
+  field.type = key == FieldKey::ID ? DataType::Int64 : DataType::Double;
+  field.count = std::max(1, defaults.count);
+  field.outputName = DefaultOutputDatasetName(key);
+  field.missingPolicy = SnapshotOutputMissingPolicy::Omit;
+  field.typeMask = typeMask & 0x3fu;
+  field.defaultValues.assign(static_cast<std::size_t>(std::max(1, field.count)),
+                             0.0);
+  return field;
+}
+
+void EnsureActiveBackgroundField(std::vector<ActiveOutputField>& fields,
+                                 FieldKey key)
+{
+  const std::string outputName = DefaultOutputDatasetName(key);
+  for (const ActiveOutputField& field : fields) {
+    if (field.field.key == key || field.outputName == outputName) return;
+  }
+
+  SnapshotOutputFieldSpec spec = MakeDefaultOutputField(key, 0x01u);
+  if (key == FieldKey::Density) {
+    spec.missingPolicy = SnapshotOutputMissingPolicy::FillDefault;
+  }
+  fields.push_back(MakeActiveOutputField(spec, {}));
+}
+
+void EnsureBackgroundGridOutputFields(std::vector<ActiveOutputField>& fields)
+{
+  EnsureActiveBackgroundField(fields, FieldKey::Position);
+  EnsureActiveBackgroundField(fields, FieldKey::ID);
+  EnsureActiveBackgroundField(fields, FieldKey::Mass);
+  EnsureActiveBackgroundField(fields, FieldKey::Density);
 }
 
 void WriteHeader(H5::H5File& output,
@@ -1465,27 +1740,6 @@ std::vector<FieldSpec> NormalizeExtractFields(std::vector<FieldSpec> fields)
     }
   }
   return fields;
-}
-
-void EnsureExtractField(std::vector<FieldSpec>& fields, FieldKey key)
-{
-  const char* outputName = GetDefaultHDF5SourceName(key);
-  for (const FieldSpec& field : fields) {
-    if (field.key == key) return;
-    if (OutputDatasetName(field) == outputName) return;
-  }
-  FieldSpec field;
-  field.key = key;
-  ApplyDefaultFieldSpec(field);
-  fields.push_back(std::move(field));
-}
-
-void EnsureBackgroundGridFields(std::vector<FieldSpec>& fields)
-{
-  EnsureExtractField(fields, FieldKey::Position);
-  EnsureExtractField(fields, FieldKey::ID);
-  EnsureExtractField(fields, FieldKey::Mass);
-  EnsureExtractField(fields, FieldKey::Density);
 }
 
 SourceHeader MakeSourceHeaderFromLoadedBlock(
@@ -2013,6 +2267,7 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
 }
 
 void WriteLoadedIdDataset(H5::Group& outGroup,
+                          const std::string& outputName,
                           const FieldSpec& field,
                           const SimulationBlock& block,
                           const std::vector<std::size_t>& keep,
@@ -2021,7 +2276,7 @@ void WriteLoadedIdDataset(H5::Group& outGroup,
   const std::size_t outputRows = keep.size() + backgroundGrid.count;
   DatasetShape shape = ShapeForFieldSpec(field, outputRows);
   H5::DataSet dst = CreateOutputDataset(outGroup,
-                                        OutputDatasetName(field),
+                                        outputName,
                                         H5::PredType::NATIVE_UINT64,
                                         shape,
                                         outputRows);
@@ -2066,6 +2321,32 @@ std::vector<FieldSpec> MakeDefaultSnapshotExtractFields()
   push(FieldKey::HDAbundance);
   push(FieldKey::J21);
   push(FieldKey::Gamma);
+  return fields;
+}
+
+std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields()
+{
+  std::vector<SnapshotOutputFieldSpec> fields;
+  auto push = [&](FieldKey key, unsigned int typeMask) {
+    fields.push_back(MakeDefaultOutputField(key, typeMask));
+  };
+
+  push(FieldKey::Position, 0x3fu);
+  push(FieldKey::Velocity, 0x3fu);
+  push(FieldKey::ID, 0x3fu);
+  push(FieldKey::Mass, 0x3fu);
+  push(FieldKey::Density, 0x01u);
+  push(FieldKey::InternalEnergy, 0x01u);
+  push(FieldKey::Temperature, 0x01u);
+  push(FieldKey::Hsml, 0x01u);
+  push(FieldKey::Volume, 0x01u);
+  push(FieldKey::Bfield, 0x01u);
+  push(FieldKey::Metallicity, 0x01u);
+  push(FieldKey::ElectronAbundance, 0x01u);
+  push(FieldKey::H2Abundance, 0x01u);
+  push(FieldKey::HDAbundance, 0x01u);
+  push(FieldKey::J21, 0x01u);
+  push(FieldKey::Gamma, 0x01u);
   return fields;
 }
 
@@ -2179,8 +2460,10 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
     }
 
     std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields);
+    std::vector<ActiveOutputField> outputFields =
+      BuildActiveOutputFields(fields, job.outputFormat);
     if (backgroundGrid.count > 0) {
-      EnsureBackgroundGridFields(fields);
+      EnsureBackgroundGridOutputFields(outputFields);
     }
     for (int ptype = 0; ptype < 6; ++ptype) {
       const auto& keep = keepByType[ptype];
@@ -2193,33 +2476,48 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
       H5::Group outGroup = output.createGroup(PartGroupName(ptype));
       bool copiedMassDataset = false;
 
-      for (const FieldSpec& field : fields) {
+      for (const ActiveOutputField& outputField : outputFields) {
+        const FieldSpec& field = outputField.field;
         if (IsTypePseudoField(field.key)) continue;
-        const std::string sourceName =
-          field.sourceName.empty() ? GetDefaultHDF5SourceName(field.key) : field.sourceName;
+        if (!OutputFieldAppliesToType(outputField, ptype)) continue;
+        const std::string sourceName = outputField.sourceName;
         if (sourceName.empty() || sourceName == "unknown" || sourceName == "dummy") {
-          continue;
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::Require) {
+            throw std::runtime_error("required output field '" +
+                                     outputField.outputName +
+                                     "' has no input field mapping");
+          }
+          if (outputField.missingPolicy != SnapshotOutputMissingPolicy::FillDefault) {
+            ++report.skippedDatasets;
+            continue;
+          }
         }
 
-        const std::string sourcePath = DatasetPath(ptype, sourceName);
-        if (!DatasetExists(input, sourcePath)) {
+        const std::string sourcePath = sourceName.empty()
+          ? std::string{}
+          : DatasetPath(ptype, sourceName);
+        if (sourcePath.empty() || !DatasetExists(input, sourcePath)) {
           if (backgroundRows > 0 &&
               FieldCanBeSynthesizedForBackgroundGrid(field.key)) {
-            const std::string outputName = OutputDatasetName(field);
+            const std::string outputName = outputField.outputName;
             extractContext = "creating background-only dataset " +
                              PartGroupName(ptype) + "/" + outputName +
                              " from missing source '" + sourceName + "'";
             DatasetShape shape = ShapeForFieldSpec(field, outputRows);
             H5::DataSet dst = CreateOutputDataset(outGroup,
                                                   outputName,
-                                                  NativeTypeForDataType(field.type),
+                                                  NativeTypeForOutputField(field),
                                                   shape,
                                                   outputRows);
-            FillExistingRowsForMissingDataset(dst,
-                                             field,
-                                             shape,
-                                             keep.size(),
-                                             outputMassTable[ptype]);
+            if (outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+              FillRowsWithDefaultValue(dst, outputField, shape, 0, keep.size());
+            } else {
+              FillExistingRowsForMissingDataset(dst,
+                                               field,
+                                               shape,
+                                               keep.size(),
+                                               outputMassTable[ptype]);
+            }
             const double valueScale =
               DatasetValueScale(field.key, sourceParameters, conversion);
             extractContext = "writing background rows for " +
@@ -2238,6 +2536,23 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
             ++report.copiedDatasets;
             continue;
           }
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+            const std::string outputName = outputField.outputName;
+            DatasetShape shape = ShapeForFieldSpec(field, outputRows);
+            H5::DataSet dst = CreateOutputDataset(outGroup,
+                                                  outputName,
+                                                  NativeTypeForOutputField(field),
+                                                  shape,
+                                                  outputRows);
+            FillRowsWithDefaultValue(dst, outputField, shape, 0, outputRows);
+            copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
+            ++report.copiedDatasets;
+            continue;
+          }
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::Require) {
+            throw std::runtime_error("required output dataset missing: " +
+                                     sourcePath);
+          }
           if (field.key == FieldKey::Mass && sourceHeader.massTable[ptype] != 0.0) {
             // Gadget/AREPO convention: constant mass is stored in Header/MassTable.
             continue;
@@ -2246,18 +2561,29 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
           continue;
         }
 
-        const std::string outputName = OutputDatasetName(field);
+        const std::string outputName = outputField.outputName;
         const double valueScale = DatasetValueScale(field.key, sourceParameters, conversion);
         extractContext = "copying dataset " + sourcePath + " -> " +
                          PartGroupName(ptype) + "/" + outputName;
-        CopyDatasetWithKeepList(input,
-                                outGroup,
-                                ptype,
-                                sourceName,
-                                outputName,
-                                keep,
-                                outputRows,
-                                valueScale);
+        if (job.outputFormat.enabled) {
+          CopyDatasetWithKeepListAsOutputField(input,
+                                               outGroup,
+                                               ptype,
+                                               sourceName,
+                                               outputField,
+                                               keep,
+                                               outputRows,
+                                               valueScale);
+        } else {
+          CopyDatasetWithKeepList(input,
+                                  outGroup,
+                                  ptype,
+                                  sourceName,
+                                  outputName,
+                                  keep,
+                                  outputRows,
+                                  valueScale);
+        }
         if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
           extractContext = "appending background rows to " +
                            PartGroupName(ptype) + "/" + outputName +
@@ -2418,8 +2744,10 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
     }
 
     std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields);
+    std::vector<ActiveOutputField> outputFields =
+      BuildActiveOutputFields(fields, job.outputFormat);
     if (backgroundGrid.count > 0) {
-      EnsureBackgroundGridFields(fields);
+      EnsureBackgroundGridOutputFields(outputFields);
     }
 
     for (int ptype = 0; ptype < 6; ++ptype) {
@@ -2435,23 +2763,65 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
       const BackgroundGridData& groupBackground =
         ptype == 0 ? backgroundGrid : emptyBackground;
 
-      for (const FieldSpec& field : fields) {
+      for (const ActiveOutputField& outputField : outputFields) {
+        const FieldSpec& field = outputField.field;
         if (IsTypePseudoField(field.key)) continue;
-        const std::string outputName = OutputDatasetName(field);
+        if (!OutputFieldAppliesToType(outputField, ptype)) continue;
+        const std::string outputName = outputField.outputName;
         if (outputName.empty() || outputName == "unknown" || outputName == "dummy") {
           continue;
         }
-        if (!LoadedFieldAvailable(block, field.key, ptype) &&
-            !(backgroundRows > 0 &&
-              FieldCanBeSynthesizedForBackgroundGrid(field.key))) {
+        const bool loadedAvailable = LoadedFieldAvailable(block, field.key, ptype);
+        const bool canSynthesizeBackground =
+          backgroundRows > 0 && FieldCanBeSynthesizedForBackgroundGrid(field.key);
+        if (!loadedAvailable && !canSynthesizeBackground) {
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+            DatasetShape shape = ShapeForFieldSpec(field, outputRows);
+            H5::DataSet dst = CreateOutputDataset(outGroup,
+                                                  outputName,
+                                                  NativeTypeForOutputField(field),
+                                                  shape,
+                                                  outputRows);
+            FillRowsWithDefaultValue(dst, outputField, shape, 0, outputRows);
+            ++report.copiedDatasets;
+            continue;
+          }
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::Require) {
+            throw std::runtime_error("required loaded output field missing: " +
+                                     outputName);
+          }
           ++report.skippedDatasets;
           continue;
         }
 
         extractContext = "writing loaded dataset " + PartGroupName(ptype) +
                          "/" + outputName;
+        if (!loadedAvailable && canSynthesizeBackground &&
+            outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+          DatasetShape shape = ShapeForFieldSpec(field, outputRows);
+          H5::DataSet dst = CreateOutputDataset(outGroup,
+                                                outputName,
+                                                NativeTypeForOutputField(field),
+                                                shape,
+                                                outputRows);
+          FillRowsWithDefaultValue(dst, outputField, shape, 0, keep.size());
+          if (field.key == FieldKey::ID) {
+            const std::vector<std::uint64_t> ids = BackgroundIdRows(groupBackground);
+            WriteUInt64Rows(dst, shape, keep.size(), groupBackground.count, ids);
+          } else {
+            WriteLoadedBackgroundRows(dst,
+                                      field,
+                                      shape,
+                                      keep.size(),
+                                      groupBackground,
+                                      background,
+                                      {});
+          }
+          ++report.copiedDatasets;
+          continue;
+        }
         if (field.key == FieldKey::ID) {
-          WriteLoadedIdDataset(outGroup, field, block, keep, groupBackground);
+          WriteLoadedIdDataset(outGroup, outputName, field, block, keep, groupBackground);
         } else {
           const double valueScale =
             DatasetValueScale(field.key, sourceParameters, conversion);
@@ -2514,6 +2884,11 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
 #else
 
 std::vector<FieldSpec> MakeDefaultSnapshotExtractFields()
+{
+  return {};
+}
+
+std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields()
 {
   return {};
 }

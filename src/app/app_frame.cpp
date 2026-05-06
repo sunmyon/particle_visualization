@@ -623,6 +623,8 @@ static void DrawToolWindows(AppRuntimeState& runtime,
   DrawHDF5FormatDialog(tools.fileFormatDialog,
                        runtime.settings.snapshotFormat.formatTokensHdf5);
 #endif
+  DrawOutputFormatDialog(tools.fileFormatDialog,
+                         runtime.settings.snapshotFormat.outputFormat);
   DrawMaskWindow(tools.mask,
                  tools.maskRequest,
                  runtime.settings.inputFilter.mask);
@@ -713,6 +715,17 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
     }
     windowCommands.open(WindowId::FileFormatDialog);
     fileNavReq.openFormatDialogRequested = false;
+  }
+
+  if (fileNavReq.openOutputFormatDialogRequested) {
+    tools.fileFormatDialog.outputFormatEdit =
+      settings.snapshotFormat.outputFormat;
+    if (tools.fileFormatDialog.outputFormatEdit.fields.empty()) {
+      tools.fileFormatDialog.outputFormatEdit.fields =
+        MakeDefaultSnapshotOutputFields();
+    }
+    windowCommands.open(WindowId::OutputFormatDialog);
+    fileNavReq.openOutputFormatDialogRequested = false;
   }
 }
 

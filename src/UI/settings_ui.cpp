@@ -56,7 +56,7 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       bool isLoading,
                                       WindowCommandQueue& windowCommands);
 static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
-                                       const SnapshotFormatState& format,
+                                       SnapshotFormatState& format,
                                        const SettingsCameraView& camera,
                                        const UnitSystem& units,
                                        SettingsActionRequestState& request);
@@ -1003,6 +1003,10 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
       rt.request.openFormatDialogRequested = true;
     }
   }
+  ImGui::SameLine();
+  if (ImGui::Button("Edit Output Format")) {
+    rt.request.openOutputFormatDialogRequested = true;
+  }
 
   static const char* FileFormatNames[] = {
     "Auto", "HDF5", "Binary", "Gadget", "Framed"
@@ -1125,7 +1129,7 @@ static double SnapshotExtractBackgroundMeanVolume(const SnapshotExtractUiState& 
 }
 
 static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
-                                       const SnapshotFormatState& format,
+                                       SnapshotFormatState& format,
                                        const SettingsCameraView& camera,
                                        const UnitSystem& units,
                                        SettingsActionRequestState& request)
@@ -1181,6 +1185,10 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
   ImGui::InputText("output HDF5##snapshot_extract",
                    state.outputPath,
                    IM_ARRAYSIZE(state.outputPath));
+  ImGui::Checkbox("use output format override##snapshot_extract",
+                  &format.outputFormat.enabled);
+  ImGui::SameLine();
+  ImGui::TextDisabled("edit in File Navigation");
   ImGui::Checkbox("copy Header##snapshot_extract", &state.copyHeader);
   ImGui::SameLine();
   ImGui::Checkbox("copy Parameters##snapshot_extract", &state.copyParameters);
@@ -1363,6 +1371,10 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
     job.backgroundGrid.cellsPerAxis = state.backgroundCellsPerAxis;
     job.backgroundGrid.density = state.backgroundDensity;
     job.fields = ExtractFieldsForCurrentFormat(fileNav, format);
+    job.outputFormat = format.outputFormat;
+    if (job.outputFormat.fields.empty()) {
+      job.outputFormat.fields = MakeDefaultSnapshotOutputFields();
+    }
     request.snapshotExtractJob = std::move(job);
     request.snapshotExtractRequested = true;
     request.snapshotExtractMessage = "Extract requested...";

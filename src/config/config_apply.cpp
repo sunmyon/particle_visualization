@@ -35,6 +35,10 @@ void ApplyConfigData(const ConfigData& config,
   if (!config.persistent.formatTokensGadget.empty()) {
     format.formatTokensGadget = config.persistent.formatTokensGadget;
   }
+  format.outputFormat = config.persistent.outputFormat;
+  if (format.outputFormat.fields.empty()) {
+    format.outputFormat.fields = MakeDefaultSnapshotOutputFields();
+  }
   format.inputDensityUnit = config.persistent.inputDensityUnit;
   format.inputTemperatureUnit = config.persistent.inputTemperatureUnit;
   format.inputMagneticFieldUnit = config.persistent.inputMagneticFieldUnit;

@@ -82,6 +82,72 @@ static void loadTokenList(std::ifstream& infile,
   }
 }
 
+static void saveOutputFieldList(std::ofstream& outfile,
+                                const SnapshotOutputFormatConfig& output)
+{
+  outfile << "OutputFormatEnabled=" << (output.enabled ? 1 : 0) << "\n";
+  outfile << "OutputFieldCount=" << output.fields.size() << "\n";
+  for (const SnapshotOutputFieldSpec& field : output.fields) {
+    outfile << GetFieldKeyDisplayName(field.key) << ","
+            << dataTypeToString(field.type) << ","
+            << field.count << ","
+            << field.outputName << ","
+            << static_cast<int>(field.missingPolicy) << ","
+            << field.typeMask << ",";
+    for (std::size_t i = 0; i < field.defaultValues.size(); ++i) {
+      if (i > 0) outfile << ";";
+      outfile << field.defaultValues[i];
+    }
+    outfile << "\n";
+  }
+}
+
+static void loadOutputFieldList(std::ifstream& infile,
+                                int fieldCount,
+                                std::vector<SnapshotOutputFieldSpec>& outFields)
+{
+  outFields.clear();
+  outFields.reserve(std::max(0, fieldCount));
+
+  std::string line;
+  for (int i = 0; i < fieldCount; ++i) {
+    if (!std::getline(infile, line)) break;
+
+    std::istringstream iss(line);
+    std::string keyText, typeText, countText, outputName, policyText, maskText;
+    std::string defaultsText;
+    if (!std::getline(iss, keyText, ',')) continue;
+    if (!std::getline(iss, typeText, ',')) continue;
+    if (!std::getline(iss, countText, ',')) continue;
+    if (!std::getline(iss, outputName, ',')) continue;
+    if (!std::getline(iss, policyText, ',')) continue;
+    if (!std::getline(iss, maskText, ',')) continue;
+    std::getline(iss, defaultsText);
+
+    SnapshotOutputFieldSpec field;
+    field.key = GetFieldKeyFromDisplayName(trim(keyText));
+    field.type = stringToDataType(trim(typeText));
+    field.count = std::max(1, std::stoi(trim(countText)));
+    field.outputName = trim(outputName);
+    const int policy = std::stoi(trim(policyText));
+    if (policy >= static_cast<int>(SnapshotOutputMissingPolicy::Omit) &&
+        policy <= static_cast<int>(SnapshotOutputMissingPolicy::Require)) {
+      field.missingPolicy = static_cast<SnapshotOutputMissingPolicy>(policy);
+    }
+    field.typeMask = static_cast<unsigned int>(std::stoul(trim(maskText))) & 0x3fu;
+
+    std::stringstream defaults(defaultsText);
+    std::string valueText;
+    while (std::getline(defaults, valueText, ';')) {
+      valueText = trim(valueText);
+      if (!valueText.empty()) {
+        field.defaultValues.push_back(std::stod(valueText));
+      }
+    }
+    outFields.push_back(std::move(field));
+  }
+}
+
 static const char* quantityToString(QuantityId q) {
   return QuantityLabel(q);
 }
@@ -134,6 +200,16 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
     else if (startsWith(line, "GadgetTokenCount=")) {
       int tokenCount = std::stoi(line.substr(std::strlen("GadgetTokenCount=")));
       loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensGadget);
+    }
+    else if (startsWith(line, "OutputFormatEnabled=")) {
+      outConfig.persistent.outputFormat.enabled =
+        std::stoi(line.substr(std::strlen("OutputFormatEnabled="))) != 0;
+    }
+    else if (startsWith(line, "OutputFieldCount=")) {
+      int fieldCount = std::stoi(line.substr(std::strlen("OutputFieldCount=")));
+      loadOutputFieldList(infile,
+                          fieldCount,
+                          outConfig.persistent.outputFormat.fields);
     }
     else if (startsWith(line, "InputDensityUnit=")) {
       const int unit = std::stoi(line.substr(std::strlen("InputDensityUnit=")));
@@ -299,6 +375,7 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
   saveTokenList(outfile, "TokenCount", config.persistent.formatTokens);
   saveTokenList(outfile, "HDF5TokenCount", config.persistent.formatTokensHdf5);
   saveTokenList(outfile, "GadgetTokenCount", config.persistent.formatTokensGadget);
+  saveOutputFieldList(outfile, config.persistent.outputFormat);
   outfile << "InputDensityUnit="
           << static_cast<int>(config.persistent.inputDensityUnit) << "\n";
   outfile << "InputTemperatureUnit="

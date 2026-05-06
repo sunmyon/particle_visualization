@@ -13,3 +13,6 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
 void DrawHDF5FormatDialog(FileFormatDialogState& state,
                           std::vector<FieldSpec>& formatTokens);
 #endif
+
+void DrawOutputFormatDialog(FileFormatDialogState& state,
+                            SnapshotOutputFormatConfig& outputFormat);

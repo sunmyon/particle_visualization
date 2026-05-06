@@ -430,6 +430,7 @@ struct FileNavigationRequestState {
   bool reloadRequested = false;
   bool openFormatDialogRequested = false;
   bool openHDF5FormatDialogRequested = false;
+  bool openOutputFormatDialogRequested = false;
   bool generateTestDataRequested = false;
 };
 
@@ -496,6 +497,11 @@ struct SnapshotFormatState {
   std::vector<FieldSpec> formatTokens = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensHdf5 = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensGadget = MakeDefaultGadgetFormatTokens();
+  SnapshotOutputFormatConfig outputFormat = [] {
+    SnapshotOutputFormatConfig config;
+    config.fields = MakeDefaultSnapshotOutputFields();
+    return config;
+  }();
   InputDensityUnit inputDensityUnit = InputDensityUnit::CodeMassDensity;
   InputTemperatureUnit inputTemperatureUnit =
     InputTemperatureUnit::CodeInternalEnergy;

@@ -37,6 +37,9 @@ inline void SetToolWindowOpen(ToolWindowUIState& windows,
     windows.fileFormatDialog.showHDF5MappingDialog = open;
 #endif
     break;
+  case WindowId::OutputFormatDialog:
+    windows.fileFormatDialog.showOutputFormatDialog = open;
+    break;
   case WindowId::ClumpFinder:
     windows.clumpFind.open = open;
     break;

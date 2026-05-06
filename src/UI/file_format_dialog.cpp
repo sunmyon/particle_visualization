@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -174,6 +175,80 @@ bool HandleGadgetIndexDragDrop(std::vector<FieldSpec>& tokens, int rowIndex)
   }
 
   return reordered;
+}
+
+const char* MissingPolicyName(SnapshotOutputMissingPolicy policy)
+{
+  switch (policy) {
+  case SnapshotOutputMissingPolicy::Omit:
+    return "omit";
+  case SnapshotOutputMissingPolicy::FillDefault:
+    return "fill default";
+  case SnapshotOutputMissingPolicy::Require:
+    return "require";
+  }
+  return "omit";
+}
+
+void ApplyOutputFieldDefaults(SnapshotOutputFieldSpec& spec)
+{
+  FieldSpec defaults;
+  defaults.key = spec.key;
+  ApplyDefaultFieldSpec(defaults);
+  spec.type = spec.key == FieldKey::ID ? DataType::Int64 : DataType::Double;
+  spec.count = std::max(1, defaults.count);
+  spec.outputName = GetDefaultHDF5SourceName(spec.key);
+  if (spec.outputName == "unknown" || spec.outputName == "dummy") {
+    spec.outputName.clear();
+  }
+  spec.defaultValues.assign(static_cast<std::size_t>(spec.count), 0.0);
+  switch (spec.key) {
+  case FieldKey::Position:
+  case FieldKey::Velocity:
+  case FieldKey::ID:
+  case FieldKey::Mass:
+    spec.typeMask = 0x3fu;
+    break;
+  default:
+    spec.typeMask = 0x01u;
+    break;
+  }
+}
+
+std::string DefaultValuesText(const SnapshotOutputFieldSpec& spec)
+{
+  std::string text;
+  for (std::size_t i = 0; i < spec.defaultValues.size(); ++i) {
+    if (i > 0) text += ",";
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.8g", spec.defaultValues[i]);
+    text += buf;
+  }
+  return text;
+}
+
+void ParseDefaultValues(const char* text, SnapshotOutputFieldSpec& spec)
+{
+  spec.defaultValues.clear();
+  std::stringstream ss(text ? text : "");
+  std::string part;
+  while (std::getline(ss, part, ',')) {
+    try {
+      spec.defaultValues.push_back(std::stod(part));
+    } catch (...) {
+    }
+  }
+  const std::size_t count = static_cast<std::size_t>(std::max(1, spec.count));
+  if (spec.defaultValues.empty()) {
+    spec.defaultValues.assign(count, 0.0);
+  } else {
+    while (spec.defaultValues.size() < count) {
+      spec.defaultValues.push_back(spec.defaultValues.back());
+    }
+    if (spec.defaultValues.size() > count) {
+      spec.defaultValues.resize(count);
+    }
+  }
 }
 
 void DrawGadgetFormatDialog(FileFormatDialogState& state,
@@ -466,6 +541,186 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
   if (ImGui::Button("Cancel")) {
     state.showFormatDialog = false;
   }
+  ImGui::End();
+}
+
+void DrawOutputFormatDialog(FileFormatDialogState& state,
+                            SnapshotOutputFormatConfig& outputFormat)
+{
+  if (!state.showOutputFormatDialog) return;
+
+  ImGui::SetNextWindowSize(ImVec2(980, 460), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Edit HDF5 Output Format",
+                    &state.showOutputFormatDialog)) {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::Checkbox("Use output format override", &state.outputFormatEdit.enabled);
+  ImGui::SameLine();
+  if (ImGui::Button("Reset output default")) {
+    state.outputFormatEdit.fields = MakeDefaultSnapshotOutputFields();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Add output field")) {
+    SnapshotOutputFieldSpec spec;
+    spec.key = FieldKey::Density;
+    ApplyOutputFieldDefaults(spec);
+    state.outputFormatEdit.fields.push_back(std::move(spec));
+  }
+
+  if (ImGui::BeginTable("OutputFormatTable", 10,
+                        ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Borders |
+                          ImGuiTableFlags_Resizable)) {
+    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+    ImGui::TableSetupColumn("Output", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+    ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+    ImGui::TableSetupColumn("Missing", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+    ImGui::TableSetupColumn("Default", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    ImGui::TableSetupColumn("Up", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+    ImGui::TableSetupColumn("Down", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < static_cast<int>(state.outputFormatEdit.fields.size()); ++i) {
+      SnapshotOutputFieldSpec& spec = state.outputFormatEdit.fields[i];
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+
+      ImGui::TableNextColumn();
+      if (ImGui::BeginCombo("##field", GetFieldKeyDisplayName(spec.key))) {
+        for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+          FieldKey key = kAvailableFieldKeys[n];
+          if (key == FieldKey::Dummy || key == FieldKey::Type ||
+              key == FieldKey::Unknown) {
+            continue;
+          }
+          const bool selected = spec.key == key;
+          if (ImGui::Selectable(GetFieldKeyDisplayName(key), selected)) {
+            spec.key = key;
+            ApplyOutputFieldDefaults(spec);
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "%s", spec.outputName.c_str());
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##output", buf, IM_ARRAYSIZE(buf))) {
+          spec.outputName = buf;
+        }
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
+        for (int n = 0; n < kNumDataTypeChoices; ++n) {
+          const DataType type = kDataTypeChoices[n].type;
+          const bool selected = spec.type == type;
+          if (ImGui::Selectable(kDataTypeChoices[n].name, selected)) {
+            spec.type = type;
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::InputInt("##count", &spec.count)) {
+        spec.count = std::max(1, spec.count);
+        ParseDefaultValues(DefaultValuesText(spec).c_str(), spec);
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::BeginCombo("##missing", MissingPolicyName(spec.missingPolicy))) {
+        const SnapshotOutputMissingPolicy policies[] = {
+          SnapshotOutputMissingPolicy::Omit,
+          SnapshotOutputMissingPolicy::FillDefault,
+          SnapshotOutputMissingPolicy::Require
+        };
+        for (SnapshotOutputMissingPolicy policy : policies) {
+          const bool selected = spec.missingPolicy == policy;
+          if (ImGui::Selectable(MissingPolicyName(policy), selected)) {
+            spec.missingPolicy = policy;
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      {
+        std::string defaults = DefaultValuesText(spec);
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), "%s", defaults.c_str());
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##defaults", buf, IM_ARRAYSIZE(buf))) {
+          ParseDefaultValues(buf, spec);
+        }
+      }
+
+      ImGui::TableNextColumn();
+      for (int type = 0; type < 6; ++type) {
+        if (type > 0) ImGui::SameLine();
+        bool enabled =
+          (spec.typeMask & static_cast<unsigned int>(1u << type)) != 0;
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d", type);
+        if (ImGui::Checkbox(label, &enabled)) {
+          if (enabled) {
+            spec.typeMask |= static_cast<unsigned int>(1u << type);
+          } else {
+            spec.typeMask &= ~static_cast<unsigned int>(1u << type);
+          }
+        }
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("^") && i > 0) {
+        std::swap(state.outputFormatEdit.fields[i],
+                  state.outputFormatEdit.fields[i - 1]);
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("v") &&
+          i + 1 < static_cast<int>(state.outputFormatEdit.fields.size())) {
+        std::swap(state.outputFormatEdit.fields[i],
+                  state.outputFormatEdit.fields[i + 1]);
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("-")) {
+        state.outputFormatEdit.fields.erase(state.outputFormatEdit.fields.begin() + i);
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::PopID();
+    }
+
+    ImGui::EndTable();
+  }
+
+  if (ImGui::Button("OK")) {
+    outputFormat = state.outputFormatEdit;
+    if (outputFormat.fields.empty()) {
+      outputFormat.fields = MakeDefaultSnapshotOutputFields();
+    }
+    state.showOutputFormatDialog = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel")) {
+    state.showOutputFormatDialog = false;
+  }
+
   ImGui::End();
 }
 

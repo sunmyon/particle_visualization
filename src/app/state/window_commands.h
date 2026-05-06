@@ -13,6 +13,7 @@ enum class WindowId : uint8_t {
   Mask,
   FileFormatDialog,
   HDF5FormatDialog,
+  OutputFormatDialog,
   ClumpFinder,
   ClumpList,
   ClumpChain,

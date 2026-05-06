@@ -52,6 +52,27 @@ struct SnapshotBackgroundGridConfig {
   double density = 1.0e-30;
 };
 
+enum class SnapshotOutputMissingPolicy {
+  Omit = 0,
+  FillDefault = 1,
+  Require = 2
+};
+
+struct SnapshotOutputFieldSpec {
+  FieldKey key = FieldKey::Unknown;
+  DataType type = DataType::Double;
+  int count = 1;
+  std::string outputName;
+  SnapshotOutputMissingPolicy missingPolicy = SnapshotOutputMissingPolicy::Omit;
+  std::vector<double> defaultValues;
+  unsigned int typeMask = 0x3fu;
+};
+
+struct SnapshotOutputFormatConfig {
+  bool enabled = false;
+  std::vector<SnapshotOutputFieldSpec> fields;
+};
+
 struct SnapshotExtractJob {
   std::string inputPath;
   std::string outputPath;
@@ -60,6 +81,7 @@ struct SnapshotExtractJob {
   SnapshotExtractUnitConversion unitConversion;
   SnapshotBackgroundGridConfig backgroundGrid;
   std::vector<FieldSpec> fields;
+  SnapshotOutputFormatConfig outputFormat;
   bool copyHeader = true;
   bool copyParameters = true;
 };
@@ -92,6 +114,7 @@ struct SnapshotLoadedExtractMetadata {
 };
 
 std::vector<FieldSpec> MakeDefaultSnapshotExtractFields();
+std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields();
 
 SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job);
 SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
