@@ -4,6 +4,8 @@
 #include <ctime>
 #include <filesystem>
 #include <cstdio>
+#include <functional>
+#include <unordered_map>
 #include <glm/vec3.hpp>
 #include <imgui.h>
 #include "implot.h"
@@ -163,7 +165,11 @@ static void DrawClumpFinderControls(ClumpFinderWindowState& ui)
 
   ImGui::InputFloat("Density Threshold", &ui.densityThreshold, 0.0f, 1.0f);
   ImGui::InputInt("minParticles", &ui.minParticles, 10, 10);
-  ImGui::InputFloat("minDepth", &ui.minDepth, 10.0f, 10.0f);
+  ImGui::InputFloat("Density contrast ratio",
+                    &ui.minDensityContrastRatio,
+                    0.1f,
+                    1.0f,
+                    "%.3g");
 
   ImGui::Checkbox("Linking Length using Hsml or cell size", &ui.useHsml);
   if (!ui.useHsml) {
@@ -231,30 +237,159 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
     return;
   }
 
+  auto rowPassesFilter = [&](const ClumpFinderRowView& row) {
+    if (row.vpeak < ui.minPeakDensity) {
+      return false;
+    }
+    if (ui.showLeaves && !row.isLeaf) {
+      return false;
+    }
+    return true;
+  };
+
+  auto makeRowLabel = [](const ClumpFinderRowView& row,
+                         char* label,
+                         size_t labelSize) {
+    const char* kind = row.isLeaf ? "leaf" : (row.isTrunk ? "trunk" : "branch");
+    std::snprintf(label,
+                  labelSize,
+                  "#%d %s depth=%d parent=%d children=%d count=%d "
+                  "mass=%.3g Msun pos=(%.3g, %.3g, %.3g)",
+                  row.sourceIndex,
+                  kind,
+                  row.depth,
+                  row.parentSourceIndex,
+                  row.childCount,
+                  row.count,
+                  row.mass,
+                  row.pos[0],
+                  row.pos[1],
+                  row.pos[2]);
+  };
+
+  std::unordered_map<int, size_t> rowBySourceIndex;
+  rowBySourceIndex.reserve(ui.rows.size());
+  std::unordered_map<int, std::vector<size_t>> childrenByParent;
+  childrenByParent.reserve(ui.rows.size());
+  std::vector<size_t> roots;
+  roots.reserve(ui.rows.size());
+
+  for (size_t i = 0; i < ui.rows.size(); ++i) {
+    rowBySourceIndex[ui.rows[i].sourceIndex] = i;
+  }
+  for (size_t i = 0; i < ui.rows.size(); ++i) {
+    const int parent = ui.rows[i].parentSourceIndex;
+    if (parent >= 0 && rowBySourceIndex.find(parent) != rowBySourceIndex.end()) {
+      childrenByParent[parent].push_back(i);
+    } else {
+      roots.push_back(i);
+    }
+  }
+
+  std::function<bool(size_t)> rowOrDescendantPassesFilter = [&](size_t rowIndex) {
+    if (rowPassesFilter(ui.rows[rowIndex])) {
+      return true;
+    }
+    auto it = childrenByParent.find(ui.rows[rowIndex].sourceIndex);
+    if (it == childrenByParent.end()) {
+      return false;
+    }
+    for (size_t childIndex : it->second) {
+      if (rowOrDescendantPassesFilter(childIndex)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   if (ImGui::BeginTable("ClumpTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
     ImGui::TableSetupColumn("Clump Info", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("Hull", ImGuiTableColumnFlags_WidthFixed, 50.0f);
     ImGui::TableHeadersRow();
 
     bool hullSelectionChanged = false;
-    for (size_t i = 0; i < ui.rows.size(); i++) {
+
+    if (ui.showLeaves) {
+      for (size_t i = 0; i < ui.rows.size(); ++i) {
+        const auto& row = ui.rows[i];
+        if (!rowPassesFilter(row)) {
+          continue;
+        }
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+
+        char label[256];
+        makeRowLabel(row, label, sizeof(label));
+        if (ImGui::Selectable(label, false)) {
+          ui.requestFocusRow = true;
+          ui.focusRowIndex = static_cast<int>(i);
+        }
+
+#ifdef USE_CONVEX_HULL
+        ImGui::TableSetColumnIndex(1);
+        char checkboxLabel[64];
+        std::snprintf(checkboxLabel, sizeof(checkboxLabel), "Hull##%d", row.sourceIndex);
+
+        bool flag = false;
+        if (row.sourceIndex >= 0 &&
+            row.sourceIndex < static_cast<int>(ui.showHull.size())) {
+          flag = ui.showHull[static_cast<size_t>(row.sourceIndex)];
+        }
+
+        if (ImGui::Checkbox(checkboxLabel, &flag)) {
+          if (row.sourceIndex >= 0 &&
+              row.sourceIndex < static_cast<int>(ui.showHull.size())) {
+            ui.showHull[static_cast<size_t>(row.sourceIndex)] = flag;
+            hullSelectionChanged = true;
+          }
+        }
+#endif
+      }
+
+#ifdef USE_CONVEX_HULL
+      if (hullSelectionChanged) {
+        ui.requestApplyHullSelection = true;
+      }
+#endif
+
+      ImGui::EndTable();
+      return;
+    }
+
+    std::function<void(size_t)> drawRow = [&](size_t i) {
+      if (!rowOrDescendantPassesFilter(i)) {
+        return;
+      }
       const auto& row = ui.rows[i];
-      if (row.vpeak < ui.minPeakDensity) {
-        continue;
-      }
-      if (ui.showLeaves && !row.isLeaf) {
-        continue;
-      }
+      const auto childIt = childrenByParent.find(row.sourceIndex);
+      const bool hasChildren =
+        childIt != childrenByParent.end() && !childIt->second.empty();
+      const bool visibleRow = rowPassesFilter(row);
 
       ImGui::TableNextRow();
 
       ImGui::TableSetColumnIndex(0);
       char label[256];
-      std::snprintf(label, sizeof(label), "%4d   %4d    %g    position=(%.3f, %.3f, %.3f) %g",
-                    row.sourceIndex, row.count, row.mass,
-                    row.pos[0], row.pos[1], row.pos[2], 0.0);
+      makeRowLabel(row, label, sizeof(label));
 
-      if (ImGui::Selectable(label, false)) {
+      ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanFullWidth;
+      if (!hasChildren) {
+        flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+      }
+      if (!visibleRow) {
+        flags |= ImGuiTreeNodeFlags_DefaultOpen;
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      }
+      const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(
+                                           static_cast<intptr_t>(row.sourceIndex)),
+                                         flags,
+                                         "%s",
+                                         label);
+      if (!visibleRow) {
+        ImGui::PopStyleColor();
+      }
+      if (ImGui::IsItemClicked()) {
         ui.requestFocusRow = true;
         ui.focusRowIndex = static_cast<int>(i);
       }
@@ -278,6 +413,17 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
         }
       }
 #endif
+
+      if (open && hasChildren) {
+        for (size_t childIndex : childIt->second) {
+          drawRow(childIndex);
+        }
+        ImGui::TreePop();
+      }
+    };
+
+    for (size_t rootIndex : roots) {
+      drawRow(rootIndex);
     }
 
 #ifdef USE_CONVEX_HULL

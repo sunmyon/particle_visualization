@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -57,7 +58,8 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                              CameraContext& camera,
                                              double snapshotTime,
                                              const SnapshotInputState& input,
-                                             const SnapshotCurrentState& current)
+                                             const SnapshotCurrentState& current,
+                                             const UnitSystem& units)
 {
   static constexpr const char* kQuantities[] = {
     "Density", "Temperature", "Hsml"
@@ -76,6 +78,18 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     ui.rows.reserve(clumpFind.nodes().size());
     ui.showHull.assign(clumpFind.nodes().size(), false);
 
+    QuantityUnitConverter converter;
+    converter.rebuild(units, 1.0);
+    const double massToMsun =
+      converter.factor(QuantityId::Mass, UnitSpace::Physical);
+
+    std::unordered_map<const StructureNode*, int> sourceIndexByNode;
+    sourceIndexByNode.reserve(clumpFind.nodes().size());
+    for (size_t i = 0; i < clumpFind.nodes().size(); ++i) {
+      sourceIndexByNode[clumpFind.node(static_cast<int>(i))] =
+        static_cast<int>(i);
+    }
+
     for (size_t i = 0; i < clumpFind.nodes().size(); ++i) {
       const StructureNode* node = clumpFind.node(static_cast<int>(i));
       if (!node) {
@@ -85,7 +99,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       ClumpFinderRowView row;
       row.sourceIndex = static_cast<int>(i);
       row.count = node->count;
-      row.mass = node->totalMass;
+      row.mass = node->totalMass * massToMsun;
       const glm::vec3 originalPos =
         RenderToWorld(glm::vec3(static_cast<float>(node->pos_cm[0]),
                                        static_cast<float>(node->pos_cm[1]),
@@ -96,6 +110,18 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       row.pos[2] = originalPos.z;
       row.vpeak = static_cast<float>(node->vpeak);
       row.isLeaf = node->isLeaf();
+      row.isTrunk = node->parent == nullptr;
+      row.childCount = static_cast<int>(node->children.size());
+      row.depth = 0;
+      for (const StructureNode* p = node->parent; p != nullptr; p = p->parent) {
+        ++row.depth;
+      }
+      if (node->parent) {
+        auto it = sourceIndexByNode.find(node->parent);
+        if (it != sourceIndexByNode.end()) {
+          row.parentSourceIndex = it->second;
+        }
+      }
       ui.rows.push_back(row);
 
 #ifdef USE_CONVEX_HULL
@@ -112,7 +138,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     auto& p = clumpFind.params();
     p.densityThreshold = ui.densityThreshold;
     p.minParticles = ui.minParticles;
-    p.minDepth = ui.minDepth;
+    p.minDensityContrastRatio = ui.minDensityContrastRatio;
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;
@@ -125,7 +151,7 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     auto& p = clumpFind.params();
     p.densityThreshold = ui.densityThreshold;
     p.minParticles = ui.minParticles;
-    p.minDepth = ui.minDepth;
+    p.minDensityContrastRatio = ui.minDensityContrastRatio;
     p.useHsml = ui.useHsml;
     p.linkingLength = ui.linkingLength;
     p.linkingLength_over_cell_size = ui.linkingLengthOverCellSize;

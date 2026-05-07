@@ -15,7 +15,8 @@ void ExecuteClumpToolRequests(ToolWindowUIState& tools,
                                      input.camera,
                                      input.snapshotCurrent.loadedTime,
                                      input.snapshotInput,
-                                     input.snapshotCurrent);
+                                     input.snapshotCurrent,
+                                     input.units);
   }
 
   if (input.clumpLoad) {

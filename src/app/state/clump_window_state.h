@@ -10,6 +10,10 @@ struct ClumpFinderRowView {
   float pos[3] = {0.f, 0.f, 0.f};
   float vpeak = 0.0f;
   bool isLeaf = false;
+  bool isTrunk = false;
+  int depth = 0;
+  int parentSourceIndex = -1;
+  int childCount = 0;
 };
 
 struct ClumpFinderWindowState {
@@ -19,7 +23,7 @@ struct ClumpFinderWindowState {
 
   float densityThreshold = 10.0f;
   int minParticles = 30;
-  float minDepth = 1.0f;
+  float minDensityContrastRatio = 10.0f;
   bool useHsml = true;
   float linkingLength = 0.01f;
   float linkingLengthOverCellSize = 2.0f;

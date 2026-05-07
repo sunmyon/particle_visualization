@@ -11,6 +11,9 @@
 
 #include <nanoflann.hpp>
 
+#include <cmath>
+#include <limits>
+
 void FindClump::buildMassHistogram(bool useLogScaleX, float& outMin, float& outMax)
 {
   massHistogramValues_.clear();
@@ -263,9 +266,9 @@ void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
     nodeList[i] = node;
   }
 
-  flagDendrogramComputed = true;
   findClumpComputed = true;
   flagFOFComputed = true;
+  flagDendrogramComputed = false;
   flagDirty = true;
 }
 
@@ -273,6 +276,24 @@ void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
 // Functions corresponding to the pruning module.
 //────────────────────────────────────────────────────────────
 namespace pruning {
+  double density_contrast_ratio(double peak, double saddle) {
+    if (!std::isfinite(peak) || peak <= 0.0) {
+      return 0.0;
+    }
+    if (!std::isfinite(saddle) || saddle <= 0.0) {
+      return std::numeric_limits<double>::infinity();
+    }
+    return peak / saddle;
+  }
+
+  double density_contrast_ratio(const StructureNode* s) {
+    if (!s) {
+      return 0.0;
+    }
+    const double saddle = s->parent ? s->parent->height() : s->vmin;
+    return density_contrast_ratio(s->vmax, saddle);
+  }
+
   // all_true: combine multiple is_independent predicates and return true only if all pass.
   std::function<bool(StructureNode*)> all_true(const std::vector<std::function<bool(StructureNode*)>>& funcs) {
     return [=](StructureNode* s) -> bool {
@@ -283,12 +304,10 @@ namespace pruning {
     };
   }
 
-  // min_delta: return a predicate for the delta condition.
-  std::function<bool(StructureNode*)> min_delta(double delta) {
+  // min_density_contrast_ratio: peak/saddle density contrast condition.
+  std::function<bool(StructureNode*)> min_density_contrast_ratio(double ratio) {
     return [=](StructureNode* s) -> bool {
-      if (s->parent)
-        return ((s->height() - s->parent->height()) >= delta);
-      return ((s->vmax - s->vmin) >= delta);
+      return density_contrast_ratio(s) >= ratio;
     };
   }
 
@@ -307,18 +326,15 @@ namespace pruning {
   }
 
   // _to_prune: find leaves that should be pruned.
-  std::vector<StructureNode*> _to_prune(std::vector<StructureNode*>& keep_structures, double min_delta, int npix) {
+  std::vector<StructureNode*> _to_prune(std::vector<StructureNode*>& keep_structures, double min_density_contrast_ratio, int npix) {
     std::vector<StructureNode*> toPrune;
 
     for (const auto& s : keep_structures) {
       if (!s->isLeaf())
 	continue;
 
-      bool flag;
-      if (s->parent)
-        flag = ((s->height() - s->parent->height()) >= min_delta);
-      else
-	flag = ((s->vmax - s->vmin) >= min_delta);
+      const bool flag =
+        density_contrast_ratio(s) >= min_density_contrast_ratio;
 
       if(flag)
 	continue;
@@ -336,7 +352,7 @@ namespace pruning {
   }
 
   // _make_trunk: build the trunk and remove orphan leaves that fail independence.
-  std::vector<StructureNode*> _make_trunk(std::vector<StructureNode*>& keep_structures, double min_delta, int npix) {
+  std::vector<StructureNode*> _make_trunk(std::vector<StructureNode*>& keep_structures, double min_density_contrast_ratio, int npix) {
     // Extract structures without parents as the trunk.
     std::vector<StructureNode*> trunk;
     for (auto& s : keep_structures) {
@@ -353,11 +369,8 @@ namespace pruning {
     }
     
     for (StructureNode* leaf : leavesInTrunk) {
-      bool flag;
-      if (leaf->parent)
-        flag = ((leaf->height() - leaf->parent->height()) >= min_delta);
-      else
-	flag = ((leaf->vmax - leaf->vmin) >= min_delta);
+      const bool flag =
+        density_contrast_ratio(leaf) >= min_density_contrast_ratio;
 
       if(flag || leaf->indices.size() > static_cast<size_t>(npix)){
 	leaf->flag_trunk = true;
@@ -366,6 +379,7 @@ namespace pruning {
       
       keep_structures.erase(std::remove(keep_structures.begin(), keep_structures.end(), leaf), keep_structures.end());            
       trunk.erase(std::remove(trunk.begin(), trunk.end(), leaf), trunk.end());      
+      delete leaf;
     }
     
     // Cache level 0 for each trunk structure for faster access.
@@ -395,72 +409,48 @@ namespace pruning {
 }
 
 
-void FindClump::findClumpsDendrogram(std::vector<SimulationElement>& originalParticles,
-                                     float worldToRenderScale,
-                                     const std::string &var)
+std::vector<int> FindClump::makeDendrogramDensityOrder(
+  const std::vector<SimulationElementFiltered>& particles) const
 {
-  std::vector<SimulationElementFiltered> filteredParticles =
-    filterParticles(originalParticles, worldToRenderScale, params_.densityThreshold, var);
-  printf("number of filtered particles:%zu out of %zu\n"
-	 , filteredParticles.size(), originalParticles.size());
-
-  float maxd = 0.;
-  for(auto &p : filteredParticles){
-    if(p.type != 0)
-      continue;
-    
-    if(maxd < p.density)
-      maxd = p.density;
+  std::vector<int> sortedIndices(particles.size());
+  for (size_t i = 0; i < particles.size(); ++i) {
+    sortedIndices[i] = static_cast<int>(i);
   }
 
-  for(auto &p : filteredParticles){
-    if(p.type != 0)
-      p.density = maxd;
-  }
-      
-  ParticleCloud cloud;
-  cloud.pts = filteredParticles; 
-  
-  size_t numParticles = cloud.pts.size();
-
-  // Sort particles by descending density.
-  std::vector<int> sortedIndices(numParticles);
-  for (size_t i = 0; i < numParticles; ++i)
-    sortedIndices[i] = i;
-
-  sort(sortedIndices.begin(), sortedIndices.end(), [&](int a, int b) {
-    return cloud.pts[a].density > cloud.pts[b].density;
+  std::sort(sortedIndices.begin(), sortedIndices.end(), [&](int a, int b) {
+    return particles[static_cast<size_t>(a)].density >
+           particles[static_cast<size_t>(b)].density;
   });
 
-  std::vector<int> rank(numParticles, -1);
-  for (size_t i = 0; i < sortedIndices.size(); ++i) 
-    rank[sortedIndices[i]] = i;  
-  
-  // Build the KD-tree.
+  return sortedIndices;
+}
+
+void FindClump::buildDendrogramHierarchy(const ParticleCloud& cloud,
+                                         const std::vector<int>& sortedIndices,
+                                         const std::vector<int>& rank)
+{
   KDTree_t kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   kdTree.buildIndex();
 
   nanoflann::SearchParameters params(10);
 
   std::vector<StructureNode*>& nodes = nodeList;
-  std::vector<StructureNode*> leafindex(numParticles);
+  std::vector<StructureNode*> leafindex(cloud.pts.size(), nullptr);
 
-  //int currentClusterID = 0;  
-  
   for (int idx : sortedIndices) {
-    const SimulationElementFiltered& p = cloud.pts[idx];
+    const SimulationElementFiltered& p = cloud.pts[static_cast<size_t>(idx)];
     double query_pt[3] = { p.pos[0], p.pos[1], p.pos[2] };
 
-    // Get type aliases that depend on KDTree_t.
     typedef typename KDTree_t::IndexType  IndexType;
     typedef typename KDTree_t::DistanceType DistanceType;
     typedef nanoflann::ResultItem<IndexType, DistanceType> MyResultItem;
-
-    // Declare ret_matches with the correct result type.
     std::vector<MyResultItem> ret_matches;
-    
-    double searchRadius = p.renderSupportRadius * p.renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
-    
+
+    double searchRadius =
+      p.renderSupportRadius * p.renderSupportRadius *
+      params_.linkingLength_over_cell_size *
+      params_.linkingLength_over_cell_size;
+
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 
     std::vector<int> neighborClusters;
@@ -468,170 +458,194 @@ void FindClump::findClumpsDendrogram(std::vector<SimulationElement>& originalPar
     for (const auto& match : ret_matches) {
       size_t neighbor_index = match.first;
       if (neighbor_index == static_cast<size_t>(idx))
-	continue;
+        continue;
 
-      if(rank[neighbor_index] > rank[idx])
-	continue;
-      
-      int rep = neighbor_index;
-      int smallest_index = leafindex[rep]->smallest_index;
+      if (rank[neighbor_index] > rank[static_cast<size_t>(idx)])
+        continue;
 
-      if (find(smallestIndices.begin(), smallestIndices.end(), smallest_index) == smallestIndices.end()){
-	neighborClusters.push_back(rep);
-	smallestIndices.push_back(smallest_index);
+      StructureNode* leaf = leafindex[neighbor_index];
+      if (!leaf) continue;
+      int smallest_index = leaf->smallest_index;
+
+      if (find(smallestIndices.begin(), smallestIndices.end(), smallest_index) ==
+          smallestIndices.end()) {
+        neighborClusters.push_back(static_cast<int>(neighbor_index));
+        smallestIndices.push_back(smallest_index);
       }
     }
 
-    std::vector<StructureNode *> neighborNodes;
-    for (auto i : neighborClusters){
-      StructureNode *p = leafindex[i];
-      neighborNodes.push_back(p->ancestor());
+    std::vector<StructureNode*> neighborNodes;
+    for (auto i : neighborClusters) {
+      StructureNode* leaf = leafindex[static_cast<size_t>(i)];
+      if (!leaf) continue;
+      neighborNodes.push_back(leaf->ancestor());
     }
 
     std::sort(neighborNodes.begin(), neighborNodes.end());
-    // Move duplicate entries to the end and return the new logical end.
     auto last = std::unique(neighborNodes.begin(), neighborNodes.end());
-    // Erase duplicates.
     neighborNodes.erase(last, neighborNodes.end());
-    
-    // Find representative cluster IDs connected to this particle.
+
     if (neighborNodes.empty()) {
       StructureNode* newLeaf = new StructureNode(std::vector<int>{idx}, p.density);
       nodes.push_back(newLeaf);
-      leafindex[idx] = newLeaf;
-      
-      //currentClusterID++;
-
-      /*for(auto &s : nodes){
-	if(!s->children.empty()){
-	  for(auto &p : s->children)
-	    if(s != p->parent)
-	      printf("something wrong, line=%d\n", __LINE__);
-	}
-
-	if(s->parent){
-	  bool flag = false;
-	  for(auto &p : s->parent->children)
-	    if(s == p)
-	      flag = true;
-
-	  if(flag == false)
-	    printf("something wrong, line=%d\n", __LINE__);	    
-	}
-	}*/
+      leafindex[static_cast<size_t>(idx)] = newLeaf;
     } else if (neighborNodes.size() == 1) {
-      StructureNode* pLeaf = neighborNodes[0];      
-
-      leafindex[idx] = pLeaf;
+      StructureNode* pLeaf = neighborNodes[0];
+      leafindex[static_cast<size_t>(idx)] = pLeaf;
       pLeaf->add_particle(idx, p.density);
     } else {
       int count = 0;
       std::vector<StructureNode*> merger;
-      for(size_t i=0;i <  neighborNodes.size();i++){
-	StructureNode* adjacent = neighborNodes[i];
-	if (adjacent->isLeaf()) {
-	  bool flag;
-	  if (adjacent->parent)
-	    flag = ((adjacent->height() - adjacent->parent->height()) >= params_.minDepth);
-	  else
-	    flag = ((adjacent->vmax - adjacent->vmin) >= params_.minDepth);
+      for (size_t i = 0; i < neighborNodes.size(); i++) {
+        StructureNode* adjacent = neighborNodes[i];
+        if (adjacent->isLeaf()) {
+          const bool independent =
+            pruning::density_contrast_ratio(adjacent) >=
+            params_.minDensityContrastRatio;
 
-	  if(flag == false || adjacent->indices.size() < static_cast<size_t>(params_.minParticles)){
-	    merger.push_back(adjacent);
-	    continue;
-	  }
-	}	  
-	
-	neighborNodes[count] = adjacent;
-	count++;
+          if (!independent ||
+              adjacent->indices.size() < static_cast<size_t>(params_.minParticles)) {
+            merger.push_back(adjacent);
+            continue;
+          }
+        }
+
+        neighborNodes[static_cast<size_t>(count)] = adjacent;
+        count++;
       }
-      
-      neighborNodes.resize(count);
 
-      if(neighborNodes.empty()){
-	neighborNodes.push_back(merger.back());
-	merger.pop_back();
-      }	
+      neighborNodes.resize(static_cast<size_t>(count));
 
-      StructureNode* pLeaf_rep = NULL;
-      if (neighborNodes.size() == 1){
-	pLeaf_rep = leafindex[idx] = neighborNodes[0];
-	pLeaf_rep->add_particle(idx, p.density);
+      if (neighborNodes.empty()) {
+        neighborNodes.push_back(merger.back());
+        merger.pop_back();
+      }
+
+      StructureNode* pLeaf_rep = nullptr;
+      if (neighborNodes.size() == 1) {
+        pLeaf_rep = leafindex[static_cast<size_t>(idx)] = neighborNodes[0];
+        pLeaf_rep->add_particle(idx, p.density);
       } else {
-	// create a new branch	
-	StructureNode* mergeNode = new StructureNode(std::vector<int>{idx}, p.density, neighborNodes);
-	leafindex[idx] = pLeaf_rep = mergeNode;
-	
-	nodes.push_back(mergeNode);
-      	//currentClusterID++;
+        StructureNode* mergeNode =
+          new StructureNode(std::vector<int>{idx}, p.density, neighborNodes);
+        leafindex[static_cast<size_t>(idx)] = pLeaf_rep = mergeNode;
+        nodes.push_back(mergeNode);
       }
 
-      while(!merger.empty()){
-	StructureNode *leaf_merged = merger.back();
-	merger.pop_back();
-	for (int particleID : leaf_merged->indices) 
-	  leafindex[particleID] = pLeaf_rep;
-	
-	pLeaf_rep->merge_node(leaf_merged);
-	
-	// Also remove leaf_merged from the parent's children container.
-	if (leaf_merged->parent) {
-	  auto& siblings = leaf_merged->parent->children;
-	  siblings.erase(std::remove(siblings.begin(), siblings.end(), leaf_merged), siblings.end());
-	}
-	
-	nodes.erase(std::remove(nodes.begin(), nodes.end(), leaf_merged), nodes.end());
-	delete leaf_merged;
+      while (!merger.empty()) {
+        StructureNode* leaf_merged = merger.back();
+        merger.pop_back();
+        for (int particleID : leaf_merged->indices) {
+          leafindex[static_cast<size_t>(particleID)] = pLeaf_rep;
+        }
+
+        pLeaf_rep->merge_node(leaf_merged);
+
+        if (leaf_merged->parent) {
+          auto& siblings = leaf_merged->parent->children;
+          siblings.erase(std::remove(siblings.begin(), siblings.end(), leaf_merged),
+                         siblings.end());
+        }
+
+        nodes.erase(std::remove(nodes.begin(), nodes.end(), leaf_merged), nodes.end());
+        delete leaf_merged;
       }
-    }    
+    }
   }
+}
 
-  // Remove pruning targets iteratively.
+void FindClump::pruneDendrogramHierarchy()
+{
+  std::vector<StructureNode*>& nodes = nodeList;
   while (true) {
-    auto toPrune = pruning::_to_prune(nodes, params_.minDepth, params_.minParticles);
+    auto toPrune = pruning::_to_prune(nodes,
+                                      params_.minDensityContrastRatio,
+                                      params_.minParticles);
     if (toPrune.empty())
       break;
     for (StructureNode* s : toPrune) {
       StructureNode* parent = s->parent;
       if (!parent)
-	continue;
+        continue;
       auto& siblings = parent->children;
       std::vector<StructureNode*> merge;
       if (siblings.size() == 2) {
-	merge = siblings;
+        merge = siblings;
       } else if (siblings.size() > 2) {
-	merge.push_back(s);
+        merge.push_back(s);
       }
       for (StructureNode* m : merge) {
-	pruning::_merge_with_parent(m);
-	nodes.erase(std::remove(nodes.begin(), nodes.end(), m), nodes.end());
-	delete m;
+        pruning::_merge_with_parent(m);
+        nodes.erase(std::remove(nodes.begin(), nodes.end(), m), nodes.end());
+        delete m;
       }
     }
   }
 
-  // Rebuild the trunk from structures without parents.
-  std::vector<StructureNode*>trunk = pruning::_make_trunk(nodes, params_.minDepth, params_.minParticles);
-  
-  for (size_t i = 0; i < nodes.size(); i++) {    
-    StructureNode *sn = nodes[i];
-    calc_node_statistic(sn, cloud.pts);
+  std::vector<StructureNode*> trunk =
+    pruning::_make_trunk(nodes,
+                         params_.minDensityContrastRatio,
+                         params_.minParticles);
+  (void)trunk;
+}
+
+void FindClump::finalizeDendrogramNodes(
+  const std::vector<SimulationElementFiltered>& filteredParticles)
+{
+  for (StructureNode* node : nodeList) {
+    calc_node_statistic(node, filteredParticles);
   }
 
-  sortNodesByMass();    
+  sortNodesByMass();
 
-  for(StructureNode* node : nodes){
+  for (StructureNode* node : nodeList) {
     std::vector<int> indices_new;
-    
-    for(size_t i = 0; i < node->indices.size() ; i++){
-      int idx = node -> indices[i];
-      int original_index = filteredParticles[idx].original_index;
+    indices_new.reserve(node->indices.size());
+
+    for (int filteredIndex : node->indices) {
+      int original_index =
+        filteredParticles[static_cast<size_t>(filteredIndex)].original_index;
       indices_new.push_back(original_index);
     }
-    
-    node -> indices = indices_new;
+
+    node->indices = indices_new;
   }
-  
+}
+
+void FindClump::findClumpsDendrogram(std::vector<SimulationElement>& originalParticles,
+                                     float worldToRenderScale,
+                                     const std::string &var)
+{
+  std::vector<SimulationElementFiltered> filteredParticles =
+    filterDendrogramGasParticles(originalParticles,
+                                 worldToRenderScale,
+                                 params_.densityThreshold,
+                                 var);
+  printf("number of dendrogram gas particles:%zu out of %zu\n"
+	 , filteredParticles.size(), originalParticles.size());
+
+  if (filteredParticles.empty()) {
+    findClumpComputed = true;
+    flagFOFComputed = false;
+    flagDendrogramComputed = true;
+    flagDirty = true;
+    return;
+  }
+
+  ParticleCloud cloud;
+  cloud.pts = filteredParticles;
+
+  const size_t numParticles = cloud.pts.size();
+  std::vector<int> sortedIndices = makeDendrogramDensityOrder(cloud.pts);
+
+  std::vector<int> rank(numParticles, -1);
+  for (size_t i = 0; i < sortedIndices.size(); ++i)
+    rank[sortedIndices[i]] = i;
+
+  buildDendrogramHierarchy(cloud, sortedIndices, rank);
+  pruneDendrogramHierarchy();
+  finalizeDendrogramNodes(filteredParticles);
+
   findClumpComputed = true;
   flagFOFComputed = false;
   flagDendrogramComputed = true;
@@ -746,17 +760,32 @@ std::vector<FindClump::SimulationElementFiltered> FindClump::filterParticles(con
   std::vector<SimulationElementFiltered> filtered;
   for (size_t i = 0; i < particles.size(); ++i) {
       const SimulationElement &p = particles[i];
-      if(p.type >= 3){
+      if (p.type >= 3 || p.getValue(var) >= threshold) {
 	SimulationElementFiltered copy = filter_particle_for_clump_find(p, i, worldToRenderScale, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
-      
-      if (p.getValue(var) >= threshold) {
-	SimulationElementFiltered copy = filter_particle_for_clump_find(p, i, worldToRenderScale, var);
-	copy.original_index = static_cast<int>(i);
-	filtered.push_back(copy);
-      }
+  }
+  return filtered;
+}
+
+std::vector<FindClump::SimulationElementFiltered> FindClump::filterDendrogramGasParticles(
+  const std::vector<SimulationElement>& particles,
+  float worldToRenderScale,
+  double threshold,
+  const std::string& var) const
+{
+  std::vector<SimulationElementFiltered> filtered;
+  for (size_t i = 0; i < particles.size(); ++i) {
+    const SimulationElement& p = particles[i];
+    if (p.type != 0 || p.getValue(var) < threshold) {
+      continue;
+    }
+
+    SimulationElementFiltered copy =
+      filter_particle_for_clump_find(p, i, worldToRenderScale, var);
+    copy.original_index = static_cast<int>(i);
+    filtered.push_back(copy);
   }
   return filtered;
 }

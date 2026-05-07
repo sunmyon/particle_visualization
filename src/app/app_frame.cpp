@@ -868,6 +868,7 @@ static void ExecuteRequests(AppDataState& data,
     camera,
     runtime.settings.fileNavigation.input,
     runtime.settings.fileNavigation.current,
+    runtime.quantity.units,
     runtime.settings.normalization,
     currentFileIndex
   };

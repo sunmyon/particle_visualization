@@ -52,7 +52,7 @@ public:
   struct Params{
     bool useHsml = true;  
     float densityThreshold = 10.;
-    float minDepth = 1.;    
+    float minDensityContrastRatio = 10.;
     int minParticles = 30;
 
     float linkingLength = 0.01;
@@ -86,10 +86,23 @@ private:
   const SimulationBlock* simulationBlockForIds_ = nullptr;
 
   void clearNodes(){
-    if (findClumpComputed) {
-      for (auto node : nodeList)
-        delete node;
+    std::vector<StructureNode*> uniqueNodes = nodeList;
+    std::sort(uniqueNodes.begin(), uniqueNodes.end());
+    uniqueNodes.erase(std::unique(uniqueNodes.begin(), uniqueNodes.end()),
+                      uniqueNodes.end());
+    for (StructureNode* node : uniqueNodes) {
+      delete node;
     }
+    nodeList.clear();
+#ifdef USE_CONVEX_HULL
+    showHull_.clear();
+#endif
+    findClumpComputed = false;
+    flagFOFComputed = false;
+    flagDendrogramComputed = false;
+    histogramComputed_ = false;
+    massHistogramValues_.clear();
+    flagDirty = true;
   }
   
   struct ClumpInfo {
@@ -130,6 +143,18 @@ private:
   void union_sets(std::vector<int>& parent, int a, int b);
 
   void findClumpsDendrogram(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
+  std::vector<SimulationElementFiltered> filterDendrogramGasParticles(
+    const std::vector<SimulationElement>& particles,
+    float worldToRenderScale,
+    double threshold,
+    const std::string& var) const;
+  std::vector<int> makeDendrogramDensityOrder(
+    const std::vector<SimulationElementFiltered>& particles) const;
+  void buildDendrogramHierarchy(const ParticleCloud& cloud,
+                                const std::vector<int>& sortedIndices,
+                                const std::vector<int>& rank);
+  void pruneDendrogramHierarchy();
+  void finalizeDendrogramNodes(const std::vector<SimulationElementFiltered>& filteredParticles);
   void calc_node_statistic(StructureNode *ns, const std::vector<SimulationElementFiltered>& p);
   void traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes);
   std::vector<SimulationElementFiltered> filterParticles(const std::vector<SimulationElement>& particles,

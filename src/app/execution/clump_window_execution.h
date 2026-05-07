@@ -27,7 +27,8 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                       CameraContext& camera,
                                       double snapshotTime,
                                       const SnapshotInputState& input,
-                                      const SnapshotCurrentState& current);
+                                      const SnapshotCurrentState& current,
+                                      const UnitSystem& units);
 
 void ExecuteLoadedClumpWindowRequests(LoadedClumpWindowState& ui,
                                       LoadedClumpTool& clumpTool,

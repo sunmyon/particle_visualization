@@ -66,6 +66,7 @@ struct ClumpToolExecutionInput {
   CameraContext& camera;
   const SnapshotInputState& snapshotInput;
   const SnapshotCurrentState& snapshotCurrent;
+  const UnitSystem& units;
   NormalizationContext& normalization;
   int currentFileIndex = -1;
 };
