@@ -232,7 +232,11 @@ inline void ApplySelectedSnapshotPath(FileNavigationRuntimeState& rt, const char
   RecomputeCurrentFileIndex(rt);
 
 #ifdef HAVE_HDF5
-  const std::string ext = p.extension().string();
+  std::string ext = p.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
   rt.input.useHDF5 = (ext == ".hdf5" || ext == ".h5");
 #endif
 }

@@ -32,23 +32,41 @@ static void StoreQuatAsEulerDegrees(const glm::quat& q, float outEuler[3])
 
 static void SyncInteractiveCuboidFromParams(ProjectionMapToolState& tool)
 {
-  tool.interactiveCuboid.center = glm::vec3(tool.params.xoffset[0],
-                                            tool.params.xoffset[1],
-                                            tool.params.xoffset[2]);
-  tool.interactiveCuboid.halfSize = 0.5f * glm::vec3(tool.params.xlen[0],
-                                                     tool.params.xlen[1],
-                                                     tool.params.xlen[2]);
+  ProjectionEnsureLayoutInitialized(tool.params);
+  const ProjectionViewBlockSpec block =
+    ProjectionResolveViewBlock(tool.params, tool.params.activeViewBlockIndex);
+  tool.interactiveCuboid.center = glm::vec3(block.xoffset[0],
+                                            block.xoffset[1],
+                                            block.xoffset[2]);
+  tool.interactiveCuboid.halfSize = 0.5f * glm::vec3(block.xlen[0],
+                                                     block.xlen[1],
+                                                     block.xlen[2]);
   tool.interactiveCuboid.orientation =
-    BuildProjectionTransformFromEuler(tool.params.tilt);
-  tool.appliedSelectedAxis = tool.params.selectedAxis;
+    BuildProjectionTransformFromEuler(block.tilt);
+  tool.appliedSelectedAxis = block.selectedAxis;
 }
 
 static void SyncParamsFromInteractiveCuboid(ProjectionMapToolState& tool)
 {
-  tool.params.xoffset[0] = tool.interactiveCuboid.center.x;
-  tool.params.xoffset[1] = tool.interactiveCuboid.center.y;
-  tool.params.xoffset[2] = tool.interactiveCuboid.center.z;
-  StoreQuatAsEulerDegrees(tool.interactiveCuboid.orientation, tool.params.tilt);
+  ProjectionEnsureLayoutInitialized(tool.params);
+  ProjectionViewBlockSpec& main = tool.params.viewBlocks[0];
+  ProjectionViewBlockSpec& block =
+    tool.params.viewBlocks[tool.params.activeViewBlockIndex];
+  ProjectionViewBlockSpec& centerTarget =
+    (tool.params.activeViewBlockIndex != 0 && block.centerSameAsMain)
+      ? main
+      : block;
+  centerTarget.xoffset[0] = tool.interactiveCuboid.center.x;
+  centerTarget.xoffset[1] = tool.interactiveCuboid.center.y;
+  centerTarget.xoffset[2] = tool.interactiveCuboid.center.z;
+
+  ProjectionViewBlockSpec& tiltTarget =
+    (tool.params.activeViewBlockIndex != 0 && block.tiltSameAsMain)
+      ? main
+      : block;
+  StoreQuatAsEulerDegrees(tool.interactiveCuboid.orientation, tiltTarget.tilt);
+  ProjectionSyncTopLevelFromViewBlock(tool.params,
+                                      tool.params.activeViewBlockIndex);
 }
 
 static void MarkProjectionToolChanged(ProjectionMapToolState& tool,
@@ -85,6 +103,9 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
   RenderLayerState* cuboidAnnotation = ctx.cuboidAnnotation;
 
   if (request.paramsChanged) {
+    ProjectionEnsureLayoutInitialized(request.params);
+    ProjectionSyncTopLevelFromViewBlock(request.params,
+                                        request.params.activeViewBlockIndex);
     if (tool) {
       tool->params = request.params;
       SyncInteractiveCuboidFromParams(*tool);
@@ -99,15 +120,37 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
 
   if (request.moveCenterToCameraRequested) {
     if (tool) {
-      tool->params.xoffset[0] = ctx.camera.cameraTarget.x;
-      tool->params.xoffset[1] = ctx.camera.cameraTarget.y;
-      tool->params.xoffset[2] = ctx.camera.cameraTarget.z;
+      ProjectionEnsureLayoutInitialized(tool->params);
+      ProjectionViewBlockSpec& main = tool->params.viewBlocks[0];
+      ProjectionViewBlockSpec& block =
+        tool->params.viewBlocks[tool->params.activeViewBlockIndex];
+      ProjectionViewBlockSpec& target =
+        (tool->params.activeViewBlockIndex != 0 && block.centerSameAsMain)
+          ? main
+          : block;
+      target.xoffset[0] = ctx.camera.cameraTarget.x;
+      target.xoffset[1] = ctx.camera.cameraTarget.y;
+      target.xoffset[2] = ctx.camera.cameraTarget.z;
+      ProjectionSyncTopLevelFromViewBlock(tool->params,
+                                          tool->params.activeViewBlockIndex);
       SyncInteractiveCuboidFromParams(*tool);
       if (cuboidAnnotation) {
         MarkProjectionToolChanged(*tool, *cuboidAnnotation);
       }
       params = tool->params;
     } else {
+      ProjectionEnsureLayoutInitialized(params);
+      ProjectionViewBlockSpec& main = params.viewBlocks[0];
+      ProjectionViewBlockSpec& block =
+        params.viewBlocks[params.activeViewBlockIndex];
+      ProjectionViewBlockSpec& target =
+        (params.activeViewBlockIndex != 0 && block.centerSameAsMain)
+          ? main
+          : block;
+      target.xoffset[0] = ctx.camera.cameraTarget.x;
+      target.xoffset[1] = ctx.camera.cameraTarget.y;
+      target.xoffset[2] = ctx.camera.cameraTarget.z;
+      ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
       params.xoffset[0] = ctx.camera.cameraTarget.x;
       params.xoffset[1] = ctx.camera.cameraTarget.y;
       params.xoffset[2] = ctx.camera.cameraTarget.z;
@@ -116,18 +159,33 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
   }
 
   if (request.setAxisFromAngularMomentumRequested) {
+    const ProjectionViewBlockSpec activeBlock =
+      ProjectionResolveViewBlock(params, params.activeViewBlockIndex);
     ProjectionAngularMomentumFrame frame =
       ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock.particles,
                                   ctx.projection.particles.simulationBlock.worldToRenderScale,
-                                  glm::vec3(params.xoffset[0],
-                                            params.xoffset[1],
-                                            params.xoffset[2]),
-                                  params.xlen);
+                                  glm::vec3(activeBlock.xoffset[0],
+                                            activeBlock.xoffset[1],
+                                            activeBlock.xoffset[2]),
+                                  activeBlock.xlen);
     if (frame.valid) {
-      params.xoffset[0] = frame.center.x;
-      params.xoffset[1] = frame.center.y;
-      params.xoffset[2] = frame.center.z;
-      StoreQuatAsEulerDegrees(BuildRotationFromZAxisTo(frame.axis), params.tilt);
+      ProjectionEnsureLayoutInitialized(params);
+      ProjectionViewBlockSpec& main = params.viewBlocks[0];
+      ProjectionViewBlockSpec& block =
+        params.viewBlocks[params.activeViewBlockIndex];
+      ProjectionViewBlockSpec& centerTarget =
+        (params.activeViewBlockIndex != 0 && block.centerSameAsMain)
+          ? main
+          : block;
+      centerTarget.xoffset[0] = frame.center.x;
+      centerTarget.xoffset[1] = frame.center.y;
+      centerTarget.xoffset[2] = frame.center.z;
+      ProjectionViewBlockSpec& tiltTarget =
+        (params.activeViewBlockIndex != 0 && block.tiltSameAsMain)
+          ? main
+          : block;
+      StoreQuatAsEulerDegrees(BuildRotationFromZAxisTo(frame.axis), tiltTarget.tilt);
+      ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
       if (tool) {
         tool->params = params;
         SyncInteractiveCuboidFromParams(*tool);
@@ -249,6 +307,18 @@ static void ApplyMovieRequestToTracking(const ProjectionMovieRequestState& reque
   track.renewAfterSnapshot = true;
 }
 
+static void ApplyMovieCameraTargetToProjectionParams(ProjectionMapParams& params,
+                                                     const glm::vec3& target)
+{
+  ProjectionEnsureLayoutInitialized(params);
+  params.viewBlocks[0].xoffset[0] = target.x;
+  params.viewBlocks[0].xoffset[1] = target.y;
+  params.viewBlocks[0].xoffset[2] = target.z;
+  params.xoffset[0] = target.x;
+  params.xoffset[1] = target.y;
+  params.xoffset[2] = target.z;
+}
+
 static bool PrepareProjectionMovieExecution(ProjectionMovieExecutionContext& ctx,
                                             const std::filesystem::path& framesDir)
 {
@@ -266,6 +336,7 @@ static bool PrepareProjectionMovieExecution(ProjectionMovieExecutionContext& ctx
     ctx.runtime.projectionParams = ctx.request.hasProjectionParams
       ? ctx.request.projectionParams
       : ctx.baseParams;
+    ProjectionEnsureLayoutInitialized(ctx.runtime.projectionParams);
     std::snprintf(ctx.runtime.projectionParams.folderPath,
                   sizeof(ctx.runtime.projectionParams.folderPath),
                   "%s",
@@ -382,9 +453,8 @@ static void SubmitProjectionMovieFrameRequest(ProjectionMovieExecutionContext& c
                                               ProjectionMapRequestState& request)
 {
   request.params = ctx.runtime.projectionParams;
-  request.params.xoffset[0] = ctx.camera.cameraTarget[0];
-  request.params.xoffset[1] = ctx.camera.cameraTarget[1];
-  request.params.xoffset[2] = ctx.camera.cameraTarget[2];
+  ApplyMovieCameraTargetToProjectionParams(request.params,
+                                           ctx.camera.cameraTarget);
   request.paramsChanged = true;
   request.renderRequested = true;
 }

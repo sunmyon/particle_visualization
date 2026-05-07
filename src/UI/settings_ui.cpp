@@ -22,8 +22,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#include <string>
 #include <vector>
 #include <imgui.h>
 #include <implot.h>
@@ -34,6 +37,16 @@
 #include "ImGuiFileDialog.h" // Match the include path.
 #endif
 
+static bool IsHDF5SnapshotPath(const char* path)
+{
+  if (!path || path[0] == '\0') return false;
+  std::string ext = std::filesystem::path(path).extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return ext == ".hdf5" || ext == ".h5";
+}
 
 struct PullDownItem {
   const char* label;
@@ -898,6 +911,14 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
   ImGui::InputInt("initialIndex", &nav.initialIndex);
 		
   RefreshSnapshotFilePath(rt);
+#ifdef HAVE_HDF5
+  if (IsHDF5SnapshotPath(input.filePath)) {
+    input.useHDF5 = true;
+    if (format.readFormat != FileFormat::HDF5) {
+      format.readFormat = FileFormat::HDF5;
+    }
+  }
+#endif
 		
   if (ImGui::Button("Browse Files")) {
 #ifndef NONATIVEFILEDIALOG
@@ -913,6 +934,11 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
     if (result == NFD_OKAY) {
       ApplySelectedSnapshotPath(rt, outPath);
+#ifdef HAVE_HDF5
+      if (IsHDF5SnapshotPath(outPath)) {
+        format.readFormat = FileFormat::HDF5;
+      }
+#endif
       NFD_FreePathU8(outPath);
     }
     else if (result == NFD_CANCEL) {
@@ -939,6 +965,11 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
 	{
 	  std::string selectedFile = ImGuiFileDialog::Instance()->GetFilePathName();
 	  ApplySelectedSnapshotPath(rt, selectedFile.c_str());
+#ifdef HAVE_HDF5
+          if (IsHDF5SnapshotPath(selectedFile.c_str())) {
+            format.readFormat = FileFormat::HDF5;
+          }
+#endif
 	}
       else
 	{

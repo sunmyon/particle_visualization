@@ -9,6 +9,14 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens,
                             FileFormat readFormat);
 
+void DrawInputFormatDialog(FileFormatDialogState& state,
+                           std::vector<FieldSpec>& binaryFormatTokens,
+                           std::vector<FieldSpec>& gadgetFormatTokens,
+#ifdef HAVE_HDF5
+                           std::vector<FieldSpec>& hdf5FormatTokens,
+#endif
+                           FileFormat& readFormat);
+
 #ifdef HAVE_HDF5
 void DrawHDF5FormatDialog(FileFormatDialogState& state,
                           std::vector<FieldSpec>& formatTokens);

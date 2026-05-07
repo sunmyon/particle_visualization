@@ -2,6 +2,7 @@
 #include "image/image_io.h"
 
 #include "data/simulation_dataset.h"
+#include "data/simulation_block.h"
 #include "data/sample_coordinates.h"
 #include "render/scene_objects.h"
 
@@ -139,10 +140,25 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particle
 						     ProjectionMapParams& params,
 						     ProjectionMapContext& ctx)
 {
+  ProjectionEnsureLayoutInitialized(params);
   if (params.multiPanelEnabled && params.dataSource == DataSource::Gas) {
     return makeMultiPanelDensityMapImage(particles, units, params, ctx);
   }
-  return makeSingleDensityMapImage(particles, units, params, ctx);
+
+  ProjectionMapParams panelParams = params;
+  panelParams.multiPanelEnabled = false;
+  const int blockIndex = std::clamp(panelParams.panels[0].viewBlockIndex,
+                                    0,
+                                    panelParams.viewBlockCount - 1);
+  const ProjectionViewBlockSpec block =
+    ProjectionResolveViewBlock(panelParams, blockIndex);
+  ProjectionApplyViewBlockToParams(panelParams, block);
+  ProjectionApplyPanelToParams(panelParams, panelParams.panels[0], block);
+  ProjectionMapContext panelCtx =
+    BuildProjectionMapContext(panelParams,
+                              ctx.scaleToPhysical,
+                              ctx.time);
+  return makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
 }
 
 RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& particles,
@@ -706,7 +722,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   auto end = high_resolution_clock::now();
   std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
 
-  return composeProjectionMapImage(map, params, ctx, originalParticles);
+  return composeProjectionMapImage(map, params, ctx, particles.simulationBlock);
 }
 
 RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset& particles,
@@ -714,34 +730,46 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
 							       ProjectionMapParams& params,
 							       ProjectionMapContext& ctx)
 {
+  ProjectionEnsureLayoutInitialized(params);
   const int rows = std::clamp(params.multiPanelRows, 1, 3);
   const int cols = std::clamp(params.multiPanelCols, 1, 6);
-  const int maxPanels = std::min(rows * cols, 6);
-  const int panelCount = std::clamp(params.multiPanelCount, 1, maxPanels);
+  const int panelCount = std::min(rows * cols, kProjectionMaxPanels);
 
   std::vector<RgbImage> panelImages;
-  panelImages.reserve(static_cast<size_t>(panelCount));
+  panelImages.resize(static_cast<size_t>(panelCount));
 
   int panelWidth = 0;
   int panelHeight = 0;
-  for (int i = 0; i < panelCount; ++i) {
-    ProjectionMapParams panelParams = params;
-    panelParams.multiPanelEnabled = false;
-    panelParams.selectedVarGas = params.multiPanelVars[i];
-    panelParams.var = QuantityLabel(panelParams.selectedVarGas);
-    panelParams.flagTimeLabel =
-      params.flagTimeLabel && params.multiPanelShowTimeLabel[i];
-    panelParams.flagPlaceScale =
-      params.flagPlaceScale && params.multiPanelShowScale[i];
 
-    RgbImage panel = makeSingleDensityMapImage(particles, units, panelParams, ctx);
-    if (!panel.valid()) {
-      return {};
+  for (int blockIndex = 0; blockIndex < params.viewBlockCount; ++blockIndex) {
+    const ProjectionViewBlockSpec block =
+      ProjectionResolveViewBlock(params, blockIndex);
+    for (int i = 0; i < panelCount; ++i) {
+      const ProjectionPanelSpec& panelSpec = params.panels[i];
+      if (panelSpec.viewBlockIndex != blockIndex) {
+        continue;
+      }
+
+      ProjectionMapParams panelParams = params;
+      panelParams.multiPanelEnabled = false;
+      panelParams.panels[0] = panelSpec;
+      ProjectionApplyViewBlockToParams(panelParams, block);
+      ProjectionApplyPanelToParams(panelParams, panelSpec, block);
+
+      ProjectionMapContext panelCtx =
+        BuildProjectionMapContext(panelParams,
+                                  ctx.scaleToPhysical,
+                                  ctx.time);
+      RgbImage panel =
+        makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
+      if (!panel.valid()) {
+        return {};
+      }
+
+      panelWidth = std::max(panelWidth, panel.width);
+      panelHeight = std::max(panelHeight, panel.height);
+      panelImages[static_cast<size_t>(i)] = std::move(panel);
     }
-
-    panelWidth = std::max(panelWidth, panel.width);
-    panelHeight = std::max(panelHeight, panel.height);
-    panelImages.push_back(std::move(panel));
   }
 
   std::vector<unsigned char> tiledRgb;
@@ -750,11 +778,14 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
   ImageCanvas canvas{tiledRgb, panelWidth * cols, panelHeight * rows};
 
   for (int i = 0; i < panelCount; ++i) {
+    if (!panelImages[static_cast<size_t>(i)].valid()) {
+      return {};
+    }
     const int col = i % cols;
     const int row = i / cols;
-    canvas.copyRgbImage(panelImages[i].rgb,
-                        panelImages[i].width,
-                        panelImages[i].height,
+    canvas.copyRgbImage(panelImages[static_cast<size_t>(i)].rgb,
+                        panelImages[static_cast<size_t>(i)].width,
+                        panelImages[static_cast<size_t>(i)].height,
                         col * panelWidth,
                         row * panelHeight);
   }
@@ -803,20 +834,25 @@ ProjectionMapGenerator::buildProjectionMap(const ProjectionMapParams& params,
   glm::vec3 axisX = glm::normalize(ctx.cuboidTransform * glm::vec3(1, 0, 0));
   glm::vec3 axisY = glm::normalize(ctx.cuboidTransform * glm::vec3(0, 1, 0));
   glm::vec3 axisZ = glm::normalize(ctx.cuboidTransform * glm::vec3(0, 0, 1));
+  glm::vec3 axes[3] = {axisX, axisY, axisZ};
+  const int viewAxis = std::clamp(params.selectedAxis, 0, 2);
+  const int upAxis = std::clamp(params.upAxis, 0, 2);
+  const float viewSign = params.projectionSign < 0 ? -1.0f : 1.0f;
+  const float upSign = params.upSign < 0 ? -1.0f : 1.0f;
 
-  if (params.selectedAxis == 0) {
-    map.wAxis = axisX;
-    map.uAxis = axisY;
-    map.vAxis = axisZ;
-  } else if (params.selectedAxis == 1) {
-    map.wAxis = axisY;
-    map.uAxis = axisZ;
-    map.vAxis = axisX;
-  } else {
-    map.wAxis = axisZ;
-    map.uAxis = axisX;
-    map.vAxis = axisY;
+  map.wAxis = glm::normalize(viewSign * axes[viewAxis]);
+  glm::vec3 upHint = upSign * axes[upAxis];
+  glm::vec3 vAxis = upHint - glm::dot(upHint, map.wAxis) * map.wAxis;
+  if (glm::dot(vAxis, vAxis) < 1.0e-8f) {
+    for (int candidate = 0; candidate < 3; ++candidate) {
+      if (candidate == viewAxis) continue;
+      upHint = axes[candidate];
+      vAxis = upHint - glm::dot(upHint, map.wAxis) * map.wAxis;
+      if (glm::dot(vAxis, vAxis) >= 1.0e-8f) break;
+    }
   }
+  map.vAxis = glm::normalize(vAxis);
+  map.uAxis = glm::normalize(glm::cross(map.vAxis, map.wAxis));
 
   map.center = ctx.center;
   return map;
@@ -826,8 +862,9 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   ProjectionMap& map,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx,
-  const std::vector<SimulationElement>& originalParticles)
+  const SimulationBlock& block)
 {
+  const std::vector<SimulationElement>& originalParticles = block.particles;
   if (params.flagVoronoi &&
       params.voronoiMode == ProjectionVoronoiMode::OpacityRendering &&
       !map.image.empty()) {
@@ -839,9 +876,8 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
     int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
     ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-    if (params.flagShowStarParticles) {
-      overlayStarParticles(canvas, map, params, ctx, originalParticles);
-    }
+    overlayStarParticles(canvas, map, params, ctx, originalParticles);
+    overlayVectorField(canvas, map, params, block);
 
     addColorBarToMap(canvas,
                      map.cell_size,
@@ -896,9 +932,8 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
   int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
   ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-  if (params.flagShowStarParticles) {
-    overlayStarParticles(canvas, map, params, ctx, originalParticles);
-  }
+  overlayStarParticles(canvas, map, params, ctx, originalParticles);
+  overlayVectorField(canvas, map, params, block);
 
   addColorBarToMap(canvas,
                    map.cell_size,
@@ -1519,8 +1554,335 @@ bool ProjectionMapGenerator::EvaluateLuaExpressionBool(const char* expr, bool& o
 }
 #endif
 
+void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
+                                                const ProjectionMap& map,
+                                                const ProjectionMapParams& params,
+                                                const SimulationBlock& block)
+{
+  const ProjectionPanelSpec& panel = params.panels[0];
+  if (panel.vectorOverlayIndex <= 0 ||
+      panel.vectorOverlayIndex > params.vectorOverlayCount ||
+      panel.vectorOverlayIndex > kProjectionMaxVectorOverlays) {
+    return;
+  }
+  const ProjectionVectorOverlaySpec& overlay =
+    params.vectorOverlays[static_cast<size_t>(panel.vectorOverlayIndex - 1)];
+
+  if (overlay.vectorField == ProjectionVectorField::MagneticField &&
+      !block.hasSoAAs(soa_views::Bfield)) {
+    return;
+  }
+
+  const int gridSize = std::clamp(overlay.vectorGridSize, 4, 256);
+  const int gridX = gridSize;
+  const int gridY = gridSize;
+  const int ncell = gridX * gridY;
+
+  std::vector<double> sumU(static_cast<size_t>(ncell), 0.0);
+  std::vector<double> sumV(static_cast<size_t>(ncell), 0.0);
+  std::vector<double> weightSum(static_cast<size_t>(ncell), 0.0);
+
+  for (size_t ipart = 0; ipart < block.particles.size(); ++ipart) {
+    const SimulationElement& p = block.particles[ipart];
+    if (p.type != static_cast<uint8_t>(params.selectedType)) continue;
+
+    const glm::vec3 pos = renderPosition(p, map.sourceWorldToRenderScale);
+    const glm::vec3 rad = pos - map.center;
+    const float u = glm::dot(rad, map.uAxis);
+    const float v = glm::dot(rad, map.vAxis);
+    const float w = glm::dot(rad, map.wAxis);
+    if (std::abs(u) > 0.5f * map.xlen[0] ||
+        std::abs(v) > 0.5f * map.xlen[1] ||
+        std::abs(w) > 0.5f * map.xlen[2]) {
+      continue;
+    }
+
+    float vec3[3] = {0.0f, 0.0f, 0.0f};
+    if (overlay.vectorField == ProjectionVectorField::Velocity) {
+      vec3[0] = p.vel[0];
+      vec3[1] = p.vel[1];
+      vec3[2] = p.vel[2];
+    } else if (!block.readSoAAs(soa_views::Bfield, ipart, vec3)) {
+      continue;
+    }
+
+    const glm::vec3 vec(vec3[0], vec3[1], vec3[2]);
+    const float vu = glm::dot(vec, map.uAxis);
+    const float vv = glm::dot(vec, map.vAxis);
+    if (!std::isfinite(vu) || !std::isfinite(vv)) continue;
+
+    const float halfX = std::max(0.5f * map.xlen[0], 1.0e-30f);
+    const float halfY = std::max(0.5f * map.xlen[1], 1.0e-30f);
+    const int ix = static_cast<int>(((u / halfX) + 1.0f) * 0.5f * gridX);
+    const int iy = static_cast<int>(((v / halfY) + 1.0f) * 0.5f * gridY);
+    if (ix < 0 || ix >= gridX || iy < 0 || iy >= gridY) continue;
+
+    const int idx = iy * gridX + ix;
+    const double weight =
+      (overlay.vectorField == ProjectionVectorField::Velocity &&
+       std::isfinite(p.mass) && p.mass > 0.0f)
+        ? static_cast<double>(p.mass)
+        : 1.0;
+    sumU[static_cast<size_t>(idx)] += weight * static_cast<double>(vu);
+    sumV[static_cast<size_t>(idx)] += weight * static_cast<double>(vv);
+    weightSum[static_cast<size_t>(idx)] += weight;
+  }
+
+  std::vector<float> avgU(static_cast<size_t>(ncell), 0.0f);
+  std::vector<float> avgV(static_cast<size_t>(ncell), 0.0f);
+  float autoMinMagnitude = std::numeric_limits<float>::max();
+  float autoMaxMagnitude = 0.0f;
+  bool hasMagnitude = false;
+  for (int i = 0; i < ncell; ++i) {
+    const double weight = weightSum[static_cast<size_t>(i)];
+    if (weight <= 0.0) continue;
+    const float u = static_cast<float>(sumU[static_cast<size_t>(i)] / weight);
+    const float v = static_cast<float>(sumV[static_cast<size_t>(i)] / weight);
+    const float mag = std::sqrt(u * u + v * v);
+    if (mag <= 0.0f || !std::isfinite(mag)) {
+      continue;
+    }
+    avgU[static_cast<size_t>(i)] = u;
+    avgV[static_cast<size_t>(i)] = v;
+    autoMinMagnitude = std::min(autoMinMagnitude, mag);
+    autoMaxMagnitude = std::max(autoMaxMagnitude, mag);
+    hasMagnitude = true;
+  }
+  if (!hasMagnitude) return;
+  const float rangeMin =
+    overlay.autoMagnitudeRange
+      ? autoMinMagnitude
+      : overlay.vectorMinMagnitude;
+  float rangeMax =
+    overlay.autoMagnitudeRange
+      ? autoMaxMagnitude
+      : overlay.vectorMaxMagnitude;
+  if (rangeMax <= 0.0f) return;
+  if (rangeMax <= rangeMin) {
+    rangeMax = rangeMin + std::max(std::abs(rangeMin) * 1.0e-6f, 1.0e-30f);
+  }
+
+  const float alpha = std::clamp(overlay.vectorOpacity, 0.0f, 1.0f);
+  const float minLength = std::max(overlay.vectorMinLengthPx, 0.0f);
+  const float maxLength = std::max(overlay.vectorMaxLengthPx, minLength);
+  const ColormapDef* vectorColormaps = AvailableColormaps();
+  const int vectorColormapCount = AvailableColormapCount();
+  const int vectorColormapIndex =
+    std::clamp(overlay.vectorColormapIndex, 0, vectorColormapCount - 1);
+
+  auto colorForMagnitude =
+    [&](float mag, unsigned char& r, unsigned char& g, unsigned char& b) {
+      if (overlay.vectorColorByMagnitude) {
+        float t = 0.0f;
+        if (overlay.vectorColorScaleMode ==
+            ProjectionVectorColorScaleMode::Log) {
+          const float safeMin = std::max(rangeMin, 0.0f);
+          const float safeMag = std::max(mag, safeMin);
+          t = std::log1p(9.0f * (safeMag - safeMin) /
+                         std::max(rangeMax - safeMin, 1.0e-30f)) /
+              std::log(10.0f);
+        } else {
+          t = (mag - rangeMin) / (rangeMax - rangeMin);
+        }
+        t = std::clamp(t, 0.0f, 1.0f);
+        float rf = 1.0f, gf = 1.0f, bf = 1.0f;
+        colormapLookup(t,
+                       rf,
+                       gf,
+                       bf,
+                       vectorColormaps[vectorColormapIndex].data,
+                       vectorColormaps[vectorColormapIndex].count);
+        r = static_cast<unsigned char>(std::clamp(rf, 0.0f, 1.0f) * 255.0f);
+        g = static_cast<unsigned char>(std::clamp(gf, 0.0f, 1.0f) * 255.0f);
+        b = static_cast<unsigned char>(std::clamp(bf, 0.0f, 1.0f) * 255.0f);
+      } else {
+        r = static_cast<unsigned char>(
+          std::clamp(overlay.vectorColor[0], 0.0f, 1.0f) * 255.0f);
+        g = static_cast<unsigned char>(
+          std::clamp(overlay.vectorColor[1], 0.0f, 1.0f) * 255.0f);
+        b = static_cast<unsigned char>(
+          std::clamp(overlay.vectorColor[2], 0.0f, 1.0f) * 255.0f);
+      }
+    };
+
+  auto normalizedMagnitudeFactor = [&](float mag) {
+    if (overlay.vectorScaleMode == ProjectionVectorScaleMode::Linear) {
+      return (mag - rangeMin) / (rangeMax - rangeMin);
+    }
+    if (overlay.vectorScaleMode == ProjectionVectorScaleMode::Log) {
+      const float safeMin = std::max(rangeMin, 0.0f);
+      const float safeMag = std::max(mag, safeMin);
+      return std::log1p(9.0f * (safeMag - safeMin) /
+                        std::max(rangeMax - safeMin, 1.0e-30f)) /
+             std::log(10.0f);
+    }
+    return 1.0f;
+  };
+
+  if (overlay.vectorMode == ProjectionVectorOverlayMode::Arrows) {
+    for (int iy = 0; iy < gridY; ++iy) {
+      for (int ix = 0; ix < gridX; ++ix) {
+        const int idx = iy * gridX + ix;
+        const float u = avgU[static_cast<size_t>(idx)];
+        const float v = avgV[static_cast<size_t>(idx)];
+        const float mag = std::sqrt(u * u + v * v);
+        if (mag <= 0.0f) continue;
+
+        const float t = std::clamp(normalizedMagnitudeFactor(mag), 0.0f, 1.0f);
+        const float length =
+          (overlay.vectorScaleMode == ProjectionVectorScaleMode::Normalized)
+            ? maxLength
+            : minLength + (maxLength - minLength) * t;
+        if (length <= 0.5f) continue;
+
+        unsigned char r = 255, g = 255, b = 255;
+        colorForMagnitude(mag, r, g, b);
+        const float dirX = u / mag;
+        const float dirY = v / mag;
+        const float cx = (static_cast<float>(ix) + 0.5f) *
+                         static_cast<float>(map.npixel_x) / gridX;
+        const float cy = (static_cast<float>(iy) + 0.5f) *
+                         static_cast<float>(map.npixel_y) / gridY;
+        const float x0 = cx - 0.5f * length * dirX;
+        const float y0 = cy - 0.5f * length * dirY;
+        const float x1 = cx + 0.5f * length * dirX;
+        const float y1 = cy + 0.5f * length * dirY;
+
+        canvas.drawLine(static_cast<int>(std::round(x0)),
+                        static_cast<int>(std::round(y0)),
+                        static_cast<int>(std::round(x1)),
+                        static_cast<int>(std::round(y1)),
+                        r,
+                        g,
+                        b,
+                        alpha);
+
+        const float headLen = std::max(3.0f, 0.28f * length);
+        const float headWidth = 0.55f * headLen;
+        const float px = -dirY;
+        const float py = dirX;
+        const float bx = x1 - headLen * dirX;
+        const float by = y1 - headLen * dirY;
+        canvas.drawLine(static_cast<int>(std::round(x1)),
+                        static_cast<int>(std::round(y1)),
+                        static_cast<int>(std::round(bx + headWidth * px)),
+                        static_cast<int>(std::round(by + headWidth * py)),
+                        r,
+                        g,
+                        b,
+                        alpha);
+        canvas.drawLine(static_cast<int>(std::round(x1)),
+                        static_cast<int>(std::round(y1)),
+                        static_cast<int>(std::round(bx - headWidth * px)),
+                        static_cast<int>(std::round(by - headWidth * py)),
+                        r,
+                        g,
+                        b,
+                        alpha);
+      }
+    }
+    return;
+  }
+
+  auto sampleField = [&](float x, float y, float& outU, float& outV, float& outMag) {
+    if (x < 0.0f || x >= static_cast<float>(map.npixel_x) ||
+        y < 0.0f || y >= static_cast<float>(map.npixel_y)) {
+      return false;
+    }
+    const float gx = x / std::max(1.0f, static_cast<float>(map.npixel_x)) *
+                     gridX - 0.5f;
+    const float gy = y / std::max(1.0f, static_cast<float>(map.npixel_y)) *
+                     gridY - 0.5f;
+    const int x0 = static_cast<int>(std::floor(gx));
+    const int y0 = static_cast<int>(std::floor(gy));
+    const float tx = gx - x0;
+    const float ty = gy - y0;
+    if (x0 < 0 || y0 < 0 || x0 + 1 >= gridX || y0 + 1 >= gridY) {
+      return false;
+    }
+    auto sample = [&](const std::vector<float>& data, int ix, int iy) {
+      return data[static_cast<size_t>(iy * gridX + ix)];
+    };
+    const float u00 = sample(avgU, x0, y0);
+    const float u10 = sample(avgU, x0 + 1, y0);
+    const float u01 = sample(avgU, x0, y0 + 1);
+    const float u11 = sample(avgU, x0 + 1, y0 + 1);
+    const float v00 = sample(avgV, x0, y0);
+    const float v10 = sample(avgV, x0 + 1, y0);
+    const float v01 = sample(avgV, x0, y0 + 1);
+    const float v11 = sample(avgV, x0 + 1, y0 + 1);
+    outU = (1.0f - ty) * ((1.0f - tx) * u00 + tx * u10) +
+           ty * ((1.0f - tx) * u01 + tx * u11);
+    outV = (1.0f - ty) * ((1.0f - tx) * v00 + tx * v10) +
+           ty * ((1.0f - tx) * v01 + tx * v11);
+    outMag = std::sqrt(outU * outU + outV * outV);
+    return std::isfinite(outMag) && outMag > 0.0f;
+  };
+
+  const int maskSize = std::clamp(overlay.streamlineMaskSize, 8, 512);
+  const int maskX = maskSize;
+  const int maskY = maskSize;
+  std::vector<unsigned char> occupied(static_cast<size_t>(maskX * maskY), 0);
+  auto maskIndex = [&](float x, float y, int& outIdx) {
+    const int mx = static_cast<int>(x / std::max(1.0f, static_cast<float>(map.npixel_x)) * maskX);
+    const int my = static_cast<int>(y / std::max(1.0f, static_cast<float>(map.npixel_y)) * maskY);
+    if (mx < 0 || mx >= maskX || my < 0 || my >= maskY) return false;
+    outIdx = my * maskX + mx;
+    return true;
+  };
+
+  const float stepPx = std::max(overlay.streamlineStepPx, 0.1f);
+  const int maxSteps = std::max(overlay.streamlineMaxSteps, 1);
+  for (int sy = 0; sy < maskY; ++sy) {
+    for (int sx = 0; sx < maskX; ++sx) {
+      const int startMask = sy * maskX + sx;
+      if (occupied[static_cast<size_t>(startMask)] != 0) continue;
+      const float seedX = (static_cast<float>(sx) + 0.5f) *
+                          static_cast<float>(map.npixel_x) / maskX;
+      const float seedY = (static_cast<float>(sy) + 0.5f) *
+                          static_cast<float>(map.npixel_y) / maskY;
+      float seedU = 0.0f, seedV = 0.0f, seedMag = 0.0f;
+      if (!sampleField(seedX, seedY, seedU, seedV, seedMag)) continue;
+
+      occupied[static_cast<size_t>(startMask)] = 1;
+      for (int directionSign : {-1, 1}) {
+        float x = seedX;
+        float y = seedY;
+        for (int step = 0; step < maxSteps; ++step) {
+          float fu = 0.0f, fv = 0.0f, mag = 0.0f;
+          if (!sampleField(x, y, fu, fv, mag)) break;
+          const float invMag = 1.0f / std::max(mag, 1.0e-30f);
+          const float nx = directionSign * fu * invMag;
+          const float ny = directionSign * fv * invMag;
+          const float nextX = x + stepPx * nx;
+          const float nextY = y + stepPx * ny;
+          int nextMask = 0;
+          if (!maskIndex(nextX, nextY, nextMask)) break;
+          if (occupied[static_cast<size_t>(nextMask)] != 0 &&
+              nextMask != startMask) {
+            break;
+          }
+          unsigned char r = 255, g = 255, b = 255;
+          colorForMagnitude(mag, r, g, b);
+          canvas.drawLine(static_cast<int>(std::round(x)),
+                          static_cast<int>(std::round(y)),
+                          static_cast<int>(std::round(nextX)),
+                          static_cast<int>(std::round(nextY)),
+                          r,
+                          g,
+                          b,
+                          alpha);
+          occupied[static_cast<size_t>(nextMask)] = 1;
+          x = nextX;
+          y = nextY;
+        }
+      }
+    }
+  }
+}
+
 void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
-						  const ProjectionMap& map,
+							  const ProjectionMap& map,
 						  const ProjectionMapParams& params,
 						  const ProjectionMapContext& ctx,
 						  const std::vector<SimulationElement>& particles)
@@ -1542,6 +1904,29 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
   }
 #endif
 
+  const ProjectionPanelSpec& panel = params.panels[0];
+  if (panel.starOverlayIndex <= 0 ||
+      panel.starOverlayIndex > params.starOverlayCount ||
+      panel.starOverlayIndex > kProjectionMaxStarOverlays) {
+    return;
+  }
+  const ProjectionStarOverlaySpec& overlay =
+    params.starOverlays[static_cast<size_t>(panel.starOverlayIndex - 1)];
+
+  float autoMaxMass = overlay.maxMass;
+  if (overlay.autoMassRange) {
+    autoMaxMass = overlay.minMass;
+    for (const auto& p : particles) {
+      if (p.type < 3 || p.type > 5) continue;
+      if (params.dataSource == DataSource::Stars && p.type == ctx.selectedType) {
+        continue;
+      }
+      if (p.mass >= overlay.minMass && std::isfinite(p.mass)) {
+        autoMaxMass = std::max(autoMaxMass, p.mass);
+      }
+    }
+  }
+
   for (const auto &p : particles) {
     if(p.type < 3 || p.type > 5)
       continue;
@@ -1549,44 +1934,38 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     if (params.dataSource == DataSource::Stars)
       if(p.type == ctx.selectedType)
 	continue;
-    
-    double pointSize = 5.0;
-    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
-    
-#ifdef USE_LUA
-    if(flag_init_lua_){
-      lua_settop(gLua_, 0);
-      lua_pushnumber(gLua_, p.mass);
-      lua_setglobal(gLua_, "m");
-      lua_pushnumber(gLua_, renderSupportRadius(p, map.sourceWorldToRenderScale));
-      lua_setglobal(gLua_, "Hsml");
-      lua_pushnumber(gLua_, p.type);
-      lua_setglobal(gLua_, "ptype");
 
-      // 1. Evaluate the filter condition.
-      bool pass = false;
-      if (!EvaluateLuaExpressionBool(params.filterExpr, pass)) {
-	std::cerr << "Error evaluating filter expression\n";
-	continue;
-      }
-
-      if (!pass) {
-	continue;  // Skip particles that do not pass the condition.
-      }
-
-      // 2. Evaluate the point size.
-      if (!EvaluateLuaExpressionNumber(params.pointSizeExpr, pointSize)) {
-	std::cerr << "Error evaluating point size expression\n";
-	pointSize = 1.0;
-      }
-
-      // 3. Evaluate the point color.
-      if (!EvaluateLuaExpressionColor(params.pointColorExpr, r, g, b, a)) {
-	std::cerr << "Error evaluating point color expression\n";
-	r = g = b = 1.0f; a = 1.0f;
-      }
+    if (p.mass < overlay.minMass) {
+      continue;
     }
-#endif
+
+    const float massScaleMax =
+      overlay.autoMassRange
+        ? autoMaxMass
+        : std::max(overlay.maxMass, overlay.minMass);
+    const float massNorm =
+      (massScaleMax > overlay.minMass)
+        ? std::clamp((p.mass - overlay.minMass) /
+                       (massScaleMax - overlay.minMass),
+                     0.0f,
+                     1.0f)
+        : 1.0f;
+
+    float pointSize = std::max(overlay.maxSizePx, 0.0f);
+    if (overlay.sizeByMass) {
+      pointSize = overlay.minSizePx +
+                  (overlay.maxSizePx - overlay.minSizePx) * std::sqrt(massNorm);
+    }
+
+    float r = std::clamp(overlay.color[0], 0.0f, 1.0f);
+    float g = std::clamp(overlay.color[1], 0.0f, 1.0f);
+    float b = std::clamp(overlay.color[2], 0.0f, 1.0f);
+    if (overlay.colorByMass) {
+      r = r * (1.0f - massNorm) + massNorm;
+      g = g * (1.0f - massNorm) + 0.85f * massNorm;
+      b = b * (1.0f - massNorm);
+    }
+    const float a = 1.0f;
 
     unsigned char ur = static_cast<unsigned char>(r * 255);
     unsigned char ug = static_cast<unsigned char>(g * 255);
@@ -1600,7 +1979,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
     int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
       
-    float desiredStarSize = pointSize * map.npixel_x * 0.02f;
+    float desiredStarSize = pointSize;
     int radius = std::max(1, static_cast<int>(desiredStarSize * 0.5f));
     
     canvas.drawAsterisk(px, py, radius, ur, ug, ub, a);                   

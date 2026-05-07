@@ -610,19 +610,13 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                      tools.topParticlesResult,
                      topParticlesCtx);
   
-  if (runtime.settings.snapshotFormat.readFormat == FileFormat::Gadget) {
-    DrawBinaryFormatDialog(tools.fileFormatDialog,
-                           runtime.settings.snapshotFormat.formatTokensGadget,
-                           runtime.settings.snapshotFormat.readFormat);
-  } else {
-    DrawBinaryFormatDialog(tools.fileFormatDialog,
-                           runtime.settings.snapshotFormat.formatTokens,
-                           runtime.settings.snapshotFormat.readFormat);
-  }
+  DrawInputFormatDialog(tools.fileFormatDialog,
+                        runtime.settings.snapshotFormat.formatTokens,
+                        runtime.settings.snapshotFormat.formatTokensGadget,
 #ifdef HAVE_HDF5
-  DrawHDF5FormatDialog(tools.fileFormatDialog,
-                       runtime.settings.snapshotFormat.formatTokensHdf5);
+                        runtime.settings.snapshotFormat.formatTokensHdf5,
 #endif
+                        runtime.settings.snapshotFormat.readFormat);
   DrawOutputFormatDialog(tools.fileFormatDialog,
                          runtime.settings.snapshotFormat.outputFormat);
   DrawMaskWindow(tools.mask,
@@ -639,7 +633,8 @@ static void DrawToolWindows(AppRuntimeState& runtime,
     windowCommands,
     runtime.analysisTools.projectionMap,
     runtime.settings.normalization,
-    runtime.quantity
+    runtime.quantity,
+    view.camera
   };
   DrawProjectionMapUI(tools.projectionMap,
                       runtime.analysisRequests.projectionMapRequest,
@@ -698,21 +693,27 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
 
 #ifdef HAVE_HDF5
   if (fileNavReq.openHDF5FormatDialogRequested) {
-    tools.fileFormatDialog.formatTokensEdit =
-      settings.snapshotFormat.formatTokensHdf5;
-    windowCommands.open(WindowId::HDF5FormatDialog);
+    settings.snapshotFormat.readFormat = FileFormat::HDF5;
+    tools.fileFormatDialog.activeInputFormatTab = FileFormat::HDF5;
+    tools.fileFormatDialog.inputFormatDialogInitialized = false;
+    tools.fileFormatDialog.selectInputFormatTabOnOpen = true;
+    windowCommands.open(WindowId::FileFormatDialog);
     fileNavReq.openHDF5FormatDialogRequested = false;
   }
 #endif
 
   if (fileNavReq.openFormatDialogRequested) {
     if (settings.snapshotFormat.readFormat == FileFormat::Gadget) {
-      tools.fileFormatDialog.formatTokensEdit =
-        settings.snapshotFormat.formatTokensGadget;
+      tools.fileFormatDialog.activeInputFormatTab = FileFormat::Gadget;
+#ifdef HAVE_HDF5
+    } else if (settings.snapshotFormat.readFormat == FileFormat::HDF5) {
+      tools.fileFormatDialog.activeInputFormatTab = FileFormat::HDF5;
+#endif
     } else {
-      tools.fileFormatDialog.formatTokensEdit =
-        settings.snapshotFormat.formatTokens;
+      tools.fileFormatDialog.activeInputFormatTab = FileFormat::Binary;
     }
+    tools.fileFormatDialog.inputFormatDialogInitialized = false;
+    tools.fileFormatDialog.selectInputFormatTabOnOpen = true;
     windowCommands.open(WindowId::FileFormatDialog);
     fileNavReq.openFormatDialogRequested = false;
   }

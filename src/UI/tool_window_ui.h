@@ -7,6 +7,7 @@ struct Histogram2DResultState;
 struct Histogram2DUIState;
 struct MaskRequestState;
 struct MaskUIState;
+struct CameraContext;
 struct NormalizationContext;
 struct ParticleMaskConfig;
 struct ProjectionFontSelectionRequestState;
@@ -52,6 +53,7 @@ struct ProjectionMapViewContext {
   const ProjectionMapToolState& tool;
   const NormalizationContext& normalization;
   const QuantityState& quantity;
+  const CameraContext& camera;
 };
 
 void DrawProjectionMapUI(ProjectionMapUIState& state,

@@ -242,6 +242,9 @@ bool HDF5Reader::readRange(SimulationBlock& out,
     for (const OpenedField& of : opened) {
       if (of.fl) {
         out.markLoadedFieldForType(GetFieldKeyDisplayName(of.fl->ftype), ptype);
+        if (of.fl->ftype == FieldKey::Volume) {
+          out.markLoadedFieldForType(GetFieldKeyDisplayName(FieldKey::Hsml), ptype);
+        }
       }
     }
     const double openMs = elapsed_ms(openStart);
@@ -1269,9 +1272,14 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
         try {
           H5SilenceErrors quiet(ptype >= 1);
           H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
+          const FieldKey storageKey =
+            ((key == FieldKey::Hsml || key == FieldKey::Volume) &&
+             dsName == GetDefaultHDF5DatasetName(FieldKey::Volume))
+              ? FieldKey::Volume
+              : key;
           FieldLayout candidate = fl;
-          candidate.ftype = key;
-          candidate.spec.key = key;
+          candidate.ftype = storageKey;
+          candidate.spec.key = storageKey;
           candidate.spec.sourceName = dsName;
           update_layout_from_hdf5(candidate, ds);
           fl = candidate;
@@ -1284,11 +1292,22 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
     };
 
     bool found = bindDataset(requestedKey, requestedName);
-    if (!found &&
-        requestedKey == FieldKey::Hsml &&
-        requestedName == GetDefaultHDF5DatasetName(FieldKey::Hsml)) {
-      found = bindDataset(FieldKey::Volume,
-                          GetDefaultHDF5DatasetName(FieldKey::Volume));
+    if (!found && requestedKey == FieldKey::Hsml) {
+      const char* fallbackNames[] = {
+        GetDefaultHDF5DatasetName(FieldKey::Hsml),
+        "Hsml",
+        GetDefaultHDF5DatasetName(FieldKey::Volume)
+      };
+      for (const char* fallbackName : fallbackNames) {
+        if (requestedName == fallbackName) continue;
+        const FieldKey storageKey =
+          std::strcmp(fallbackName,
+                      GetDefaultHDF5DatasetName(FieldKey::Volume)) == 0
+            ? FieldKey::Volume
+            : FieldKey::Hsml;
+        found = bindDataset(storageKey, fallbackName);
+        if (found) break;
+      }
     }
 
     fl.present = found;

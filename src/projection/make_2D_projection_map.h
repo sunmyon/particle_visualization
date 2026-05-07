@@ -21,6 +21,7 @@
 #endif
 
 class ImageCanvas;
+struct SimulationBlock;
 class SimulationDataset;
 class SimulationElement;
 struct ProjectionMapParams;
@@ -137,18 +138,22 @@ private:
 			const ProjectionMapParams& params,
 			const ProjectionMapContext& ctx);
 
-  void overlayStarParticles(ImageCanvas& canvas,
-			    const ProjectionMap& map,
-			    const ProjectionMapParams& params,
-			    const ProjectionMapContext& ctx,
-			    const std::vector<SimulationElement>& particles);
-  float kernel(float u);
+	  void overlayStarParticles(ImageCanvas& canvas,
+				    const ProjectionMap& map,
+				    const ProjectionMapParams& params,
+				    const ProjectionMapContext& ctx,
+				    const std::vector<SimulationElement>& particles);
+	  void overlayVectorField(ImageCanvas& canvas,
+	                          const ProjectionMap& map,
+	                          const ProjectionMapParams& params,
+	                          const SimulationBlock& block);
+	  float kernel(float u);
   ProjectionMap buildProjectionMap(const ProjectionMapParams& params,
                                    const ProjectionMapContext& ctx) const;
   RgbImage composeProjectionMapImage(ProjectionMap& map,
-                                     const ProjectionMapParams& params,
-                                     const ProjectionMapContext& ctx,
-                                     const std::vector<SimulationElement>& originalParticles);
+	                                     const ProjectionMapParams& params,
+	                                     const ProjectionMapContext& ctx,
+	                                     const SimulationBlock& block);
   RgbImage makeSingleDensityMapImage(SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,

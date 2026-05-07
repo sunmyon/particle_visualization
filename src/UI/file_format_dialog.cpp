@@ -251,6 +251,370 @@ void ParseDefaultValues(const char* text, SnapshotOutputFieldSpec& spec)
   }
 }
 
+bool HandleBinaryIndexDragDrop(std::vector<FieldSpec>& tokens, int row)
+{
+  char label[32];
+  std::snprintf(label, sizeof(label), "%d", row + 1);
+  ImGui::Selectable(label, false);
+
+  if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+    ImGui::SetDragDropPayload("DND_BINARY_FORMAT_TOKEN",
+                              &row,
+                              sizeof(row));
+    ImGui::Text("Moving row %d", row + 1);
+    ImGui::EndDragDropSource();
+  }
+
+  if (ImGui::BeginDragDropTarget()) {
+    const ImGuiPayload* payload =
+      ImGui::AcceptDragDropPayload("DND_BINARY_FORMAT_TOKEN");
+    if (payload) {
+      IM_ASSERT(payload->DataSize == sizeof(int));
+      const int srcIndex = *static_cast<const int*>(payload->Data);
+      if (srcIndex >= 0 &&
+          srcIndex < static_cast<int>(tokens.size()) &&
+          srcIndex != row) {
+        FieldSpec token = tokens[srcIndex];
+        tokens.erase(tokens.begin() + srcIndex);
+        int dst = row;
+        if (srcIndex < row) --dst;
+        tokens.insert(tokens.begin() + dst, token);
+        ImGui::EndDragDropTarget();
+        return true;
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
+
+  return false;
+}
+
+void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
+{
+  ImGui::TextDisabled("Drag rows by the Index column to reorder fields.");
+  if (ImGui::Button("Add token")) {
+    FieldSpec spec;
+    spec.key = FieldKey::Dummy;
+    ApplyDefaultFieldSpec(spec);
+    tokens.push_back(std::move(spec));
+  }
+
+  if (ImGui::BeginTable("BinaryFormatTable", 6,
+                        ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Borders |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY,
+                        ImVec2(0.0f, 0.0f))) {
+    ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
+    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+    ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+    ImGui::TableSetupColumn("Move", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < static_cast<int>(tokens.size()); ++i) {
+      FieldSpec& spec = tokens[i];
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+
+      ImGui::TableNextColumn();
+      if (HandleBinaryIndexDragDrop(tokens, i)) {
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##field", GetFieldKeyDisplayName(spec.key))) {
+        for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+          FieldKey key = kAvailableFieldKeys[n];
+          const bool selected = spec.key == key;
+          if (ImGui::Selectable(GetFieldKeyDisplayName(key), selected)) {
+            spec.key = key;
+            ApplyDefaultFieldSpec(spec);
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
+        for (int n = 0; n < kNumDataTypeChoices; ++n) {
+          DataType type = kDataTypeChoices[n].type;
+          const bool selected = spec.type == type;
+          if (ImGui::Selectable(kDataTypeChoices[n].name, selected)) {
+            spec.type = type;
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputInt("##count", &spec.count);
+      if (spec.count < 0) spec.count = 0;
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("^") && i > 0) {
+        std::swap(tokens[i], tokens[i - 1]);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("v") &&
+          i + 1 < static_cast<int>(tokens.size())) {
+        std::swap(tokens[i], tokens[i + 1]);
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("-")) {
+        tokens.erase(tokens.begin() + i);
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
+  }
+}
+
+void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
+{
+  ImGui::TextDisabled(
+    "Order is the Gadget binary block order. Record markers are handled automatically.");
+  ImGui::TextDisabled(
+    "The 256-byte Gadget header is read automatically; do not add it here.");
+  ImGui::TextDisabled(
+    "For skip/dummy: components = values per element; repeat = number of whole blocks.");
+  ImGui::TextDisabled("Drag rows by the Index column to reorder blocks.");
+  if (ImGui::Button("Reset Gadget default")) {
+    tokens = MakeDefaultGadgetFormatTokens();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("All float")) {
+    SetAllGadgetFloatingTypes(tokens, DataType::Float);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("All double")) {
+    SetAllGadgetFloatingTypes(tokens, DataType::Double);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Add field/skip")) {
+    FieldSpec spec;
+    spec.key = FieldKey::Dummy;
+    ApplyGadgetBlockDefaults(spec);
+    tokens.push_back(std::move(spec));
+  }
+
+  if (ImGui::BeginTable("GadgetFormatTable", 8,
+                        ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Borders |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY,
+                        ImVec2(0.0f, 0.0f))) {
+    ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
+    ImGui::TableSetupColumn("Field / skip", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Domain", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+    ImGui::TableSetupColumn("Components", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+    ImGui::TableSetupColumn("Repeat", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+    ImGui::TableSetupColumn("Move", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < static_cast<int>(tokens.size()); ++i) {
+      FieldSpec& spec = tokens[i];
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+
+      ImGui::TableNextColumn();
+      if (HandleGadgetIndexDragDrop(tokens, i)) {
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::TableNextColumn();
+      const char* blockName = spec.key == FieldKey::Dummy
+        ? "skip/dummy"
+        : GetFieldKeyDisplayName(spec.key);
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##block", blockName)) {
+        for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+          FieldKey key = kAvailableFieldKeys[n];
+          if (key == FieldKey::Type || key == FieldKey::Unknown) continue;
+          const char* label = key == FieldKey::Dummy
+            ? "skip/dummy"
+            : GetFieldKeyDisplayName(key);
+          const bool selected = spec.key == key;
+          if (ImGui::Selectable(label, selected)) {
+            spec.key = key;
+            ApplyGadgetBlockDefaults(spec);
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      if (spec.key == FieldKey::Dummy) {
+        static const char* domains[] = { "all", "type0", "type0+type5", "absolute" };
+        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
+        int repeat = GadgetBlockRepeat(spec.sourceName);
+        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
+          SetGadgetDomainSource(spec, domainIndex, repeat);
+        }
+      } else if (IsFixedGadgetBlock(spec.key)) {
+        ImGui::TextUnformatted("all");
+      } else {
+        static const char* domains[] = { "all", "type0", "type0+type5" };
+        int domainIndex = std::min(GadgetDomainIndexOr(spec.sourceName, 1), 2);
+        const int repeat = GadgetBlockRepeat(spec.sourceName);
+        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
+          SetGadgetDomainSource(spec, domainIndex, repeat);
+        }
+      }
+
+      ImGui::TableNextColumn();
+      DrawGadgetTypeCombo(spec);
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputInt("##components", &spec.count);
+      if (spec.count < 1) spec.count = 1;
+
+      ImGui::TableNextColumn();
+      if (spec.key == FieldKey::Dummy) {
+        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
+        int repeat = GadgetBlockRepeat(spec.sourceName);
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputInt("##repeat", &repeat)) {
+          SetGadgetDomainSource(spec, domainIndex, repeat);
+        }
+      } else {
+        ImGui::TextUnformatted("-");
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("^") && i > 0) {
+        std::swap(tokens[i], tokens[i - 1]);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("v") &&
+          i + 1 < static_cast<int>(tokens.size())) {
+        std::swap(tokens[i], tokens[i + 1]);
+      }
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("-")) {
+        tokens.erase(tokens.begin() + i);
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
+  }
+}
+
+#ifdef HAVE_HDF5
+void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
+{
+  if (ImGui::Button("Add field")) {
+    FieldSpec spec;
+    spec.key = FieldKey::Dummy;
+    ApplyDefaultFieldSpec(spec);
+    tokens.push_back(std::move(spec));
+  }
+
+  if (ImGui::BeginTable("FieldTable", 6,
+                        ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Borders |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY,
+                        ImVec2(0.0f, 0.0f))) {
+    ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
+    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < static_cast<int>(tokens.size()); ++i) {
+      FieldSpec& spec = tokens[i];
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::Text("%d", i + 1);
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##field", GetFieldKeyDisplayName(spec.key))) {
+        for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+          FieldKey key = kAvailableFieldKeys[n];
+          const bool selected = spec.key == key;
+          if (ImGui::Selectable(GetFieldKeyDisplayName(key), selected)) {
+            spec.key = key;
+            ApplyDefaultFieldSpec(spec);
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "%s", spec.sourceName.c_str());
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##sourceName", buf, IM_ARRAYSIZE(buf))) {
+          spec.sourceName = buf;
+        }
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
+        for (int n = 0; n < kNumDataTypeChoices; ++n) {
+          const DataType type = kDataTypeChoices[n].type;
+          const bool selected = spec.type == type;
+          if (ImGui::Selectable(kDataTypeChoices[n].name, selected)) {
+            spec.type = type;
+          }
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputInt("##count", &spec.count, 1, 10);
+      if (spec.count < 1) spec.count = 1;
+
+      ImGui::TableNextColumn();
+      if (ImGui::Button("-", ImVec2(24,24))) {
+        tokens.erase(tokens.begin() + i);
+        ImGui::PopID();
+        --i;
+        continue;
+      }
+
+      ImGui::PopID();
+    }
+
+    ImGui::EndTable();
+  }
+}
+#endif
+
 void DrawGadgetFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens)
 {
@@ -541,6 +905,117 @@ void DrawBinaryFormatDialog(FileFormatDialogState& state,
   if (ImGui::Button("Cancel")) {
     state.showFormatDialog = false;
   }
+  ImGui::End();
+}
+
+void DrawInputFormatDialog(FileFormatDialogState& state,
+                           std::vector<FieldSpec>& binaryFormatTokens,
+                           std::vector<FieldSpec>& gadgetFormatTokens,
+#ifdef HAVE_HDF5
+                           std::vector<FieldSpec>& hdf5FormatTokens,
+#endif
+                           FileFormat& readFormat)
+{
+  if (!state.showFormatDialog) {
+    state.inputFormatDialogInitialized = false;
+    return;
+  }
+
+  if (!state.inputFormatDialogInitialized) {
+    state.binaryFormatTokensEdit = binaryFormatTokens;
+    state.gadgetFormatTokensEdit = gadgetFormatTokens;
+#ifdef HAVE_HDF5
+    state.hdf5FormatTokensEdit = hdf5FormatTokens;
+#endif
+    if (readFormat == FileFormat::Gadget) {
+      state.activeInputFormatTab = FileFormat::Gadget;
+#ifdef HAVE_HDF5
+    } else if (readFormat == FileFormat::HDF5) {
+      state.activeInputFormatTab = FileFormat::HDF5;
+#endif
+    } else {
+      state.activeInputFormatTab = FileFormat::Binary;
+    }
+    state.selectInputFormatTabOnOpen = true;
+    state.inputFormatDialogInitialized = true;
+  }
+
+  ImGui::SetNextWindowSize(ImVec2(980, 520), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Edit Data Format", &state.showFormatDialog)) {
+    ImGui::End();
+    return;
+  }
+
+  if (ImGui::BeginTabBar("InputFormatTabs")) {
+    const bool selectingInitialTab = state.selectInputFormatTabOnOpen;
+    const FileFormat initialTab = state.activeInputFormatTab;
+    ImGuiTabItemFlags binaryFlags =
+      selectingInitialTab && initialTab == FileFormat::Binary
+        ? ImGuiTabItemFlags_SetSelected
+        : ImGuiTabItemFlags_None;
+    if (ImGui::BeginTabItem("Binary", nullptr, binaryFlags)) {
+      const bool drawThisTab =
+        !selectingInitialTab || initialTab == FileFormat::Binary;
+      if (drawThisTab) {
+        state.activeInputFormatTab = FileFormat::Binary;
+        readFormat = FileFormat::Binary;
+        DrawSimpleBinaryFormatEditor(state.binaryFormatTokensEdit);
+      }
+      ImGui::EndTabItem();
+    }
+
+    ImGuiTabItemFlags gadgetFlags =
+      selectingInitialTab && initialTab == FileFormat::Gadget
+        ? ImGuiTabItemFlags_SetSelected
+        : ImGuiTabItemFlags_None;
+    if (ImGui::BeginTabItem("Gadget", nullptr, gadgetFlags)) {
+      const bool drawThisTab =
+        !selectingInitialTab || initialTab == FileFormat::Gadget;
+      if (drawThisTab) {
+        state.activeInputFormatTab = FileFormat::Gadget;
+        readFormat = FileFormat::Gadget;
+        DrawSimpleGadgetFormatEditor(state.gadgetFormatTokensEdit);
+      }
+      ImGui::EndTabItem();
+    }
+
+#ifdef HAVE_HDF5
+    ImGuiTabItemFlags hdf5Flags =
+      selectingInitialTab && initialTab == FileFormat::HDF5
+        ? ImGuiTabItemFlags_SetSelected
+        : ImGuiTabItemFlags_None;
+    if (ImGui::BeginTabItem("HDF5", nullptr, hdf5Flags)) {
+      const bool drawThisTab =
+        !selectingInitialTab || initialTab == FileFormat::HDF5;
+      if (drawThisTab) {
+        state.activeInputFormatTab = FileFormat::HDF5;
+        readFormat = FileFormat::HDF5;
+        DrawSimpleHDF5FormatEditor(state.hdf5FormatTokensEdit);
+      }
+      ImGui::EndTabItem();
+    }
+#endif
+
+    ImGui::EndTabBar();
+    state.selectInputFormatTabOnOpen = false;
+  }
+
+  ImGui::Separator();
+  if (ImGui::Button("OK")) {
+    binaryFormatTokens = state.binaryFormatTokensEdit;
+    gadgetFormatTokens = state.gadgetFormatTokensEdit;
+#ifdef HAVE_HDF5
+    hdf5FormatTokens = state.hdf5FormatTokensEdit;
+#endif
+    state.showFormatDialog = false;
+    state.inputFormatDialogInitialized = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel")) {
+    state.showFormatDialog = false;
+    state.inputFormatDialogInitialized = false;
+  }
+
   ImGui::End();
 }
 

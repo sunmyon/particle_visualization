@@ -5,6 +5,8 @@
 #include "projection/projection_map_context.h"
 #include "render/colormap_defs.h"
 
+#include <algorithm>
+
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
                                                double scaleToPhysical,
                                                double time)
@@ -19,8 +21,14 @@ ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params
 
   ctx.cuboidTransform = BuildProjectionTransformFromEuler(params.tilt);
 
-  ctx.planeNormal =
-    glm::normalize(ctx.cuboidTransform * glm::vec3(0.0f, 0.0f, 1.0f));
+  glm::vec3 axes[3] = {
+    glm::normalize(ctx.cuboidTransform * glm::vec3(1.0f, 0.0f, 0.0f)),
+    glm::normalize(ctx.cuboidTransform * glm::vec3(0.0f, 1.0f, 0.0f)),
+    glm::normalize(ctx.cuboidTransform * glm::vec3(0.0f, 0.0f, 1.0f))
+  };
+  const int selectedAxis = std::clamp(params.selectedAxis, 0, 2);
+  const float projectionSign = params.projectionSign < 0 ? -1.0f : 1.0f;
+  ctx.planeNormal = glm::normalize(projectionSign * axes[selectedAxis]);
 
   int colormapIndex = params.colormapindex;
   const ColormapDef* colormaps = AvailableColormaps();
