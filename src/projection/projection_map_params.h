@@ -15,6 +15,25 @@ enum class ProjectionVectorField : int { Velocity = 0, MagneticField = 1 };
 enum class ProjectionVectorOverlayMode : int { Arrows = 0, Streamlines = 1 };
 enum class ProjectionVectorScaleMode : int { Linear = 0, Log = 1, Normalized = 2 };
 enum class ProjectionVectorColorScaleMode : int { Linear = 0, Log = 1 };
+enum class ProjectionParticleOverlayScalar : int {
+  Fixed = 0,
+  Mass = 1,
+  Luminosity = 2,
+  Density = 3,
+  Metallicity = 4,
+  Temperature = 5
+};
+enum class ProjectionParticleSizeScale : int {
+  Fixed = 0,
+  Linear = 1,
+  Sqrt = 2,
+  Log = 3,
+  Saturating = 4
+};
+enum class ProjectionParticleSymbol : int {
+  SoftCircle = 0,
+  Asterisk = 1
+};
 
 inline constexpr int kProjectionMaxViewBlocks = 4;
 inline constexpr int kProjectionMaxPanels = 6;
@@ -48,8 +67,6 @@ struct ProjectionViewBlockSpec {
   bool centerSameAsMain = true;
   bool tiltSameAsMain = true;
 
-  bool showTimeLabelDefault = true;
-  bool showScaleDefault = false;
   float arrowLenXDefault = 100.0f;
   char arrowLabelStrDefault[255] = "100 au";
 };
@@ -69,20 +86,36 @@ struct ProjectionPanelSpec {
   float arrowLenX = 100.0f;
   char arrowLabelStr[255] = "100 au";
 
-  int starOverlayIndex = 0; // 0=off, 1..kProjectionMaxStarOverlays.
+  int starOverlayIndex = 1; // 0=off, 1..kProjectionMaxStarOverlays.
   int vectorOverlayIndex = 0; // 0=off, 1..kProjectionMaxVectorOverlays.
 };
 
 struct ProjectionStarOverlaySpec {
   char name[64] = "star field 1";
+  bool typeEnabled[6] = {false, false, false, true, true, true};
   float minMass = 0.0f;
-  bool autoMassRange = true;
+  bool useMaxMass = false;
   float maxMass = 1.0f;
+  ProjectionParticleOverlayScalar sizeScalar =
+    ProjectionParticleOverlayScalar::Fixed;
+  ProjectionParticleSizeScale sizeScale =
+    ProjectionParticleSizeScale::Fixed;
+  bool autoSizeRange = true;
+  float sizeValueMin = 1.0f;
+  float sizeValueMax = 1.0e3f;
   float minSizePx = 3.0f;
-  float maxSizePx = 8.0f;
-  bool sizeByMass = false;
-  bool colorByMass = false;
+  float maxSizePx = 3.0f;
+  int sizeBins = 0; // 0=continuous, >1=stepped bins.
+  ProjectionParticleOverlayScalar colorScalar =
+    ProjectionParticleOverlayScalar::Fixed;
+  bool autoColorRange = true;
+  bool colorLogScale = true;
+  float colorValueMin = 1.0f;
+  float colorValueMax = 1.0e3f;
+  int colorColormapIndex = 0;
   float color[3] = {1.0f, 1.0f, 1.0f};
+  float opacity = 1.0f;
+  ProjectionParticleSymbol symbol = ProjectionParticleSymbol::SoftCircle;
 };
 
 struct ProjectionVectorOverlaySpec {
@@ -119,7 +152,7 @@ struct ProjectionMapParams {
 
   bool flagDensityWeight = true;
   bool flagVoronoi = true;
-  bool useGpuProjection = false;
+  bool useGpuProjection = true;
   int step_z = 200;
   ProjectionVoronoiMode voronoiMode = ProjectionVoronoiMode::WeightedMean;
   bool voronoiTfLogDomain = true;
@@ -194,12 +227,6 @@ struct ProjectionMapParams {
   std::array<ProjectionPanelSpec, kProjectionMaxPanels> panels;
   std::array<ProjectionStarOverlaySpec, kProjectionMaxStarOverlays> starOverlays;
   std::array<ProjectionVectorOverlaySpec, kProjectionMaxVectorOverlays> vectorOverlays;
-
-  char filterExpr[256] = "return m > 10.0";
-  char pointSizeExpr[256] = "return m / 10.0";
-  char pointColorExpr[256] = "return { r = m/100.0, g = 0.5, b = 0.2, a = 1.0 }";
-  char minValueExpr[32] = "return 0.0";
-  char maxValueExpr[32] = "return 1.0";
 };
 
 inline void ProjectionCopyString(char* dst, std::size_t dstSize, const char* src)
@@ -283,8 +310,6 @@ inline void ProjectionSyncViewBlockFromTopLevel(ProjectionMapParams& params,
   block.projectionSign = params.projectionSign;
   block.upAxis = params.upAxis;
   block.upSign = params.upSign;
-  block.showTimeLabelDefault = params.flagTimeLabel;
-  block.showScaleDefault = params.flagPlaceScale;
   block.arrowLenXDefault = params.arrowLenX;
   ProjectionCopyString(block.arrowLabelStrDefault,
                        sizeof(block.arrowLabelStrDefault),
@@ -321,8 +346,6 @@ inline void ProjectionSyncTopLevelFromViewBlock(ProjectionMapParams& params,
   params.projectionSign = block.projectionSign;
   params.upAxis = block.upAxis;
   params.upSign = block.upSign;
-  params.flagTimeLabel = block.showTimeLabelDefault;
-  params.flagPlaceScale = block.showScaleDefault;
   params.arrowLenX = block.arrowLenXDefault;
   ProjectionCopyString(params.arrowLabelStr,
                        sizeof(params.arrowLabelStr),
@@ -392,15 +415,16 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
       panel.timeLabelMode =
         (i < kProjectionMaxPanels && !params.multiPanelShowTimeLabel[i])
           ? ProjectionPanelLabelMode::Hide
-          : ProjectionPanelLabelMode::Default;
+          : ProjectionPanelLabelMode::Show;
       panel.scaleBarMode =
         (i < kProjectionMaxPanels && !params.multiPanelShowScale[i])
           ? ProjectionPanelLabelMode::Hide
-          : ProjectionPanelLabelMode::Default;
+          : ProjectionPanelLabelMode::Show;
       panel.arrowLenX = params.arrowLenX;
       ProjectionCopyString(panel.arrowLabelStr,
                            sizeof(panel.arrowLabelStr),
                            params.arrowLabelStr);
+      panel.starOverlayIndex = 1;
     }
     params.layoutInitialized = true;
   }
@@ -449,8 +473,18 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
     ProjectionStarOverlaySpec& overlay = params.starOverlays[i];
     overlay.minMass = std::max(overlay.minMass, 0.0f);
     overlay.maxMass = std::max(overlay.maxMass, overlay.minMass);
+    overlay.sizeValueMin = std::max(overlay.sizeValueMin, 0.0f);
+    overlay.sizeValueMax = std::max(overlay.sizeValueMax, overlay.sizeValueMin);
+    overlay.colorValueMin = std::max(overlay.colorValueMin, 0.0f);
+    overlay.colorValueMax =
+      std::max(overlay.colorValueMax, overlay.colorValueMin);
     overlay.minSizePx = std::max(overlay.minSizePx, 0.0f);
     overlay.maxSizePx = std::max(overlay.maxSizePx, overlay.minSizePx);
+    overlay.sizeBins = std::clamp(overlay.sizeBins, 0, 64);
+    overlay.opacity = std::clamp(overlay.opacity, 0.0f, 1.0f);
+    overlay.symbol =
+      static_cast<ProjectionParticleSymbol>(
+        std::clamp(static_cast<int>(overlay.symbol), 0, 1));
   }
   for (int i = 0; i < params.vectorOverlayCount; ++i) {
     if (params.vectorOverlays[i].name[0] == '\0') {
@@ -512,10 +546,10 @@ inline void ProjectionApplyPanelToParams(ProjectionMapParams& params,
   params.range_max = panel.rangeMax;
   params.flagTimeLabel =
     ProjectionResolveLabelMode(panel.timeLabelMode,
-                               block.showTimeLabelDefault);
+                               true);
   params.flagPlaceScale =
     ProjectionResolveLabelMode(panel.scaleBarMode,
-                               block.showScaleDefault);
+                               false);
 
   const bool overrideScale =
     panel.scaleBarMode == ProjectionPanelLabelMode::Override;

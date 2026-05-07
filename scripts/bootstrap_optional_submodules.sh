@@ -49,13 +49,12 @@ declare -A repos=(
   [cppzmq]="https://github.com/zeromq/cppzmq.git"
   [libzmq]="https://github.com/zeromq/libzmq.git"
   [hdf5]="https://github.com/HDFGroup/hdf5.git"
-  [lua]="https://github.com/lua/lua.git"
   [wayland]="https://gitlab.freedesktop.org/wayland/wayland.git"
   [wayland-protocols]="https://gitlab.freedesktop.org/wayland/wayland-protocols.git"
   [xkbcommon]="https://github.com/xkbcommon/libxkbcommon.git"
 )
 
-declare -a default_deps=(glfw glm eigen nlohmann_json cppzmq libzmq lua)
+declare -a default_deps=(glfw glm eigen nlohmann_json cppzmq libzmq)
 declare -a wayland_deps=(wayland wayland-protocols xkbcommon)
 
 append_dep_once() {
@@ -300,28 +299,6 @@ build_meson_dep() {
   meson install -C "${dep_build}"
 }
 
-build_lua() {
-  local src_dir="${submodule_root}/lua"
-  local dep_install="${install_root}/lua"
-  local lua_makefile="${src_dir}/makefile"
-
-  if [[ ! -f "${lua_makefile}" ]]; then
-    echo "Lua makefile not found at ${lua_makefile}" >&2
-    return 1
-  fi
-
-  make -C "${src_dir}" -f makefile clean || true
-  make -C "${src_dir}" -f makefile -j "$(nproc)"
-
-  mkdir -p "${dep_install}/bin" "${dep_install}/lib" "${dep_install}/include"
-  install -m 755 "${src_dir}/lua" "${dep_install}/bin/lua"
-  install -m 644 "${src_dir}/liblua.a" "${dep_install}/lib/liblua.a"
-  install -m 644 "${src_dir}/lua.h" "${dep_install}/include/lua.h"
-  install -m 644 "${src_dir}/luaconf.h" "${dep_install}/include/luaconf.h"
-  install -m 644 "${src_dir}/lualib.h" "${dep_install}/include/lualib.h"
-  install -m 644 "${src_dir}/lauxlib.h" "${dep_install}/include/lauxlib.h"
-}
-
 for dep in "${deps[@]}"; do
   if [[ -z "${repos[${dep}]:-}" ]]; then
     echo "Unknown dependency: ${dep}" >&2
@@ -332,9 +309,6 @@ done
 
 for dep in "${deps[@]}"; do
   case "${dep}" in
-    lua)
-      build_lua
-      ;;
     wayland|wayland-protocols|xkbcommon)
       build_meson_dep "${dep}"
       ;;

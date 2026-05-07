@@ -33,9 +33,6 @@
 #include <iostream>
 #include <limits>
 
-#ifdef USE_LUA
-#include <lua.hpp>
-#endif
 #include <nanoflann.hpp>
 
 #ifdef _OPENMP
@@ -166,10 +163,6 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
 							   ProjectionMapParams& params,
 							   ProjectionMapContext& ctx)
 {
-#ifdef USE_LUA
-  ensureLuaInitialized();
-#endif
-
   std::vector<SimulationElement>& originalParticles = particles.simulationBlock.particles;
   
   if(params.flagSpecifyZoomRegionByMass){
@@ -722,7 +715,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   auto end = high_resolution_clock::now();
   std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
 
-  return composeProjectionMapImage(map, params, ctx, particles.simulationBlock);
+  return composeProjectionMapImage(map, params, ctx, particles.simulationBlock, units);
 }
 
 RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset& particles,
@@ -862,9 +855,9 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   ProjectionMap& map,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx,
-  const SimulationBlock& block)
+  const SimulationBlock& block,
+  const UnitSystem& units)
 {
-  const std::vector<SimulationElement>& originalParticles = block.particles;
   if (params.flagVoronoi &&
       params.voronoiMode == ProjectionVoronoiMode::OpacityRendering &&
       !map.image.empty()) {
@@ -876,7 +869,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
     int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
     ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-    overlayStarParticles(canvas, map, params, ctx, originalParticles);
+    overlayStarParticles(canvas, map, params, ctx, block, units);
     overlayVectorField(canvas, map, params, block);
 
     addColorBarToMap(canvas,
@@ -932,7 +925,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
   int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
   ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-  overlayStarParticles(canvas, map, params, ctx, originalParticles);
+  overlayStarParticles(canvas, map, params, ctx, block, units);
   overlayVectorField(canvas, map, params, block);
 
   addColorBarToMap(canvas,
@@ -1475,85 +1468,6 @@ void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
   }
 }
 
-#ifdef USE_LUA
-void ProjectionMapGenerator::ensureLuaInitialized(){
-  if (flag_init_lua_ == false) {
-    gLua_ = luaL_newstate();
-    luaL_openlibs(gLua_);
-    flag_init_lua_ = true;
-  }
-}
-
-  // ---------------------------
-  // Evaluate a Lua expression and return a numeric value.
-bool ProjectionMapGenerator::EvaluateLuaExpressionNumber(const char* expr, double& outValue) {
-  lua_settop(gLua_, 0);
-  if (luaL_dostring(gLua_, expr) == LUA_OK) {
-    if(lua_isnumber(gLua_, -1)) {
-      outValue = lua_tonumber(gLua_, -1);
-      lua_pop(gLua_, 1);
-      return true;
-    }
-  } else {
-    const char* err = lua_tostring(gLua_, -1);
-    std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua_, 1);
-  }
-  return false;
-}
-
-
-  // ---------------------------
-  // Evaluate a Lua expression and read a color table.
-bool ProjectionMapGenerator::EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a) {
-  lua_settop(gLua_, 0);
-  if (luaL_dostring(gLua_, expr) == LUA_OK) {
-    if(lua_istable(gLua_, -1)) {
-      lua_getfield(gLua_, -1, "r");
-      r = static_cast<float>(lua_tonumber(gLua_, -1));
-      lua_pop(gLua_, 1);
-      lua_getfield(gLua_, -1, "g");
-      g = static_cast<float>(lua_tonumber(gLua_, -1));
-      lua_pop(gLua_, 1);
-      lua_getfield(gLua_, -1, "b");
-      b = static_cast<float>(lua_tonumber(gLua_, -1));
-      lua_pop(gLua_, 1);
-      lua_getfield(gLua_, -1, "a");
-      a = static_cast<float>(lua_tonumber(gLua_, -1));
-      lua_pop(gLua_, 1);
-      lua_pop(gLua_, 1); // Pop the table.
-      return true;
-    }
-    lua_pop(gLua_, 1);
-  } else {
-    const char* err = lua_tostring(gLua_, -1);
-    std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua_, 1);
-  }
-  return false;
-}
-
-
-  // ---------------------------
-  // Evaluate a Lua expression and return a boolean value for filtering.
-bool ProjectionMapGenerator::EvaluateLuaExpressionBool(const char* expr, bool& outValue) {
-  lua_settop(gLua_, 0);
-  if (luaL_dostring(gLua_, expr) == LUA_OK) {
-    if(lua_isboolean(gLua_, -1)) {
-      outValue = lua_toboolean(gLua_, -1);
-      lua_pop(gLua_, 1);
-      return true;
-    }
-    lua_pop(gLua_, 1);
-  } else {
-    const char* err = lua_tostring(gLua_, -1);
-    std::cerr << "Lua error: " << err << std::endl;
-    lua_pop(gLua_, 1);
-  }
-  return false;
-}
-#endif
-
 void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
                                                 const ProjectionMap& map,
                                                 const ProjectionMapParams& params,
@@ -1881,28 +1795,126 @@ void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
   }
 }
 
+namespace {
+bool ProjectionParticleTypeEnabled(const ProjectionStarOverlaySpec& overlay,
+                                   const SimulationElement& p)
+{
+  const int type = static_cast<int>(p.type);
+  return type >= 0 &&
+         type < 6 &&
+         overlay.typeEnabled[type] &&
+         std::isfinite(p.mass) &&
+         p.mass >= overlay.minMass &&
+         (!overlay.useMaxMass || p.mass <= overlay.maxMass);
+}
+
+float ProjectionParticleOverlayScalarValue(const ProjectionStarOverlaySpec& overlay,
+                                           const SimulationBlock& block,
+                                           const UnitSystem& units,
+                                           const ProjectionMapParams& params,
+                                           const SimulationElement& p,
+                                           size_t index,
+                                           ProjectionParticleOverlayScalar scalar)
+{
+  switch (scalar) {
+  case ProjectionParticleOverlayScalar::Mass:
+    return p.mass;
+  case ProjectionParticleOverlayScalar::Luminosity:
+    return static_cast<float>(
+      compute_band_luminosity_Lsun(p.mass * units.mass_msun, params.flux));
+  case ProjectionParticleOverlayScalar::Density:
+    return p.density;
+  case ProjectionParticleOverlayScalar::Metallicity: {
+    float zmet = 0.0f;
+    block.readSoAAs(soa_views::Metallicity, index, zmet);
+    return zmet;
+  }
+  case ProjectionParticleOverlayScalar::Temperature:
+    return p.temperature;
+  case ProjectionParticleOverlayScalar::Fixed:
+  default:
+    (void)overlay;
+    return 1.0f;
+  }
+}
+
+float ProjectionNormalizeOverlayValue(float value,
+                                      float minValue,
+                                      float maxValue,
+                                      bool logScale)
+{
+  if (!std::isfinite(value)) {
+    return 0.0f;
+  }
+  if (logScale) {
+    if (value <= 0.0f || minValue <= 0.0f || maxValue <= minValue) {
+      return 0.0f;
+    }
+    value = std::log10(value);
+    minValue = std::log10(minValue);
+    maxValue = std::log10(maxValue);
+  }
+  if (maxValue <= minValue) {
+    return 1.0f;
+  }
+  return std::clamp((value - minValue) / (maxValue - minValue), 0.0f, 1.0f);
+}
+
+float ProjectionApplySizeScale(float t,
+                               ProjectionParticleSizeScale scale)
+{
+  t = std::clamp(t, 0.0f, 1.0f);
+  switch (scale) {
+  case ProjectionParticleSizeScale::Sqrt:
+    return std::sqrt(t);
+  case ProjectionParticleSizeScale::Saturating:
+    return (1.0f - std::exp(-4.0f * t)) / (1.0f - std::exp(-4.0f));
+  case ProjectionParticleSizeScale::Linear:
+  case ProjectionParticleSizeScale::Log:
+  case ProjectionParticleSizeScale::Fixed:
+  default:
+    return t;
+  }
+}
+
+void ProjectionAutoScalarRange(const ProjectionStarOverlaySpec& overlay,
+                               const SimulationBlock& block,
+                               const UnitSystem& units,
+                               const ProjectionMapParams& params,
+                               const ProjectionMapContext& ctx,
+                               ProjectionParticleOverlayScalar scalar,
+                               float& outMin,
+                               float& outMax)
+{
+  outMin = std::numeric_limits<float>::max();
+  outMax = std::numeric_limits<float>::lowest();
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const SimulationElement& p = block.particles[i];
+    if (!ProjectionParticleTypeEnabled(overlay, p)) continue;
+    if (params.dataSource == DataSource::Stars &&
+        p.type == ctx.selectedType) {
+      continue;
+    }
+    const float value =
+      ProjectionParticleOverlayScalarValue(overlay, block, units, params, p, i, scalar);
+    if (!std::isfinite(value)) continue;
+    outMin = std::min(outMin, value);
+    outMax = std::max(outMax, value);
+  }
+  if (outMin == std::numeric_limits<float>::max() || outMax <= outMin) {
+    outMin = 0.0f;
+    outMax = 1.0f;
+  }
+}
+}
+
 void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
-							  const ProjectionMap& map,
+						  const ProjectionMap& map,
 						  const ProjectionMapParams& params,
 						  const ProjectionMapContext& ctx,
-						  const std::vector<SimulationElement>& particles)
+						  const SimulationBlock& block,
+						  const UnitSystem& units)
 {
-
-#ifdef USE_LUA
-  if(flag_init_lua_){
-    double minVal = 0.0, maxVal = 1.0;
-    if(!EvaluateLuaExpressionNumber(params.minValueExpr, minVal)) {
-      std::cerr << "Error evaluating min value expression\n";
-    }
-    if(!EvaluateLuaExpressionNumber(params.maxValueExpr, maxVal)) {
-      std::cerr << "Error evaluating max value expression\n";
-    }
-    lua_pushnumber(gLua_, minVal);
-    lua_setglobal(gLua_, "min");
-    lua_pushnumber(gLua_, maxVal);
-    lua_setglobal(gLua_, "max");
-  }
-#endif
 
   const ProjectionPanelSpec& panel = params.panels[0];
   if (panel.starOverlayIndex <= 0 ||
@@ -1913,59 +1925,96 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
   const ProjectionStarOverlaySpec& overlay =
     params.starOverlays[static_cast<size_t>(panel.starOverlayIndex - 1)];
 
-  float autoMaxMass = overlay.maxMass;
-  if (overlay.autoMassRange) {
-    autoMaxMass = overlay.minMass;
-    for (const auto& p : particles) {
-      if (p.type < 3 || p.type > 5) continue;
-      if (params.dataSource == DataSource::Stars && p.type == ctx.selectedType) {
-        continue;
-      }
-      if (p.mass >= overlay.minMass && std::isfinite(p.mass)) {
-        autoMaxMass = std::max(autoMaxMass, p.mass);
-      }
-    }
+  float sizeMin = overlay.sizeValueMin;
+  float sizeMax = overlay.sizeValueMax;
+  if (overlay.autoSizeRange &&
+      overlay.sizeScale != ProjectionParticleSizeScale::Fixed &&
+      overlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed) {
+    ProjectionAutoScalarRange(overlay,
+                              block,
+                              units,
+                              params,
+                              ctx,
+                              overlay.sizeScalar,
+                              sizeMin,
+                              sizeMax);
   }
 
-  for (const auto &p : particles) {
-    if(p.type < 3 || p.type > 5)
-      continue;
+  float colorMin = overlay.colorValueMin;
+  float colorMax = overlay.colorValueMax;
+  if (overlay.autoColorRange &&
+      overlay.colorScalar != ProjectionParticleOverlayScalar::Fixed) {
+    ProjectionAutoScalarRange(overlay,
+                              block,
+                              units,
+                              params,
+                              ctx,
+                              overlay.colorScalar,
+                              colorMin,
+                              colorMax);
+  }
 
-    if (params.dataSource == DataSource::Stars)
-      if(p.type == ctx.selectedType)
-	continue;
+  const ColormapDef* colormaps = AvailableColormaps();
+  const int colormapCount = AvailableColormapCount();
+  const int colormapIndex =
+    std::clamp(overlay.colorColormapIndex, 0, colormapCount - 1);
 
-    if (p.mass < overlay.minMass) {
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const SimulationElement& p = block.particles[i];
+    if (!ProjectionParticleTypeEnabled(overlay, p)) continue;
+    if (params.dataSource == DataSource::Stars && p.type == ctx.selectedType) {
       continue;
     }
 
-    const float massScaleMax =
-      overlay.autoMassRange
-        ? autoMaxMass
-        : std::max(overlay.maxMass, overlay.minMass);
-    const float massNorm =
-      (massScaleMax > overlay.minMass)
-        ? std::clamp((p.mass - overlay.minMass) /
-                       (massScaleMax - overlay.minMass),
-                     0.0f,
-                     1.0f)
-        : 1.0f;
-
-    float pointSize = std::max(overlay.maxSizePx, 0.0f);
-    if (overlay.sizeByMass) {
-      pointSize = overlay.minSizePx +
-                  (overlay.maxSizePx - overlay.minSizePx) * std::sqrt(massNorm);
+    float sizeT = 1.0f;
+    if (overlay.sizeScale != ProjectionParticleSizeScale::Fixed &&
+        overlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed) {
+      const float value =
+        ProjectionParticleOverlayScalarValue(overlay,
+                                             block,
+                                             units,
+                                             params,
+                                             p,
+                                             i,
+                                             overlay.sizeScalar);
+      const bool logSize =
+        overlay.sizeScale == ProjectionParticleSizeScale::Log;
+      sizeT = ProjectionNormalizeOverlayValue(value, sizeMin, sizeMax, logSize);
+      sizeT = ProjectionApplySizeScale(sizeT, overlay.sizeScale);
+      if (overlay.sizeBins > 1) {
+        const float bins = static_cast<float>(overlay.sizeBins - 1);
+        sizeT = std::round(sizeT * bins) / bins;
+      }
     }
+    const float pointSize =
+      overlay.minSizePx + (overlay.maxSizePx - overlay.minSizePx) * sizeT;
 
     float r = std::clamp(overlay.color[0], 0.0f, 1.0f);
     float g = std::clamp(overlay.color[1], 0.0f, 1.0f);
     float b = std::clamp(overlay.color[2], 0.0f, 1.0f);
-    if (overlay.colorByMass) {
-      r = r * (1.0f - massNorm) + massNorm;
-      g = g * (1.0f - massNorm) + 0.85f * massNorm;
-      b = b * (1.0f - massNorm);
+    if (overlay.colorScalar != ProjectionParticleOverlayScalar::Fixed &&
+        colormapCount > 0) {
+      const float value =
+        ProjectionParticleOverlayScalarValue(overlay,
+                                             block,
+                                             units,
+                                             params,
+                                             p,
+                                             i,
+                                             overlay.colorScalar);
+      const float colorT =
+        ProjectionNormalizeOverlayValue(value,
+                                        colorMin,
+                                        colorMax,
+                                        overlay.colorLogScale);
+      colormapLookup(colorT,
+                     r,
+                     g,
+                     b,
+                     colormaps[colormapIndex].data,
+                     colormaps[colormapIndex].count);
     }
-    const float a = 1.0f;
+    const float a = std::clamp(overlay.opacity, 0.0f, 1.0f);
 
     unsigned char ur = static_cast<unsigned char>(r * 255);
     unsigned char ug = static_cast<unsigned char>(g * 255);
@@ -1979,10 +2028,18 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
     int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
       
-    float desiredStarSize = pointSize;
-    int radius = std::max(1, static_cast<int>(desiredStarSize * 0.5f));
-    
-    canvas.drawAsterisk(px, py, radius, ur, ug, ub, a);                   
+    const float radius = std::max(pointSize * 0.5f, 0.5f);
+    if (overlay.symbol == ProjectionParticleSymbol::Asterisk) {
+      canvas.drawAsterisk(px,
+                          py,
+                          std::max(1, static_cast<int>(std::round(radius))),
+                          ur,
+                          ug,
+                          ub,
+                          a);
+    } else {
+      canvas.drawSoftCircle(px, py, radius, ur, ug, ub, a);
+    }
   }
 }
 

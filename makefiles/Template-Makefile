@@ -11,7 +11,6 @@ EXTERNAL_DIR := external
 ################## OPTIONS ####################
 OPTION += -DDEBUG_MODE
 
-OPTION += -DUSE_LUA
 OPTION += -DUSE_CONVEX_HULL
 OPTION += -DCLUMP_DATA_READ
 OPTION += -DISO_CONTOUR
@@ -36,10 +35,6 @@ LDFLAGS := -lglfw -lgmp -lmpfr
 
 ifeq ($(findstring HAVE_HDF5, $(OPTION)), HAVE_HDF5)
 LDFLAGS += -lhdf5_cpp -lhdf5
-endif
-
-ifeq ($(findstring USE_LUA, $(OPTION)), USE_LUA)
-LDFLAGS += -llua
 endif
 
 ifeq ($(findstring USE_TBB, $(OPTION)), USE_TBB)
@@ -225,7 +220,6 @@ clean:
 	rm -f $(TARGET) $(OBJECTS)
 
 OPTION_ADD += -DNONATIVEFILEDIALOG
-OPTION_REMOVE += -DUSE_LUA
 OPTION_REMOVE += -DUSE_CONVEX_HULL
 OPTION_REMOVE += -DCLUMP_DATA_READ
 OPTION_REMOVE += -DHAVE_HDF5
@@ -237,13 +231,13 @@ EM_INCL    := $(INCL)
 EM_REMOVE_OPTION  := $(OPTION_REMOVE)
 EM_ADDITIONAL_DEFS := $(OPTION_ADD)
 
-EM_REMOVE_LIBS    := -lhdf5_cpp -lhdf5 -llua -lgmp  -lgmp -lmpfr -framework Cocoa
+EM_REMOVE_LIBS    := -lhdf5_cpp -lhdf5 -lgmp  -lgmp -lmpfr -framework Cocoa
 
 EMFLAGS   := -std=c++17 -O0 -g4 -Wall $(EM_INCL) $(EM_OPTION) $(EM_ADDITIONAL_DEFS) \
               -s USE_GLFW=3 -s USE_WEBGL2=1 -s FULL_ES3=1 \
               -s ALLOW_MEMORY_GROWTH=1 -s ASSERTIONS=1
 
-# たとえば HDF5/LUA をリンクしない代わりに、Web 上で読み込む静的アセットをプリロードしたいような場合は
+# たとえば HDF5 をリンクしない代わりに、Web 上で読み込む静的アセットをプリロードしたいような場合は
 EM_LDFLAGS := -s WASM=1 \
               -o particle_vis.html \
               --preload-file assets@/assets \

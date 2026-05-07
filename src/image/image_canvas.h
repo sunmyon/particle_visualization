@@ -69,6 +69,14 @@ public:
 		    unsigned char g,
 		    unsigned char b,
 		    float alpha = 1.0f);
+
+  void drawSoftCircle(int centerX,
+                      int centerY,
+                      float radius,
+                      unsigned char r,
+                      unsigned char g,
+                      unsigned char b,
+                      float alpha = 1.0f);
   
   void copyRgbImage(const std::vector<unsigned char>& src,
                     int srcWidth,

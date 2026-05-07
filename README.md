@@ -21,8 +21,8 @@ git submodule update --init --recursive
 
 The repository keeps small vendored UI/header libraries as submodules
 (`imgui`, `stb`, `ImGuiFileDialog`) plus fallback checkouts for `glfw` and
-`lua`. Heavy science dependencies such as CGAL, GMP, MPFR, and VTK are not
-submodules.
+other optional build dependencies. Heavy science dependencies such as CGAL,
+GMP, MPFR, and VTK are not submodules.
 
 ## License
 
@@ -47,7 +47,7 @@ Recommended dependency sources:
 - Linux workstation or cluster: prefer system packages, environment modules, or
   vcpkg.
 - Submodules: fallback/vendor path only, mainly for small UI dependencies and
-  GLFW/Lua on systems where packages are unavailable.
+  GLFW on systems where packages are unavailable.
 - OpenGL, Vulkan, and Metal are platform/SDK capabilities detected by CMake;
   they are not vcpkg manifest dependencies.
 
@@ -60,7 +60,7 @@ For macOS, Homebrew is the primary path. This avoids mixing Apple Silicon
 
 ```bash
 brew install cmake pkg-config
-brew install glfw glm hdf5 lua
+brew install glfw glm hdf5
 brew install zeromq cppzmq nlohmann-json eigen fftw
 ```
 
@@ -230,7 +230,7 @@ cmake --build --preset linux-headless-gcc
 
 ## Dependencies
 
-The default build includes the optional science and bridge features used during normal development: HDF5 IO, Lua projection expressions, the Python/ZeroMQ bridge, Eigen-backed geometry/streamline tools, and FFTW-backed power-spectrum analysis.
+The default build includes the optional science and bridge features used during normal development: HDF5 IO, the Python/ZeroMQ bridge, Eigen-backed geometry/streamline tools, and FFTW-backed power-spectrum analysis.
 
 The vcpkg manifest keeps the hard core small:
 
@@ -241,7 +241,6 @@ The vcpkg manifest keeps the hard core small:
 Optional dependency groups are exposed as manifest features:
 
 - `hdf5`: HDF5 snapshot, halo, clump, and extract IO.
-- `lua`: Lua expressions for projection map customization.
 - `python-bridge`: ZeroMQ/cppzmq/nlohmann-json bridge and remote frame/input tools.
 - `geometry`: Eigen-backed geometrical analysis and streamline tools.
 - `power-spectrum`: FFTW-backed Fourier power spectrum analysis.
@@ -269,7 +268,6 @@ Match the dependency set with CMake options. A lightweight CMake configure can d
 ```bash
 cmake -S . -B build-core \
   -DHAVE_HDF5=OFF \
-  -DUSE_LUA=OFF \
   -DPYTHON_BRIDGE=OFF \
   -DGEOMETRICAL_ANALYSIS=OFF \
   -DSTREAM_LINE=OFF \

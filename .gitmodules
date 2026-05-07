@@ -10,6 +10,3 @@
 [submodule "external/submodules/glfw"]
 	path = external/submodules/glfw
 	url = https://github.com/glfw/glfw.git
-[submodule "external/submodules/lua"]
-	path = external/submodules/lua
-	url = https://github.com/lua/lua.git

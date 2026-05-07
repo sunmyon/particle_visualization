@@ -8,7 +8,6 @@
   ],
   "default-features": [
     "hdf5",
-    "lua",
     "python-bridge",
     "geometry",
     "power-spectrum"
@@ -23,12 +22,6 @@
             "cpp"
           ]
         }
-      ]
-    },
-    "lua": {
-      "description": "Enable Lua expressions for projection map customization.",
-      "dependencies": [
-        "lua"
       ]
     },
     "python-bridge": {

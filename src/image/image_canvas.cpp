@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 
 ImageCanvas::ImageCanvas(std::vector<unsigned char>& rgb,
                          int width,
@@ -272,6 +273,35 @@ void ImageCanvas::drawAsterisk(int centerX,
   drawLine(centerX - d, centerY + d,
            centerX + d, centerY - d,
            r, g, b, alpha);
+}
+
+void ImageCanvas::drawSoftCircle(int centerX,
+                                 int centerY,
+                                 float radius,
+                                 unsigned char r,
+                                 unsigned char g,
+                                 unsigned char b,
+                                 float alpha)
+{
+  if (radius <= 0.0f) return;
+
+  const int extent = std::max(1, static_cast<int>(std::ceil(radius)));
+  const float invRadius = 1.0f / radius;
+  for (int dy = -extent; dy <= extent; ++dy) {
+    for (int dx = -extent; dx <= extent; ++dx) {
+      const float dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+      const float x = dist * invRadius;
+      if (x > 1.0f) continue;
+      const float core = std::exp(-4.0f * x * x);
+      const float edge = 1.0f - x * x;
+      blendPixel(centerX + dx,
+                 centerY + dy,
+                 r,
+                 g,
+                 b,
+                 alpha * core * edge);
+    }
+  }
 }
 
 

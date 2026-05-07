@@ -1,10 +1,6 @@
 #ifndef PROJECTION_MAP_GENERATOR_H
 #define PROJECTION_MAP_GENERATOR_H
 
-#ifdef USE_LUA
-#include <lua.hpp>
-#endif
-
 #include "image/bitmap_font_renderer.h"
 
 #include <cstdint>
@@ -117,16 +113,6 @@ private:
                                  const ProjectionMapContext& ctx);
   void createStarMap(ProjectionMap &map, const std::vector<pos_val>& particles, float sigma_pix, bool normalize);
 
-#ifdef USE_LUA
-  lua_State* gLua_ = nullptr;
-  bool flag_init_lua_ = false;
-  void ensureLuaInitialized();
-
-  bool EvaluateLuaExpressionNumber(const char* expr, double& outValue);
-  bool EvaluateLuaExpressionColor(const char* expr, float& r, float& g, float& b, float& a);
-  bool EvaluateLuaExpressionBool(const char* expr, bool& outValue);
-#endif
-
   void addColorBarToMap(ImageCanvas& canvas,
 			double cell_size,
 			float minVal,
@@ -142,7 +128,8 @@ private:
 				    const ProjectionMap& map,
 				    const ProjectionMapParams& params,
 				    const ProjectionMapContext& ctx,
-				    const std::vector<SimulationElement>& particles);
+				    const SimulationBlock& block,
+				    const UnitSystem& units);
 	  void overlayVectorField(ImageCanvas& canvas,
 	                          const ProjectionMap& map,
 	                          const ProjectionMapParams& params,
@@ -153,7 +140,8 @@ private:
   RgbImage composeProjectionMapImage(ProjectionMap& map,
 	                                     const ProjectionMapParams& params,
 	                                     const ProjectionMapContext& ctx,
-	                                     const SimulationBlock& block);
+	                                     const SimulationBlock& block,
+	                                     const UnitSystem& units);
   RgbImage makeSingleDensityMapImage(SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,

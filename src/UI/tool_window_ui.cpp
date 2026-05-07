@@ -719,20 +719,16 @@ bool DrawProjectionQuantityCombo(const char* label,
   return dirty;
 }
 
-bool DrawProjectionAxisCombo(const char* label, int& selectedAxis)
+bool DrawProjectionSignedAxisCombo(const char* label, int& selectedAxis, int& sign)
 {
-  const char* axisLabels[] = { "X", "Y", "Z" };
+  const char* axisLabels[] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
   selectedAxis = std::clamp(selectedAxis, 0, 2);
-  return ImGui::Combo(label, &selectedAxis, axisLabels, IM_ARRAYSIZE(axisLabels));
-}
-
-bool DrawProjectionSignCombo(const char* label, int& sign)
-{
-  const char* signLabels[] = { "+", "-" };
-  int value = sign < 0 ? 1 : 0;
-  const bool changed = ImGui::Combo(label, &value, signLabels, IM_ARRAYSIZE(signLabels));
+  int value = selectedAxis * 2 + (sign < 0 ? 1 : 0);
+  const bool changed =
+    ImGui::Combo(label, &value, axisLabels, IM_ARRAYSIZE(axisLabels));
   if (changed) {
-    sign = value == 1 ? -1 : 1;
+    selectedAxis = std::clamp(value / 2, 0, 2);
+    sign = (value % 2) == 1 ? -1 : 1;
   }
   return changed;
 }
@@ -741,6 +737,34 @@ void DrawProjectionSectionHeader(const char* label)
 {
   ImGui::Spacing();
   ImGui::Separator();
+  ImGui::Spacing();
+  ImGui::SetWindowFontScale(1.15f);
+  ImGui::TextUnformatted(label);
+  ImGui::SetWindowFontScale(1.0f);
+}
+
+template <typename Body>
+void DrawProjectionSubsectionBox(const char* label, Body body)
+{
+  ImGui::Spacing();
+  const ImVec2 boxMin = ImGui::GetCursorScreenPos();
+  ImGui::BeginGroup();
+  ImGui::Indent(8.0f);
+  ImGui::Spacing();
+  ImGui::TextDisabled("%s", label);
+  body();
+  ImGui::Spacing();
+  ImGui::Unindent(8.0f);
+  ImGui::EndGroup();
+  const ImVec2 boxMax = ImGui::GetItemRectMax();
+  ImGui::GetWindowDrawList()->AddRect(boxMin,
+                                      boxMax,
+                                      ImGui::GetColorU32(ImGuiCol_Border),
+                                      4.0f);
+}
+
+void DrawProjectionLargeLabel(const char* label)
+{
   ImGui::Spacing();
   ImGui::SetWindowFontScale(1.15f);
   ImGui::TextUnformatted(label);
@@ -940,11 +964,9 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           }
 
           ImGui::TableSetColumnIndex(6);
-          const ProjectionViewBlockSpec resolvedBlock =
-            ProjectionResolveViewBlock(params, panel.viewBlockIndex);
           bool showTime = ProjectionResolveLabelMode(
             panel.timeLabelMode,
-            resolvedBlock.showTimeLabelDefault);
+            true);
           if (ImGui::Checkbox("Time##time_label", &showTime)) {
             panel.timeLabelMode = showTime
               ? ProjectionPanelLabelMode::Show
@@ -953,7 +975,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           }
           bool showScale = ProjectionResolveLabelMode(
             panel.scaleBarMode,
-            resolvedBlock.showScaleDefault);
+            false);
           if (ImGui::Checkbox("Scale##scale_bar", &showScale)) {
             panel.scaleBarMode = showScale
               ? ProjectionPanelLabelMode::Show
@@ -971,7 +993,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
     }
 
     if (ImGui::BeginTabItem("View blocks")) {
-      ImGui::SetNextItemWidth(120.0f);
+      ImGui::SetNextItemWidth(92.0f);
       int blockCount = params.viewBlockCount;
       if (ImGui::InputInt("Block count", &blockCount)) {
         const int oldCount = params.viewBlockCount;
@@ -1004,95 +1026,129 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         dirty = true;
       }
 
-      for (int i = 0; i < params.viewBlockCount; ++i) {
-        ImGui::PushID(i);
-        if (ImGui::Selectable(params.viewBlocks[i].name,
-                              params.selectedViewBlockIndex == i)) {
-          params.selectedViewBlockIndex = i;
-          params.activeViewBlockIndex = i;
-          ProjectionSyncTopLevelFromViewBlock(params, i);
-          dirty = true;
-        }
-        ImGui::PopID();
-      }
-
       params.selectedViewBlockIndex =
         std::clamp(params.selectedViewBlockIndex, 0, params.viewBlockCount - 1);
+      std::vector<const char*> viewBlockNames;
+      viewBlockNames.reserve(static_cast<size_t>(params.viewBlockCount));
+      for (int i = 0; i < params.viewBlockCount; ++i) {
+        viewBlockNames.push_back(params.viewBlocks[i].name);
+      }
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(170.0f);
+      if (ImGui::Combo("Edit block",
+                       &params.selectedViewBlockIndex,
+                       viewBlockNames.data(),
+                       static_cast<int>(viewBlockNames.size()))) {
+        params.activeViewBlockIndex = params.selectedViewBlockIndex;
+        ProjectionSyncTopLevelFromViewBlock(params,
+                                           params.selectedViewBlockIndex);
+        dirty = true;
+      }
       ProjectionViewBlockSpec& block =
         params.viewBlocks[params.selectedViewBlockIndex];
-      DrawProjectionSectionHeader("Selected block");
-      dirty |= ImGui::InputText("Name", block.name, IM_ARRAYSIZE(block.name));
-      dirty |= ImGui::InputInt("Pixels", &block.npixel, 10, 1000);
-      block.npixel = std::max(block.npixel, 1);
+      ImGui::Separator();
+      DrawProjectionLargeLabel(block.name);
       const bool isMainBlock = params.selectedViewBlockIndex == 0;
-      if (!isMainBlock) {
-        dirty |= ImGui::Checkbox("Size same as main", &block.sizeSameAsMain);
-        dirty |= ImGui::Checkbox("Center same as main", &block.centerSameAsMain);
-        dirty |= ImGui::Checkbox("Tilt/axis same as main", &block.tiltSameAsMain);
-      }
 
-      if (isMainBlock || !block.sizeSameAsMain) {
+      DrawProjectionSubsectionBox("Block", [&]() {
+        if (ImGui::BeginTable("ViewBlockIdentityGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::SetNextItemWidth(180.0f);
+          dirty |= ImGui::InputText("Name##view_block",
+                                    block.name,
+                                    IM_ARRAYSIZE(block.name));
+          ImGui::TableSetColumnIndex(1);
+          ImGui::SetNextItemWidth(76.0f);
+          dirty |= ImGui::InputInt("Pixels##view_block",
+                                   &block.npixel,
+                                   10,
+                                   1000);
+          block.npixel = std::max(block.npixel, 1);
+          if (!isMainBlock) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            dirty |= ImGui::Checkbox("Center same as main",
+                                     &block.centerSameAsMain);
+            ImGui::TableSetColumnIndex(1);
+            dirty |= ImGui::Checkbox("Size same as main",
+                                     &block.sizeSameAsMain);
+            ImGui::TableSetColumnIndex(2);
+            dirty |= ImGui::Checkbox("Tilt same as main",
+                                     &block.tiltSameAsMain);
+          }
+          ImGui::EndTable();
+        }
+      });
+
+      const bool showRegionSize = isMainBlock || !block.sizeSameAsMain;
+      const bool showRegionCenter = isMainBlock || !block.centerSameAsMain;
+      if (showRegionSize || showRegionCenter) {
+        DrawProjectionSubsectionBox("Region", [&]() {
+      if (showRegionSize) {
         float xlenOriginal[3] = {
           block.xlen[0] * renderToWorld,
           block.xlen[1] * renderToWorld,
           block.xlen[2] * renderToWorld
         };
+        ImGui::SetNextItemWidth(260.0f);
         if (ImGui::InputFloat3("Size", xlenOriginal)) {
           for (int k = 0; k < 3; ++k) block.xlen[k] = xlenOriginal[k] * worldToRender;
           dirty = true;
         }
       }
 
-      if (isMainBlock || !block.centerSameAsMain) {
+      if (showRegionCenter) {
         float xoffsetOriginal[3] = {
           block.xoffset[0] * renderToWorld,
           block.xoffset[1] * renderToWorld,
           block.xoffset[2] * renderToWorld
         };
-        if (ImGui::InputFloat3("Center offset", xoffsetOriginal)) {
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::InputFloat3("Center", xoffsetOriginal)) {
           for (int k = 0; k < 3; ++k) block.xoffset[k] = xoffsetOriginal[k] * worldToRender;
           dirty = true;
         }
       }
-      if (ImGui::Button("Set center from camera")) {
-        ProjectionViewBlockSpec& main = params.viewBlocks[0];
-        ProjectionViewBlockSpec& centerTarget =
-          (!isMainBlock && block.centerSameAsMain) ? main : block;
-        centerTarget.xoffset[0] = ctx.camera.cameraTarget.x;
-        centerTarget.xoffset[1] = ctx.camera.cameraTarget.y;
-        centerTarget.xoffset[2] = ctx.camera.cameraTarget.z;
-        dirty = true;
+      if (showRegionCenter) {
+        if (ImGui::Button("Set center from camera")) {
+          block.xoffset[0] = ctx.camera.cameraTarget.x;
+          block.xoffset[1] = ctx.camera.cameraTarget.y;
+          block.xoffset[2] = ctx.camera.cameraTarget.z;
+          dirty = true;
+        }
+      }
+        });
       }
 
       if (isMainBlock || !block.tiltSameAsMain) {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= DrawProjectionAxisCombo("Projection normal", block.selectedAxis);
+        DrawProjectionSubsectionBox("Orientation", [&]() {
+        ImGui::SetNextItemWidth(150.0f);
+        dirty |= DrawProjectionSignedAxisCombo("Projection normal",
+                                               block.selectedAxis,
+                                               block.projectionSign);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(64.0f);
-        dirty |= DrawProjectionSignCombo("View sign##projection_sign",
-                                         block.projectionSign);
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= DrawProjectionAxisCombo("Up direction", block.upAxis);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(64.0f);
-        dirty |= DrawProjectionSignCombo("Up sign##up_sign", block.upSign);
+        ImGui::SetNextItemWidth(150.0f);
+        dirty |= DrawProjectionSignedAxisCombo("Up direction",
+                                               block.upAxis,
+                                               block.upSign);
+        ImGui::SetNextItemWidth(260.0f);
         dirty |= ImGui::InputFloat3("Tilt (deg)", block.tilt);
+        });
       }
-      dirty |= ImGui::Checkbox("Default time label", &block.showTimeLabelDefault);
-      dirty |= ImGui::Checkbox("Default spatial scale", &block.showScaleDefault);
-      if (block.showScaleDefault) {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Default arrow length",
+      DrawProjectionSubsectionBox("Scale bar", [&]() {
+        ImGui::SetNextItemWidth(96.0f);
+        dirty |= ImGui::InputFloat("Arrow length",
                                    &block.arrowLenXDefault,
                                    0.0f,
                                    0.0f,
                                    "%g");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(160.0f);
-        dirty |= ImGui::InputText("Default arrow label",
+        ImGui::SetNextItemWidth(140.0f);
+        dirty |= ImGui::InputText("Arrow label",
                                   block.arrowLabelStrDefault,
                                   IM_ARRAYSIZE(block.arrowLabelStrDefault));
-      }
+      });
       if (dirty && params.selectedViewBlockIndex == params.activeViewBlockIndex) {
         ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
       }
@@ -1100,17 +1156,58 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
     }
 
     if (ImGui::BeginTabItem("Rendering")) {
-      dirty |= ImGui::Checkbox("Density weighting", &params.flagDensityWeight);
-      dirty |= ImGui::Checkbox("Use Voronoi tesselation", &params.flagVoronoi);
-      if (params.flagVoronoi) {
-        int voronoiMode = static_cast<int>(params.voronoiMode);
-        const char* modeLabels[] = { "Weighted mean", "Opacity rendering" };
-        if (ImGui::Combo("Voronoi mode", &voronoiMode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
-          params.voronoiMode = static_cast<ProjectionVoronoiMode>(voronoiMode);
+      ImGui::TextDisabled("Projection");
+      if (ImGui::BeginTable("ProjectionMethodGrid", 5)) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        const char* methodLabels[] = { "Standard", "Voronoi" };
+        int method = params.flagVoronoi ? 1 : 0;
+        ImGui::SetNextItemWidth(116.0f);
+        if (ImGui::Combo("Method##projection_method",
+                         &method,
+                         methodLabels,
+                         IM_ARRAYSIZE(methodLabels))) {
+          params.flagVoronoi = method == 1;
           dirty = true;
         }
-        dirty |= ImGui::InputInt("nz", &params.step_z, 10, 1000);
+
+        ImGui::TableSetColumnIndex(1);
+        int voronoiMode = static_cast<int>(params.voronoiMode);
+        const char* modeLabels[] = { "Weighted mean", "Opacity rendering" };
+        ImGui::BeginDisabled(!params.flagVoronoi);
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::Combo("Mode##projection_method",
+                         &voronoiMode,
+                         modeLabels,
+                         IM_ARRAYSIZE(modeLabels))) {
+          params.voronoiMode =
+            static_cast<ProjectionVoronoiMode>(voronoiMode);
+          dirty = true;
+        }
+        ImGui::EndDisabled();
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::BeginDisabled(!params.flagVoronoi);
+        ImGui::SetNextItemWidth(86.0f);
+        dirty |= ImGui::InputInt("Slices##projection_method",
+                                 &params.step_z,
+                                 10,
+                                 1000);
+        ImGui::EndDisabled();
+
+        ImGui::TableSetColumnIndex(3);
+        dirty |= ImGui::Checkbox("Density weight##projection_method",
+                                 &params.flagDensityWeight);
+
+        ImGui::TableSetColumnIndex(4);
+        dirty |= ImGui::Checkbox("GPU##projection_method",
+                                 &params.useGpuProjection);
+        ImGui::EndTable();
+      }
+
+      if (params.flagVoronoi) {
         if (params.voronoiMode == ProjectionVoronoiMode::OpacityRendering) {
+          DrawProjectionSubsectionBox("Opacity rendering", [&]() {
           dirty |= DrawProjectionQuantityCombo("Opacity quantity",
                                                params.voronoiOpacityVarGas,
                                                ctx.quantity.catalog);
@@ -1132,17 +1229,31 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
             ApplyProjectionTransferFunction(voronoiTransferEditor, params);
             dirty = true;
           }
+          });
         }
       }
-      dirty |= ImGui::Checkbox("Use GPU projection", &params.useGpuProjection);
 
-      DrawProjectionSectionHeader("Time");
-      dirty |= ImGui::InputText("Time format",
-                                params.timeFormatBuf,
-                                IM_ARRAYSIZE(params.timeFormatBuf));
-      dirty |= ImGui::Checkbox("Use redshift", &params.flagUseRedshift);
-      dirty |= ImGui::InputFloat("Time unit to display",
-                                 &params.factorShownTimeInUnitTime);
+      DrawProjectionSubsectionBox("Time", [&]() {
+        if (ImGui::BeginTable("ProjectionTimeGrid", 3)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::SetNextItemWidth(140.0f);
+          dirty |= ImGui::InputText("Format##projection_time",
+                                    params.timeFormatBuf,
+                                    IM_ARRAYSIZE(params.timeFormatBuf));
+          ImGui::TableSetColumnIndex(1);
+          dirty |= ImGui::Checkbox("Use redshift##projection_time",
+                                   &params.flagUseRedshift);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::SetNextItemWidth(96.0f);
+          dirty |= ImGui::InputFloat("Unit##projection_time",
+                                     &params.factorShownTimeInUnitTime,
+                                     0.0f,
+                                     0.0f,
+                                     "%g");
+          ImGui::EndTable();
+        }
+      });
 
       DrawProjectionSectionHeader("Zoom region");
       dirty |= ImGui::Checkbox("Rescale center to zoom-in region",
@@ -1168,7 +1279,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
     if (ImGui::BeginTabItem("Overlay")) {
       DrawProjectionSectionHeader("Star particles");
       int starCount = params.starOverlayCount;
-      ImGui::SetNextItemWidth(120.0f);
+      ImGui::SetNextItemWidth(92.0f);
       if (ImGui::InputInt("Star field count", &starCount)) {
         const int oldCount = params.starOverlayCount;
         params.starOverlayCount =
@@ -1187,71 +1298,274 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       for (int i = 0; i < params.starOverlayCount; ++i) {
         starPresetNames.push_back(params.starOverlays[i].name);
       }
-      ImGui::SetNextItemWidth(180.0f);
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(170.0f);
       dirty |= ImGui::Combo("Edit star field",
                             &params.selectedStarOverlayIndex,
                             starPresetNames.data(),
                             static_cast<int>(starPresetNames.size()));
       ProjectionStarOverlaySpec& starOverlay =
         params.starOverlays[params.selectedStarOverlayIndex];
-      dirty |= ImGui::InputText("Star field name",
-                                starOverlay.name,
-                                IM_ARRAYSIZE(starOverlay.name));
-      ImGui::SetNextItemWidth(120.0f);
-      dirty |= ImGui::InputFloat("Minimum mass",
-                                 &starOverlay.minMass,
-                                 0.0f,
-                                 0.0f,
-                                 "%g");
-      starOverlay.minMass = std::max(starOverlay.minMass, 0.0f);
-      dirty |= ImGui::Checkbox("Auto mass range",
-                               &starOverlay.autoMassRange);
-      if (!starOverlay.autoMassRange ||
-          starOverlay.sizeByMass ||
-          starOverlay.colorByMass) {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Maximum mass",
-                                   &starOverlay.maxMass,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-        starOverlay.maxMass =
-          std::max(starOverlay.maxMass, starOverlay.minMass);
-      }
-      dirty |= ImGui::Checkbox("Size by mass", &starOverlay.sizeByMass);
-      if (starOverlay.sizeByMass) {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Min size (px)",
-                                   &starOverlay.minSizePx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
+      ImGui::Separator();
+      DrawProjectionLargeLabel(starOverlay.name);
+      const char* scalarLabels[] = {
+        "Fixed",
+        "Mass",
+        "Luminosity",
+        "Density",
+        "Metallicity",
+        "Temperature"
+      };
+      const char* sizeScaleLabels[] = {
+        "Fixed",
+        "Linear",
+        "Sqrt",
+        "Log",
+        "Saturating"
+      };
+
+      DrawProjectionSubsectionBox("Star field", [&]() {
+        ImGui::SetNextItemWidth(220.0f);
+        dirty |= ImGui::InputText("Name",
+                                  starOverlay.name,
+                                  IM_ARRAYSIZE(starOverlay.name));
+        dirty |= ImGui::Checkbox("Type 3", &starOverlay.typeEnabled[3]);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Max size (px)",
-                                   &starOverlay.maxSizePx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-      } else {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Size (px)",
-                                   &starOverlay.maxSizePx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-      }
-      starOverlay.minSizePx = std::max(starOverlay.minSizePx, 0.0f);
-      starOverlay.maxSizePx =
-        std::max(starOverlay.maxSizePx, starOverlay.minSizePx);
-      dirty |= ImGui::ColorEdit3("Star color",
-                                 starOverlay.color,
-                                 ImGuiColorEditFlags_NoInputs);
-      dirty |= ImGui::Checkbox("Color by mass", &starOverlay.colorByMass);
+        dirty |= ImGui::Checkbox("Type 4", &starOverlay.typeEnabled[4]);
+        ImGui::SameLine();
+        dirty |= ImGui::Checkbox("Type 5", &starOverlay.typeEnabled[5]);
+
+        if (ImGui::BeginTable("StarMassFilterGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::SetNextItemWidth(96.0f);
+          dirty |= ImGui::InputFloat("Min mass",
+                                     &starOverlay.minMass,
+                                     0.0f,
+                                     0.0f,
+                                     "%g");
+          starOverlay.minMass = std::max(starOverlay.minMass, 0.0f);
+
+          ImGui::TableSetColumnIndex(1);
+          dirty |= ImGui::Checkbox("Use max##star_mass",
+                                   &starOverlay.useMaxMass);
+          if (starOverlay.useMaxMass) {
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputFloat("Max mass",
+                                       &starOverlay.maxMass,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            starOverlay.maxMass =
+              std::max(starOverlay.maxMass, starOverlay.minMass);
+          }
+          ImGui::EndTable();
+        }
+      });
+
+      const bool variableSize =
+        starOverlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed &&
+        starOverlay.sizeScale != ProjectionParticleSizeScale::Fixed;
+      DrawProjectionSubsectionBox("Size", [&]() {
+        if (ImGui::BeginTable("StarSizeGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          int sizeScalar = static_cast<int>(starOverlay.sizeScalar);
+          ImGui::SetNextItemWidth(132.0f);
+          if (ImGui::Combo("Value##star_size",
+                           &sizeScalar,
+                           scalarLabels,
+                           IM_ARRAYSIZE(scalarLabels))) {
+            const auto oldScalar = starOverlay.sizeScalar;
+            starOverlay.sizeScalar =
+              static_cast<ProjectionParticleOverlayScalar>(sizeScalar);
+            if (oldScalar == ProjectionParticleOverlayScalar::Fixed &&
+                starOverlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed &&
+                starOverlay.sizeScale == ProjectionParticleSizeScale::Fixed) {
+              starOverlay.sizeScale = ProjectionParticleSizeScale::Log;
+            }
+            dirty = true;
+          }
+
+          if (variableSize) {
+            ImGui::TableSetColumnIndex(1);
+            int sizeScale = static_cast<int>(starOverlay.sizeScale);
+            ImGui::SetNextItemWidth(116.0f);
+            if (ImGui::Combo("Scale##star_size",
+                             &sizeScale,
+                             sizeScaleLabels,
+                             IM_ARRAYSIZE(sizeScaleLabels))) {
+              starOverlay.sizeScale =
+                static_cast<ProjectionParticleSizeScale>(sizeScale);
+              dirty = true;
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(76.0f);
+            dirty |= ImGui::InputFloat("Min px##star_size",
+                                       &starOverlay.minSizePx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::SetNextItemWidth(76.0f);
+            dirty |= ImGui::InputFloat("Max px##star_size",
+                                       &starOverlay.maxSizePx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            starOverlay.minSizePx = std::max(starOverlay.minSizePx, 0.0f);
+            starOverlay.maxSizePx =
+              std::max(starOverlay.maxSizePx, starOverlay.minSizePx);
+          } else {
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(86.0f);
+            dirty |= ImGui::InputFloat("Size px##star_size",
+                                       &starOverlay.maxSizePx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            starOverlay.maxSizePx = std::max(starOverlay.maxSizePx, 0.0f);
+          }
+
+          if (variableSize) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            dirty |= ImGui::Checkbox("Auto range##star_size",
+                                     &starOverlay.autoSizeRange);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(76.0f);
+            dirty |= ImGui::InputInt("Bins##star_size", &starOverlay.sizeBins);
+            starOverlay.sizeBins = std::clamp(starOverlay.sizeBins, 0, 64);
+          }
+
+          if (variableSize && !starOverlay.autoSizeRange) {
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputFloat("Range min##star_size",
+                                       &starOverlay.sizeValueMin,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputFloat("Range max##star_size",
+                                       &starOverlay.sizeValueMax,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            starOverlay.sizeValueMax =
+              std::max(starOverlay.sizeValueMax, starOverlay.sizeValueMin);
+          }
+
+          ImGui::EndTable();
+        }
+      });
+
+      DrawProjectionSubsectionBox("Color and opacity", [&]() {
+        const ColormapDef* starColormaps = AvailableColormaps();
+        const int starColormapCount = AvailableColormapCount();
+        starOverlay.colorColormapIndex =
+          std::clamp(starOverlay.colorColormapIndex,
+                     0,
+                     starColormapCount - 1);
+        if (ImGui::BeginTable("StarColorGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          int colorScalar = static_cast<int>(starOverlay.colorScalar);
+          ImGui::SetNextItemWidth(132.0f);
+          if (ImGui::Combo("Value##star_color",
+                           &colorScalar,
+                           scalarLabels,
+                           IM_ARRAYSIZE(scalarLabels))) {
+            starOverlay.colorScalar =
+              static_cast<ProjectionParticleOverlayScalar>(colorScalar);
+            dirty = true;
+          }
+
+          ImGui::TableSetColumnIndex(1);
+          ImGui::SetNextItemWidth(120.0f);
+          dirty |= ImGui::SliderFloat("Opacity##star_color",
+                                      &starOverlay.opacity,
+                                      0.0f,
+                                      1.0f,
+                                      "%.2f");
+
+          if (starOverlay.colorScalar ==
+              ProjectionParticleOverlayScalar::Fixed) {
+            ImGui::TableSetColumnIndex(2);
+            dirty |= ImGui::ColorEdit3("Fixed color##star_color",
+                                       starOverlay.color,
+                                       ImGuiColorEditFlags_NoInputs);
+            ImGui::TableSetColumnIndex(3);
+          } else {
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(132.0f);
+            if (ImGui::BeginCombo("Color scale##star_color",
+                                  starColormaps[starOverlay.colorColormapIndex].name)) {
+              for (int cmap = 0; cmap < starColormapCount; ++cmap) {
+                const bool selected = starOverlay.colorColormapIndex == cmap;
+                if (ImGui::Selectable(starColormaps[cmap].name, selected)) {
+                  starOverlay.colorColormapIndex = cmap;
+                  dirty = true;
+                }
+                if (selected) {
+                  ImGui::SetItemDefaultFocus();
+                }
+              }
+              ImGui::EndCombo();
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            dirty |= ImGui::Checkbox("Auto range##star_color",
+                                     &starOverlay.autoColorRange);
+            ImGui::TableSetColumnIndex(1);
+            dirty |= ImGui::Checkbox("Log color##star_color",
+                                     &starOverlay.colorLogScale);
+
+            if (!starOverlay.autoColorRange) {
+              ImGui::TableSetColumnIndex(2);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Min##star_color",
+                                         &starOverlay.colorValueMin,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              ImGui::TableSetColumnIndex(3);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Max##star_color",
+                                         &starOverlay.colorValueMax,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              starOverlay.colorValueMax =
+                std::max(starOverlay.colorValueMax, starOverlay.colorValueMin);
+            }
+          }
+
+          ImGui::TableSetColumnIndex(3);
+          const char* symbolLabels[] = { "Soft circle", "Asterisk" };
+          int symbol = static_cast<int>(starOverlay.symbol);
+          ImGui::SetNextItemWidth(116.0f);
+          if (ImGui::Combo("Symbol##star_color",
+                           &symbol,
+                           symbolLabels,
+                           IM_ARRAYSIZE(symbolLabels))) {
+            starOverlay.symbol =
+              static_cast<ProjectionParticleSymbol>(
+                std::clamp(symbol, 0, IM_ARRAYSIZE(symbolLabels) - 1));
+            dirty = true;
+          }
+
+          ImGui::EndTable();
+        }
+      });
 
       DrawProjectionSectionHeader("Vector field");
       int vectorCount = params.vectorOverlayCount;
-      ImGui::SetNextItemWidth(120.0f);
+      ImGui::SetNextItemWidth(92.0f);
       if (ImGui::InputInt("Vector field count", &vectorCount)) {
         const int oldCount = params.vectorOverlayCount;
         params.vectorOverlayCount =
@@ -1270,189 +1584,257 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       for (int i = 0; i < params.vectorOverlayCount; ++i) {
         vectorPresetNames.push_back(params.vectorOverlays[i].name);
       }
-      ImGui::SetNextItemWidth(180.0f);
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(170.0f);
       dirty |= ImGui::Combo("Edit vector field",
                             &params.selectedVectorOverlayIndex,
                             vectorPresetNames.data(),
                             static_cast<int>(vectorPresetNames.size()));
       ProjectionVectorOverlaySpec& overlay =
         params.vectorOverlays[static_cast<size_t>(params.selectedVectorOverlayIndex)];
-      dirty |= ImGui::InputText("Vector field name",
-                                overlay.name,
-                                IM_ARRAYSIZE(overlay.name));
+      ImGui::Separator();
+      DrawProjectionLargeLabel(overlay.name);
       const char* modeLabels[] = { "Arrows", "Streamlines" };
-      int mode = static_cast<int>(overlay.vectorMode);
-      if (ImGui::Combo("Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
-        overlay.vectorMode =
-          static_cast<ProjectionVectorOverlayMode>(
-            std::clamp(mode, 0, IM_ARRAYSIZE(modeLabels) - 1));
-        if (overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines) {
-          overlay.vectorColorByMagnitude = true;
-        }
-        dirty = true;
-      }
-      const bool streamlines =
-        overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines;
       const char* fieldLabels[] = { "Velocity", "B field" };
-      int field = static_cast<int>(overlay.vectorField);
-      if (ImGui::Combo("Vector field",
-                       &field,
-                       fieldLabels,
-                       IM_ARRAYSIZE(fieldLabels))) {
-        overlay.vectorField =
-          static_cast<ProjectionVectorField>(
-            std::clamp(field, 0, IM_ARRAYSIZE(fieldLabels) - 1));
-        dirty = true;
-      }
-      ImGui::SetNextItemWidth(120.0f);
-      dirty |= ImGui::InputInt("Vector grid",
-                               &overlay.vectorGridSize,
-                               1,
-                               8);
-      overlay.vectorGridSize =
-        std::clamp(overlay.vectorGridSize, 4, 256);
+      bool streamlines =
+        overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines;
+
+      DrawProjectionSubsectionBox("Vector field", [&]() {
+        ImGui::SetNextItemWidth(220.0f);
+        dirty |= ImGui::InputText("Name##vector_field",
+                                  overlay.name,
+                                  IM_ARRAYSIZE(overlay.name));
+        if (ImGui::BeginTable("VectorFieldGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          int mode = static_cast<int>(overlay.vectorMode);
+          ImGui::SetNextItemWidth(132.0f);
+          if (ImGui::Combo("Mode##vector_field",
+                           &mode,
+                           modeLabels,
+                           IM_ARRAYSIZE(modeLabels))) {
+            overlay.vectorMode =
+              static_cast<ProjectionVectorOverlayMode>(
+                std::clamp(mode, 0, IM_ARRAYSIZE(modeLabels) - 1));
+            if (overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines) {
+              overlay.vectorColorByMagnitude = true;
+            }
+            dirty = true;
+          }
+          ImGui::TableSetColumnIndex(1);
+          int field = static_cast<int>(overlay.vectorField);
+          ImGui::SetNextItemWidth(132.0f);
+          if (ImGui::Combo("Field##vector_field",
+                           &field,
+                           fieldLabels,
+                           IM_ARRAYSIZE(fieldLabels))) {
+            overlay.vectorField =
+              static_cast<ProjectionVectorField>(
+                std::clamp(field, 0, IM_ARRAYSIZE(fieldLabels) - 1));
+            dirty = true;
+          }
+          ImGui::TableSetColumnIndex(2);
+          ImGui::SetNextItemWidth(76.0f);
+          dirty |= ImGui::InputInt("Grid##vector_field",
+                                   &overlay.vectorGridSize,
+                                   1,
+                                   8);
+          overlay.vectorGridSize =
+            std::clamp(overlay.vectorGridSize, 4, 256);
+          ImGui::EndTable();
+        }
+      });
+
+      streamlines =
+        overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines;
+
       if (!streamlines) {
-        const char* scaleLabels[] = { "Linear", "Log", "Normalized" };
-        int scaleMode = static_cast<int>(overlay.vectorScaleMode);
-        if (ImGui::Combo("Arrow scale",
-                         &scaleMode,
-                         scaleLabels,
-                         IM_ARRAYSIZE(scaleLabels))) {
-          overlay.vectorScaleMode =
-            static_cast<ProjectionVectorScaleMode>(
-              std::clamp(scaleMode, 0, IM_ARRAYSIZE(scaleLabels) - 1));
-          dirty = true;
-        }
-        dirty |= ImGui::Checkbox("Auto magnitude range",
-                                 &overlay.autoMagnitudeRange);
-        if (!overlay.autoMagnitudeRange) {
-          ImGui::SetNextItemWidth(120.0f);
-          dirty |= ImGui::InputFloat("Min magnitude",
-                                     &overlay.vectorMinMagnitude,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-          overlay.vectorMinMagnitude =
-            std::max(overlay.vectorMinMagnitude, 0.0f);
-          ImGui::SameLine();
-          ImGui::SetNextItemWidth(120.0f);
-          dirty |= ImGui::InputFloat("Max magnitude",
-                                     &overlay.vectorMaxMagnitude,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-          overlay.vectorMaxMagnitude =
-            std::max(overlay.vectorMaxMagnitude, overlay.vectorMinMagnitude);
-        }
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Min arrow size (px)",
-                                   &overlay.vectorMinLengthPx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Max arrow size (px)",
-                                   &overlay.vectorMaxLengthPx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-        overlay.vectorMinLengthPx = std::max(overlay.vectorMinLengthPx, 0.0f);
-        overlay.vectorMaxLengthPx =
-          std::max(overlay.vectorMaxLengthPx, overlay.vectorMinLengthPx);
+        DrawProjectionSubsectionBox("Arrow size", [&]() {
+          const char* scaleLabels[] = { "Linear", "Log", "Normalized" };
+          if (ImGui::BeginTable("VectorArrowGrid", 4)) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            int scaleMode = static_cast<int>(overlay.vectorScaleMode);
+            ImGui::SetNextItemWidth(132.0f);
+            if (ImGui::Combo("Scale##vector_arrow",
+                             &scaleMode,
+                             scaleLabels,
+                             IM_ARRAYSIZE(scaleLabels))) {
+              overlay.vectorScaleMode =
+                static_cast<ProjectionVectorScaleMode>(
+                  std::clamp(scaleMode, 0, IM_ARRAYSIZE(scaleLabels) - 1));
+              dirty = true;
+            }
+            ImGui::TableSetColumnIndex(1);
+            dirty |= ImGui::Checkbox("Auto range##vector_arrow",
+                                     &overlay.autoMagnitudeRange);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(76.0f);
+            dirty |= ImGui::InputFloat("Min px##vector_arrow",
+                                       &overlay.vectorMinLengthPx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::SetNextItemWidth(76.0f);
+            dirty |= ImGui::InputFloat("Max px##vector_arrow",
+                                       &overlay.vectorMaxLengthPx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            overlay.vectorMinLengthPx =
+              std::max(overlay.vectorMinLengthPx, 0.0f);
+            overlay.vectorMaxLengthPx =
+              std::max(overlay.vectorMaxLengthPx, overlay.vectorMinLengthPx);
+
+            if (!overlay.autoMagnitudeRange) {
+              ImGui::TableNextRow();
+              ImGui::TableSetColumnIndex(2);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Mag min##vector_arrow",
+                                         &overlay.vectorMinMagnitude,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              overlay.vectorMinMagnitude =
+                std::max(overlay.vectorMinMagnitude, 0.0f);
+              ImGui::TableSetColumnIndex(3);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Mag max##vector_arrow",
+                                         &overlay.vectorMaxMagnitude,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              overlay.vectorMaxMagnitude =
+                std::max(overlay.vectorMaxMagnitude,
+                         overlay.vectorMinMagnitude);
+            }
+            ImGui::EndTable();
+          }
+        });
       }
-      ImGui::SetNextItemWidth(120.0f);
-      dirty |= ImGui::SliderFloat("Opacity",
-                                  &overlay.vectorOpacity,
-                                  0.0f,
-                                  1.0f,
-                                  "%.2f");
-      dirty |= ImGui::ColorEdit3("Color",
-                                 overlay.vectorColor,
-                                 ImGuiColorEditFlags_NoInputs);
-      dirty |= ImGui::Checkbox("Color by magnitude",
-                               &overlay.vectorColorByMagnitude);
-      if (overlay.vectorColorByMagnitude) {
-        const char* colorScaleLabels[] = { "Linear", "Log" };
-        int colorScaleMode = static_cast<int>(overlay.vectorColorScaleMode);
-        ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::Combo("Color scale",
-                         &colorScaleMode,
-                         colorScaleLabels,
-                         IM_ARRAYSIZE(colorScaleLabels))) {
-          overlay.vectorColorScaleMode =
-            static_cast<ProjectionVectorColorScaleMode>(
-              std::clamp(colorScaleMode,
-                         0,
-                         IM_ARRAYSIZE(colorScaleLabels) - 1));
-          dirty = true;
-        }
-        if (streamlines) {
-          dirty |= ImGui::Checkbox("Auto color range",
-                                   &overlay.autoMagnitudeRange);
-        }
-        if (streamlines && !overlay.autoMagnitudeRange) {
-          ImGui::SetNextItemWidth(120.0f);
-          dirty |= ImGui::InputFloat("Color min",
-                                     &overlay.vectorMinMagnitude,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-          overlay.vectorMinMagnitude =
-            std::max(overlay.vectorMinMagnitude, 0.0f);
-          ImGui::SameLine();
-          ImGui::SetNextItemWidth(120.0f);
-          dirty |= ImGui::InputFloat("Color max",
-                                     &overlay.vectorMaxMagnitude,
-                                     0.0f,
-                                     0.0f,
-                                     "%g");
-          overlay.vectorMaxMagnitude =
-            std::max(overlay.vectorMaxMagnitude, overlay.vectorMinMagnitude);
-        }
+
+      DrawProjectionSubsectionBox("Color and opacity", [&]() {
         const ColormapDef* overlayColormaps = AvailableColormaps();
         const int overlayColormapCount = AvailableColormapCount();
         overlay.vectorColormapIndex =
           std::clamp(overlay.vectorColormapIndex,
                      0,
                      overlayColormapCount - 1);
-        ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::BeginCombo("Vector colormap",
-                              overlayColormaps[overlay.vectorColormapIndex].name)) {
-          for (int cmap = 0; cmap < overlayColormapCount; ++cmap) {
-            const bool selected = overlay.vectorColormapIndex == cmap;
-            if (ImGui::Selectable(overlayColormaps[cmap].name, selected)) {
-              overlay.vectorColormapIndex = cmap;
+        if (ImGui::BeginTable("VectorColorGrid", 4)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          dirty |= ImGui::Checkbox("By magnitude##vector_color",
+                                   &overlay.vectorColorByMagnitude);
+          ImGui::TableSetColumnIndex(1);
+          ImGui::SetNextItemWidth(120.0f);
+          dirty |= ImGui::SliderFloat("Opacity##vector_color",
+                                      &overlay.vectorOpacity,
+                                      0.0f,
+                                      1.0f,
+                                      "%.2f");
+          if (overlay.vectorColorByMagnitude) {
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(132.0f);
+            if (ImGui::BeginCombo("Color scale##vector_color",
+                                  overlayColormaps[overlay.vectorColormapIndex].name)) {
+              for (int cmap = 0; cmap < overlayColormapCount; ++cmap) {
+                const bool selected = overlay.vectorColormapIndex == cmap;
+                if (ImGui::Selectable(overlayColormaps[cmap].name, selected)) {
+                  overlay.vectorColormapIndex = cmap;
+                  dirty = true;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+              }
+              ImGui::EndCombo();
+            }
+          } else {
+            ImGui::TableSetColumnIndex(2);
+            dirty |= ImGui::ColorEdit3("Color##vector_color",
+                                       overlay.vectorColor,
+                                       ImGuiColorEditFlags_NoInputs);
+          }
+
+          if (overlay.vectorColorByMagnitude) {
+            const char* colorScaleLabels[] = { "Linear", "Log" };
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            int colorScaleMode = static_cast<int>(overlay.vectorColorScaleMode);
+            ImGui::SetNextItemWidth(116.0f);
+            if (ImGui::Combo("Scale##vector_color",
+                             &colorScaleMode,
+                             colorScaleLabels,
+                             IM_ARRAYSIZE(colorScaleLabels))) {
+              overlay.vectorColorScaleMode =
+                static_cast<ProjectionVectorColorScaleMode>(
+                  std::clamp(colorScaleMode,
+                             0,
+                             IM_ARRAYSIZE(colorScaleLabels) - 1));
               dirty = true;
             }
-            if (selected) ImGui::SetItemDefaultFocus();
+            if (streamlines) {
+              ImGui::TableSetColumnIndex(1);
+              dirty |= ImGui::Checkbox("Auto range##vector_color",
+                                       &overlay.autoMagnitudeRange);
+            }
+            if (streamlines && !overlay.autoMagnitudeRange) {
+              ImGui::TableSetColumnIndex(2);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Min##vector_color",
+                                         &overlay.vectorMinMagnitude,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              overlay.vectorMinMagnitude =
+                std::max(overlay.vectorMinMagnitude, 0.0f);
+              ImGui::TableSetColumnIndex(3);
+              ImGui::SetNextItemWidth(96.0f);
+              dirty |= ImGui::InputFloat("Max##vector_color",
+                                         &overlay.vectorMaxMagnitude,
+                                         0.0f,
+                                         0.0f,
+                                         "%g");
+              overlay.vectorMaxMagnitude =
+                std::max(overlay.vectorMaxMagnitude,
+                         overlay.vectorMinMagnitude);
+            }
           }
-          ImGui::EndCombo();
+          ImGui::EndTable();
         }
-      }
+      });
+
       if (overlay.vectorMode == ProjectionVectorOverlayMode::Streamlines) {
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputFloat("Streamline step (px)",
-                                   &overlay.streamlineStepPx,
-                                   0.0f,
-                                   0.0f,
-                                   "%g");
-        overlay.streamlineStepPx =
-          std::max(overlay.streamlineStepPx, 0.1f);
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputInt("Max streamline steps",
-                                 &overlay.streamlineMaxSteps,
-                                 1,
-                                 10);
-        overlay.streamlineMaxSteps =
-          std::max(overlay.streamlineMaxSteps, 1);
-        ImGui::SetNextItemWidth(120.0f);
-        dirty |= ImGui::InputInt("Streamline mask",
-                                 &overlay.streamlineMaskSize,
-                                 1,
-                                 8);
-        overlay.streamlineMaskSize =
-          std::clamp(overlay.streamlineMaskSize, 8, 512);
+        DrawProjectionSubsectionBox("Streamlines", [&]() {
+          if (ImGui::BeginTable("VectorStreamlineGrid", 3)) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputFloat("Step px##streamline",
+                                       &overlay.streamlineStepPx,
+                                       0.0f,
+                                       0.0f,
+                                       "%g");
+            overlay.streamlineStepPx =
+              std::max(overlay.streamlineStepPx, 0.1f);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputInt("Max steps##streamline",
+                                     &overlay.streamlineMaxSteps,
+                                     1,
+                                     10);
+            overlay.streamlineMaxSteps =
+              std::max(overlay.streamlineMaxSteps, 1);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetNextItemWidth(96.0f);
+            dirty |= ImGui::InputInt("Mask##streamline",
+                                     &overlay.streamlineMaskSize,
+                                     1,
+                                     8);
+            overlay.streamlineMaskSize =
+              std::clamp(overlay.streamlineMaskSize, 8, 512);
+            ImGui::EndTable();
+          }
+        });
       }
       ImGui::EndTabItem();
     }
@@ -1619,6 +2001,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
     state.dragInitialized = false;
   }
   ImGui::PopStyleColor();
+  ImGui::Separator();
 
   if (state.selectMode) {
     ImGuiIO& io = ImGui::GetIO();

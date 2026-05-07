@@ -28,7 +28,6 @@ endif()
 # ===== Options, corresponding to the old Makefile options =====
 # vcpkg manifest features provide the dependency sets for these options:
 #   hdf5          -> HAVE_HDF5 / CLUMP_DATA_READ
-#   lua           -> USE_LUA
 #   python-bridge -> PYTHON_BRIDGE
 #   geometry      -> GEOMETRICAL_ANALYSIS / STREAM_LINE
 #   power-spectrum-> POWER_SPECTRUM
@@ -36,7 +35,6 @@ endif()
 # For a lightweight build, disable the corresponding CMake options and use
 # vcpkg with --x-no-default-features or explicit --x-feature selections.
 option(DEBUG_MODE          "Enable debug mode"                   ON)
-option(USE_LUA             "Enable Lua"                          ON)
 option(USE_CONVEX_HULL     "Enable Convex Hull"                  ON)
 option(USE_LETTERBOX       "Use Letter box"                      ON)
 option(CLUMP_DATA_READ     "Enable Clump data read"              ON)
@@ -63,9 +61,6 @@ option(AUTO_DISABLE_STREAM_LINE_ON_MISSING_EIGEN
   ON)
 option(AUTO_DISABLE_HDF5_ON_MISSING_CXX
   "Automatically disable HAVE_HDF5 when HDF5 C++ bindings are unavailable"
-  ON)
-option(AUTO_DISABLE_LUA_ON_MISSING_DEPS
-  "Automatically disable USE_LUA when Lua development files are unavailable"
   ON)
 option(AUTO_DISABLE_POWER_SPECTRUM_ON_MISSING_FFTW
   "Automatically disable POWER_SPECTRUM when FFTW3 is unavailable"
@@ -234,29 +229,6 @@ if(AUTO_DISABLE_HDF5_ON_MISSING_CXX AND HAVE_HDF5)
   endif()
 endif()
 
-if(AUTO_DISABLE_LUA_ON_MISSING_DEPS AND USE_LUA)
-  set(_AUTO_HAVE_LUA FALSE)
-  find_package(Lua QUIET)
-  if(TARGET Lua::Lua OR LUA_FOUND)
-    set(_AUTO_HAVE_LUA TRUE)
-  else()
-    find_package(PkgConfig QUIET)
-    if(PKG_CONFIG_FOUND)
-      pkg_check_modules(_AUTO_LUA_PC QUIET lua-5.4 lua5.4 lua5.3 lua)
-      if(_AUTO_LUA_PC_FOUND)
-        set(_AUTO_HAVE_LUA TRUE)
-      endif()
-    endif()
-  endif()
-
-  if(NOT _AUTO_HAVE_LUA)
-    message(WARNING
-      "USE_LUA was enabled, but Lua development files were not found. "
-      "Disabling USE_LUA for this build.")
-    set(USE_LUA OFF CACHE BOOL "Enable Lua" FORCE)
-  endif()
-endif()
-
 if(NOT HAVE_HDF5 AND CLUMP_DATA_READ)
   message(STATUS "CLUMP_DATA_READ requires HDF5; disabling CLUMP_DATA_READ")
   set(CLUMP_DATA_READ OFF CACHE BOOL "Enable Clump data read" FORCE)
@@ -405,7 +377,7 @@ function(particle_vis_add_glfw_submodule_if_present)
 endfunction()
 
 foreach(_particle_vis_dep IN ITEMS
-    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json lua)
+    glfw glm eigen hdf5 libzmq cppzmq nlohmann_json)
   particle_vis_register_dependency_prefixes("${_particle_vis_dep}")
 endforeach()
 
@@ -794,7 +766,7 @@ if(APPLE)
   find_program(_BREW brew)
   if(_BREW)
     # List the required Homebrew packages.
-    set(_brew_packages libomp hdf5 lua eigen)
+    set(_brew_packages libomp hdf5 eigen)
     if(PYTHON_BRIDGE)
       list(APPEND _brew_packages zeromq cppzmq nlohmann-json)
     endif()
@@ -1323,40 +1295,8 @@ if(HAVE_HDF5)
   endif()
 endif()
 
-# ===== Lua =====
-if(USE_LUA)
-# 1)  CMake  FindLua
-  find_package(Lua QUIET)
-
-# CMake module mode  LUA_FOUND / LUA_LIBRARIES / LUA_INCLUDE_DIR
-  if(TARGET Lua::Lua)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Lua::Lua)
-    message(STATUS "Lua: using imported target Lua::Lua")
-  elseif(LUA_FOUND)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIR})
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
-    message(STATUS "Lua: include=${LUA_INCLUDE_DIR}")
-    message(STATUS "Lua: libs=${LUA_LIBRARIES}")
-# 2) pkg-config fallback macOS/Linux
-  elseif(PKG_CONFIG_FOUND)
-    pkg_check_modules(LUA QUIET lua-5.4 lua5.4 lua5.3 lua)
-    if(LUA_FOUND)
-      target_include_directories(${PROJECT_NAME} PRIVATE ${LUA_INCLUDE_DIRS})
-      target_link_directories(${PROJECT_NAME} PRIVATE ${LUA_LIBRARY_DIRS})
-      target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
-      message(STATUS "Lua: pkg-config include=${LUA_INCLUDE_DIRS}")
-      message(STATUS "Lua: pkg-config libs=${LUA_LIBRARIES}")
-    else()
-      message(WARNING "Lua not found.")
-    endif()
-  else()
-      message(WARNING "Lua not found.")
-  endif()
-endif()
-
 # ===== Compile definitions passed to C++ =====
 add_def(DEBUG_MODE          DEBUG_MODE)
-add_def(USE_LUA             USE_LUA)
 add_def(USE_CONVEX_HULL     USE_CONVEX_HULL)
 add_def(USE_LETTERBOX       USE_LETTERBOX)
 add_def(CLUMP_DATA_READ     CLUMP_DATA_READ)
@@ -1452,29 +1392,6 @@ function(link_hdf5_to tgt)
       ${HDF5_MANUAL_C_LIBRARY})
   else()
     message(FATAL_ERROR "HDF5 was enabled but no link information is available for target ${tgt}.")
-  endif()
-endfunction()
-
-function(link_lua_to tgt)
-  if(NOT USE_LUA)
-    return()
-  endif()
-
-  if(TARGET Lua::Lua)
-    target_compile_definitions(${tgt} PRIVATE USE_LUA)
-    target_link_libraries(${tgt} PRIVATE Lua::Lua)
-  elseif(LUA_FOUND AND LUA_LIBRARIES)
-    target_compile_definitions(${tgt} PRIVATE USE_LUA)
-    if(LUA_INCLUDE_DIR)
-      target_include_directories(${tgt} PRIVATE ${LUA_INCLUDE_DIR})
-    endif()
-    if(LUA_INCLUDE_DIRS)
-      target_include_directories(${tgt} PRIVATE ${LUA_INCLUDE_DIRS})
-    endif()
-    if(LUA_LIBRARY_DIRS)
-      target_link_directories(${tgt} PRIVATE ${LUA_LIBRARY_DIRS})
-    endif()
-    target_link_libraries(${tgt} PRIVATE ${LUA_LIBRARIES})
   endif()
 endfunction()
 
@@ -1601,7 +1518,6 @@ if(PARTICLE_VIS_BUILD_BATCH)
 
   link_glm_headers_to(particle_vis_batch)
   link_hdf5_to(particle_vis_batch)
-  link_lua_to(particle_vis_batch)
   link_nlohmann_json_to(particle_vis_batch)
   if(GEOMETRICAL_ANALYSIS)
     link_eigen_to(particle_vis_batch)
