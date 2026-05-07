@@ -2029,14 +2029,38 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
     int py = static_cast<int>((v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y);
       
     const float radius = std::max(pointSize * 0.5f, 0.5f);
+    const int iradius = std::max(1, static_cast<int>(std::round(radius)));
+    const int thickness =
+      std::max(1, static_cast<int>(std::round(radius * 0.35f)));
     if (overlay.symbol == ProjectionParticleSymbol::Asterisk) {
       canvas.drawAsterisk(px,
                           py,
-                          std::max(1, static_cast<int>(std::round(radius))),
+                          iradius,
                           ur,
                           ug,
                           ub,
                           a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::FilledCircle) {
+      canvas.drawFilledCircle(px, py, radius, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Ring) {
+      canvas.drawCircleOutline(px,
+                               py,
+                               radius,
+                               std::max(1.0f, radius * 0.35f),
+                               ur,
+                               ug,
+                               ub,
+                               a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Star) {
+      canvas.drawFivePointStar(px, py, radius, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Plus) {
+      canvas.drawPlus(px, py, iradius, thickness, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Cross) {
+      canvas.drawCross(px, py, iradius, thickness, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Diamond) {
+      canvas.drawDiamond(px, py, iradius, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::Square) {
+      canvas.drawSquare(px, py, iradius, ur, ug, ub, a);
     } else {
       canvas.drawSoftCircle(px, py, radius, ur, ug, ub, a);
     }

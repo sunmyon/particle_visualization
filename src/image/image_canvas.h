@@ -70,6 +70,23 @@ public:
 		    unsigned char b,
 		    float alpha = 1.0f);
 
+  void drawFilledCircle(int centerX,
+                        int centerY,
+                        float radius,
+                        unsigned char r,
+                        unsigned char g,
+                        unsigned char b,
+                        float alpha = 1.0f);
+
+  void drawCircleOutline(int centerX,
+                         int centerY,
+                         float radius,
+                         float thickness,
+                         unsigned char r,
+                         unsigned char g,
+                         unsigned char b,
+                         float alpha = 1.0f);
+
   void drawSoftCircle(int centerX,
                       int centerY,
                       float radius,
@@ -77,6 +94,48 @@ public:
                       unsigned char g,
                       unsigned char b,
                       float alpha = 1.0f);
+
+  void drawFivePointStar(int centerX,
+                         int centerY,
+                         float radius,
+                         unsigned char r,
+                         unsigned char g,
+                         unsigned char b,
+                         float alpha = 1.0f);
+
+  void drawPlus(int centerX,
+                int centerY,
+                int radius,
+                int thickness,
+                unsigned char r,
+                unsigned char g,
+                unsigned char b,
+                float alpha = 1.0f);
+
+  void drawCross(int centerX,
+                 int centerY,
+                 int radius,
+                 int thickness,
+                 unsigned char r,
+                 unsigned char g,
+                 unsigned char b,
+                 float alpha = 1.0f);
+
+  void drawDiamond(int centerX,
+                   int centerY,
+                   int radius,
+                   unsigned char r,
+                   unsigned char g,
+                   unsigned char b,
+                   float alpha = 1.0f);
+
+  void drawSquare(int centerX,
+                  int centerY,
+                  int radius,
+                  unsigned char r,
+                  unsigned char g,
+                  unsigned char b,
+                  float alpha = 1.0f);
   
   void copyRgbImage(const std::vector<unsigned char>& src,
                     int srcWidth,

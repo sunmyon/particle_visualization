@@ -4,6 +4,36 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cmath>
+#include <array>
+#include <limits>
+
+namespace {
+float DistanceToSegment(float px,
+                        float py,
+                        float x0,
+                        float y0,
+                        float x1,
+                        float y1)
+{
+  const float vx = x1 - x0;
+  const float vy = y1 - y0;
+  const float wx = px - x0;
+  const float wy = py - y0;
+  const float len2 = vx * vx + vy * vy;
+  if (len2 <= 0.0f) {
+    const float dx = px - x0;
+    const float dy = py - y0;
+    return std::sqrt(dx * dx + dy * dy);
+  }
+
+  const float t = std::clamp((wx * vx + wy * vy) / len2, 0.0f, 1.0f);
+  const float cx = x0 + t * vx;
+  const float cy = y0 + t * vy;
+  const float dx = px - cx;
+  const float dy = py - cy;
+  return std::sqrt(dx * dx + dy * dy);
+}
+} // namespace
 
 ImageCanvas::ImageCanvas(std::vector<unsigned char>& rgb,
                          int width,
@@ -256,23 +286,98 @@ void ImageCanvas::drawAsterisk(int centerX,
 {
   if (radius <= 0) return;
 
-  drawLine(centerX - radius, centerY,
-           centerX + radius, centerY,
-           r, g, b, alpha);
+  const float fr = static_cast<float>(radius);
+  const float diag = fr * 0.70710678f;
+  const float halfThickness = std::clamp(fr * 0.12f, 0.55f, 2.5f);
+  const int extent =
+    std::max(1, static_cast<int>(std::ceil(fr + halfThickness + 1.0f)));
+  const float cx = static_cast<float>(centerX);
+  const float cy = static_cast<float>(centerY);
+  const std::array<std::array<float, 4>, 4> segments = {{
+    {{cx - fr, cy, cx + fr, cy}},
+    {{cx, cy - fr, cx, cy + fr}},
+    {{cx - diag, cy - diag, cx + diag, cy + diag}},
+    {{cx - diag, cy + diag, cx + diag, cy - diag}}
+  }};
 
-  drawLine(centerX, centerY - radius,
-           centerX, centerY + radius,
-           r, g, b, alpha);
+  for (int y = centerY - extent; y <= centerY + extent; ++y) {
+    for (int x = centerX - extent; x <= centerX + extent; ++x) {
+      const float px = static_cast<float>(x) + 0.5f;
+      const float py = static_cast<float>(y) + 0.5f;
+      float minDist = std::numeric_limits<float>::max();
+      for (const auto& segment : segments) {
+        minDist = std::min(minDist,
+                           DistanceToSegment(px,
+                                             py,
+                                             segment[0],
+                                             segment[1],
+                                             segment[2],
+                                             segment[3]));
+      }
+      const float coverage =
+        std::clamp(halfThickness + 0.75f - minDist, 0.0f, 1.0f);
+      if (coverage <= 0.0f) continue;
+      blendPixel(x, y, r, g, b, alpha * coverage);
+    }
+  }
+}
 
-  const int d = static_cast<int>(radius * 0.70710678f);
+void ImageCanvas::drawFilledCircle(int centerX,
+                                   int centerY,
+                                   float radius,
+                                   unsigned char r,
+                                   unsigned char g,
+                                   unsigned char b,
+                                   float alpha)
+{
+  if (radius <= 0.0f) return;
 
-  drawLine(centerX - d, centerY - d,
-           centerX + d, centerY + d,
-           r, g, b, alpha);
+  const int extent = std::max(1, static_cast<int>(std::ceil(radius + 0.5f)));
+  for (int dy = -extent; dy <= extent; ++dy) {
+    for (int dx = -extent; dx <= extent; ++dx) {
+      const float dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+      const float coverage = std::clamp(radius + 0.5f - dist, 0.0f, 1.0f);
+      if (coverage <= 0.0f) continue;
+      blendPixel(centerX + dx,
+                 centerY + dy,
+                 r,
+                 g,
+                 b,
+                 alpha * coverage);
+    }
+  }
+}
 
-  drawLine(centerX - d, centerY + d,
-           centerX + d, centerY - d,
-           r, g, b, alpha);
+void ImageCanvas::drawCircleOutline(int centerX,
+                                    int centerY,
+                                    float radius,
+                                    float thickness,
+                                    unsigned char r,
+                                    unsigned char g,
+                                    unsigned char b,
+                                    float alpha)
+{
+  if (radius <= 0.0f || thickness <= 0.0f) return;
+
+  const float halfThickness = thickness * 0.5f;
+  const int extent =
+    std::max(1, static_cast<int>(std::ceil(radius + halfThickness + 0.5f)));
+  for (int dy = -extent; dy <= extent; ++dy) {
+    for (int dx = -extent; dx <= extent; ++dx) {
+      const float dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+      const float coverage =
+        std::clamp(halfThickness + 0.5f - std::abs(dist - radius),
+                   0.0f,
+                   1.0f);
+      if (coverage <= 0.0f) continue;
+      blendPixel(centerX + dx,
+                 centerY + dy,
+                 r,
+                 g,
+                 b,
+                 alpha * coverage);
+    }
+  }
 }
 
 void ImageCanvas::drawSoftCircle(int centerX,
@@ -304,6 +409,150 @@ void ImageCanvas::drawSoftCircle(int centerX,
   }
 }
 
+void ImageCanvas::drawFivePointStar(int centerX,
+                                    int centerY,
+                                    float radius,
+                                    unsigned char r,
+                                    unsigned char g,
+                                    unsigned char b,
+                                    float alpha)
+{
+  if (radius <= 0.0f) return;
+
+  constexpr float pi = 3.14159265358979323846f;
+  std::array<float, 10> vx{};
+  std::array<float, 10> vy{};
+  const float innerRadius = radius * 0.45f;
+  for (int i = 0; i < 10; ++i) {
+    const float angle = -0.5f * pi + static_cast<float>(i) * pi / 5.0f;
+    const float rr = (i % 2 == 0) ? radius : innerRadius;
+    vx[static_cast<size_t>(i)] = centerX + std::cos(angle) * rr;
+    vy[static_cast<size_t>(i)] = centerY + std::sin(angle) * rr;
+  }
+
+  const int extent = std::max(1, static_cast<int>(std::ceil(radius)));
+  for (int y = centerY - extent; y <= centerY + extent; ++y) {
+    for (int x = centerX - extent; x <= centerX + extent; ++x) {
+      const float px = static_cast<float>(x) + 0.5f;
+      const float py = static_cast<float>(y) + 0.5f;
+      bool inside = false;
+      for (int i = 0, j = 9; i < 10; j = i++) {
+        const bool crosses =
+          ((vy[static_cast<size_t>(i)] > py) !=
+           (vy[static_cast<size_t>(j)] > py)) &&
+          (px <
+           (vx[static_cast<size_t>(j)] - vx[static_cast<size_t>(i)]) *
+             (py - vy[static_cast<size_t>(i)]) /
+             (vy[static_cast<size_t>(j)] - vy[static_cast<size_t>(i)]) +
+             vx[static_cast<size_t>(i)]);
+        if (crosses) inside = !inside;
+      }
+      if (inside) {
+        blendPixel(x, y, r, g, b, alpha);
+      }
+    }
+  }
+}
+
+void ImageCanvas::drawPlus(int centerX,
+                           int centerY,
+                           int radius,
+                           int thickness,
+                           unsigned char r,
+                           unsigned char g,
+                           unsigned char b,
+                           float alpha)
+{
+  if (radius <= 0 || thickness <= 0) return;
+
+  const int half = std::max(0, thickness / 2);
+  blendRect(centerX - radius,
+            centerY - half,
+            centerX + radius + 1,
+            centerY + half + 1,
+            r,
+            g,
+            b,
+            alpha);
+  blendRect(centerX - half,
+            centerY - radius,
+            centerX + half + 1,
+            centerY + radius + 1,
+            r,
+            g,
+            b,
+            alpha);
+}
+
+void ImageCanvas::drawCross(int centerX,
+                            int centerY,
+                            int radius,
+                            int thickness,
+                            unsigned char r,
+                            unsigned char g,
+                            unsigned char b,
+                            float alpha)
+{
+  if (radius <= 0 || thickness <= 0) return;
+
+  const int half = std::max(0, thickness / 2);
+  for (int offset = -half; offset <= half; ++offset) {
+    drawLine(centerX - radius,
+             centerY - radius + offset,
+             centerX + radius,
+             centerY + radius + offset,
+             r,
+             g,
+             b,
+             alpha);
+    drawLine(centerX - radius,
+             centerY + radius + offset,
+             centerX + radius,
+             centerY - radius + offset,
+             r,
+             g,
+             b,
+             alpha);
+  }
+}
+
+void ImageCanvas::drawDiamond(int centerX,
+                              int centerY,
+                              int radius,
+                              unsigned char r,
+                              unsigned char g,
+                              unsigned char b,
+                              float alpha)
+{
+  if (radius <= 0) return;
+
+  for (int dy = -radius; dy <= radius; ++dy) {
+    const int halfWidth = radius - std::abs(dy);
+    for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
+      blendPixel(centerX + dx, centerY + dy, r, g, b, alpha);
+    }
+  }
+}
+
+void ImageCanvas::drawSquare(int centerX,
+                             int centerY,
+                             int radius,
+                             unsigned char r,
+                             unsigned char g,
+                             unsigned char b,
+                             float alpha)
+{
+  if (radius <= 0) return;
+
+  blendRect(centerX - radius,
+            centerY - radius,
+            centerX + radius + 1,
+            centerY + radius + 1,
+            r,
+            g,
+            b,
+            alpha);
+}
 
 void ImageCanvas::copyRgbImage(const std::vector<unsigned char>& src,
                                int srcWidth,

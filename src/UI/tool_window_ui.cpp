@@ -1546,7 +1546,17 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           }
 
           ImGui::TableSetColumnIndex(3);
-          const char* symbolLabels[] = { "Soft circle", "Asterisk" };
+          const char* symbolLabels[] = {
+            "Soft circle",
+            "Asterisk",
+            "Filled circle",
+            "Ring",
+            "Star",
+            "Plus",
+            "Cross",
+            "Diamond",
+            "Square"
+          };
           int symbol = static_cast<int>(starOverlay.symbol);
           ImGui::SetNextItemWidth(116.0f);
           if (ImGui::Combo("Symbol##star_color",

@@ -32,7 +32,14 @@ enum class ProjectionParticleSizeScale : int {
 };
 enum class ProjectionParticleSymbol : int {
   SoftCircle = 0,
-  Asterisk = 1
+  Asterisk = 1,
+  FilledCircle = 2,
+  Ring = 3,
+  Star = 4,
+  Plus = 5,
+  Cross = 6,
+  Diamond = 7,
+  Square = 8
 };
 
 inline constexpr int kProjectionMaxViewBlocks = 4;
@@ -484,7 +491,7 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
     overlay.opacity = std::clamp(overlay.opacity, 0.0f, 1.0f);
     overlay.symbol =
       static_cast<ProjectionParticleSymbol>(
-        std::clamp(static_cast<int>(overlay.symbol), 0, 1));
+        std::clamp(static_cast<int>(overlay.symbol), 0, 8));
   }
   for (int i = 0; i < params.vectorOverlayCount; ++i) {
     if (params.vectorOverlays[i].name[0] == '\0') {
