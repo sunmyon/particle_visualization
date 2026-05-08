@@ -6,6 +6,10 @@
 #include <imgui_impl_opengl3.h>
 #include "implot.h"
 
+#include <algorithm>
+#include <array>
+#include <filesystem>
+
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND
 #include "platform/vulkan_context.h"
 #include <imgui_impl_vulkan.h>
@@ -21,6 +25,47 @@
 
 namespace {
 
+void ConfigureImGuiStyleAndFont()
+{
+  ImGui::StyleColorsDark();
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImFontConfig fontConfig;
+  fontConfig.OversampleH = 3;
+  fontConfig.OversampleV = 2;
+  fontConfig.PixelSnapH = false;
+  fontConfig.SizePixels = 15.5f;
+
+  const std::array<std::filesystem::path, 4> fontCandidates = {
+    std::filesystem::path("external/imgui/misc/fonts/Roboto-Medium.ttf"),
+    std::filesystem::path("../external/imgui/misc/fonts/Roboto-Medium.ttf"),
+    std::filesystem::path("external/imgui/misc/fonts/DroidSans.ttf"),
+    std::filesystem::path("../external/imgui/misc/fonts/DroidSans.ttf")
+  };
+
+  bool loadedFont = false;
+  for (const std::filesystem::path& path : fontCandidates) {
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    if (io.Fonts->AddFontFromFileTTF(path.string().c_str(),
+                                     fontConfig.SizePixels,
+                                     &fontConfig)) {
+      loadedFont = true;
+      break;
+    }
+  }
+
+  if (!loadedFont) {
+    io.Fonts->AddFontDefault(&fontConfig);
+  }
+
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.FramePadding.y = std::max(style.FramePadding.y, 4.0f);
+  style.ItemSpacing.y = std::max(style.ItemSpacing.y, 5.0f);
+  style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+}
+
 class HeadlessOpenGLImGuiBackend final : public ImGuiBackend {
 public:
   HeadlessOpenGLImGuiBackend(int width, int height)
@@ -34,7 +79,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
@@ -103,7 +148,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
@@ -192,7 +237,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
@@ -252,7 +297,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
@@ -334,7 +379,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
@@ -415,7 +460,7 @@ public:
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::StyleColorsDark();
+    ConfigureImGuiStyleAndFont();
 
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(static_cast<float>(width_),

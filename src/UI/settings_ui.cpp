@@ -233,9 +233,11 @@ static void DrawRenderSnapshotSection(SettingsActionRequestState& request)
 {
   ImGui::Spacing();
   ImGui::BeginChild("RenderSnapshotPanel",
-                    ImVec2(0.0f, 120.0f),
-                    true,
-                    ImGuiWindowFlags_NoScrollbar);
+                    ImVec2(0.0f, 0.0f),
+                    ImGuiChildFlags_Borders |
+                      ImGuiChildFlags_AutoResizeY |
+                      ImGuiChildFlags_AlwaysUseWindowPadding,
+                    ImGuiWindowFlags_NoSavedSettings);
   ImGui::TextUnformatted("Render snapshot");
 
   if (ImGui::Button("Save render snapshot")) {
