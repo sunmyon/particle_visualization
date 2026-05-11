@@ -1698,7 +1698,7 @@ ActiveOutputField MakeActiveOutputField(const FieldSpec& field)
   ActiveOutputField active;
   active.field = field;
   active.outputName = OutputDatasetName(field);
-  active.typeMask = 0x3fu;
+  active.typeMask = field.typeMask;
   return active;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 #include "render/render_backend.h"
 
@@ -41,8 +42,15 @@ struct SettingsMemoryView {
   size_t gpuVolumeCacheBytes = 0;
   bool systemAvailableKnown = false;
   size_t systemAvailableBytes = 0;
+  bool processMemoryKnown = false;
+  size_t processMemoryBytes = 0;
   bool gpuAvailableKnown = false;
   size_t gpuAvailableBytes = 0;
+  bool gpuAllocatedKnown = false;
+  size_t gpuAllocatedBytes = 0;
+  bool gpuBudgetKnown = false;
+  size_t gpuBudgetBytes = 0;
+  std::string gpuDeviceName;
   RenderBackendTimingInfo timing;
 };
 

@@ -117,6 +117,26 @@ bool DrawGadgetTypeCombo(FieldSpec& spec)
   return changed;
 }
 
+void DrawFieldTypeMaskCheckboxes(FieldSpec& spec, const char* idPrefix)
+{
+  for (int type = 0; type < 6; ++type) {
+    bool enabled =
+      (spec.typeMask & static_cast<std::uint8_t>(1u << type)) != 0;
+    char label[32];
+    std::snprintf(label, sizeof(label), "T%d##%s%d", type, idPrefix, type);
+    if (ImGui::Checkbox(label, &enabled)) {
+      if (enabled) {
+        spec.typeMask |= static_cast<std::uint8_t>(1u << type);
+      } else {
+        spec.typeMask &= static_cast<std::uint8_t>(~(1u << type));
+      }
+    }
+    if (type != 2 && type != 5) {
+      ImGui::SameLine();
+    }
+  }
+}
+
 bool HandleGadgetIndexDragDrop(std::vector<FieldSpec>& tokens, int rowIndex)
 {
   char label[32];
@@ -534,7 +554,7 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
     tokens.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("FieldTable", 6,
+  if (ImGui::BeginTable("FieldTable", 7,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
@@ -542,9 +562,10 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
                         ImVec2(0.0f, 0.0f))) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 190.0f);
     ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 120.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
     ImGui::TableHeadersRow();
 
@@ -579,6 +600,9 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
           spec.sourceName = buf;
         }
       }
+
+      ImGui::TableNextColumn();
+      DrawFieldTypeMaskCheckboxes(spec, "simple_hdf5_type");
 
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1);
@@ -1211,13 +1235,14 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
     return;
   }
 
-  if (ImGui::BeginTable("FieldTable", 6,
+  if (ImGui::BeginTable("FieldTable", 7,
                         ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 190.0f);
     ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 120.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
     ImGui::TableHeadersRow();
 
@@ -1255,6 +1280,9 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
 
         ImGui::PopItemWidth();
       }
+
+      ImGui::TableNextColumn();
+      DrawFieldTypeMaskCheckboxes(state.formatTokensEdit[i], "hdf5_type");
 
       ImGui::TableNextColumn();
       if (ImGui::BeginCombo("##typeCombo",

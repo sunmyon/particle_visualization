@@ -3011,12 +3011,22 @@ public:
       return info;
     }
 
+    info.gpuDeviceName = [[device name] UTF8String];
     const unsigned long long recommended = [device recommendedMaxWorkingSetSize];
     const unsigned long long allocated = [device currentAllocatedSize];
+    info.gpuAllocatedKnown = true;
+    info.gpuAllocatedBytes = static_cast<std::size_t>(allocated);
+    if (recommended > 0) {
+      info.gpuBudgetKnown = true;
+      info.gpuBudgetBytes = static_cast<std::size_t>(recommended);
+    }
     if (recommended > 0 && recommended > allocated) {
       info.gpuAvailableKnown = true;
       info.gpuAvailableBytes =
         static_cast<std::size_t>(recommended - allocated);
+    } else if (recommended > 0) {
+      info.gpuAvailableKnown = true;
+      info.gpuAvailableBytes = 0;
     }
     return info;
   }

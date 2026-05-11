@@ -3,10 +3,27 @@
 #include <string>
 #include <vector>
 
+enum class ClumpFinderPlotQuantity : int {
+  MassMsun = 0,
+  Density = 1,
+  Temperature = 2,
+  PeakValue = 3,
+  Count = 4,
+  StellarMassMsun = 5,
+  StellarCount = 6,
+  Depth = 7
+};
+
+static constexpr int kNumClumpFinderPlotQuantities = 8;
+
 struct ClumpFinderRowView {
   int sourceIndex = -1;
   int count = 0;
   double mass = 0.0;
+  double stellarMass = 0.0;
+  int stellarCount = 0;
+  float density = 0.0f;
+  float temperature = 0.0f;
   float pos[3] = {0.f, 0.f, 0.f};
   float vpeak = 0.0f;
   bool isLeaf = false;
@@ -34,6 +51,7 @@ struct ClumpFinderWindowState {
   bool requestSortByHierarchy = false;
   bool requestApplyHullSelection = false;
   bool requestComputeHistogram = false;
+  bool requestComputeScatter = false;
   bool requestFocusRow = false;
   int focusRowIndex = -1;
   bool clumpsComputed = false;
@@ -46,19 +64,35 @@ struct ClumpFinderWindowState {
   bool requestOutputHdf5 = false;
 #endif
 
-  bool histogramAutoRange = true;
-  float histogramRangeMin = 0.0f;
-  float histogramRangeMax = 1.0f;
+  int histogramSelectedVar = static_cast<int>(ClumpFinderPlotQuantity::MassMsun);
+  float histogramRangeMin = 1.0f;
+  float histogramRangeMax = 1.0e8f;
+  float histogramCountMin = 0.0f;
+  float histogramCountMax = 100.0f;
 
-  bool histogramLogScaleX = false;
+  bool histogramLogScaleX = true;
   bool histogramLogScaleY = false;
 
   int histogramBins = 50;
-  bool histogramBinsAuto = false;
 
   bool histogramComputed = false;
   uint64_t histogramVersion = 0;
-  std::vector<float> massHistogramValues;
+  std::vector<float> histogramValues;
+
+  int scatterXVar = static_cast<int>(ClumpFinderPlotQuantity::MassMsun);
+  int scatterYVar = static_cast<int>(ClumpFinderPlotQuantity::Temperature);
+  int plotYSelection = 0;
+  bool scatterLogScaleX = true;
+  bool scatterLogScaleY = true;
+  float scatterRangeXMin = 1.0f;
+  float scatterRangeXMax = 1.0e8f;
+  float scatterRangeYMin = 1.0f;
+  float scatterRangeYMax = 1.0e8f;
+  bool scatterComputed = false;
+  uint64_t scatterVersion = 0;
+  std::vector<float> scatterXValues;
+  std::vector<float> scatterYValues;
+
   std::vector<ClumpFinderRowView> rows;
   std::vector<bool> showHull;
   bool exportHistogramPackage = true;

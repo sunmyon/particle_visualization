@@ -1,10 +1,12 @@
 #include "app/state/clump_window_state.h"
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <cstdio>
 #include <functional>
+#include <string>
 #include <unordered_map>
 #include <glm/vec3.hpp>
 #include <imgui.h>
@@ -19,6 +21,78 @@ constexpr const char* kClumpFinderQuantities[] = {
 };
 constexpr int kNumClumpFinderQuantities =
   static_cast<int>(sizeof(kClumpFinderQuantities) / sizeof(kClumpFinderQuantities[0]));
+
+constexpr const char* kClumpFinderPlotQuantityLabels[] = {
+  "Mass [Msun]",
+  "Density",
+  "Temperature",
+  "Peak value",
+  "Count",
+  "Stellar mass [Msun]",
+  "Stellar count",
+  "Depth"
+};
+
+constexpr const char* kClumpFinderPlotYLabels[] = {
+  "Histogram",
+  "Mass [Msun]",
+  "Density",
+  "Temperature",
+  "Peak value",
+  "Count",
+  "Stellar mass [Msun]",
+  "Stellar count",
+  "Depth"
+};
+
+const char* ClumpPlotQuantityLabel(int quantity)
+{
+  if (quantity < 0 || quantity >= kNumClumpFinderPlotQuantities) {
+    quantity = 0;
+  }
+  return kClumpFinderPlotQuantityLabels[quantity];
+}
+
+std::string ClumpPlotAxisLabel(int quantity, bool logScale)
+{
+  std::string label = ClumpPlotQuantityLabel(quantity);
+  if (logScale) {
+    return "log10(" + label + ")";
+  }
+  return label;
+}
+
+int QuantityFromYSelection(int selection)
+{
+  return std::clamp(selection - 1, 0, kNumClumpFinderPlotQuantities - 1);
+}
+
+float TransformClumpAxisLimit(float value, bool logScale)
+{
+  if (!logScale) {
+    return value;
+  }
+  if (!std::isfinite(value) || value <= 0.0f) {
+    return 0.0f;
+  }
+  return std::log10(value);
+}
+
+void TransformClumpAxisRange(float minValue,
+                             float maxValue,
+                             bool logScale,
+                             float& outMin,
+                             float& outMax)
+{
+  outMin = TransformClumpAxisLimit(minValue, logScale);
+  outMax = TransformClumpAxisLimit(maxValue, logScale);
+  if (!(outMax > outMin) ||
+      !std::isfinite(outMin) ||
+      !std::isfinite(outMax)) {
+    outMin = logScale ? -1.0f : 0.0f;
+    outMax = logScale ? 1.0f : 1.0f;
+  }
+}
 
 std::string MakeExportTimestamp()
 {
@@ -101,6 +175,9 @@ void BuildHistogramBins(const std::vector<float>& samples,
     centers[static_cast<size_t>(i)] = xmin + (static_cast<float>(i) + 0.5f) * binSize;
   }
   for (float v : samples) {
+    if (!std::isfinite(v) || v < xmin || v > xmax) {
+      continue;
+    }
     int bin = static_cast<int>((v - xmin) / binSize);
     if (bin < 0) bin = 0;
     if (bin >= bins) bin = bins - 1;
@@ -120,27 +197,43 @@ void ExportClumpFinderHistogramIfNeeded(ClumpFinderWindowState& ui,
   std::vector<float> centers;
   std::vector<float> counts;
   float binSize = 1.0f;
-  BuildHistogramBins(ui.massHistogramValues,
-                     ui.histogramBinsAuto ? std::max(1, ui.histogramBins) : ui.histogramBins,
-                     ui.histogramRangeMin,
-                     ui.histogramRangeMax,
+  float xMin = 0.0f;
+  float xMax = 1.0f;
+  TransformClumpAxisRange(ui.histogramRangeMin,
+                          ui.histogramRangeMax,
+                          ui.histogramLogScaleX,
+                          xMin,
+                          xMax);
+
+  BuildHistogramBins(ui.histogramValues,
+                     ui.histogramBins,
+                     xMin,
+                     xMax,
                      centers,
                      counts,
                      binSize);
 
-  float yMax = 1.0f;
-  for (float v : counts) yMax = std::max(yMax, v);
-
   BarHistogramPlotExportParams params;
-  params.kind = "clump_finder_mass_histogram";
-  params.title = "Clump Mass Histogram";
-  params.xLabel = ui.histogramLogScaleX ? "log10(Mass)" : "Mass";
+  float yMin = ui.histogramCountMin;
+  float yMax = ui.histogramCountMax;
+  if (!(yMax > yMin) || !std::isfinite(yMin) || !std::isfinite(yMax)) {
+    yMin = ui.histogramLogScaleY ? 0.8f : 0.0f;
+    yMax = 100.0f;
+  }
+  if (ui.histogramLogScaleY && yMin <= 0.0f) {
+    yMin = 0.8f;
+  }
+
+  params.kind = "clump_finder_histogram";
+  params.title = "Clump Histogram";
+  params.xLabel = ClumpPlotAxisLabel(ui.histogramSelectedVar,
+                                     ui.histogramLogScaleX);
   params.yLabel = "Count";
   params.logX = false;
   params.logY = ui.histogramLogScaleY;
-  params.xMin = ui.histogramRangeMin;
-  params.xMax = ui.histogramRangeMax;
-  params.yMin = ui.histogramLogScaleY ? 0.8f : 0.0f;
+  params.xMin = xMin;
+  params.xMax = xMax;
+  params.yMin = yMin;
   params.yMax = yMax;
   params.binSize = binSize;
 
@@ -254,7 +347,7 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
     std::snprintf(label,
                   labelSize,
                   "#%d %s depth=%d parent=%d children=%d count=%d "
-                  "mass=%.3g Msun pos=(%.3g, %.3g, %.3g)",
+                  "mass=%.3g Msun mstar=%.3g Msun pos=(%.3g, %.3g, %.3g)",
                   row.sourceIndex,
                   kind,
                   row.depth,
@@ -262,6 +355,7 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
                   row.childCount,
                   row.count,
                   row.mass,
+                  row.stellarMass,
                   row.pos[0],
                   row.pos[1],
                   row.pos[2]);
@@ -439,64 +533,173 @@ static void DrawClumpListSection(ClumpFinderWindowState& ui)
 static void DrawClumpHistogramSection(ClumpFinderWindowState& ui,
                                       const PlotBatchExportViewContext& exportContext)
 {
-  if (!ImGui::CollapsingHeader("Clump Mass Histogram")) {
+  if (!ImGui::CollapsingHeader("Clump Plots")) {
     return;
   }
 
-  ImGui::Checkbox("Auto Range", &ui.histogramAutoRange);
-  if (!ui.histogramAutoRange) {
-    ImGui::InputFloat("X Axis Min", &ui.histogramRangeMin, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &ui.histogramRangeMax, 0.0f, 0.0f, "%g");
-  }
+  ui.plotYSelection =
+    std::clamp(ui.plotYSelection, 0, kNumClumpFinderPlotQuantities);
+  const bool yIsHistogram = ui.plotYSelection == 0;
 
-  ImGui::Checkbox("Use Log scale X", &ui.histogramLogScaleX);
+  ImGui::TextUnformatted("X/Y plot");
+  ImGui::Combo("X##clump_plot_x",
+               &ui.scatterXVar,
+               kClumpFinderPlotQuantityLabels,
+               kNumClumpFinderPlotQuantities);
   ImGui::SameLine();
-  ImGui::Checkbox("Use Log scale Y", &ui.histogramLogScaleY);
+  ImGui::Combo("Y##clump_plot_y",
+               &ui.plotYSelection,
+               kClumpFinderPlotYLabels,
+               kNumClumpFinderPlotQuantities + 1);
 
-  ImGui::InputInt("Number of bins", &ui.histogramBins);
-
+  ImGui::InputFloat("X Min##clump_plot_xmin", &ui.scatterRangeXMin, 0.0f, 0.0f, "%g");
   ImGui::SameLine();
-  ImGui::Checkbox("Use auto scale Y", &ui.histogramBinsAuto);
+  ImGui::InputFloat("X Max##clump_plot_xmax", &ui.scatterRangeXMax, 0.0f, 0.0f, "%g");
 
-  if (ImGui::Button("Compute 1D Histogram")) {
-    ui.requestComputeHistogram = true;
-  }
-  ImGui::Checkbox("Save plot image + JSON after compute", &ui.exportHistogramPackage);
-  if (ui.exportFolder[0] != '\0') {
-    ImGui::TextWrapped("Export folder: %s", ui.exportFolder);
-  }
-  if (ui.lastExportStatus[0] != '\0') {
-    ImGui::TextWrapped("%s", ui.lastExportStatus);
+  if (yIsHistogram) {
+    ImGui::InputFloat("Count Min##clump_plot_count_min",
+                      &ui.histogramCountMin,
+                      0.0f,
+                      0.0f,
+                      "%g");
+    ImGui::SameLine();
+    ImGui::InputFloat("Count Max##clump_plot_count_max",
+                      &ui.histogramCountMax,
+                      0.0f,
+                      0.0f,
+                      "%g");
+  } else {
+    ImGui::InputFloat("Y Min##clump_plot_ymin", &ui.scatterRangeYMin, 0.0f, 0.0f, "%g");
+    ImGui::SameLine();
+    ImGui::InputFloat("Y Max##clump_plot_ymax", &ui.scatterRangeYMax, 0.0f, 0.0f, "%g");
   }
 
-  if (!ui.histogramComputed) {
-    return;
+  ImGui::Checkbox("Log X##clump_plot_logx", &ui.scatterLogScaleX);
+  ImGui::SameLine();
+  if (yIsHistogram) {
+    ImGui::Checkbox("Log Count##clump_plot_log_count", &ui.histogramLogScaleY);
+  } else {
+    ImGui::Checkbox("Log Y##clump_plot_logy", &ui.scatterLogScaleY);
   }
 
-  if (ImPlot::BeginPlot("Mass Histogram", ImVec2(-1, 300))) {
-    if (ui.histogramLogScaleY) {
-      ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+  if (yIsHistogram) {
+    ImGui::InputInt("Number of bins##clump_hist_bins", &ui.histogramBins);
+    ui.histogramBins = std::max(1, ui.histogramBins);
+  }
+
+  if (ImGui::Button("Compute Plot")) {
+    if (yIsHistogram) {
+      ui.histogramSelectedVar = ui.scatterXVar;
+      ui.histogramRangeMin = ui.scatterRangeXMin;
+      ui.histogramRangeMax = ui.scatterRangeXMax;
+      ui.histogramLogScaleX = ui.scatterLogScaleX;
+      ui.requestComputeHistogram = true;
     } else {
-      ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Linear);
+      ui.scatterYVar = QuantityFromYSelection(ui.plotYSelection);
+      ui.requestComputeScatter = true;
     }
-
-    ImPlot::SetupAxisLimits(ImAxis_X1,
-                            ui.histogramRangeMin,
-                            ui.histogramRangeMax,
-                            ImGuiCond_Always);
-
-    int bins_plot = ui.histogramBins;
-    if (ui.histogramBinsAuto) {
-      bins_plot = -1;
-    }
-
-    ImPlot::PlotHistogram("Mass",
-                          ui.massHistogramValues.data(),
-                          static_cast<int>(ui.massHistogramValues.size()),
-                          bins_plot);
-    ImPlot::EndPlot();
   }
-  ExportClumpFinderHistogramIfNeeded(ui, exportContext);
+
+  if (yIsHistogram) {
+    ImGui::SameLine();
+    ImGui::Checkbox("Save plot image + JSON after compute", &ui.exportHistogramPackage);
+    if (ui.exportFolder[0] != '\0') {
+      ImGui::TextWrapped("Export folder: %s", ui.exportFolder);
+    }
+    if (ui.lastExportStatus[0] != '\0') {
+      ImGui::TextWrapped("%s", ui.lastExportStatus);
+    }
+  }
+
+  if (yIsHistogram && ui.histogramComputed) {
+    ui.histogramSelectedVar = ui.scatterXVar;
+    ui.histogramRangeMin = ui.scatterRangeXMin;
+    ui.histogramRangeMax = ui.scatterRangeXMax;
+    ui.histogramLogScaleX = ui.scatterLogScaleX;
+
+    float xMin = 0.0f;
+    float xMax = 1.0f;
+    TransformClumpAxisRange(ui.histogramRangeMin,
+                            ui.histogramRangeMax,
+                            ui.histogramLogScaleX,
+                            xMin,
+                            xMax);
+
+    float yMin = ui.histogramCountMin;
+    float yMax = ui.histogramCountMax;
+    if (!(yMax > yMin) || !std::isfinite(yMin) || !std::isfinite(yMax)) {
+      yMin = ui.histogramLogScaleY ? 0.8f : 0.0f;
+      yMax = 100.0f;
+    }
+    if (ui.histogramLogScaleY && yMin <= 0.0f) {
+      yMin = 0.8f;
+    }
+
+    std::vector<float> centers;
+    std::vector<float> counts;
+    float binSize = 1.0f;
+    BuildHistogramBins(ui.histogramValues,
+                       ui.histogramBins,
+                       xMin,
+                       xMax,
+                       centers,
+                       counts,
+                       binSize);
+
+    const std::string xLabel =
+      ClumpPlotAxisLabel(ui.histogramSelectedVar, ui.histogramLogScaleX);
+    if (ImPlot::BeginPlot("Clump Histogram", ImVec2(-1, 300))) {
+      ImPlot::SetupAxis(ImAxis_X1, xLabel.c_str());
+      ImPlot::SetupAxis(ImAxis_Y1, "Count");
+      if (ui.histogramLogScaleY) {
+        ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+      } else {
+        ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Linear);
+      }
+      ImPlot::SetupAxisLimits(ImAxis_X1, xMin, xMax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, yMin, yMax, ImGuiCond_Always);
+
+      ImPlot::PlotBars(ClumpPlotQuantityLabel(ui.histogramSelectedVar),
+                       centers.data(),
+                       counts.data(),
+                       static_cast<int>(counts.size()),
+                       binSize);
+      ImPlot::EndPlot();
+    }
+    ExportClumpFinderHistogramIfNeeded(ui, exportContext);
+  }
+
+  if (!yIsHistogram && ui.scatterComputed) {
+    float xMin = 0.0f;
+    float xMax = 1.0f;
+    float yMin = 0.0f;
+    float yMax = 1.0f;
+    TransformClumpAxisRange(ui.scatterRangeXMin,
+                            ui.scatterRangeXMax,
+                            ui.scatterLogScaleX,
+                            xMin,
+                            xMax);
+    TransformClumpAxisRange(ui.scatterRangeYMin,
+                            ui.scatterRangeYMax,
+                            ui.scatterLogScaleY,
+                            yMin,
+                            yMax);
+    const std::string xLabel =
+      ClumpPlotAxisLabel(ui.scatterXVar, ui.scatterLogScaleX);
+    const std::string yLabel =
+      ClumpPlotAxisLabel(ui.scatterYVar, ui.scatterLogScaleY);
+    if (ImPlot::BeginPlot("Clump Scatter", ImVec2(-1, 300))) {
+      ImPlot::SetupAxis(ImAxis_X1, xLabel.c_str());
+      ImPlot::SetupAxis(ImAxis_Y1, yLabel.c_str());
+      ImPlot::SetupAxisLimits(ImAxis_X1, xMin, xMax, ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, yMin, yMax, ImGuiCond_Always);
+      ImPlot::PlotScatter("Clumps",
+                          ui.scatterXValues.data(),
+                          ui.scatterYValues.data(),
+                          static_cast<int>(ui.scatterXValues.size()));
+      ImPlot::EndPlot();
+    }
+  }
 }
 
 void DrawClumpFinderUI(ClumpFinderWindowState& ui,

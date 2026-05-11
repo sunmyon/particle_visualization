@@ -1,6 +1,7 @@
 #pragma once
 #include "data/data_type.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -50,7 +51,21 @@ struct FieldSpec {
   DataType type = DataType::Float;
   int count = 1;
   std::string sourceName;
+  std::uint8_t typeMask = 0x3fu;
 };
+
+inline std::uint8_t DefaultFieldTypeMask(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::Position:
+  case FieldKey::Velocity:
+  case FieldKey::ID:
+  case FieldKey::Mass:
+    return 0x3fu;
+  default:
+    return 0x01u;
+  }
+}
 
 inline const char* GetFieldKeyDisplayName(FieldKey key) {
   switch (key) {
@@ -135,6 +150,7 @@ inline const char* GetDefaultHDF5SourceName(FieldKey key) {
 }
 
 inline void ApplyDefaultFieldSpec(FieldSpec& spec) {
+  spec.typeMask = DefaultFieldTypeMask(spec.key);
   switch (spec.key) {
     case FieldKey::Position:
     case FieldKey::Velocity:

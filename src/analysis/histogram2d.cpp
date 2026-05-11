@@ -63,6 +63,9 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
   float min2 = 1.e30f, max2 = -1.e30f;
 
   const float* centerPtr = ctx.cameraCenter ? &ctx.cameraCenter->x : nullptr;
+  auto typeSelected = [&params](const SimulationElement& p) {
+    return p.type < 6 && static_cast<int>(p.type) == params.particleType;
+  };
 
   if (params.autoRange) {
     bool firstX = true;
@@ -70,7 +73,7 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
 
     for (size_t ipart = 0; ipart < partblock.particles.size(); ipart++) {
       const SimulationElement& p = partblock.particles[ipart];
-      if (p.type != 0) continue;
+      if (!typeSelected(p)) continue;
       if (!condition(p)) continue;
 
       float v1 = getScalarValue(partblock, p, ipart, params.var1, centerPtr);
@@ -139,9 +142,49 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
     return result;
   }
 
+  size_t validScatterCandidates = 0;
+  if (params.showScatter) {
+    for (size_t ipart = 0; ipart < partblock.particles.size(); ipart++) {
+      const SimulationElement& p = partblock.particles[ipart];
+      if (!typeSelected(p)) continue;
+      if (!condition(p)) continue;
+
+      float v1 = getScalarValue(partblock, p, ipart, params.var1, centerPtr);
+      float v2 = getScalarValue(partblock, p, ipart, params.var2, centerPtr);
+
+      if (params.logScaleX) {
+        if (v1 > 0.0f) v1 = std::log10(v1);
+        else continue;
+      }
+
+      if (params.logScaleY) {
+        if (v2 > 0.0f) v2 = std::log10(v2);
+        else continue;
+      }
+
+      if (v1 < min1 || v1 >= max1 || v2 < min2 || v2 >= max2)
+        continue;
+
+      ++validScatterCandidates;
+    }
+  }
+
+  const size_t scatterLimit =
+    static_cast<size_t>(std::clamp(params.scatterMaxPoints, 0, 10000));
+  const size_t scatterStride =
+    (params.showScatter && scatterLimit > 0 && validScatterCandidates > scatterLimit)
+      ? (validScatterCandidates + scatterLimit - 1) / scatterLimit
+      : 1;
+  size_t scatterCandidateIndex = 0;
+
+  if (params.showScatter && scatterLimit > 0) {
+    result.scatterX.reserve(std::min(validScatterCandidates, scatterLimit));
+    result.scatterY.reserve(std::min(validScatterCandidates, scatterLimit));
+  }
+
   for (size_t ipart = 0; ipart < partblock.particles.size(); ipart++) {
     const SimulationElement& p = partblock.particles[ipart];
-    if (p.type != 0) continue;
+    if (!typeSelected(p)) continue;
     if (!condition(p)) continue;
 
     float v1 = getScalarValue(partblock, p, ipart, params.var1, centerPtr);
@@ -159,6 +202,15 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
 
     if (v1 < min1 || v1 >= max1 || v2 < min2 || v2 >= max2)
       continue;
+
+    if (params.showScatter && scatterLimit > 0) {
+      if ((scatterCandidateIndex % scatterStride) == 0 &&
+          result.scatterX.size() < scatterLimit) {
+        result.scatterX.push_back(v1);
+        result.scatterY.push_back(v2);
+      }
+      ++scatterCandidateIndex;
+    }
 
     int binIndex1 = std::min(params.bins1 - 1, static_cast<int>((v1 - min1) / binSize1));
     int binIndex2 = std::min(params.bins2 - 1, static_cast<int>((v2 - min2) / binSize2));

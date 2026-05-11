@@ -783,6 +783,7 @@ bool HDF5Reader::build_opened_fields_for_ptype_(int ptype,
   for (auto& fl : layout.fields) {
     if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) continue;
     if (!fl.present) continue;
+    if ((fl.spec.typeMask & static_cast<std::uint8_t>(1u << ptype)) == 0) continue;
 
     const std::string dsName = fl.spec.sourceName;
     try {
@@ -1258,6 +1259,10 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
 {
   for (auto& fl : layout.fields) {
     if (fl.dest == DestKind::Ignore && !isTempSynthField(fl.ftype)) {
+      fl.present = false;
+      continue;
+    }
+    if ((fl.spec.typeMask & 0x3fu) == 0) {
       fl.present = false;
       continue;
     }

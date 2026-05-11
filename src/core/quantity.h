@@ -60,6 +60,8 @@ struct QuantityCatalogState {
   int nUIQ = 0;
   std::array<QuantityId,kMaxQ> allQ{};
   std::array<QuantityId,kMaxQ> uiQ{};
+  std::array<int,kNumTypes> nUIQByType{};
+  std::array<std::array<QuantityId,kMaxQ>,kNumTypes> uiQByType{};
 };
 
 struct QuantityUnitRule {

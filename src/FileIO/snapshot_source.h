@@ -48,31 +48,27 @@ public:
   void initDefaultFormatTokens() {
     formatTokens.clear();
 
-    FieldSpec token;
-    token.key = FieldKey::Position;    token.type = DataType::Float; token.count = 3;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Velocity;    token.type = DataType::Float; token.count = 3;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Type;        token.type = DataType::Int32; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::ID;          token.type = DataType::Int32; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Hsml;        token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Density;     token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Temperature; token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Dummy;       token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Value;       token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Value2;      token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Dummy;       token.type = DataType::Float; token.count = 4;
-    formatTokens.push_back(token);
-    token.key = FieldKey::Mass;        token.type = DataType::Float; token.count = 1;
-    formatTokens.push_back(token);
+    auto push = [&](FieldKey key, DataType type, int count) {
+      FieldSpec token;
+      token.key = key;
+      token.type = type;
+      token.count = count;
+      token.typeMask = DefaultFieldTypeMask(key);
+      formatTokens.push_back(token);
+    };
+
+    push(FieldKey::Position,    DataType::Float, 3);
+    push(FieldKey::Velocity,    DataType::Float, 3);
+    push(FieldKey::Type,        DataType::Int32, 1);
+    push(FieldKey::ID,          DataType::Int32, 1);
+    push(FieldKey::Hsml,        DataType::Float, 1);
+    push(FieldKey::Density,     DataType::Float, 1);
+    push(FieldKey::Temperature, DataType::Float, 1);
+    push(FieldKey::Dummy,       DataType::Float, 1);
+    push(FieldKey::Value,       DataType::Float, 1);
+    push(FieldKey::Value2,      DataType::Float, 1);
+    push(FieldKey::Dummy,       DataType::Float, 4);
+    push(FieldKey::Mass,        DataType::Float, 1);
 
     formatTokens_hdf5 = formatTokens;
   }

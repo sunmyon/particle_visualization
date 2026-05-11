@@ -1,9 +1,11 @@
 #include "app/app_frame.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -16,8 +18,11 @@
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
+extern "C" void* objc_autoreleasePoolPush(void);
+extern "C" void objc_autoreleasePoolPop(void* pool);
 #elif defined(__linux__)
 #include <sys/sysinfo.h>
+#include <unistd.h>
 #endif
 
 #include "app/state/app_state.h"
@@ -52,6 +57,96 @@
 #include "UI/clump_ui.h"
 
 namespace {
+
+class FrameAutoreleasePool {
+public:
+  FrameAutoreleasePool()
+  {
+#if defined(__APPLE__)
+    pool_ = objc_autoreleasePoolPush();
+#endif
+  }
+
+  ~FrameAutoreleasePool()
+  {
+#if defined(__APPLE__)
+    if (pool_) {
+      objc_autoreleasePoolPop(pool_);
+    }
+#endif
+  }
+
+  FrameAutoreleasePool(const FrameAutoreleasePool&) = delete;
+  FrameAutoreleasePool& operator=(const FrameAutoreleasePool&) = delete;
+
+private:
+#if defined(__APPLE__)
+  void* pool_ = nullptr;
+#endif
+};
+
+void MaybeLogGpuMemorySample(const SettingsMemoryView& memory,
+                             double currentTimeSeconds)
+{
+  const char* path = std::getenv("PARTICLE_VIS_GPU_MEMORY_LOG");
+  if (!path || path[0] == '\0') {
+    return;
+  }
+
+  static std::string logPath;
+  static bool wroteHeader = false;
+  static double lastLogTime = -1.0;
+  if (logPath != path) {
+    logPath = path;
+    wroteHeader = false;
+    lastLogTime = -1.0;
+  }
+
+  if (lastLogTime >= 0.0 && currentTimeSeconds - lastLogTime < 1.0) {
+    return;
+  }
+  lastLogTime = currentTimeSeconds;
+
+  std::ofstream out(logPath, std::ios::app);
+  if (!out) {
+    return;
+  }
+  if (!wroteHeader) {
+    out << "time_s,"
+        << "gpu_device,"
+        << "gpu_driver_allocated_bytes,"
+        << "gpu_budget_bytes,"
+        << "gpu_available_bytes,"
+        << "gpu_estimated_total_bytes,"
+        << "gpu_particle_buffer_bytes,"
+        << "gpu_particle_cache_bytes,"
+        << "gpu_volume_tree_bytes,"
+        << "gpu_volume_cache_bytes,"
+        << "cpu_rss_bytes,"
+        << "system_available_bytes\n";
+    wroteHeader = true;
+  }
+
+  const size_t gpuEstimate =
+    memory.gpuParticleBufferBytes +
+    memory.gpuParticleCacheBytes +
+    memory.gpuVolumeTreeBytes +
+    memory.gpuVolumeCacheBytes;
+  out << std::fixed << std::setprecision(3)
+      << currentTimeSeconds << ","
+      << '"' << memory.gpuDeviceName << '"' << ","
+      << (memory.gpuAllocatedKnown ? memory.gpuAllocatedBytes : 0) << ","
+      << (memory.gpuBudgetKnown ? memory.gpuBudgetBytes : 0) << ","
+      << (memory.gpuAvailableKnown ? memory.gpuAvailableBytes : 0) << ","
+      << gpuEstimate << ","
+      << memory.gpuParticleBufferBytes << ","
+      << memory.gpuParticleCacheBytes << ","
+      << memory.gpuVolumeTreeBytes << ","
+      << memory.gpuVolumeCacheBytes << ","
+      << (memory.processMemoryKnown ? memory.processMemoryBytes : 0) << ","
+      << (memory.systemAvailableKnown ? memory.systemAvailableBytes : 0)
+      << "\n";
+}
 
 std::filesystem::path MakeRenderSnapshotPath()
 {
@@ -368,6 +463,38 @@ static bool QuerySystemAvailableMemoryBytes(size_t& outBytes)
   return false;
 #endif
 }
+
+static bool QueryProcessResidentMemoryBytes(size_t& outBytes)
+{
+#if defined(__APPLE__)
+  mach_task_basic_info_data_t info{};
+  mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+  if (task_info(mach_task_self(),
+                MACH_TASK_BASIC_INFO,
+                reinterpret_cast<task_info_t>(&info),
+                &count) != KERN_SUCCESS) {
+    return false;
+  }
+  outBytes = static_cast<size_t>(info.resident_size);
+  return true;
+#elif defined(__linux__)
+  std::ifstream statm("/proc/self/statm");
+  size_t totalPages = 0;
+  size_t residentPages = 0;
+  if (!(statm >> totalPages >> residentPages)) {
+    return false;
+  }
+  const long pageSize = sysconf(_SC_PAGESIZE);
+  if (pageSize <= 0) {
+    return false;
+  }
+  outBytes = residentPages * static_cast<size_t>(pageSize);
+  return true;
+#else
+  (void)outBytes;
+  return false;
+#endif
+}
 #include "projection/projection_map_ui_state.h"
 
 #ifdef PYTHON_BRIDGE
@@ -454,6 +581,8 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
     EstimateParticleLodTreeBytes(renderSystem.scene.particleLod);
   ctx.memory.systemAvailableKnown =
     QuerySystemAvailableMemoryBytes(ctx.memory.systemAvailableBytes);
+  ctx.memory.processMemoryKnown =
+    QueryProcessResidentMemoryBytes(ctx.memory.processMemoryBytes);
 
   if (ctx.backend.particleFrameCache &&
       runtime.render.scheduling.cacheParticleFrames &&
@@ -490,10 +619,17 @@ static SettingsViewContext MakeSettingsViewContext(const AppViewState& view,
       renderSystem.backend->queryMemoryInfo();
     ctx.memory.gpuAvailableKnown = backendMemory.gpuAvailableKnown;
     ctx.memory.gpuAvailableBytes = backendMemory.gpuAvailableBytes;
+    ctx.memory.gpuAllocatedKnown = backendMemory.gpuAllocatedKnown;
+    ctx.memory.gpuAllocatedBytes = backendMemory.gpuAllocatedBytes;
+    ctx.memory.gpuBudgetKnown = backendMemory.gpuBudgetKnown;
+    ctx.memory.gpuBudgetBytes = backendMemory.gpuBudgetBytes;
+    ctx.memory.gpuDeviceName = backendMemory.gpuDeviceName;
   }
   if (renderSystem.backend) {
     ctx.memory.timing = renderSystem.backend->queryTimingInfo();
   }
+  MaybeLogGpuMemorySample(ctx.memory,
+                          runtime.render.scheduling.currentTimeSeconds);
 
 #ifdef CLUMP_DATA_READ
   ctx.analysis.clumpBatch = &analysis.clumpBatch;
@@ -650,7 +786,20 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                haloesCtx);
 #endif
   
-  Histogram2DViewContext histogram2DCtx{runtime.quantity.catalog, plotExportCtx};
+  std::array<std::size_t, 6> histogramTypeCounts{};
+  if (data.particles) {
+    for (const SimulationElement& particle :
+         data.particles->simulationBlock.particles) {
+      if (particle.type < histogramTypeCounts.size()) {
+        ++histogramTypeCounts[particle.type];
+      }
+    }
+  }
+  Histogram2DViewContext histogram2DCtx{
+    runtime.quantity.catalog,
+    histogramTypeCounts,
+    plotExportCtx
+  };
   DrawHistogram2DUI(tools.histogram2D,
                     tools.histogram2DRequest,
 		    histogram2DResult,
@@ -899,6 +1048,8 @@ void RunFrame(AppState& app,
               WindowContext& window,
               IFramePresenter& presenter)
 {
+  FrameAutoreleasePool frameAutoreleasePool;
+
   if (!BeginFrame(app.runtime, window)) {
     return;
   }

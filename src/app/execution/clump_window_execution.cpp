@@ -1,13 +1,19 @@
 #include "app/execution/clump_window_execution.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <nanoflann.hpp>
 
 #include "analysis/clump/clump_chain.h"
 #include "app/state/clump_window_state.h"
@@ -52,6 +58,206 @@ static glm::vec3 RenderToWorld(const glm::vec3& p, float worldToRenderScale)
   return p * RenderToWorldScaleOrOne(worldToRenderScale);
 }
 
+struct ClumpFinderAggregate {
+  double gasMass = 0.0;
+  double densityMassWeighted = 0.0;
+  double temperatureMassWeighted = 0.0;
+  double stellarMass = 0.0;
+  int stellarCount = 0;
+};
+
+struct ClumpGasSample {
+  float pos[3] = {0.0f, 0.0f, 0.0f};
+  float radius = 0.0f;
+  const StructureNode* owner = nullptr;
+};
+
+struct ClumpGasSampleCloud {
+  const std::vector<ClumpGasSample>* samples = nullptr;
+
+  inline size_t kdtree_get_point_count() const {
+    return samples ? samples->size() : 0;
+  }
+
+  inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
+    return (*samples)[idx].pos[dim];
+  }
+
+  template <class BBOX>
+  bool kdtree_get_bbox(BBOX&) const { return false; }
+};
+
+using ClumpGasKdTree =
+  nanoflann::KDTreeSingleIndexAdaptor<
+    nanoflann::L2_Simple_Adaptor<double, ClumpGasSampleCloud>,
+    ClumpGasSampleCloud,
+    3>;
+
+static float ClumpFinderPlotValue(const ClumpFinderRowView& row,
+                                  int quantity)
+{
+  switch (static_cast<ClumpFinderPlotQuantity>(quantity)) {
+  case ClumpFinderPlotQuantity::MassMsun:
+    return static_cast<float>(row.mass);
+  case ClumpFinderPlotQuantity::Density:
+    return row.density;
+  case ClumpFinderPlotQuantity::Temperature:
+    return row.temperature;
+  case ClumpFinderPlotQuantity::PeakValue:
+    return row.vpeak;
+  case ClumpFinderPlotQuantity::Count:
+    return static_cast<float>(row.count);
+  case ClumpFinderPlotQuantity::StellarMassMsun:
+    return static_cast<float>(row.stellarMass);
+  case ClumpFinderPlotQuantity::StellarCount:
+    return static_cast<float>(row.stellarCount);
+  case ClumpFinderPlotQuantity::Depth:
+    return static_cast<float>(row.depth);
+  }
+  return static_cast<float>(row.mass);
+}
+
+static bool AppendClumpPlotSample(const ClumpFinderRowView& row,
+                                  int quantity,
+                                  bool logScale,
+                                  std::vector<float>& out)
+{
+  float value = ClumpFinderPlotValue(row, quantity);
+  if (!std::isfinite(value)) {
+    return false;
+  }
+  if (logScale) {
+    if (value <= 0.0f) {
+      return false;
+    }
+    value = std::log10(value);
+  }
+  if (!std::isfinite(value)) {
+    return false;
+  }
+  out.push_back(value);
+  return true;
+}
+
+static void BuildClumpPlotSamples(const std::vector<ClumpFinderRowView>& rows,
+                                  int quantity,
+                                  bool logScale,
+                                  std::vector<float>& out)
+{
+  out.clear();
+  out.reserve(rows.size());
+  for (const ClumpFinderRowView& row : rows) {
+    AppendClumpPlotSample(row, quantity, logScale, out);
+  }
+}
+
+static std::unordered_map<const StructureNode*, ClumpFinderAggregate>
+BuildNearbyStellarStats(const std::vector<StructureNode*>& nodes,
+                        const std::vector<SimulationElement>& particles,
+                        float worldToRenderScale,
+                        const FindClump::Params& params)
+{
+  std::unordered_map<const StructureNode*, ClumpFinderAggregate> directStats;
+  directStats.reserve(nodes.size());
+
+  std::vector<ClumpGasSample> gasSamples;
+  gasSamples.reserve(particles.size());
+
+  const float fixedLinkingLength =
+    params.linkingLength * RenderToWorldScaleOrOne(worldToRenderScale);
+  float maxRadius = 0.0f;
+
+  for (const StructureNode* node : nodes) {
+    if (!node) {
+      continue;
+    }
+    directStats.try_emplace(node);
+    for (int idx : node->indices) {
+      if (idx < 0 || static_cast<size_t>(idx) >= particles.size()) {
+        continue;
+      }
+      const SimulationElement& particle = particles[static_cast<size_t>(idx)];
+      if (particle.type != 0) {
+        continue;
+      }
+
+      float radius = fixedLinkingLength;
+      if (params.useHsml && particle.supportRadius > 0.0f) {
+        radius = particle.supportRadius * params.linkingLength_over_cell_size;
+      }
+      if (!std::isfinite(radius) || radius <= 0.0f) {
+        continue;
+      }
+
+      ClumpGasSample sample;
+      sample.pos[0] = particle.position[0];
+      sample.pos[1] = particle.position[1];
+      sample.pos[2] = particle.position[2];
+      sample.radius = radius;
+      sample.owner = node;
+      gasSamples.push_back(sample);
+      maxRadius = std::max(maxRadius, radius);
+    }
+  }
+
+  if (gasSamples.empty() || maxRadius <= 0.0f) {
+    return directStats;
+  }
+
+  ClumpGasSampleCloud cloud;
+  cloud.samples = &gasSamples;
+  ClumpGasKdTree kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+  kdTree.buildIndex();
+
+  nanoflann::SearchParameters searchParams(10);
+  const double maxRadius2 = static_cast<double>(maxRadius) * maxRadius;
+
+  for (const SimulationElement& particle : particles) {
+    if (particle.type < 3) {
+      continue;
+    }
+    const double mass = particle.mass;
+    if (!std::isfinite(mass) || mass <= 0.0) {
+      continue;
+    }
+
+    double query[3] = {
+      particle.position[0],
+      particle.position[1],
+      particle.position[2]
+    };
+
+    using IndexType = typename ClumpGasKdTree::IndexType;
+    using DistanceType = typename ClumpGasKdTree::DistanceType;
+    using ResultItem = nanoflann::ResultItem<IndexType, DistanceType>;
+    std::vector<ResultItem> matches;
+    kdTree.radiusSearch(query, maxRadius2, matches, searchParams);
+
+    const StructureNode* bestOwner = nullptr;
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    for (const ResultItem& match : matches) {
+      const ClumpGasSample& sample =
+        gasSamples[static_cast<size_t>(match.first)];
+      const double radius2 = static_cast<double>(sample.radius) * sample.radius;
+      if (match.second > radius2 || match.second >= bestDist2) {
+        continue;
+      }
+      bestDist2 = match.second;
+      bestOwner = sample.owner;
+    }
+
+    if (!bestOwner) {
+      continue;
+    }
+
+    ClumpFinderAggregate& stats = directStats[bestOwner];
+    stats.stellarMass += mass;
+    stats.stellarCount += 1;
+  }
+
+  return directStats;
+}
+
 void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
                                              FindClump& clumpFind,
                                              SimulationDataset& simulationData,
@@ -82,6 +288,65 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     converter.rebuild(units, 1.0);
     const double massToMsun =
       converter.factor(QuantityId::Mass, UnitSpace::Physical);
+    const double densityToDisplay =
+      converter.factor(QuantityId::Density, UnitSpace::Physical);
+    const double temperatureToDisplay =
+      converter.factor(QuantityId::Temperature, UnitSpace::Physical);
+    const auto& particles = simulationData.simulationBlock.particles;
+    std::unordered_map<const StructureNode*, ClumpFinderAggregate> directStellarStats =
+      BuildNearbyStellarStats(clumpFind.nodes(),
+                              particles,
+                              simulationData.simulationBlock.worldToRenderScale,
+                              clumpFind.params());
+
+    std::unordered_map<const StructureNode*, ClumpFinderAggregate> aggregateByNode;
+    aggregateByNode.reserve(clumpFind.nodes().size());
+    std::function<ClumpFinderAggregate(const StructureNode*)> aggregateNode =
+      [&](const StructureNode* node) -> ClumpFinderAggregate {
+        if (!node) {
+          return {};
+        }
+        auto cached = aggregateByNode.find(node);
+        if (cached != aggregateByNode.end()) {
+          return cached->second;
+        }
+
+        ClumpFinderAggregate aggregate;
+        auto directStats = directStellarStats.find(node);
+        if (directStats != directStellarStats.end()) {
+          aggregate.stellarMass += directStats->second.stellarMass;
+          aggregate.stellarCount += directStats->second.stellarCount;
+        }
+
+        for (const StructureNode* child : node->children) {
+          ClumpFinderAggregate childAggregate = aggregateNode(child);
+          aggregate.gasMass += childAggregate.gasMass;
+          aggregate.densityMassWeighted += childAggregate.densityMassWeighted;
+          aggregate.temperatureMassWeighted += childAggregate.temperatureMassWeighted;
+          aggregate.stellarMass += childAggregate.stellarMass;
+          aggregate.stellarCount += childAggregate.stellarCount;
+        }
+
+        for (int idx : node->indices) {
+          if (idx < 0 || static_cast<size_t>(idx) >= particles.size()) {
+            continue;
+          }
+          const SimulationElement& particle = particles[static_cast<size_t>(idx)];
+          if (particle.type != 0) {
+            continue;
+          }
+          const double mass = particle.mass;
+          if (!std::isfinite(mass) || mass <= 0.0) {
+            continue;
+          }
+          aggregate.gasMass += mass;
+          aggregate.densityMassWeighted += mass * particle.density;
+          aggregate.temperatureMassWeighted += mass * particle.temperature;
+        }
+
+        aggregateByNode[node] = aggregate;
+        return aggregate;
+      };
 
     std::unordered_map<const StructureNode*, int> sourceIndexByNode;
     sourceIndexByNode.reserve(clumpFind.nodes().size());
@@ -100,6 +365,17 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       row.sourceIndex = static_cast<int>(i);
       row.count = node->count;
       row.mass = node->totalMass * massToMsun;
+      const ClumpFinderAggregate aggregate = aggregateNode(node);
+      row.stellarMass = aggregate.stellarMass * massToMsun;
+      row.stellarCount = aggregate.stellarCount;
+      if (aggregate.gasMass > 0.0) {
+        row.density =
+          static_cast<float>((aggregate.densityMassWeighted / aggregate.gasMass) *
+                             densityToDisplay);
+        row.temperature =
+          static_cast<float>((aggregate.temperatureMassWeighted / aggregate.gasMass) *
+                             temperatureToDisplay);
+      }
       const glm::vec3 originalPos =
         RenderToWorld(glm::vec3(static_cast<float>(node->pos_cm[0]),
                                        static_cast<float>(node->pos_cm[1]),
@@ -130,8 +406,6 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     }
 
     ui.clumpsComputed = clumpFind.computed();
-    ui.massHistogramValues = clumpFind.massHistogramValues();
-    ui.histogramComputed = clumpFind.histogramComputed();
   };
 
   if (ui.requestRunFOF) {
@@ -145,6 +419,11 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     clumpFind.runFOF(simulationData.simulationBlock, var);
     ui.requestRunFOF = false;
     syncViewFromService();
+    ui.histogramComputed = false;
+    ui.histogramValues.clear();
+    ui.scatterComputed = false;
+    ui.scatterXValues.clear();
+    ui.scatterYValues.clear();
   }
 
   if (ui.requestRunDendrogram) {
@@ -158,6 +437,11 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     clumpFind.runDendrogram(simulationData.simulationBlock, var);
     ui.requestRunDendrogram = false;
     syncViewFromService();
+    ui.histogramComputed = false;
+    ui.histogramValues.clear();
+    ui.scatterComputed = false;
+    ui.scatterXValues.clear();
+    ui.scatterYValues.clear();
   }
 
   if (ui.requestSortByMass) {
@@ -193,17 +477,49 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
 #endif
 
   if (ui.requestComputeHistogram) {
-    float massMin = 0.0f;
-    float massMax = 1.0f;
-    clumpFind.buildMassHistogram(ui.histogramLogScaleX, massMin, massMax);
-    if (ui.histogramAutoRange && clumpFind.histogramComputed()) {
-      ui.histogramRangeMin = massMin;
-      ui.histogramRangeMax = massMax;
-    }
+    BuildClumpPlotSamples(ui.rows,
+                          ui.histogramSelectedVar,
+                          ui.histogramLogScaleX,
+                          ui.histogramValues);
+    ui.histogramComputed = !ui.histogramValues.empty();
+    ui.scatterComputed = false;
+    ui.scatterXValues.clear();
+    ui.scatterYValues.clear();
     ui.requestComputeHistogram = false;
-    syncViewFromService();
     if (ui.histogramComputed) {
       ++ui.histogramVersion;
+    }
+  }
+
+  if (ui.requestComputeScatter) {
+    ui.scatterXValues.clear();
+    ui.scatterYValues.clear();
+    ui.scatterXValues.reserve(ui.rows.size());
+    ui.scatterYValues.reserve(ui.rows.size());
+    for (const ClumpFinderRowView& row : ui.rows) {
+      std::vector<float> xOne;
+      std::vector<float> yOne;
+      xOne.reserve(1);
+      yOne.reserve(1);
+      if (!AppendClumpPlotSample(row,
+                                 ui.scatterXVar,
+                                 ui.scatterLogScaleX,
+                                 xOne) ||
+          !AppendClumpPlotSample(row,
+                                 ui.scatterYVar,
+                                 ui.scatterLogScaleY,
+                                 yOne)) {
+        continue;
+      }
+      ui.scatterXValues.push_back(xOne[0]);
+      ui.scatterYValues.push_back(yOne[0]);
+    }
+    ui.scatterComputed = !ui.scatterXValues.empty();
+    ui.histogramComputed = false;
+    ui.histogramValues.clear();
+    ui.requestComputeScatter = false;
+    if (ui.scatterComputed) {
+      ++ui.scatterVersion;
     }
   }
 
@@ -243,8 +559,11 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
     ui.clumpsComputed = false;
     ui.rows.clear();
     ui.showHull.clear();
-    ui.massHistogramValues.clear();
+    ui.histogramValues.clear();
     ui.histogramComputed = false;
+    ui.scatterXValues.clear();
+    ui.scatterYValues.clear();
+    ui.scatterComputed = false;
   }
 }
 

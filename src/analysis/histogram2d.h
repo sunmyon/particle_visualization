@@ -27,6 +27,10 @@ struct Histogram2DParams {
   bool logScaleX = true;
   bool logScaleY = true;
   bool logScaleColor = true;
+  int particleType = 0;
+  bool selectedTypes[6] = {true, false, false, false, false, false};
+  bool showScatter = false;
+  int scatterMaxPoints = 10000;
 
   bool useCameraCenter = false;
   float cameraRadius = 10.0f;
@@ -45,6 +49,9 @@ struct Histogram2DResult {
   float range1_max = 1.0f;
   float range2_min = 0.0f;
   float range2_max = 1.0f;
+
+  std::vector<float> scatterX;
+  std::vector<float> scatterY;
 
   bool valid = false;
 };

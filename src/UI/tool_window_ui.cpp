@@ -545,43 +545,124 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
   ImGui::Begin("histogram 2D", &state.open, ImGuiWindowFlags_None);
 
-  if (ImGui::BeginCombo("X Axis Quantity", QuantityLabel(params.var1))) {
-    for (int q = 0; q < catalog.nAllQ; ++q) {
-      QuantityId cand = catalog.allQ[q];
-      bool is_selected = (cand == params.var1);
-      if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        params.var1 = cand;
-      if (is_selected) ImGui::SetItemDefaultFocus();
+  const char* typeLabels[] = {
+    "Type 0", "Type 1", "Type 2", "Type 3", "Type 4", "Type 5"
+  };
+  params.particleType = std::clamp(params.particleType, 0, 5);
+  int firstNonEmptyType = -1;
+  for (int t = 0; t < 6; ++t) {
+    if (ctx.particleTypeCounts[static_cast<size_t>(t)] > 0) {
+      firstNonEmptyType = t;
+      break;
+    }
+  }
+  const bool hasAnyParticles = firstNonEmptyType >= 0;
+  if (hasAnyParticles &&
+      ctx.particleTypeCounts[static_cast<size_t>(params.particleType)] == 0) {
+    params.particleType = firstNonEmptyType;
+  }
+
+  ImGui::SetNextItemWidth(120.0f);
+  if (!hasAnyParticles) {
+    ImGui::BeginDisabled();
+  }
+  const char* currentTypeLabel = hasAnyParticles
+    ? typeLabels[params.particleType]
+    : "No particles";
+  if (ImGui::BeginCombo("Particle type", currentTypeLabel)) {
+    for (int t = 0; t < 6; ++t) {
+      const size_t count = ctx.particleTypeCounts[static_cast<size_t>(t)];
+      const bool enabled = count > 0;
+      if (!enabled) {
+        ImGui::BeginDisabled();
+      }
+      char label[64];
+      std::snprintf(label, sizeof(label), "%s (%zu)", typeLabels[t], count);
+      const bool selected = params.particleType == t;
+      if (ImGui::Selectable(label, selected) && enabled) {
+        params.particleType = t;
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+      if (!enabled) {
+        ImGui::EndDisabled();
+      }
     }
     ImGui::EndCombo();
   }
-
-  if (ImGui::BeginCombo("Y Axis Quantity", QuantityLabel(params.var2))) {
-    for (int q = 0; q < catalog.nAllQ; ++q) {
-      QuantityId cand = catalog.allQ[q];
-      bool is_selected = (cand == params.var2);
-      if (ImGui::Selectable(QuantityLabel(cand), is_selected))
-        params.var2 = cand;
-      if (is_selected) ImGui::SetItemDefaultFocus();
-    }
-    ImGui::EndCombo();
+  if (!hasAnyParticles) {
+    ImGui::EndDisabled();
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Scatter plot", &params.showScatter);
+  if (params.showScatter) {
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(86.0f);
+    ImGui::InputInt("Max points", &params.scatterMaxPoints, 0, 0);
+    params.scatterMaxPoints = std::clamp(params.scatterMaxPoints, 1, 10000);
   }
 
-  ImGui::InputInt("Bins X", &params.bins1);
-  ImGui::InputInt("Bins Y", &params.bins2);
+  auto drawQuantityCombo = [&](const char* label, QuantityId& quantity) {
+    if (ImGui::BeginCombo(label, QuantityLabel(quantity))) {
+      for (int q = 0; q < catalog.nAllQ; ++q) {
+        QuantityId cand = catalog.allQ[q];
+        const bool isSelected = cand == quantity;
+        if (ImGui::Selectable(QuantityLabel(cand), isSelected)) {
+          quantity = cand;
+        }
+        if (isSelected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  };
 
-  ImGui::Checkbox("Use Log scale X", &params.logScaleX);
-  ImGui::Checkbox("Use Log scale Y", &params.logScaleY);
-  ImGui::Checkbox("Use Log color scale", &params.logScaleColor);
+  drawQuantityCombo("X Axis Quantity", params.var1);
+  drawQuantityCombo("Y Axis Quantity", params.var2);
 
-  ImGui::Checkbox("Auto Range", &params.autoRange);
-
+  ImGui::Spacing();
+  const ImVec2 scaleBoxMin = ImGui::GetCursorScreenPos();
+  ImGui::BeginGroup();
+  ImGui::Indent(8.0f);
+  ImGui::Spacing();
+  ImGui::TextDisabled("Binning and scale");
+  if (!params.showScatter) {
+    ImGui::SetNextItemWidth(72.0f);
+    ImGui::InputInt("Bins X", &params.bins1, 0, 0);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(72.0f);
+    ImGui::InputInt("Bins Y", &params.bins2, 0, 0);
+  }
+  ImGui::Checkbox("Log X", &params.logScaleX);
+  ImGui::SameLine();
+  ImGui::Checkbox("Log Y", &params.logScaleY);
+  if (!params.showScatter) {
+    ImGui::SameLine();
+    ImGui::Checkbox("Log color", &params.logScaleColor);
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Auto range", &params.autoRange);
   if (!params.autoRange) {
-    ImGui::InputFloat("X Axis Min", &params.range1_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("X Axis Max", &params.range1_max, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Min", &params.range2_min, 0.0f, 0.0f, "%g");
-    ImGui::InputFloat("Y Axis Max", &params.range2_max, 0.0f, 0.0f, "%g");
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputFloat("X Min", &params.range1_min, 0.0f, 0.0f, "%g");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputFloat("X Max", &params.range1_max, 0.0f, 0.0f, "%g");
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputFloat("Y Min", &params.range2_min, 0.0f, 0.0f, "%g");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputFloat("Y Max", &params.range2_max, 0.0f, 0.0f, "%g");
   }
+  ImGui::Spacing();
+  ImGui::Unindent(8.0f);
+  ImGui::EndGroup();
+  const ImVec2 scaleBoxMax = ImGui::GetItemRectMax();
+  ImGui::GetWindowDrawList()->AddRect(scaleBoxMin,
+                                      scaleBoxMax,
+                                      ImGui::GetColorU32(ImGuiCol_Border),
+                                      4.0f);
+  ImGui::Spacing();
 
 #ifdef USE_CONVEX_HULL
   ImGui::Checkbox("Filter: Use Convex Hull", &params.useConvexHull);
@@ -592,8 +673,16 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
     ImGui::InputFloat("Camera Radius", &params.cameraRadius, 0.1f, 1.0f, "%.2f");
   }
 
-  if (ImGui::Button("Compute Histogram")) {
+  if (!hasAnyParticles) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button(params.showScatter ? "Compute Scatter" : "Compute Histogram")) {
     SubmitHistogram2DRequest(state, request);
+  }
+  if (!hasAnyParticles) {
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("No particles are loaded.");
   }
   ImGui::Checkbox("Save plot image + JSON after compute", &state.exportPlotPackage);
   if (state.exportFolder[0] != '\0') {
@@ -604,39 +693,51 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
   }
 
   if (result.computed && result.result.valid) {
-    size_t computedBins1 = result.result.values.size();
-    size_t computedBins2 = (computedBins1 > 0) ? result.result.values[0].size() : 0;
-
-    std::vector<float> heatmapData;
-    heatmapData.reserve(computedBins1 * computedBins2);
-
-    for (size_t j = 0; j < computedBins2; j++) {
-      for (size_t i = 0; i < computedBins1; i++) {
-        heatmapData.push_back(result.result.values[i][j]);
-      }
-    }
-
-    if (ImPlot::BeginPlot("2D Histogram", ImVec2(-1, 300))) {
-      ImPlot::SetupAxes(QuantityLabel(params.var1), QuantityLabel(params.var2));
+    const Histogram2DParams& plotParams = result.paramsUsed;
+    if (ImPlot::BeginPlot(plotParams.showScatter ? "Scatter Plot" : "2D Histogram",
+                          ImVec2(-1, 300))) {
+      ImPlot::SetupAxes(QuantityLabel(plotParams.var1), QuantityLabel(plotParams.var2));
 
       ImPlot::SetupAxisLimits(ImAxis_X1,
-                              params.range1_min,
-                              params.range1_max,
+                              result.result.range1_min,
+                              result.result.range1_max,
                               ImGuiCond_Always);
       ImPlot::SetupAxisLimits(ImAxis_Y1,
-                              params.range2_min,
-                              params.range2_max,
+                              result.result.range2_min,
+                              result.result.range2_max,
                               ImGuiCond_Always);
 
-      ImPlot::PushColormap(ImPlotColormap_Viridis);
+      if (plotParams.showScatter) {
+        ImPlot::PlotScatter("Particles",
+                            result.result.scatterX.data(),
+                            result.result.scatterY.data(),
+                            static_cast<int>(result.result.scatterX.size()));
+      } else {
+        const size_t computedBins1 = result.result.values.size();
+        const size_t computedBins2 =
+          (computedBins1 > 0) ? result.result.values[0].size() : 0;
+        std::vector<float> heatmapData;
+        heatmapData.reserve(computedBins1 * computedBins2);
+        for (size_t j = 0; j < computedBins2; j++) {
+          for (size_t i = 0; i < computedBins1; i++) {
+            heatmapData.push_back(result.result.values[i][j]);
+          }
+        }
 
-      ImPlot::PlotHeatmap("Histogram",
-                          heatmapData.data(),
-                          (int)computedBins2,
-                          (int)computedBins1,
-                          0, 0, "",
-                          ImPlotPoint(params.range1_min, params.range2_min),
-                          ImPlotPoint(params.range1_max, params.range2_max));
+        ImPlot::PushColormap(ImPlotColormap_Viridis);
+        ImPlot::PlotHeatmap("Histogram",
+                            heatmapData.data(),
+                            static_cast<int>(computedBins2),
+                            static_cast<int>(computedBins1),
+                            0,
+                            0,
+                            "",
+                            ImPlotPoint(result.result.range1_min,
+                                        result.result.range2_min),
+                            ImPlotPoint(result.result.range1_max,
+                                        result.result.range2_max));
+        ImPlot::PopColormap();
+      }
 
       ImPlot::EndPlot();
     }

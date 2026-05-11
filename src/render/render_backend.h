@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 struct ProjectionPreviewUIState;
@@ -16,6 +17,11 @@ class VulkanContext;
 struct RenderBackendMemoryInfo {
   bool gpuAvailableKnown = false;
   std::size_t gpuAvailableBytes = 0;
+  bool gpuAllocatedKnown = false;
+  std::size_t gpuAllocatedBytes = 0;
+  bool gpuBudgetKnown = false;
+  std::size_t gpuBudgetBytes = 0;
+  std::string gpuDeviceName;
 };
 
 struct RenderBackendTimingInfo {

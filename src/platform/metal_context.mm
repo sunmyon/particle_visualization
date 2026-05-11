@@ -54,6 +54,14 @@ id<MTLDevice> CreateMetalDevice()
   return nil;
 }
 
+void ClearDrawableAttachment(MTLRenderPassDescriptor* renderPass)
+{
+  if (!renderPass) {
+    return;
+  }
+  renderPass.colorAttachments[0].texture = nil;
+}
+
 } // namespace
 
 MetalContext::MetalContext()
@@ -191,6 +199,7 @@ void MetalContext::present(NativeWindowHandle window)
     [impl_->commandBuffer presentDrawable:impl_->drawable];
   }
   [impl_->commandBuffer commit];
+  ClearDrawableAttachment(impl_->renderPass);
   impl_->commandBuffer = nil;
   impl_->drawable = nil;
 }
@@ -255,6 +264,7 @@ destinationBytesPerImage:stagingBytes];
   }
   [impl_->commandBuffer commit];
   [impl_->commandBuffer waitUntilCompleted];
+  ClearDrawableAttachment(impl_->renderPass);
 
   out.format = RenderedFrameFormat::RGBA8;
   out.pixels.assign(static_cast<std::size_t>(width) *
@@ -374,6 +384,7 @@ bool MetalContext::beginFrame(int width, int height)
     if (!impl_->layer) {
       return false;
     }
+    ClearDrawableAttachment(impl_->renderPass);
     impl_->layer.drawableSize =
       CGSizeMake(static_cast<CGFloat>(width), static_cast<CGFloat>(height));
     impl_->drawable = [impl_->layer nextDrawable];
@@ -428,7 +439,13 @@ bool MetalContext::beginFrame(int width, int height)
 
   impl_->encoder =
     [impl_->commandBuffer renderCommandEncoderWithDescriptor:impl_->renderPass];
-  return impl_->encoder != nil;
+  if (!impl_->encoder) {
+    ClearDrawableAttachment(impl_->renderPass);
+    impl_->commandBuffer = nil;
+    impl_->drawable = nil;
+    return false;
+  }
+  return true;
 }
 
 bool MetalContext::initImGuiRenderer()

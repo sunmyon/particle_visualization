@@ -695,6 +695,7 @@ public:
     physicalDevice_ = context_.physicalDevice();
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physicalDevice_, &props);
+    deviceName_ = props.deviceName;
     softwareRenderer_ =
       LooksLikeSoftwareVulkanDevice(props.deviceType, props.deviceName);
 #ifdef VK_EXT_MEMORY_BUDGET_EXTENSION_NAME
@@ -876,18 +877,27 @@ public:
     vkGetPhysicalDeviceMemoryProperties2(physicalDevice_, &memoryProps);
 
     std::size_t available = 0;
+    std::size_t budgetBytes = 0;
+    std::size_t usageBytes = 0;
     for (std::uint32_t i = 0; i < memoryProps.memoryProperties.memoryHeapCount;
          ++i) {
       const VkMemoryHeap& heap = memoryProps.memoryProperties.memoryHeaps[i];
       if ((heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) {
         continue;
       }
+      budgetBytes += static_cast<std::size_t>(budget.heapBudget[i]);
+      usageBytes += static_cast<std::size_t>(budget.heapUsage[i]);
       const VkDeviceSize heapAvailable =
         budget.heapBudget[i] > budget.heapUsage[i]
           ? budget.heapBudget[i] - budget.heapUsage[i]
           : 0;
       available += static_cast<std::size_t>(heapAvailable);
     }
+    info.gpuDeviceName = deviceName_;
+    info.gpuBudgetKnown = true;
+    info.gpuBudgetBytes = budgetBytes;
+    info.gpuAllocatedKnown = true;
+    info.gpuAllocatedBytes = usageBytes;
     info.gpuAvailableKnown = true;
     info.gpuAvailableBytes = available;
 #endif
@@ -5507,6 +5517,7 @@ private:
   VulkanContext& context_;
   VkDevice device_ = VK_NULL_HANDLE;
   VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
+  std::string deviceName_;
   VulkanBuffer particleBuffer_;
   VulkanBuffer stressParticleBuffer_;
   VulkanBuffer particleLodBuffer_;

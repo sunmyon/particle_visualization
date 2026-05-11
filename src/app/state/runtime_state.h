@@ -479,6 +479,7 @@ inline std::vector<FieldSpec> MakeDefaultSnapshotFormatTokens()
     spec.type = type;
     spec.count = count;
     spec.sourceName = GetDefaultHDF5SourceName(key);
+    spec.typeMask = DefaultFieldTypeMask(key);
     tokens.push_back(std::move(spec));
   };
 

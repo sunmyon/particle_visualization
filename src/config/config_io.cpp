@@ -1,6 +1,7 @@
 #include "config_io.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -47,7 +48,8 @@ static void saveTokenList(std::ofstream& outfile,
     outfile << GetFieldKeyDisplayName(tokens[i].key) << ","
             << dataTypeToString(tokens[i].type) << ","
             << tokens[i].count << ","
-            << tokens[i].sourceName << "\n";
+            << tokens[i].sourceName << ","
+            << static_cast<unsigned int>(tokens[i].typeMask) << "\n";
   }
 }
 
@@ -63,11 +65,12 @@ static void loadTokenList(std::ifstream& infile,
     if (!std::getline(infile, line)) break;
 
     std::istringstream iss(line);
-    std::string tokenLabel, tokenType, tokenCountStr, sourceName;
+    std::string tokenLabel, tokenType, tokenCountStr, sourceName, typeMaskStr;
     if (!std::getline(iss, tokenLabel, ',')) continue;
     if (!std::getline(iss, tokenType, ',')) continue;
     if (!std::getline(iss, tokenCountStr, ',')) continue;
-    std::getline(iss, sourceName);
+    std::getline(iss, sourceName, ',');
+    std::getline(iss, typeMaskStr);
 
     FieldSpec ft;
     ft.key   = GetFieldKeyFromDisplayName(trim(tokenLabel));
@@ -77,6 +80,18 @@ static void loadTokenList(std::ifstream& infile,
     ft.sourceName = sourceName.empty()
       ? GetDefaultHDF5SourceName(ft.key)
       : sourceName;
+    typeMaskStr = trim(typeMaskStr);
+    if (!typeMaskStr.empty()) {
+      try {
+        ft.typeMask =
+          static_cast<std::uint8_t>(std::stoul(typeMaskStr) & 0x3fu);
+      } catch (...) {
+        ft.typeMask = 0x3fu;
+      }
+    }
+    if ((ft.typeMask & 0x3fu) == 0) {
+      ft.typeMask = 0x3fu;
+    }
 
     outTokens.push_back(ft);
   }

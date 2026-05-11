@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+
 #include "app/state/plot_export_state.h"
 
 struct Histogram2DRequestState;
@@ -40,6 +43,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
 
 struct Histogram2DViewContext {
   const QuantityCatalogState& catalog;
+  std::array<std::size_t, 6> particleTypeCounts{};
   PlotBatchExportViewContext exportContext;
 };
 

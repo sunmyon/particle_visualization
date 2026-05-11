@@ -619,6 +619,10 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   ImGui::Text("CPU particle LOD tree: %s",
               FormatBytes(memory.cpuParticleLodTreeBytes));
   ImGui::Text("CPU estimated total: %s", FormatBytes(cpuEstimate));
+  if (memory.processMemoryKnown) {
+    ImGui::Text("Process resident memory: %s",
+                FormatBytes(memory.processMemoryBytes));
+  }
   DrawMemoryPressureWarning("CPU",
                             cpuEstimate,
                             memory.systemAvailableKnown,
@@ -642,6 +646,25 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
   }
 #endif
   ImGui::Text("GPU estimated total: %s", FormatBytes(gpuEstimate));
+  if (!memory.gpuDeviceName.empty()) {
+    ImGui::Text("GPU device: %s", memory.gpuDeviceName.c_str());
+  }
+  if (memory.gpuAllocatedKnown) {
+    ImGui::Text("GPU driver allocated: %s",
+                FormatBytes(memory.gpuAllocatedBytes));
+  }
+  if (memory.gpuBudgetKnown) {
+    ImGui::Text("GPU budget / recommended working set: %s",
+                FormatBytes(memory.gpuBudgetBytes));
+  }
+  if (memory.gpuAllocatedKnown &&
+      memory.gpuBudgetKnown &&
+      memory.gpuBudgetBytes > 0) {
+    const double usage =
+      100.0 * static_cast<double>(memory.gpuAllocatedBytes) /
+      static_cast<double>(memory.gpuBudgetBytes);
+    ImGui::Text("GPU driver usage: %.1f%%", usage);
+  }
   DrawMemoryPressureWarning("GPU",
                             gpuEstimate,
                             memory.gpuAvailableKnown,
