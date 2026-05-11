@@ -38,24 +38,9 @@
 static void RecenterCameraPreservingDistance(CameraContext& cam,
                                              const glm::vec3& newTarget);
 
-static float WorldToRenderScaleOrOne(float worldToRenderScale)
-{
-  return worldToRenderScale > 0.0f ? worldToRenderScale : 1.0f;
-}
-
-static float RenderToWorldScaleOrOne(float worldToRenderScale)
-{
-  return worldToRenderScale > 0.0f ? 1.0f / worldToRenderScale : 1.0f;
-}
-
 static glm::vec3 WorldToRender(const glm::vec3& p, float worldToRenderScale)
 {
-  return p * WorldToRenderScaleOrOne(worldToRenderScale);
-}
-
-static glm::vec3 RenderToWorld(const glm::vec3& p, float worldToRenderScale)
-{
-  return p * RenderToWorldScaleOrOne(worldToRenderScale);
+  return p * worldToRenderScale;
 }
 
 struct ClumpFinderAggregate {
@@ -162,8 +147,7 @@ BuildNearbyStellarStats(const std::vector<StructureNode*>& nodes,
   std::vector<ClumpGasSample> gasSamples;
   gasSamples.reserve(block.particles.size());
 
-  const float fixedLinkingLength =
-    params.linkingLength * RenderToWorldScaleOrOne(block.worldToRenderScale);
+  const float fixedLinkingLength = params.linkingLength;
   float maxRadius = 0.0f;
 
   for (const StructureNode* node : nodes) {
@@ -391,14 +375,9 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
           static_cast<float>((aggregate.temperatureMassWeighted / aggregate.gasMass) *
                              temperatureToDisplay);
       }
-      const glm::vec3 originalPos =
-        RenderToWorld(glm::vec3(static_cast<float>(node->pos_cm[0]),
-                                       static_cast<float>(node->pos_cm[1]),
-                                       static_cast<float>(node->pos_cm[2])),
-                             simulationData.simulationBlock.worldToRenderScale);
-      row.pos[0] = originalPos.x;
-      row.pos[1] = originalPos.y;
-      row.pos[2] = originalPos.z;
+      row.pos[0] = static_cast<float>(node->pos_cm[0]);
+      row.pos[1] = static_cast<float>(node->pos_cm[1]);
+      row.pos[2] = static_cast<float>(node->pos_cm[2]);
       row.vpeak = static_cast<float>(node->vpeak);
       row.isLeaf = node->isLeaf();
       row.isTrunk = node->parent == nullptr;

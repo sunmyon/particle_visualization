@@ -6,8 +6,6 @@
 #include <functional>
 #include <glm/glm.hpp>
 
-#include "data/sample_coordinates.h"
-
 Histogram2DResult
 Histogram2DComputer::compute(const SimulationBlock& partblock,
                              const Histogram2DParams& params,
@@ -51,13 +49,13 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
 #endif
 
   if (params.useCameraCenter) {
-    auto isWithinRadius = [&ctx, &params](const SimulationElement& p) -> bool {
-      if (!ctx.cameraCenter) {
+    auto isWithinRadius = [&ctx](const SimulationElement& p) -> bool {
+      if (!ctx.dataCenter) {
         return false;
       }
 
-      glm::vec3 pos = renderPosition(p, ctx.worldToRenderScale);
-      return glm::length(pos - *ctx.cameraCenter) <= params.cameraRadius;
+      const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
+      return glm::length(pos - *ctx.dataCenter) <= ctx.dataRadius;
     };
 
     auto prevFunc = condition;
@@ -69,7 +67,7 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
   float min1 = 1.e30f, max1 = -1.e30f;
   float min2 = 1.e30f, max2 = -1.e30f;
 
-  const float* centerPtr = ctx.cameraCenter ? &ctx.cameraCenter->x : nullptr;
+  const float* centerPtr = ctx.dataCenter ? &ctx.dataCenter->x : nullptr;
   auto typeSelected = [&params](const SimulationElement& p) {
     return p.type < 6 && static_cast<int>(p.type) == params.particleType;
   };

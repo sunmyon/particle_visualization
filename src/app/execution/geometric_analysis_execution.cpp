@@ -97,7 +97,6 @@ void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
   disk.tag = request.diskTag;
 
   if (diskFinder.compute(particles.simulationBlock.particles,
-                         1.0f,
                          param,
                          disk)) {
     result.valid  = true;

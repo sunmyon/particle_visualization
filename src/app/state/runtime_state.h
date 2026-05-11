@@ -627,8 +627,8 @@ struct SettingsActionRequestState {
 };
 
 struct SettingsRuntimeState {
-  float minZoom = 0.1f;
-  float maxZoom = 500.0f;
+  float minZoom = 0.001f;
+  float maxZoom = 1.0e6f;
 
   ViewFilterConfig viewFilter;
   InputFilterConfig inputFilter;

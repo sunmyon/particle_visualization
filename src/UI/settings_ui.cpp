@@ -1537,7 +1537,6 @@ static void DrawViewCameraSection(SettingsRuntimeState& rt,
   if (!ImGui::CollapsingHeader("View / Camera"))
     return;
 
-  DrawNormalizationSection(rt.normalization, rt.request);
   DrawCameraPlacementSection(rt, camera);
 }
 
@@ -2641,6 +2640,8 @@ static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
     return;
 
   auto& req = rt.request;
+
+  DrawNormalizationSection(rt.normalization, req);
 
   if (ImGui::CollapsingHeader("Zoom Range")) {
     ImGui::InputFloat("Min Zoom", &rt.minZoom, 0.0f, 0.0f, "%g");

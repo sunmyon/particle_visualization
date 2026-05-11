@@ -47,7 +47,6 @@ public:
 
   template<class VecT>
   bool compute(const VecT& particles,
-               float worldToRenderScale,
                const Params& par,
                DiskObject& disk) const;
 
@@ -87,11 +86,9 @@ private:
 /*=================== Implementation =============================*/
 template<class VecT>
 inline bool DiskRadiusFinder::compute(const VecT& particles,
-                                      float worldToRenderScale,
                                       const Params& par,
                                       DiskObject& disk) const
 {
-  (void)worldToRenderScale;
   const double Grav = par.G;
 
   disk.clear();

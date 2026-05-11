@@ -42,8 +42,8 @@ by silently replacing invalid scales with fallback values.
 - Radial profile now computes in data coordinates. Its center is converted from
   the render-space camera target to data coordinates at the tool execution
   boundary.
-- Histogram2D still has camera-center filtering that uses render coordinates.
+- Histogram2D computes in data coordinates. Its optional camera-center filter
+  receives a data-space center and radius from the tool execution boundary.
 - Clump UI helpers still contain render/data conversion for camera focusing and
   some display-related operations.
 - Camera state itself is still render-space and should be separated later.
-

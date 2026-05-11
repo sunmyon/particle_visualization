@@ -6,7 +6,6 @@
 
 #include <vector>
 #include "data/simulation_block.h"
-#include "data/sample_coordinates.h"
 #include "data/simulation_element.h"
 #include "analysis/clump/structure_nodes.h"
 
@@ -21,7 +20,7 @@ public:
   // backing SimulationElement storage.
   struct ClumpParticleSample{
     float pos[3];
-    float renderSupportRadius;
+    float supportRadius;
     float density;
     float val;             // Physical quantity in [0,1].
     float mass;            // mass
@@ -68,18 +67,19 @@ public:
 
   ClumpParticleSample makeClumpParticleSample(const SimulationElement& p,
                                               size_t index,
-                                              float worldToRenderScale,
                                               const std::string &var) const{
     ClumpParticleSample p_f;
     if (sourceBlock_) {
-      sourceBlock_->getVector(index, VectorId::Pos, p_f.pos);
+      sourceBlock_->getVector(index, VectorId::OriginalPos, p_f.pos);
     } else {
-      renderPosition(p, worldToRenderScale, p_f.pos);
+      p_f.pos[0] = p.position[0];
+      p_f.pos[1] = p.position[1];
+      p_f.pos[2] = p.position[2];
     }
 
-    p_f.renderSupportRadius = sourceBlock_
-      ? sourceBlock_->getQuantityOr(index, QuantityId::Hsml) * worldToRenderScale
-      : renderSupportRadius(p, worldToRenderScale);
+    p_f.supportRadius = sourceBlock_
+      ? sourceBlock_->getQuantityOr(index, QuantityId::Hsml)
+      : p.supportRadius;
     p_f.mass = sourceBlock_
       ? sourceBlock_->getQuantityOr(index, QuantityId::Mass)
       : 0.0f;
@@ -186,14 +186,13 @@ private:
     3  // Dimension count.
     > KDTree_t;
   
-  void findClumps(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
+  void findClumps(std::vector<SimulationElement>& cloud, const std::string &var);
   int find_parent(std::vector<int>& parent, int i);
   void union_sets(std::vector<int>& parent, int a, int b);
 
-  void findClumpsDendrogram(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
+  void findClumpsDendrogram(std::vector<SimulationElement>& cloud, const std::string &var);
   std::vector<ClumpParticleSample> filterDendrogramGasParticles(
     const std::vector<SimulationElement>& particles,
-    float worldToRenderScale,
     double threshold,
     const std::string& var) const;
   std::vector<int> makeDendrogramDensityOrder(
@@ -206,7 +205,6 @@ private:
   void calc_node_statistic(StructureNode *ns, const std::vector<ClumpParticleSample>& p);
   void traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes);
   std::vector<ClumpParticleSample> filterParticles(const std::vector<SimulationElement>& particles,
-                                                       float worldToRenderScale,
                                                        double threshold,
                                                        const std::string &var) const;
   std::vector<SimulationElement> getAllChildren(StructureNode* node, std::vector<SimulationElement>& p) const;
@@ -264,7 +262,7 @@ public:
   void runFOF(SimulationBlock& block, const std::string &var){
     sourceBlock_ = &block;
     clearNodes();
-    findClumps(block.particles, block.worldToRenderScale, var);
+    findClumps(block.particles, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif
@@ -273,7 +271,7 @@ public:
   void runDendrogram(SimulationBlock& block, const std::string &var){
     sourceBlock_ = &block;
     clearNodes();
-    findClumpsDendrogram(block.particles, block.worldToRenderScale, var);
+    findClumpsDendrogram(block.particles, var);
 #ifdef USE_CONVEX_HULL
     showHull_.assign(nodeList.size(), false);
 #endif

@@ -57,8 +57,8 @@ struct Histogram2DResult {
 };
 
 struct Histogram2DContext {
-  const glm::vec3* cameraCenter = nullptr;
-  float worldToRenderScale = 1.0f;
+  const glm::vec3* dataCenter = nullptr;
+  float dataRadius = 0.0f;
 
 #ifdef USE_CONVEX_HULL
   const std::vector<std::shared_ptr<IConvexHull>>* convexHulls = nullptr;

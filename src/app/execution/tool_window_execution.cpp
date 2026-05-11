@@ -298,12 +298,12 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     [](const SimulationElement&) { return true; };
 
   if (req.histogramUseCameraCenter) {
-    const glm::vec3 camCenter = camera.cameraTarget;
-    const float radius = req.histogramCameraRadius;
     const float worldToRenderScale = particles.simulationBlock.worldToRenderScale;
-    includeParticle = [camCenter, radius, worldToRenderScale](const SimulationElement& p) {
-      const glm::vec3 pos = renderPosition(p, worldToRenderScale);
-      return glm::length(pos - camCenter) <= radius;
+    const glm::vec3 dataCenter = camera.cameraTarget / worldToRenderScale;
+    const float dataRadius = req.histogramCameraRadius / worldToRenderScale;
+    includeParticle = [dataCenter, dataRadius](const SimulationElement& p) {
+      const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
+      return glm::length(pos - dataCenter) <= dataRadius;
     };
   }
 

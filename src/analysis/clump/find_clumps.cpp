@@ -70,12 +70,11 @@ void FindClump::union_sets(std::vector<int>& parent, int a, int b) {
 
 // Clump detection routine.
 void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
-                           float worldToRenderScale,
 			   const std::string &var
 			   )
 {
   std::vector<ClumpParticleSample> filteredParticles =
-    filterParticles(originalParticles, worldToRenderScale, params_.densityThreshold, var);
+    filterParticles(originalParticles, params_.densityThreshold, var);
   printf("number of filtered particles:%zu out of %zu\n"
 	 , filteredParticles.size(), originalParticles.size());
 
@@ -118,7 +117,7 @@ void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
     std::vector<MyResultItem> ret_matches;
 
     if(params_.useHsml)
-      searchRadius = cloud.pts[i].renderSupportRadius * cloud.pts[i].renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+      searchRadius = cloud.pts[i].supportRadius * cloud.pts[i].supportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 		
     kdTree.radiusSearch(query_pt, searchRadius, ret_matches, params);
 	
@@ -128,7 +127,7 @@ void FindClump::findClumps(std::vector<SimulationElement>& originalParticles,
 	continue;
 	    
       if(params_.useHsml){
-	double LinkingLength_j = cloud.pts[neighbor_index].renderSupportRadius * cloud.pts[neighbor_index].renderSupportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
+	double LinkingLength_j = cloud.pts[neighbor_index].supportRadius * cloud.pts[neighbor_index].supportRadius * params_.linkingLength_over_cell_size * params_.linkingLength_over_cell_size;
 	if(LinkingLength_j > match.second)
 	  continue;
       }
@@ -447,7 +446,7 @@ void FindClump::buildDendrogramHierarchy(const ParticleCloud& cloud,
     std::vector<MyResultItem> ret_matches;
 
     double searchRadius =
-      p.renderSupportRadius * p.renderSupportRadius *
+      p.supportRadius * p.supportRadius *
       params_.linkingLength_over_cell_size *
       params_.linkingLength_over_cell_size;
 
@@ -613,12 +612,10 @@ void FindClump::finalizeDendrogramNodes(
 }
 
 void FindClump::findClumpsDendrogram(std::vector<SimulationElement>& originalParticles,
-                                     float worldToRenderScale,
                                      const std::string &var)
 {
   std::vector<ClumpParticleSample> filteredParticles =
     filterDendrogramGasParticles(originalParticles,
-                                 worldToRenderScale,
                                  params_.densityThreshold,
                                  var);
   printf("number of dendrogram gas particles:%zu out of %zu\n"
@@ -754,14 +751,13 @@ void FindClump::sortNodesByHierarchy() {
 
 // Example filtering operation.
 std::vector<FindClump::ClumpParticleSample> FindClump::filterParticles(const std::vector<SimulationElement>& particles,
-                                                                           float worldToRenderScale,
                                                                            double threshold,
                                                                            const std::string &var) const{
   std::vector<ClumpParticleSample> filtered;
   for (size_t i = 0; i < particles.size(); ++i) {
       const SimulationElement &p = particles[i];
       if (p.type >= 3 || sampleValueForClumpVariable(p, i, var) >= threshold) {
-	ClumpParticleSample copy = makeClumpParticleSample(p, i, worldToRenderScale, var);
+	ClumpParticleSample copy = makeClumpParticleSample(p, i, var);
 	copy.original_index = static_cast<int>(i);
 	filtered.push_back(copy);
       }
@@ -771,7 +767,6 @@ std::vector<FindClump::ClumpParticleSample> FindClump::filterParticles(const std
 
 std::vector<FindClump::ClumpParticleSample> FindClump::filterDendrogramGasParticles(
   const std::vector<SimulationElement>& particles,
-  float worldToRenderScale,
   double threshold,
   const std::string& var) const
 {
@@ -783,7 +778,7 @@ std::vector<FindClump::ClumpParticleSample> FindClump::filterDendrogramGasPartic
     }
 
     ClumpParticleSample copy =
-      makeClumpParticleSample(p, i, worldToRenderScale, var);
+      makeClumpParticleSample(p, i, var);
     copy.original_index = static_cast<int>(i);
     filtered.push_back(copy);
   }
