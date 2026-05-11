@@ -8,13 +8,11 @@
 #include <vector>
 
 #include "core/physics_constants.h"
-#include "data/sample_coordinates.h"
 
 RadialProfileResult
 RadialProfileComputer::compute(const SimulationBlock& partblock,
-			       double scaleToPhysical,
                                const RadialProfileParams& params,
-			       const glm::vec3& cam_center)
+                               const glm::vec3& dataCenter)
 {
   RadialProfileResult result;
   result.valid = false;
@@ -33,18 +31,13 @@ RadialProfileComputer::compute(const SimulationBlock& partblock,
   float ymax = params.ymax;
   float rmax = params.rmax;
 
-  // --- center ---
-  float normalizationFactor = static_cast<float>(scaleToPhysical);
-  if (!std::isfinite(normalizationFactor) || normalizationFactor <= 0.0f) {
-    normalizationFactor = 1.0f;
-  }
-  glm::vec3 center = cam_center;
-  const float worldToRenderScale = 1.0f / normalizationFactor;
+  const glm::vec3 center = dataCenter;
 
-  auto getPos = [&](const SimulationElement& p) -> glm::vec3 {
-    return params.useOriginal
-      ? glm::vec3(p.position[0], p.position[1], p.position[2])
-      : renderPosition(p, worldToRenderScale);
+  auto getPos = [&](size_t index, const SimulationElement& p) -> glm::vec3 {
+    (void)p;
+    float pos[3] = {0.0f, 0.0f, 0.0f};
+    partblock.getVector(index, VectorId::OriginalPos, pos);
+    return glm::vec3(pos[0], pos[1], pos[2]);
   };
 
   struct Item {
@@ -63,7 +56,7 @@ RadialProfileComputer::compute(const SimulationBlock& partblock,
     const SimulationElement& p = partblock.particles[i];
     if (p.type != 0) continue;
 
-    glm::vec3 pos  = getPos(p);
+    glm::vec3 pos  = getPos(static_cast<size_t>(i), p);
     glm::vec3 dpos = pos - center;
     float r = glm::length(dpos);
 
@@ -71,7 +64,8 @@ RadialProfileComputer::compute(const SimulationBlock& partblock,
 
     Item it;
     it.idx  = i;
-    it.mass = p.mass;
+    it.mass = partblock.getQuantityOr(static_cast<size_t>(i),
+                                      QuantityId::Mass);
     it.dpos = dpos;
     it.r    = r;
     it.xval = 0.0f;
@@ -86,8 +80,9 @@ RadialProfileComputer::compute(const SimulationBlock& partblock,
     for (const auto& it : items) {
       if (it.r < dmin) {
         dmin = it.r;
-        const SimulationElement& p = partblock.particles[it.idx];
-        v_center = glm::vec3(p.vel[0], p.vel[1], p.vel[2]);
+        float vel[3] = {0.0f, 0.0f, 0.0f};
+        partblock.getVector(static_cast<size_t>(it.idx), VectorId::Vel, vel);
+        v_center = glm::vec3(vel[0], vel[1], vel[2]);
       }
     }
   }
@@ -208,20 +203,24 @@ RadialProfileComputer::compute(const SimulationBlock& partblock,
     const SimulationElement& p = partblock.particles[it.idx];
 
     if (flag_cumulativeY) {
-      masses[bin] += p.mass;
+      const float mass = partblock.getQuantityOr(static_cast<size_t>(it.idx),
+                                                 QuantityId::Mass);
+      masses[bin] += mass;
       counts[bin] += 1;
       continue;
     }
 
+    const float mass = partblock.getQuantityOr(static_cast<size_t>(it.idx),
+                                               QuantityId::Mass);
     if (params.isMDot) {
       float vr = getScalarValue(partblock, p, it.idx, QuantityId::VRad, cptr, vptr);
-      profile[bin] += vr * p.mass;
-      masses[bin]  += p.mass;
+      profile[bin] += vr * mass;
+      masses[bin]  += mass;
       counts[bin]  += 1;
     } else {
       float val = getScalarValue(partblock, p, it.idx, params.var1, cptr, vptr);
-      profile[bin] += val * p.mass;
-      masses[bin]  += p.mass;
+      profile[bin] += val * mass;
+      masses[bin]  += mass;
       counts[bin]  += 1;
     }
   }

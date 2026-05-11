@@ -603,10 +603,43 @@ void DrawHistogram2DUI(Histogram2DUIState& state,
     params.scatterMaxPoints = std::clamp(params.scatterMaxPoints, 1, 10000);
   }
 
+  auto quantityAvailableForSelectedType = [&](QuantityId quantity) {
+    if (!QuantityShowInUI(quantity)) {
+      return true;
+    }
+    const int type = std::clamp(params.particleType, 0, 5);
+    for (int q = 0; q < catalog.nUIQByType[static_cast<size_t>(type)]; ++q) {
+      if (catalog.uiQByType[static_cast<size_t>(type)][q] == quantity) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto firstAvailableQuantity = [&]() {
+    for (int q = 0; q < catalog.nAllQ; ++q) {
+      const QuantityId cand = catalog.allQ[q];
+      if (quantityAvailableForSelectedType(cand)) {
+        return cand;
+      }
+    }
+    return QuantityId::Mass;
+  };
+
+  if (!quantityAvailableForSelectedType(params.var1)) {
+    params.var1 = firstAvailableQuantity();
+  }
+  if (!quantityAvailableForSelectedType(params.var2)) {
+    params.var2 = firstAvailableQuantity();
+  }
+
   auto drawQuantityCombo = [&](const char* label, QuantityId& quantity) {
     if (ImGui::BeginCombo(label, QuantityLabel(quantity))) {
       for (int q = 0; q < catalog.nAllQ; ++q) {
         QuantityId cand = catalog.allQ[q];
+        if (!quantityAvailableForSelectedType(cand)) {
+          continue;
+        }
         const bool isSelected = cand == quantity;
         if (ImGui::Selectable(QuantityLabel(cand), isSelected)) {
           quantity = cand;
@@ -902,8 +935,7 @@ void ProjectionCopySeedPanels(ProjectionMapParams& params, int oldCount)
 
 bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                                 const ProjectionMapViewContext& ctx,
-                                float renderToWorld,
-                                float worldToRender)
+                                float renderToWorld)
 {
   static TransferFunctionEditor voronoiTransferEditor;
   bool dirty = false;
@@ -1188,34 +1220,36 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         DrawProjectionSubsectionBox("Region", [&]() {
       if (showRegionSize) {
         float xlenOriginal[3] = {
-          block.xlen[0] * renderToWorld,
-          block.xlen[1] * renderToWorld,
-          block.xlen[2] * renderToWorld
+          block.xlen[0],
+          block.xlen[1],
+          block.xlen[2]
         };
         ImGui::SetNextItemWidth(260.0f);
         if (ImGui::InputFloat3("Size", xlenOriginal)) {
-          for (int k = 0; k < 3; ++k) block.xlen[k] = xlenOriginal[k] * worldToRender;
+          for (int k = 0; k < 3; ++k) block.xlen[k] = xlenOriginal[k];
           dirty = true;
         }
       }
 
       if (showRegionCenter) {
         float xoffsetOriginal[3] = {
-          block.xoffset[0] * renderToWorld,
-          block.xoffset[1] * renderToWorld,
-          block.xoffset[2] * renderToWorld
+          block.xoffset[0],
+          block.xoffset[1],
+          block.xoffset[2]
         };
         ImGui::SetNextItemWidth(260.0f);
         if (ImGui::InputFloat3("Center", xoffsetOriginal)) {
-          for (int k = 0; k < 3; ++k) block.xoffset[k] = xoffsetOriginal[k] * worldToRender;
+          for (int k = 0; k < 3; ++k) block.xoffset[k] = xoffsetOriginal[k];
           dirty = true;
         }
       }
       if (showRegionCenter) {
         if (ImGui::Button("Set center from camera")) {
-          block.xoffset[0] = ctx.camera.cameraTarget.x;
-          block.xoffset[1] = ctx.camera.cameraTarget.y;
-          block.xoffset[2] = ctx.camera.cameraTarget.z;
+          const glm::vec3 dataTarget =
+            ctx.camera.cameraTarget * renderToWorld;
+          block.xoffset[0] = dataTarget.x;
+          block.xoffset[1] = dataTarget.y;
+          block.xoffset[2] = dataTarget.z;
           dirty = true;
         }
       }
@@ -1239,8 +1273,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       }
       DrawProjectionSubsectionBox("Scale bar", [&]() {
         ImGui::SetNextItemWidth(96.0f);
-        dirty |= ImGui::InputFloat("Arrow length",
-                                   &block.arrowLenXDefault,
+        dirty |= ImGui::InputFloat("Length / box",
+                                   &block.scaleBarFractionDefault,
                                    0.0f,
                                    0.0f,
                                    "%g");
@@ -1969,14 +2003,13 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   }
 
   const float renderToWorld = ctx.normalization.toPhysicalScale();
-  const float worldToRender = ctx.normalization.toNormalizedScale();
 
   if (!state.paramsInitialized ||
       state.observedToolRevision != ctx.tool.revision) {
     state.draftParams = ctx.tool.params;
     for (int i = 0; i < 3; ++i) {
-      state.xlen_input[i] = state.draftParams.xlen[i] * renderToWorld;
-      state.xoffset_input[i] = state.draftParams.xoffset[i] * renderToWorld;
+      state.xlen_input[i] = state.draftParams.xlen[i];
+      state.xoffset_input[i] = state.draftParams.xoffset[i];
     }
     state.paramsInitialized = true;
     state.observedToolRevision = ctx.tool.revision;
@@ -2143,8 +2176,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
 
   paramsDirty |= DrawProjectionLayoutEditor(params,
                                             ctx,
-                                            renderToWorld,
-                                            worldToRender);
+                                            renderToWorld);
 
   bool renderRequested = false;
   if (ImGui::Button("render 2D projection map")) {

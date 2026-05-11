@@ -6,6 +6,9 @@
 #include "interaction/camera.h"
 #include "projection/projection_map_tool_state.h"
 
+#include <algorithm>
+#include <cmath>
+
 static bool UpdateOverlayState(const SimulationDataset& particles,
                                const CameraContext& camera,
                                const ParticleLabelRenderState& state,
@@ -26,8 +29,55 @@ static bool UpdateOverlayState(const SimulationDataset& particles,
   return false;
 }
 
+static void ApplyRenderScale(CubeObject& cube, float scale)
+{
+  cube.center *= scale;
+  cube.halfSize *= scale;
+}
+
+static void ApplyRenderScale(EllipsoidObject& ellipsoid, float scale)
+{
+  ellipsoid.position *= scale;
+  ellipsoid.radii *= scale;
+}
+
+static void ApplyRenderScale(DiskObject& disk, float scale)
+{
+  disk.position *= scale;
+  disk.radius *= scale;
+}
+
+static void ApplyRenderScale(LineObject& line, float scale)
+{
+  for (glm::vec3& point : line.points) {
+    point *= scale;
+  }
+}
+
+static void ApplyRenderScale(PolyhedronObject& polyhedron, float scale)
+{
+  for (glm::vec3& vertex : polyhedron.vertices) {
+    vertex *= scale;
+  }
+}
+
+static void ApplyRenderScale(CuboidObject& cuboid, float scale)
+{
+  cuboid.center *= scale;
+  cuboid.halfSize *= scale;
+}
+
+static void ApplyRenderScale(CuboidAnnotationObject& annotation, float scale)
+{
+  ApplyRenderScale(annotation.cuboid, scale);
+  annotation.arrowLength *= scale;
+  annotation.arrowHeadLength *= scale;
+  annotation.arrowHeadWidth *= scale;
+}
+
 #ifdef GEOMETRICAL_ANALYSIS
 static DerivedLayerUpdate RebuildDiskDerivedState(DiskAnalysisResultState& result,
+                                                  float worldToRenderScale,
                                                   float opacity,
                                                   DiskManager& disks)
 {
@@ -40,6 +90,7 @@ static DerivedLayerUpdate RebuildDiskDerivedState(DiskAnalysisResultState& resul
   bool visible = false;
   if (result.valid) {
     DiskObject disk = result.disk;
+    ApplyRenderScale(disk, worldToRenderScale);
     disk.opacity = opacity;
     disk.color   = glm::vec3(1.0f);
     disk.tag     = "main_disk";
@@ -51,6 +102,7 @@ static DerivedLayerUpdate RebuildDiskDerivedState(DiskAnalysisResultState& resul
 }
 
 static DerivedLayerUpdate RebuildEllipsoidDerivedState(EllipsoidAnalysisResultState& result,
+                                                       float worldToRenderScale,
                                                        float opacity,
                                                        EllipsoidManager& ellipsoids)
 {
@@ -63,6 +115,7 @@ static DerivedLayerUpdate RebuildEllipsoidDerivedState(EllipsoidAnalysisResultSt
   bool visible = false;
   if (result.valid) {
     EllipsoidObject obj = result.ellipsoid;
+    ApplyRenderScale(obj, worldToRenderScale);
     obj.opacity = opacity;
     obj.color   = glm::vec3(1.0f);
     obj.tag     = "analysis_ellipsoid";
@@ -77,6 +130,7 @@ static DerivedLayerUpdate RebuildEllipsoidDerivedState(EllipsoidAnalysisResultSt
 
 #ifdef STREAM_LINE
 static DerivedLayerUpdate RebuildStreamlinePreviewDerivedState(StreamlinePreviewResultState& result,
+                                                               float worldToRenderScale,
                                                                CubeManager& cubes)
 {
   if (!result.cpuUpdated) {
@@ -88,6 +142,7 @@ static DerivedLayerUpdate RebuildStreamlinePreviewDerivedState(StreamlinePreview
   bool visible = false;
   if (result.valid) {
     CubeObject cube = result.cube;
+    ApplyRenderScale(cube, worldToRenderScale);
     cube.tag = "streamline_seed_region";
     cubes.add(cube);
     visible = true;
@@ -97,6 +152,7 @@ static DerivedLayerUpdate RebuildStreamlinePreviewDerivedState(StreamlinePreview
 }
 
 static DerivedLayerUpdate RebuildStreamlineDerivedState(StreamlineBuildResultState& result,
+                                                        float worldToRenderScale,
                                                         LineManager& lines)
 {
   if (!result.cpuUpdated) {
@@ -105,7 +161,9 @@ static DerivedLayerUpdate RebuildStreamlineDerivedState(StreamlineBuildResultSta
 
   lines.clearGroup("streamline");
 
-  for (auto& line : result.lines) {
+  for (const auto& source : result.lines) {
+    LineObject line = source;
+    ApplyRenderScale(line, worldToRenderScale);
     lines.add(line);
   }
 
@@ -116,6 +174,7 @@ static DerivedLayerUpdate RebuildStreamlineDerivedState(StreamlineBuildResultSta
 
 #ifdef POWER_SPECTRUM
 static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumResultState& result,
+                                                                 float worldToRenderScale,
                                                                  CubeManager& cubes)
 {
   if (!result.regionPreviewCpuUpdated) {
@@ -127,6 +186,7 @@ static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumRe
   bool visible = false;
   if (result.regionPreviewValid) {
     CubeObject cube = result.regionCube;
+    ApplyRenderScale(cube, worldToRenderScale);
     cube.tag = "power_spectrum_region";
     cubes.add(cube);
     visible = true;
@@ -137,6 +197,7 @@ static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumRe
 #endif
 
 static bool RebuildSnapshotExtractRegionDerivedState(SnapshotExtractPreviewState& result,
+                                                     float worldToRenderScale,
                                                      CubeManager& cubes,
                                                      EllipsoidManager& ellipsoids)
 {
@@ -150,10 +211,12 @@ static bool RebuildSnapshotExtractRegionDerivedState(SnapshotExtractPreviewState
   if (result.valid) {
     if (result.regionKind == SnapshotExtractRegionKind::Sphere) {
       EllipsoidObject sphere = result.sphere;
+      ApplyRenderScale(sphere, worldToRenderScale);
       sphere.tag = "snapshot_extract_region";
       ellipsoids.add(sphere);
     } else {
       CubeObject box = result.box;
+      ApplyRenderScale(box, worldToRenderScale);
       box.tag = "snapshot_extract_region";
       cubes.add(box);
     }
@@ -163,16 +226,22 @@ static bool RebuildSnapshotExtractRegionDerivedState(SnapshotExtractPreviewState
 }
 
 #ifdef USE_CONVEX_HULL
-static DerivedLayerUpdate RebuildConvexHullDerivedState(const ConvexHullRuntimeState& convexState,
+static DerivedLayerUpdate RebuildConvexHullDerivedState(ConvexHullRuntimeState& convexState,
                                                         bool requested,
+                                                        float worldToRenderScale,
                                                         float opacity,
                                                         PolyhedronManager& polyhedra)
 {
-  if (!requested) {
+  const bool scaleChanged =
+    std::abs(convexState.renderedWorldToRenderScale - worldToRenderScale) >
+    std::max(1.0e-6f, 1.0e-6f * std::abs(worldToRenderScale));
+
+  if (!requested && !scaleChanged) {
     return {};
   }
 
   polyhedra.clearGroup("convex_hull");
+  convexState.renderedWorldToRenderScale = worldToRenderScale;
 
   bool anyVisible = false;
   for (const auto& entry : convexState.entries) {
@@ -187,6 +256,7 @@ static DerivedLayerUpdate RebuildConvexHullDerivedState(const ConvexHullRuntimeS
                                 entry.lineVertices[k + 1],
                                 entry.lineVertices[k + 2]);
     }
+    ApplyRenderScale(obj, worldToRenderScale);
 
     obj.color   = glm::vec3(1.0f);
     obj.opacity = opacity;
@@ -203,7 +273,8 @@ static DerivedLayerUpdate RebuildConvexHullDerivedState(const ConvexHullRuntimeS
 static DerivedLayerUpdate UpdateCuboidAnnotationDerivedState(bool requested,
                                                bool showAnnotation,
                                                CuboidAnnotationManager& annotations,
-                                               const ProjectionMapToolState& rt)
+                                               const ProjectionMapToolState& rt,
+                                               float worldToRenderScale)
 {
   if (!requested) {
     return {};
@@ -230,6 +301,7 @@ static DerivedLayerUpdate UpdateCuboidAnnotationDerivedState(bool requested,
     obj.arrowHeadLength   = 0.05f;
     obj.arrowHeadWidth    = 0.03f;
     obj.tag               = "interactive_cuboid";
+    ApplyRenderScale(obj, worldToRenderScale);
 
     annotations.add(obj);
   }
@@ -248,11 +320,13 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
 #ifdef GEOMETRICAL_ANALYSIS
   rebuild.disk =
     RebuildDiskDerivedState(derived.analysis.disk,
+                            particles.simulationBlock.worldToRenderScale,
                             render.disks.opacity,
                             derived.scene.disk);
 
   rebuild.ellipsoid =
     RebuildEllipsoidDerivedState(derived.analysis.ellipsoid,
+                                 particles.simulationBlock.worldToRenderScale,
                                  render.ellipsoids.opacity,
                                  derived.scene.ellipsoid);
 #endif
@@ -260,10 +334,12 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
 #ifdef STREAM_LINE
   rebuild.cube =
     RebuildStreamlinePreviewDerivedState(derived.analysis.streamlinePreview,
+                                         particles.simulationBlock.worldToRenderScale,
                                          derived.scene.cube);
 
   rebuild.line =
     RebuildStreamlineDerivedState(derived.analysis.streamlineBuild,
+                                  particles.simulationBlock.worldToRenderScale,
                                   derived.scene.line);
 #endif
 
@@ -271,6 +347,7 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
   {
     const DerivedLayerUpdate powerRegion =
       RebuildPowerSpectrumRegionDerivedState(derived.analysis.powerSpectrum,
+                                             particles.simulationBlock.worldToRenderScale,
                                              derived.scene.cube);
     if (powerRegion.changed) {
       rebuild.cube.changed = true;
@@ -280,6 +357,7 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
 
   if (RebuildSnapshotExtractRegionDerivedState(
         derived.analysis.snapshotExtractPreview,
+        particles.simulationBlock.worldToRenderScale,
         derived.scene.cube,
         derived.scene.ellipsoid)) {
     rebuild.cube.changed = true;
@@ -303,6 +381,7 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
   rebuild.polyhedron =
     RebuildConvexHullDerivedState(derived.analysis.convexHulls,
                                   render.polyhedra.cpuUpdated,
+                                  particles.simulationBlock.worldToRenderScale,
                                   render.polyhedra.opacity,
                                   derived.scene.polyhedron);
 #endif
@@ -311,7 +390,8 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
     UpdateCuboidAnnotationDerivedState(render.cuboidAnnotations.cpuUpdated,
                                        render.cuboidAnnotations.show,
                                        derived.scene.cuboidAnnotation,
-                                       projection);
+                                       projection,
+                                       particles.simulationBlock.worldToRenderScale);
 
   if (rebuild.line.changed || rebuild.cuboidAnnotation.changed) {
     rebuild.lineLayer.changed = true;

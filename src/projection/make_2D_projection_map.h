@@ -27,14 +27,15 @@ struct FluxSettings;
 struct UnitSystem;
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
-                                               double scaleToPhysical,
                                                double time);
 
 extern const float jetMap[];
 extern const float viridisMap[];
 extern const float plasmaMap[];
 
-struct pos_val {
+// Detached projection work item. Values are copied from SimulationBlock via
+// accessors before CPU/GPU projection code sees them.
+struct ProjectionParticleSample {
   float pos[3];
   float val;
   float colorVal;
@@ -70,7 +71,6 @@ private:
     float xlen[3] = {0.f, 0.f, 0.f}, xmin[3] = {0.f, 0.f, 0.f};
     float dx = 0.f, dy = 0.f, dz = 0.f;
     float cell_size = 0.f;
-    float sourceWorldToRenderScale = 1.0f;
     float minVal = 0.f, maxVal = 0.f;
     float colorMinVal = 0.f, colorMaxVal = 1.f;
     bool flagDensityWeight = false;
@@ -96,25 +96,26 @@ private:
   };
   CpuVoronoiCache cpuVoronoiCache_;
 
-  void createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles);
+  void createProjectionMap(ProjectionMap &map, const std::vector<ProjectionParticleSample>& particles);
   void createVoronoiSliceMap(ProjectionMap& map,
-                             const std::vector<pos_val>& particles,
+                             const std::vector<ProjectionParticleSample>& particles,
                              const ProjectionMapParams& params,
                              const ProjectionMapContext& ctx);
   VoronoiLabelGrid buildCpuVoronoiLabelGrid(const ProjectionMap& map,
-                                            const std::vector<pos_val>& particles);
+                                            const std::vector<ProjectionParticleSample>& particles);
   void integrateCpuVoronoiLabelGrid(ProjectionMap& map,
-                                    const std::vector<pos_val>& particles,
+                                    const std::vector<ProjectionParticleSample>& particles,
                                     const VoronoiLabelGrid& grid);
   void renderCpuVoronoiLabelGrid(ProjectionMap& map,
-                                 const std::vector<pos_val>& particles,
+                                 const std::vector<ProjectionParticleSample>& particles,
                                  const VoronoiLabelGrid& grid,
                                  const ProjectionMapParams& params,
                                  const ProjectionMapContext& ctx);
-  void createStarMap(ProjectionMap &map, const std::vector<pos_val>& particles, float sigma_pix, bool normalize);
+  void createStarMap(ProjectionMap &map, const std::vector<ProjectionParticleSample>& particles, float sigma_pix, bool normalize);
 
   void addColorBarToMap(ImageCanvas& canvas,
 			double cell_size,
+			double projectedBoxWidth,
 			float minVal,
 			float maxVal,
 			int colorBarWidth,

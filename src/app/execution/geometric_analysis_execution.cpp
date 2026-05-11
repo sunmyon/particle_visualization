@@ -24,7 +24,6 @@
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/simulation_dataset.h"
-#include "data/sample_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -41,6 +40,8 @@ void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
 				      DiskAnalysisResultState& result,
 				      const UnitSystem& units)
 {
+  (void)normalization;
+
   if (request.clearRequested) {
     result = DiskAnalysisResultState{};
     request.clearRequested = false;
@@ -68,12 +69,13 @@ void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
       return;
     }
 
-    param.mass = p.mass;
+    param.mass =
+      particles.simulationBlock.getQuantityOr(i, QuantityId::Mass);
+    float vel[3] = {0.0f, 0.0f, 0.0f};
+    particles.simulationBlock.getVector(i, VectorId::Vel, vel);
     for (int k = 0; k < 3; ++k) {
-      const glm::vec3 pos =
-        renderPosition(p, particles.simulationBlock.worldToRenderScale);
-      param.center[k] = pos[k];
-      param.v_center[k] = p.vel[k];
+      param.center[k] = p.position[k];
+      param.v_center[k] = vel[k];
     }
     found = true;
     break;
@@ -87,7 +89,7 @@ void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
 
   param.G = units.grav_const_internal;
   param.max_shell = 100;
-  param.scale_fac = normalization.toPhysicalScale();
+  param.scale_fac = 1.0f;
 
   DiskObject disk;
   disk.color = glm::vec3(1.0f);
@@ -95,7 +97,7 @@ void ExecuteSingleDiskAnalysisRequest(SimulationDataset& particles,
   disk.tag = request.diskTag;
 
   if (diskFinder.compute(particles.simulationBlock.particles,
-                         particles.simulationBlock.worldToRenderScale,
+                         1.0f,
                          param,
                          disk)) {
     result.valid  = true;
@@ -452,7 +454,7 @@ void ExecuteDiskBatchRequest(SimulationDataset& particles,
     ApplyDiskBatchFrameResult(spec,
                               diskResult1,
                               diskResult2,
-                              normalization.toPhysicalScale(),
+                              1.0,
                               fileNav,
                               snapshotLoad,
                               runtime,

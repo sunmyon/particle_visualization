@@ -22,6 +22,23 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+static float ProjectionWorldToRenderScale(const ProjectionMapExecutionContext& ctx)
+{
+  return ctx.projection.particles.simulationBlock.worldToRenderScale;
+}
+
+static glm::vec3 ProjectionDataToRender(const glm::vec3& p,
+                                        float worldToRenderScale)
+{
+  return p * worldToRenderScale;
+}
+
+static glm::vec3 ProjectionRenderToData(const glm::vec3& p,
+                                        float worldToRenderScale)
+{
+  return p / worldToRenderScale;
+}
+
 static void StoreQuatAsEulerDegrees(const glm::quat& q, float outEuler[3])
 {
   const glm::vec3 euler = glm::degrees(glm::eulerAngles(glm::normalize(q)));
@@ -101,6 +118,7 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
   ProjectionMapParams params = request.params;
   ProjectionMapToolState* tool = ctx.tool;
   RenderLayerState* cuboidAnnotation = ctx.cuboidAnnotation;
+  const float worldToRenderScale = ProjectionWorldToRenderScale(ctx);
 
   if (request.paramsChanged) {
     ProjectionEnsureLayoutInitialized(request.params);
@@ -128,9 +146,11 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
         (tool->params.activeViewBlockIndex != 0 && block.centerSameAsMain)
           ? main
           : block;
-      target.xoffset[0] = ctx.camera.cameraTarget.x;
-      target.xoffset[1] = ctx.camera.cameraTarget.y;
-      target.xoffset[2] = ctx.camera.cameraTarget.z;
+      const glm::vec3 dataTarget =
+        ProjectionRenderToData(ctx.camera.cameraTarget, worldToRenderScale);
+      target.xoffset[0] = dataTarget.x;
+      target.xoffset[1] = dataTarget.y;
+      target.xoffset[2] = dataTarget.z;
       ProjectionSyncTopLevelFromViewBlock(tool->params,
                                           tool->params.activeViewBlockIndex);
       SyncInteractiveCuboidFromParams(*tool);
@@ -147,13 +167,15 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
         (params.activeViewBlockIndex != 0 && block.centerSameAsMain)
           ? main
           : block;
-      target.xoffset[0] = ctx.camera.cameraTarget.x;
-      target.xoffset[1] = ctx.camera.cameraTarget.y;
-      target.xoffset[2] = ctx.camera.cameraTarget.z;
+      const glm::vec3 dataTarget =
+        ProjectionRenderToData(ctx.camera.cameraTarget, worldToRenderScale);
+      target.xoffset[0] = dataTarget.x;
+      target.xoffset[1] = dataTarget.y;
+      target.xoffset[2] = dataTarget.z;
       ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
-      params.xoffset[0] = ctx.camera.cameraTarget.x;
-      params.xoffset[1] = ctx.camera.cameraTarget.y;
-      params.xoffset[2] = ctx.camera.cameraTarget.z;
+      params.xoffset[0] = dataTarget.x;
+      params.xoffset[1] = dataTarget.y;
+      params.xoffset[2] = dataTarget.z;
     }
     request.moveCenterToCameraRequested = false;
   }
@@ -162,8 +184,7 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
     const ProjectionViewBlockSpec activeBlock =
       ProjectionResolveViewBlock(params, params.activeViewBlockIndex);
     ProjectionAngularMomentumFrame frame =
-      ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock.particles,
-                                  ctx.projection.particles.simulationBlock.worldToRenderScale,
+      ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock,
                                   glm::vec3(activeBlock.xoffset[0],
                                             activeBlock.xoffset[1],
                                             activeBlock.xoffset[2]),
@@ -201,7 +222,12 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
     if (tool) {
       const glm::mat4 view =
         glm::lookAt(ctx.camera.cameraPos, ctx.camera.cameraTarget, ctx.camera.cameraUp);
-      UpdateCuboidTransformArcball(tool->interactiveCuboid,
+      CuboidObject renderCuboid = tool->interactiveCuboid;
+      renderCuboid.center =
+        ProjectionDataToRender(renderCuboid.center, worldToRenderScale);
+      renderCuboid.halfSize =
+        ProjectionDataToRender(renderCuboid.halfSize, worldToRenderScale);
+      UpdateCuboidTransformArcball(renderCuboid,
                                    request.dragOldX,
                                    request.dragOldY,
                                    request.dragNewX,
@@ -209,7 +235,12 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
                                    request.displayWidth,
                                    request.displayHeight,
                                    view,
-                                   tool->interactiveCuboid.center);
+                                   renderCuboid.center);
+      tool->interactiveCuboid = renderCuboid;
+      tool->interactiveCuboid.center =
+        ProjectionRenderToData(renderCuboid.center, worldToRenderScale);
+      tool->interactiveCuboid.halfSize =
+        ProjectionRenderToData(renderCuboid.halfSize, worldToRenderScale);
       SyncParamsFromInteractiveCuboid(*tool);
       if (cuboidAnnotation) {
         MarkProjectionToolChanged(*tool, *cuboidAnnotation);

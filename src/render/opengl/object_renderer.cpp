@@ -953,6 +953,30 @@ void IsoContourRenderer::draw(const RenderDrawContext& ctx,
   if (vao_ == 0 || indexCount_ == 0) return;
   if (ctx.isoContourProgram == 0) return;
 
+  const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+  GLboolean depthWriteWasEnabled = GL_TRUE;
+  GLint blendSrcRgb = GL_ONE;
+  GLint blendDstRgb = GL_ZERO;
+  GLint blendSrcAlpha = GL_ONE;
+  GLint blendDstAlpha = GL_ZERO;
+  GLint blendEquationRgb = GL_FUNC_ADD;
+  GLint blendEquationAlpha = GL_FUNC_ADD;
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+  glBlendFuncSeparate(GL_SRC_ALPHA,
+                      GL_ONE_MINUS_SRC_ALPHA,
+                      GL_ONE,
+                      GL_ONE_MINUS_SRC_ALPHA);
+
   glUseProgram(ctx.isoContourProgram);
 
   glUniformMatrix4fv(glGetUniformLocation(ctx.isoContourProgram, "model"),
@@ -967,6 +991,19 @@ void IsoContourRenderer::draw(const RenderDrawContext& ctx,
   glBindVertexArray(vao_);
   glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
   glBindVertexArray(0);
+
+  glDepthMask(depthWriteWasEnabled);
+  glBlendEquationSeparate(static_cast<GLenum>(blendEquationRgb),
+                          static_cast<GLenum>(blendEquationAlpha));
+  glBlendFuncSeparate(static_cast<GLenum>(blendSrcRgb),
+                      static_cast<GLenum>(blendDstRgb),
+                      static_cast<GLenum>(blendSrcAlpha),
+                      static_cast<GLenum>(blendDstAlpha));
+  if (blendWasEnabled) {
+    glEnable(GL_BLEND);
+  } else {
+    glDisable(GL_BLEND);
+  }
 }
 
 void IsoContourRenderer::destroy()

@@ -435,8 +435,7 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
                                         RadialProfileRequestState& request,
                                         RadialProfileResultState& result,
                                         const SimulationBlock& partblock,
-                                        const glm::vec3& camCenter,
-                                        NormalizationContext& normalization,
+                                        const glm::vec3& dataCenter,
                                         QuantityState& quantity)
 {
   if (!request.runRequested) {
@@ -446,8 +445,7 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
   ExecuteRadialProfileRequest(request,
                               result,
                               partblock,
-                              camCenter,
-                              normalization,
+                              dataCenter,
                               quantity);
 
   if (request.params.autorange && result.result.valid) {

@@ -62,6 +62,8 @@ void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
                                      StreamlinePreviewRequestState& request,
                                      StreamlinePreviewResultState& result)
 {
+  (void)particles;
+
   if (request.clearRequested) {
     result = StreamlinePreviewResultState{};
     result.cpuUpdated = true;
@@ -82,18 +84,13 @@ void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
     return;
   }
 
-  const float worldToRender =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? particles.simulationBlock.worldToRenderScale
-      : 1.0f;
-
   CubeObject cube;
-  cube.center  = worldToRender * glm::vec3(request.seedCenter[0],
-                                                  request.seedCenter[1],
-                                                  request.seedCenter[2]);
-  cube.halfSize = 0.5f * worldToRender * glm::vec3(request.seedSize[0],
-                                                          request.seedSize[1],
-                                                          request.seedSize[2]);
+  cube.center  = glm::vec3(request.seedCenter[0],
+                           request.seedCenter[1],
+                           request.seedCenter[2]);
+  cube.halfSize = 0.5f * glm::vec3(request.seedSize[0],
+                                   request.seedSize[1],
+                                   request.seedSize[2]);
   
   cube.orientation = glm::quat{1, 0, 0, 0};
   cube.color   = glm::vec3(1.0f);
@@ -132,29 +129,16 @@ void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
   spec.stepScale = request.stepScale;
   spec.thetaMaxDegrees = request.thetaMaxDegrees;
   spec.useManualSeed = request.useManualSeed;
-  const float worldToRender =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? particles.simulationBlock.worldToRenderScale
-      : 1.0f;
-  const float renderToWorld =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? 1.0f / particles.simulationBlock.worldToRenderScale
-      : 1.0f;
 
   spec.manualSeeds = request.manualSeeds;
-  for (auto& seed : spec.manualSeeds) {
-    for (float& v : seed) {
-      v *= worldToRender;
-    }
-  }
 
   if (request.seedSize[0] > 0.f &&
       request.seedSize[1] > 0.f &&
       request.seedSize[2] > 0.f) {
     spec.seedRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.seedRegion.center[i] = request.seedCenter[i] * worldToRender;
-      spec.seedRegion.size[i] = request.seedSize[i] * worldToRender;
+      spec.seedRegion.center[i] = request.seedCenter[i];
+      spec.seedRegion.size[i] = request.seedSize[i];
     }
   }
 
@@ -164,8 +148,8 @@ void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
       request.regionSize[2] > 0.f) {
     spec.fieldRegion.enabled = true;
     for (int i = 0; i < 3; ++i) {
-      spec.fieldRegion.center[i] = request.regionCenter[i] * worldToRender;
-      spec.fieldRegion.size[i] = request.regionSize[i] * worldToRender;
+      spec.fieldRegion.center[i] = request.regionCenter[i];
+      spec.fieldRegion.size[i] = request.regionSize[i];
     }
   }
 
@@ -182,12 +166,12 @@ void ExecuteStreamlineBuildRequest(SimulationDataset& particles,
   for (const auto& src : built.seedReports) {
     StreamlineBuildResultState::SeedReport dst;
     dst.seedIndex = src.seedIndex;
-    dst.position[0] = src.position[0] * renderToWorld;
-    dst.position[1] = src.position[1] * renderToWorld;
-    dst.position[2] = src.position[2] * renderToWorld;
+    dst.position[0] = src.position[0];
+    dst.position[1] = src.position[1];
+    dst.position[2] = src.position[2];
     dst.stopReason = static_cast<int>(src.stopReason);
     dst.pointCount = src.pointCount;
-    dst.length = src.length * renderToWorld;
+    dst.length = src.length;
     result.seedReports.push_back(dst);
   }
 

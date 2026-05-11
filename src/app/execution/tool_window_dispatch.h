@@ -33,7 +33,6 @@ struct ParticleToolExecutionInput {
 struct AnalysisToolExecutionInput {
   SimulationDataset& particles;
   QuantityState& quantity;
-  NormalizationContext& normalization;
   AnalysisDerivedState& analysis;
   CameraContext& camera;
 };

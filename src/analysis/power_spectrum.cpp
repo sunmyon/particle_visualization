@@ -44,11 +44,14 @@ grid_analysis::Region3D MakeGasRegion(const SimulationBlock& block,
   }
 
   valid = false;
-  for (const auto& p : block.particles) {
+  for (std::size_t i = 0; i < block.particles.size(); ++i) {
+    const auto& p = block.particles[i];
     if (p.type != 0) continue;
+    float pos[3] = {0.0f, 0.0f, 0.0f};
+    if (!block.getVector(i, VectorId::OriginalPos, pos)) continue;
     valid = true;
     for (int axis = 0; axis < 3; ++axis) {
-      const double x = static_cast<double>(p.position[axis]);
+      const double x = static_cast<double>(pos[axis]);
       region.xmin[axis] = std::min(region.xmin[axis], x);
       region.xmax[axis] = std::max(region.xmax[axis], x);
     }
@@ -297,24 +300,28 @@ PowerSpectrumComputer::compute(const SimulationBlock& block,
       const auto& p = block.particles[i];
       if (p.type != 0) continue;
 
+      float pos3[3] = {0.0f, 0.0f, 0.0f};
+      if (!block.getVector(i, VectorId::OriginalPos, pos3)) continue;
       std::array<double, 3> pos{
-        static_cast<double>(p.position[0]),
-        static_cast<double>(p.position[1]),
-        static_cast<double>(p.position[2])
+        static_cast<double>(pos3[0]),
+        static_cast<double>(pos3[1]),
+        static_cast<double>(pos3[2])
       };
 
       if (result.vectorSpectrum) {
         std::array<double, 3> vec{};
         if (params.vectorField == 1) {
           float b[3] = {0.0f, 0.0f, 0.0f};
-          if (!block.readSoAAs(soa_views::Bfield, i, b)) continue;
+          if (!block.getVector(i, VectorId::Bfield, b)) continue;
           vec = {static_cast<double>(b[0]),
                  static_cast<double>(b[1]),
                  static_cast<double>(b[2])};
         } else {
-          vec = {static_cast<double>(p.vel[0]),
-                 static_cast<double>(p.vel[1]),
-                 static_cast<double>(p.vel[2])};
+          float vel[3] = {0.0f, 0.0f, 0.0f};
+          if (!block.getVector(i, VectorId::Vel, vel)) continue;
+          vec = {static_cast<double>(vel[0]),
+                 static_cast<double>(vel[1]),
+                 static_cast<double>(vel[2])};
         }
         builder.depositVectorSample(pos, vec, 1.0);
       } else {

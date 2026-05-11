@@ -8,7 +8,6 @@
 #include <algorithm>
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
-                                               double scaleToPhysical,
                                                double time)
 {
   ProjectionMapContext ctx;
@@ -43,7 +42,6 @@ ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params
   ctx.colorMap = colormaps[colormapIndex].data;
   ctx.colorMapSize = colormaps[colormapIndex].count;
 
-  ctx.scaleToPhysical = scaleToPhysical;
   ctx.time = time;
 
   return ctx;

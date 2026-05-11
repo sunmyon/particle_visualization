@@ -30,14 +30,16 @@ inline void RecomputeCurrentFileIndex(FileNavigationRuntimeState& rt)
 
 inline void RefreshSnapshotFilePath(FileNavigationRuntimeState& rt)
 {
+  RecomputeCurrentFileIndex(rt);
+  const int fileIndex = rt.navigation.currentFileIndex;
   char fileNameOnly[255];
   std::snprintf(fileNameOnly,
                 sizeof(fileNameOnly),
                 rt.input.fileFormat,
-                rt.navigation.initialIndex,
-                rt.navigation.initialIndex,
-                rt.navigation.initialIndex,
-                rt.navigation.initialIndex);
+                fileIndex,
+                fileIndex,
+                fileIndex,
+                fileIndex);
   std::snprintf(rt.input.filePath,
                 sizeof(rt.input.filePath),
                 "%s/%s",

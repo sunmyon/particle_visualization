@@ -16,7 +16,6 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "render/scene_objects.h"
-#include "data/sample_coordinates.h"
 
 #if defined(USE_TBB) && __has_include(<tbb/parallel_sort.h>)
 #define HAS_TBB 1
@@ -92,6 +91,7 @@ inline bool DiskRadiusFinder::compute(const VecT& particles,
                                       const Params& par,
                                       DiskObject& disk) const
 {
+  (void)worldToRenderScale;
   const double Grav = par.G;
 
   disk.clear();
@@ -101,13 +101,12 @@ inline bool DiskRadiusFinder::compute(const VecT& particles,
   P.reserve(particles.size());
 
   for (const auto& src : particles) {
-    const glm::vec3 pos = renderPosition(src, worldToRenderScale);
     PDisk d;
     d.m = src.mass;
     d.pos = {
-      double(pos.x - par.center[0]),
-      double(pos.y - par.center[1]),
-      double(pos.z - par.center[2])
+      double(src.position[0] - par.center[0]),
+      double(src.position[1] - par.center[1]),
+      double(src.position[2] - par.center[2])
     };
     d.vel = {
       double(src.vel[0] - par.v_center[0]),

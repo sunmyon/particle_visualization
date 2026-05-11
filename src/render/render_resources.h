@@ -152,8 +152,7 @@ void BuildRenderParticles(const ParticleRenderInput& input,
                           std::vector<RenderParticle>& out,
                           std::vector<RenderParticle>* stressOut = nullptr);
 
-std::vector<float> BuildVelocityInstanceData(const std::vector<SimulationElement>& particles,
-                                             float worldToRenderScale,
+std::vector<float> BuildVelocityInstanceData(const SimulationBlock& block,
                                              const int velocity_subtraction);
 
 void UpdateVelocityRenderData(const ParticleRenderInput& input,

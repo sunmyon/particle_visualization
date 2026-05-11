@@ -221,12 +221,14 @@ bool FindMostMassiveParticleTarget(const SimulationBlock& block,
 {
   bool found = false;
   float bestMass = -1.0f;
-  for (const SimulationElement& p : block.particles) {
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const SimulationElement& p = block.particles[i];
     if (static_cast<int>(p.type) != type) {
       continue;
     }
-    if (!found || p.mass > bestMass) {
-      bestMass = p.mass;
+    const float mass = block.getQuantityOr(i, QuantityId::Mass);
+    if (!found || mass > bestMass) {
+      bestMass = mass;
       outTarget = renderPosition(p, block.worldToRenderScale);
       found = true;
     }
@@ -501,6 +503,9 @@ int RunVolumeGpuBatchFromJson(const char* path)
       ConfigureTransferFunction(volumeJob, request, volumeRender);
 
       render.scene.volume = app.derived.analysis.volume.tree;
+      ScaleAdaptiveVolumeTreeCoordinates(
+        render.scene.volume,
+        app.data.particles->simulationBlock.worldToRenderScale);
       ++render.scene.volumeVersion;
 
       ApplyBatchCameraJson(root,

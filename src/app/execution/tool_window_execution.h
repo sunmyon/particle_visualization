@@ -41,8 +41,7 @@ void ExecuteRadialProfileWindowRequests(RadialProfileUIState& ui,
                                         RadialProfileRequestState& request,
                                         RadialProfileResultState& result,
                                         const SimulationBlock& partblock,
-                                        const glm::vec3& camCenter,
-                                        NormalizationContext& normalization,
+                                        const glm::vec3& dataCenter,
                                         QuantityState& quantity);
 
 void ExecuteHistogram2DWindowRequests(Histogram2DUIState& ui,

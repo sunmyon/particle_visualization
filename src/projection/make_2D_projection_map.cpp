@@ -3,7 +3,6 @@
 
 #include "data/simulation_dataset.h"
 #include "data/simulation_block.h"
-#include "data/sample_coordinates.h"
 #include "render/scene_objects.h"
 
 #include <chrono>
@@ -42,7 +41,7 @@
 namespace{
   // Data container used by nanoflann.
   struct VoronoiParticleCloud {
-    std::vector<pos_val> particles;
+    std::vector<ProjectionParticleSample> particles;
   
     // kd-tree interface.
     inline size_t kdtree_get_point_count() const { return particles.size(); }
@@ -130,6 +129,20 @@ double EvaluateProjectionTf(const ProjectionMapParams& params, double value)
   }
   return std::max(sigma, 0.0);
 }
+
+ProjectionParticleSample MakeProjectionParticleSample(const SimulationBlock& block,
+                                                      size_t index,
+                                                      const SimulationElement& p)
+{
+  ProjectionParticleSample sample{};
+  sample.pos[0] = p.position[0];
+  sample.pos[1] = p.position[1];
+  sample.pos[2] = p.position[2];
+  sample.mass = block.getQuantityOr(index, QuantityId::Mass);
+  sample.density = block.getQuantityOr(index, QuantityId::Density);
+  sample.hsml = p.supportRadius;
+  return sample;
+}
 } // namespace
 
 RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particles,
@@ -153,7 +166,6 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particle
   ProjectionApplyPanelToParams(panelParams, panelParams.panels[0], block);
   ProjectionMapContext panelCtx =
     BuildProjectionMapContext(panelParams,
-                              ctx.scaleToPhysical,
                               ctx.time);
   return makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
 }
@@ -173,15 +185,17 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
     double weight = 0.;
     
     int count = 0;
-    for (const auto& p : originalParticles) {
+    for (size_t ipart = 0; ipart < originalParticles.size(); ++ipart) {
+      const auto& p = originalParticles[ipart];
       if(p.type != ctx.selectedType)
 	continue;
-      
-      if(p.mass > params.criticalGasMassForZoomRegion)
+
+      const float mass =
+        particles.simulationBlock.getQuantityOr(ipart, QuantityId::Mass);
+      if(mass > params.criticalGasMassForZoomRegion)
 	continue;
       
-      const glm::vec3 pos =
-        renderPosition(p, particles.simulationBlock.worldToRenderScale);
+      const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
       for(int k=0;k<3;k++){
 	if(pos[k] < xmin_zoom[k])
 	  xmin_zoom[k] = pos[k];
@@ -189,10 +203,10 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
 	if(pos[k] > xmax_zoom[k])
 	  xmax_zoom[k] = pos[k];
 
-	xsum_zoom[k] += p.mass * pos[k];
+	xsum_zoom[k] += mass * pos[k];
       }
 
-      weight += p.mass;
+      weight += mass;
       count++;
     }
 
@@ -209,12 +223,10 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       ctx.center.x = xsum_zoom[0];
       ctx.center.y = xsum_zoom[1];
       ctx.center.z = xsum_zoom[2];
-      if (params.lenZoomRegion > 0.0f && ctx.scaleToPhysical > 0.0) {
-        const float lenNormalized =
-          params.lenZoomRegion / static_cast<float>(ctx.scaleToPhysical);
-        params.xlen[0] = lenNormalized;
-        params.xlen[1] = lenNormalized;
-        params.xlen[2] = lenNormalized;
+      if (params.lenZoomRegion > 0.0f) {
+        params.xlen[0] = params.lenZoomRegion;
+        params.xlen[1] = params.lenZoomRegion;
+        params.xlen[2] = params.lenZoomRegion;
       }
     }else
       printf("no particles have been found...\n");
@@ -234,15 +246,14 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   xmax_cut[1] = ctx.center.y + params.xlen[1];
   xmax_cut[2] = ctx.center.z + params.xlen[2];  
   
-  std::vector<pos_val> insideParticles;
+  std::vector<ProjectionParticleSample> insideParticles;
 
   for (int idx = 0; idx < (int)originalParticles.size(); ++idx) {
     const auto& p = originalParticles[idx];
     if (p.type != ctx.selectedType) continue;
 
     bool inside = false;
-    const glm::vec3 pos =
-      renderPosition(p, particles.simulationBlock.worldToRenderScale);
+    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
     glm::vec4 localPos =
       glm::inverse(ctx.cuboidTransform)
       * glm::vec4(pos - ctx.center, 1.0f)
@@ -255,10 +266,10 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
     }
     if (!inside) continue;
 
-    pos_val pp;
-    pp.pos[0] = pos.x; pp.pos[1] = pos.y; pp.pos[2] = pos.z;
-    pp.hsml = renderSupportRadius(p, particles.simulationBlock.worldToRenderScale);
-    pp.mass = p.mass;
+    ProjectionParticleSample pp =
+      MakeProjectionParticleSample(particles.simulationBlock,
+                                   static_cast<size_t>(idx),
+                                   p);
     
     if (params.dataSource == DataSource::Gas) {
       const QuantityId projectionQuantity =
@@ -274,23 +285,29 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
                                    p,
                                    idx,
                                    params.selectedVarGas);
-      pp.density = p.density;
+      pp.density =
+        particles.simulationBlock.getQuantityOr(static_cast<size_t>(idx),
+                                                QuantityId::Density);
     }
     
     if (params.dataSource == DataSource::Stars) {
       if (params.starQuantity == StarQuantity::Metallicity) {
 	float zmet = 0.0f;
-	particles.simulationBlock.readSoAAs(soa_views::Metallicity, (size_t)idx, zmet);
+	particles.simulationBlock.getQuantity(static_cast<size_t>(idx),
+                                              QuantityId::Metallicity,
+                                              zmet);
 	pp.val = zmet;
         pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Mass) {
-	pp.val = p.mass;
+	pp.val = pp.mass;
         pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Density) {
-	pp.val = p.density;
+	pp.val = particles.simulationBlock.getQuantityOr(
+          static_cast<size_t>(idx), QuantityId::Density);
         pp.colorVal = pp.val;
       } else if (params.starQuantity == StarQuantity::Flux) {
-	pp.val = (float)compute_band_luminosity_Lsun(p.mass*units.mass_msun, params.flux);
+	pp.val = (float)compute_band_luminosity_Lsun(
+          pp.mass * units.mass_msun, params.flux);
         pp.colorVal = pp.val;
       } else {
 	pp.val = 1.0f;
@@ -309,7 +326,6 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
     }
     
   ProjectionMap map = buildProjectionMap(params, ctx);
-  map.sourceWorldToRenderScale = particles.simulationBlock.worldToRenderScale;
   for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
 
   using namespace std::chrono;
@@ -372,7 +388,7 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       double colorValueMin = std::numeric_limits<double>::max();
       double colorValueMax = -std::numeric_limits<double>::max();
       size_t finiteColorValueCount = 0;
-      for (const pos_val& p : insideParticles) {
+      for (const ProjectionParticleSample& p : insideParticles) {
         const glm::vec3 diff =
           glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
         const double cx = glm::dot(diff, map.uAxis);
@@ -751,7 +767,6 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
 
       ProjectionMapContext panelCtx =
         BuildProjectionMapContext(panelParams,
-                                  ctx.scaleToPhysical,
                                   ctx.time);
       RgbImage panel =
         makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
@@ -874,6 +889,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
     addColorBarToMap(canvas,
                      map.cell_size,
+                     map.xlen[0],
                      map.colorMinVal,
                      map.colorMaxVal,
                      colorBarWidth,
@@ -930,6 +946,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
   addColorBarToMap(canvas,
                    map.cell_size,
+                   map.xlen[0],
                    rangeMin,
                    rangeMax,
                    colorBarWidth,
@@ -981,7 +998,7 @@ float ProjectionMapGenerator::kernel(float u) {
     return 0.;
 }
   
-void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::vector<pos_val>& particles)
+void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::vector<ProjectionParticleSample>& particles)
 {
   float xmin_local[3];
   xmin_local[0] = map.xmin[0] - map.center.x;
@@ -1049,7 +1066,7 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
 
 void ProjectionMapGenerator::createVoronoiSliceMap(
   ProjectionMap& map,
-  const std::vector<pos_val>& particles,
+  const std::vector<ProjectionParticleSample>& particles,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx)
 {  
@@ -1069,7 +1086,7 @@ void ProjectionMapGenerator::createVoronoiSliceMap(
     HashFloat(cacheKey, map.wAxis[k]);
   }
   HashCombine(cacheKey, particles.size());
-  for (const pos_val& p : particles) {
+  for (const ProjectionParticleSample& p : particles) {
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
     HashFloat(cacheKey, glm::dot(diff, map.uAxis));
     HashFloat(cacheKey, glm::dot(diff, map.vAxis));
@@ -1098,13 +1115,13 @@ void ProjectionMapGenerator::createVoronoiSliceMap(
 ProjectionMapGenerator::VoronoiLabelGrid
 ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
   const ProjectionMap& map,
-  const std::vector<pos_val>& particles)
+  const std::vector<ProjectionParticleSample>& particles)
 {
-  std::vector<pos_val> filtered;
+  std::vector<ProjectionParticleSample> filtered;
   for (size_t i=0;i<particles.size();i++)
     {
-      const pos_val& p = particles[i];
-      pos_val sp;
+      const ProjectionParticleSample& p = particles[i];
+      ProjectionParticleSample sp;
       
       glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
       sp.pos[0] = glm::dot(diff, map.uAxis);
@@ -1189,13 +1206,13 @@ ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
 
 void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
   ProjectionMap& map,
-  const std::vector<pos_val>& particles,
+  const std::vector<ProjectionParticleSample>& particles,
   const VoronoiLabelGrid& grid)
 {
-  std::vector<pos_val> filtered;
+  std::vector<ProjectionParticleSample> filtered;
   filtered.reserve(particles.size());
-  for (const pos_val& p : particles) {
-    pos_val sp;
+  for (const ProjectionParticleSample& p : particles) {
+    ProjectionParticleSample sp;
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
     sp.pos[0] = glm::dot(diff, map.uAxis);
     sp.pos[1] = glm::dot(diff, map.vAxis);
@@ -1223,7 +1240,7 @@ void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
             static_cast<size_t>(label) >= filtered.size()) {
           continue;
         }
-        const pos_val& p = filtered[static_cast<size_t>(label)];
+        const ProjectionParticleSample& p = filtered[static_cast<size_t>(label)];
         double weight = 1.0;
         if (map.flagDensityWeight == true)
           weight *= p.density;
@@ -1250,15 +1267,15 @@ void ProjectionMapGenerator::integrateCpuVoronoiLabelGrid(
 
 void ProjectionMapGenerator::renderCpuVoronoiLabelGrid(
   ProjectionMap& map,
-  const std::vector<pos_val>& particles,
+  const std::vector<ProjectionParticleSample>& particles,
   const VoronoiLabelGrid& grid,
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx)
 {
-  std::vector<pos_val> filtered;
+  std::vector<ProjectionParticleSample> filtered;
   filtered.reserve(particles.size());
-  for (const pos_val& p : particles) {
-    pos_val sp;
+  for (const ProjectionParticleSample& p : particles) {
+    ProjectionParticleSample sp;
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
     sp.pos[0] = glm::dot(diff, map.uAxis);
     sp.pos[1] = glm::dot(diff, map.vAxis);
@@ -1280,7 +1297,7 @@ void ProjectionMapGenerator::renderCpuVoronoiLabelGrid(
   const double dz = std::max<double>(std::abs(map.dz), 1.0e-30);
   double colorMin = std::numeric_limits<double>::max();
   double colorMax = -std::numeric_limits<double>::max();
-  for (const pos_val& p : filtered) {
+  for (const ProjectionParticleSample& p : filtered) {
     double value = p.colorVal;
     if (!std::isfinite(value)) continue;
     if (params.flagLogScale) {
@@ -1320,7 +1337,7 @@ void ProjectionMapGenerator::renderCpuVoronoiLabelGrid(
           continue;
         }
 
-        const pos_val& p = filtered[static_cast<size_t>(label)];
+        const ProjectionParticleSample& p = filtered[static_cast<size_t>(label)];
         const double sigma = EvaluateProjectionTf(params,
                                                   static_cast<double>(p.val));
         if (!(sigma > 0.0) || !std::isfinite(sigma)) {
@@ -1377,7 +1394,7 @@ static inline double gaussian2d_weight(double r2, double sigma2, double pixel_ar
 }
 
 void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
-                                           const std::vector<pos_val>& particles,
+                                           const std::vector<ProjectionParticleSample>& particles,
                                            float sigma_pix,
                                            bool normalize)
 {
@@ -1500,7 +1517,7 @@ void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
     const SimulationElement& p = block.particles[ipart];
     if (p.type != static_cast<uint8_t>(params.selectedType)) continue;
 
-    const glm::vec3 pos = renderPosition(p, map.sourceWorldToRenderScale);
+    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
     const glm::vec3 rad = pos - map.center;
     const float u = glm::dot(rad, map.uAxis);
     const float v = glm::dot(rad, map.vAxis);
@@ -1513,10 +1530,8 @@ void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
 
     float vec3[3] = {0.0f, 0.0f, 0.0f};
     if (overlay.vectorField == ProjectionVectorField::Velocity) {
-      vec3[0] = p.vel[0];
-      vec3[1] = p.vel[1];
-      vec3[2] = p.vel[2];
-    } else if (!block.readSoAAs(soa_views::Bfield, ipart, vec3)) {
+      if (!block.getVector(ipart, VectorId::Vel, vec3)) continue;
+    } else if (!block.getVector(ipart, VectorId::Bfield, vec3)) {
       continue;
     }
 
@@ -1532,10 +1547,11 @@ void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
     if (ix < 0 || ix >= gridX || iy < 0 || iy >= gridY) continue;
 
     const int idx = iy * gridX + ix;
+    const float mass = block.getQuantityOr(ipart, QuantityId::Mass);
     const double weight =
       (overlay.vectorField == ProjectionVectorField::Velocity &&
-       std::isfinite(p.mass) && p.mass > 0.0f)
-        ? static_cast<double>(p.mass)
+       std::isfinite(mass) && mass > 0.0f)
+        ? static_cast<double>(mass)
         : 1.0;
     sumU[static_cast<size_t>(idx)] += weight * static_cast<double>(vu);
     sumV[static_cast<size_t>(idx)] += weight * static_cast<double>(vv);
@@ -1797,40 +1813,44 @@ void ProjectionMapGenerator::overlayVectorField(ImageCanvas& canvas,
 
 namespace {
 bool ProjectionParticleTypeEnabled(const ProjectionStarOverlaySpec& overlay,
-                                   const SimulationElement& p)
+                                   const SimulationBlock& block,
+                                   const SimulationElement& p,
+                                   size_t index)
 {
   const int type = static_cast<int>(p.type);
+  const float mass = block.getQuantityOr(index, QuantityId::Mass);
   return type >= 0 &&
          type < 6 &&
          overlay.typeEnabled[type] &&
-         std::isfinite(p.mass) &&
-         p.mass >= overlay.minMass &&
-         (!overlay.useMaxMass || p.mass <= overlay.maxMass);
+         std::isfinite(mass) &&
+         mass >= overlay.minMass &&
+         (!overlay.useMaxMass || mass <= overlay.maxMass);
 }
 
 float ProjectionParticleOverlayScalarValue(const ProjectionStarOverlaySpec& overlay,
                                            const SimulationBlock& block,
                                            const UnitSystem& units,
                                            const ProjectionMapParams& params,
-                                           const SimulationElement& p,
                                            size_t index,
                                            ProjectionParticleOverlayScalar scalar)
 {
   switch (scalar) {
   case ProjectionParticleOverlayScalar::Mass:
-    return p.mass;
+    return block.getQuantityOr(index, QuantityId::Mass);
   case ProjectionParticleOverlayScalar::Luminosity:
     return static_cast<float>(
-      compute_band_luminosity_Lsun(p.mass * units.mass_msun, params.flux));
+      compute_band_luminosity_Lsun(
+        block.getQuantityOr(index, QuantityId::Mass) * units.mass_msun,
+        params.flux));
   case ProjectionParticleOverlayScalar::Density:
-    return p.density;
+    return block.getQuantityOr(index, QuantityId::Density);
   case ProjectionParticleOverlayScalar::Metallicity: {
     float zmet = 0.0f;
-    block.readSoAAs(soa_views::Metallicity, index, zmet);
+    block.getQuantity(index, QuantityId::Metallicity, zmet);
     return zmet;
   }
   case ProjectionParticleOverlayScalar::Temperature:
-    return p.temperature;
+    return block.getQuantityOr(index, QuantityId::Temperature);
   case ProjectionParticleOverlayScalar::Fixed:
   default:
     (void)overlay;
@@ -1890,13 +1910,13 @@ void ProjectionAutoScalarRange(const ProjectionStarOverlaySpec& overlay,
   outMax = std::numeric_limits<float>::lowest();
   for (size_t i = 0; i < block.particles.size(); ++i) {
     const SimulationElement& p = block.particles[i];
-    if (!ProjectionParticleTypeEnabled(overlay, p)) continue;
+    if (!ProjectionParticleTypeEnabled(overlay, block, p, i)) continue;
     if (params.dataSource == DataSource::Stars &&
         p.type == ctx.selectedType) {
       continue;
     }
     const float value =
-      ProjectionParticleOverlayScalarValue(overlay, block, units, params, p, i, scalar);
+      ProjectionParticleOverlayScalarValue(overlay, block, units, params, i, scalar);
     if (!std::isfinite(value)) continue;
     outMin = std::min(outMin, value);
     outMax = std::max(outMax, value);
@@ -1961,7 +1981,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
 
   for (size_t i = 0; i < block.particles.size(); ++i) {
     const SimulationElement& p = block.particles[i];
-    if (!ProjectionParticleTypeEnabled(overlay, p)) continue;
+    if (!ProjectionParticleTypeEnabled(overlay, block, p, i)) continue;
     if (params.dataSource == DataSource::Stars && p.type == ctx.selectedType) {
       continue;
     }
@@ -1974,7 +1994,6 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
                                              block,
                                              units,
                                              params,
-                                             p,
                                              i,
                                              overlay.sizeScalar);
       const bool logSize =
@@ -1999,7 +2018,6 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
                                              block,
                                              units,
                                              params,
-                                             p,
                                              i,
                                              overlay.colorScalar);
       const float colorT =
@@ -2022,7 +2040,7 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       
     // Project the 3D position to image coordinates using the same method as createProjectionMap().
     glm::vec3 rad =
-      renderPosition(p, map.sourceWorldToRenderScale) - map.center;
+      glm::vec3(p.position[0], p.position[1], p.position[2]) - map.center;
     float u = glm::dot(rad, map.uAxis);  // Component along the image X axis.
     float v = glm::dot(rad, map.vAxis);  // Component along the image Y axis.
     int px = static_cast<int>((u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x);
@@ -2127,6 +2145,7 @@ std::vector<double> generate_ticks(double min, double max, int n_desired) {
 
 void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					      double cell_size,
+					      double projectedBoxWidth,
 					      float minVal,
 					      float maxVal,
 					      int colorBarWidth,
@@ -2272,15 +2291,15 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   // draw spatial scale
   if(params.flagPlaceScale)
     {
-      double arrowLenX_scaled = params.arrowLenX;
-      if(ctx.scaleToPhysical > 0.0)
-	arrowLenX_scaled /= ctx.scaleToPhysical;
+      double scaleBarLength =
+        static_cast<double>(params.scaleBarFraction) *
+        std::max(projectedBoxWidth, 0.0);
 
-      int arrowLenX_in_pixel = static_cast<int>(arrowLenX_scaled / cell_size);
+      int scaleBarLengthPixels = static_cast<int>(scaleBarLength / cell_size);
 	
       int arrowCenterX = outW_init / 2;
-      int arrowStartX = arrowCenterX - arrowLenX_in_pixel / 2;
-      int arrowEndX = arrowStartX + arrowLenX_in_pixel;
+      int arrowStartX = arrowCenterX - scaleBarLengthPixels / 2;
+      int arrowEndX = arrowStartX + scaleBarLengthPixels;
       
       int arrowStartY = outH - 30;
 

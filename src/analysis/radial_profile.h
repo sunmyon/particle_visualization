@@ -58,9 +58,8 @@ public:
   }
 
   RadialProfileResult compute(const SimulationBlock& partblock,
-			      double scaleToPhysical,
                               const RadialProfileParams& params,
-			      const glm::vec3& cam_center);
+                              const glm::vec3& dataCenter);
 
 private:
   glm::vec3 v_center = glm::vec3(0);

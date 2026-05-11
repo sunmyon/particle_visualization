@@ -209,23 +209,25 @@ inline std::vector<FieldSpec> MakeDefaultGadgetFormatTokens()
   auto push = [&](FieldKey key,
                   DataType type,
                   int count,
-                  const char* domainSource) {
+                  const char* domainSource,
+                  std::uint8_t typeMask) {
     FieldSpec spec;
     spec.key = key;
     spec.type = type;
     spec.count = count;
     spec.sourceName = domainSource;
+    spec.typeMask = typeMask;
     tokens.push_back(std::move(spec));
   };
 
-  push(FieldKey::Position,       DataType::Float, 3, "all:1");
-  push(FieldKey::Velocity,       DataType::Float, 3, "all:1");
-  push(FieldKey::ID,             DataType::Int32, 1, "all:1");
-  push(FieldKey::Mass,           DataType::Float, 1, "all:1");
-  push(FieldKey::InternalEnergy, DataType::Float, 1, "type0:1");
-  push(FieldKey::Density,        DataType::Float, 1, "type0:1");
-  push(FieldKey::H2Abundance,    DataType::Float, 1, "type0:1");
-  push(FieldKey::Hsml,           DataType::Float, 1, "type0:1");
+  push(FieldKey::Position,       DataType::Float, 3, "types:1", 0x3fu);
+  push(FieldKey::Velocity,       DataType::Float, 3, "types:1", 0x3fu);
+  push(FieldKey::ID,             DataType::Int32, 1, "types:1", 0x3fu);
+  push(FieldKey::Mass,           DataType::Float, 1, "types:1", 0x3fu);
+  push(FieldKey::InternalEnergy, DataType::Float, 1, "types:1", 0x01u);
+  push(FieldKey::Density,        DataType::Float, 1, "types:1", 0x01u);
+  push(FieldKey::H2Abundance,    DataType::Float, 1, "types:1", 0x01u);
+  push(FieldKey::Hsml,           DataType::Float, 1, "types:1", 0x01u);
 
   return tokens;
 }

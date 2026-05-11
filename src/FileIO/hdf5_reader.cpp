@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include "FileIO/hdf5_reader.h"
@@ -26,6 +27,17 @@ namespace {
 
   std::string partPath(int ptype, const std::string& dsName) {
     return "/PartType" + std::to_string(ptype) + "/" + dsName;
+  }
+
+  std::string hdf5MaskString(unsigned int mask)
+  {
+    std::string out;
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      if ((mask & (1u << ptype)) == 0) continue;
+      if (!out.empty()) out += ",";
+      out += "T" + std::to_string(ptype);
+    }
+    return out.empty() ? "none" : out;
   }
 
   struct Hdf5FieldReadStat {
@@ -1269,6 +1281,31 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
 
     const FieldKey requestedKey = fl.ftype;
     const std::string requestedName = fl.spec.sourceName;
+    auto datasetAvailabilityMask = [&](const std::string& dsName) {
+      unsigned int mask = 0;
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        if (flag_skip_DM_ && ptype == 1) continue;
+        try {
+          H5SilenceErrors quiet(ptype >= 1);
+          H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
+          (void)ds;
+          mask |= (1u << ptype);
+        } catch (...) {
+        }
+      }
+      return mask;
+    };
+    const unsigned int availableMask = datasetAvailabilityMask(requestedName);
+    std::cerr << "[HDF5ReaderMask] request field="
+              << GetFieldKeyDisplayName(requestedKey)
+              << " source=" << requestedName
+              << " requestedMask=0x" << std::hex
+              << static_cast<unsigned>(fl.spec.typeMask & 0x3fu)
+              << " availableMask=0x" << availableMask
+              << std::dec << " requested=("
+              << hdf5MaskString(fl.spec.typeMask & 0x3fu)
+              << ") available=(" << hdf5MaskString(availableMask)
+              << ")\n";
 
     auto bindDataset = [&](FieldKey key, const std::string& dsName) {
       for (int ptype = 0; ptype < 6; ++ptype) {
@@ -1288,6 +1325,15 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
           candidate.spec.sourceName = dsName;
           update_layout_from_hdf5(candidate, ds);
           fl = candidate;
+          std::cerr << "[HDF5ReaderMask] bound field="
+                    << GetFieldKeyDisplayName(fl.ftype)
+                    << " source=" << fl.spec.sourceName
+                    << " firstPtype=T" << ptype
+                    << " finalMask=0x" << std::hex
+                    << static_cast<unsigned>(fl.spec.typeMask & 0x3fu)
+                    << std::dec << " ("
+                    << hdf5MaskString(fl.spec.typeMask & 0x3fu)
+                    << ")\n";
           return true;
         } catch (...) {
         }
@@ -1316,6 +1362,16 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
     }
 
     fl.present = found;
+    if (!found) {
+      std::cerr << "[HDF5ReaderMask] missing field="
+                << GetFieldKeyDisplayName(requestedKey)
+                << " source=" << requestedName
+                << " finalMask=0x" << std::hex
+                << static_cast<unsigned>(fl.spec.typeMask & 0x3fu)
+                << std::dec << " ("
+                << hdf5MaskString(fl.spec.typeMask & 0x3fu)
+                << ")\n";
+    }
   }
 
   return true;

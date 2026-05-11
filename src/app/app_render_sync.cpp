@@ -1,8 +1,10 @@
 #include "app/app_render_sync.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #include <glm/geometric.hpp>
 
@@ -266,32 +268,50 @@ static void UpdateLineRenderSceneData(const SceneManagers& scene,
 
 #ifdef ISO_CONTOUR
 static void UpdateIsoContourRenderSceneData(const IsoContourGeometryState& isoContour,
+                                            float worldToRenderScale,
                                             RenderRuntimeState& render,
                                             RenderSystem& rs)
 {
-  if (!render.isocontour.cpuUpdated) {
+  const bool scaleChanged =
+    std::abs(render.isoContourWorldToRenderScale - worldToRenderScale) >
+    std::max(1.0e-6f, 1.0e-6f * std::abs(worldToRenderScale));
+
+  if (!render.isocontour.cpuUpdated && !scaleChanged) {
     return;
   }
 
-  BuildIsoContourRenderData(isoContour.verts,
+  std::vector<float> renderVerts = isoContour.verts;
+  for (float& v : renderVerts) {
+    v *= worldToRenderScale;
+  }
+
+  BuildIsoContourRenderData(renderVerts,
                             isoContour.inds,
                             rs.scene.isoContour);
   render.isocontour.cpuUpdated = false;
+  render.isoContourWorldToRenderScale = worldToRenderScale;
   ++rs.scene.isoContourVersion;
 }
 #endif
 
 #ifdef VOLUME_RENDERING
 static void UpdateVolumeRenderSceneData(const VolumeRenderingResultState& volume,
+                                        float worldToRenderScale,
                                         RenderRuntimeState& render,
                                         RenderSystem& rs)
 {
-  if (!render.volume.cpuUpdated && !rs.build.volumeDirty) {
+  const bool scaleChanged =
+    std::abs(render.volumeWorldToRenderScale - worldToRenderScale) >
+    std::max(1.0e-6f, 1.0e-6f * std::abs(worldToRenderScale));
+
+  if (!render.volume.cpuUpdated && !rs.build.volumeDirty && !scaleChanged) {
     return;
   }
 
   rs.scene.volume = volume.tree;
+  ScaleAdaptiveVolumeTreeCoordinates(rs.scene.volume, worldToRenderScale);
   render.volume.cpuUpdated = false;
+  render.volumeWorldToRenderScale = worldToRenderScale;
   rs.build.volumeDirty = false;
   ++rs.scene.volumeVersion;
 }
@@ -363,12 +383,18 @@ ParticleRenderBuildResult UpdateRenderSceneData(const ParticleRenderInput& parti
 
 #ifdef ISO_CONTOUR
   UpdateIsoContourRenderSceneData(derived.analysis.isoContour,
+                                  particleInput.block
+                                    ? particleInput.block->worldToRenderScale
+                                    : 1.0f,
                                   render,
                                   rs);
 #endif
 
 #ifdef VOLUME_RENDERING
   UpdateVolumeRenderSceneData(derived.analysis.volume,
+                              particleInput.block
+                                ? particleInput.block->worldToRenderScale
+                                : 1.0f,
                               render,
                               rs);
 #endif

@@ -100,7 +100,6 @@ ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& pr
   ProjectionFrameResult result;
   ProjectionMapContext context =
     BuildProjectionMapContext(params,
-                              projection.scaleToPhysical,
                               time);
   result.outputPath = std::move(output.path);
 

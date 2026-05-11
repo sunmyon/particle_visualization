@@ -1,11 +1,8 @@
 
-#include <vector>
 #include <glm/gtc/quaternion.hpp>
 
-#include <vector>
 #include "projection/projection_geometry.h"
-#include "data/sample_coordinates.h"
-#include "data/simulation_element.h"
+#include "data/simulation_block.h"
 
 glm::quat UpdateTransformFromEuler(float *eulerAngles)
 {
@@ -17,8 +14,7 @@ glm::quat UpdateTransformFromEuler(float *eulerAngles)
 }  
 
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
-    const std::vector<SimulationElement>& particles,
-    float worldToRenderScale,
+    const SimulationBlock& block,
     const glm::vec3& initialCenter,
     const float xlen[3])
 {
@@ -42,8 +38,9 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
            xlen[1] * xlen[1] +
            xlen[2] * xlen[2]);
 
-  for (const auto& p : particles) {
-    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const auto& p = block.particles[i];
+    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
     const glm::vec3 localPos = pos - initialCenter;
 
     const double r2 =
@@ -55,16 +52,20 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
       continue;
     }
 
-    const double mass = p.mass;
-    const double weight = p.density;
+    const double mass =
+      static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
+    const double weight =
+      static_cast<double>(block.getQuantityOr(i, QuantityId::Density));
+    float vel[3] = {0.0f, 0.0f, 0.0f};
+    block.getVector(i, VectorId::Vel, vel);
 
     weightedPos[0] += pos.x * weight;
     weightedPos[1] += pos.y * weight;
     weightedPos[2] += pos.z * weight;
 
-    weightedVel[0] += mass * p.vel[0];
-    weightedVel[1] += mass * p.vel[1];
-    weightedVel[2] += mass * p.vel[2];
+    weightedVel[0] += mass * vel[0];
+    weightedVel[1] += mass * vel[1];
+    weightedVel[2] += mass * vel[2];
 
     totalMass += mass;
     totalWeight += weight;
@@ -87,9 +88,10 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
   glm::dvec3 angularMomentum(0.0);
   double angularMomentumMass = 0.0;
 
-  for (const auto& p : particles) {
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const auto& p = block.particles[i];
     const glm::vec3 localPos =
-      renderPosition(p, worldToRenderScale) - center;
+      glm::vec3(p.position[0], p.position[1], p.position[2]) - center;
 
     if (localPos.x < xmin[0] || localPos.x > xmax[0] ||
         localPos.y < xmin[1] || localPos.y > xmax[1] ||
@@ -97,11 +99,14 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
       continue;
     }
 
-    const double mass = p.mass;
+    const double mass =
+      static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
+    float vel[3] = {0.0f, 0.0f, 0.0f};
+    block.getVector(i, VectorId::Vel, vel);
     const glm::dvec3 r(localPos.x, localPos.y, localPos.z);
-    const glm::dvec3 dv(p.vel[0] - meanVel.x,
-                        p.vel[1] - meanVel.y,
-                        p.vel[2] - meanVel.z);
+    const glm::dvec3 dv(vel[0] - meanVel.x,
+                        vel[1] - meanVel.y,
+                        vel[2] - meanVel.z);
 
     angularMomentum += mass * glm::cross(r, dv);
     angularMomentumMass += mass;

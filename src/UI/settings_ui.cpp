@@ -68,7 +68,7 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       SnapshotFormatState& format,
                                       bool isLoading,
                                       WindowCommandQueue& windowCommands);
-static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
+static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
                                        SnapshotFormatState& format,
                                        const SettingsCameraView& camera,
                                        const UnitSystem& units,
@@ -78,6 +78,7 @@ static void DrawNormalizationSection(NormalizationContext& ctx,
 static void DrawSinkIdSection(const SettingsCameraView& camera,
 	                              SettingsActionRequestState& req);
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt, const SettingsCameraView& camera);
+static void DrawViewCameraSection(SettingsRuntimeState& rt, const SettingsCameraView& camera);
 #ifdef PYTHON_BRIDGE
 static bool DrawPythonBridgeSection(SettingsPythonBridgeEdit& edit, const PythonBridgeViewState& view);
 #endif
@@ -86,7 +87,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
                                 const QuantityState& quantity,
                                 const SettingsCameraView& camera,
                                 const AnalysisJobRuntimeState& jobs,
-                                const FileNavigationRuntimeState& fileNav,
+                                FileNavigationRuntimeState& fileNav,
+                                SnapshotFormatState& snapshotFormat,
+                                const UnitSystem& units,
                                 const SettingsAnalysisResultView& result,
                                 SettingsUIState& ui,
                                 WindowCommandQueue& windowCommands,
@@ -150,14 +153,7 @@ void ShowSettingsUI(SettingsUIState& ui,
                             settings.snapshotFormat,
                             view.snapshotLoading,
                             windowCommands);
-  DrawSnapshotExtractSection(settings.fileNavigation,
-                             settings.snapshotFormat,
-                             view.camera,
-                             settings.request.unitsDraft,
-                             settings.request);
-  DrawNormalizationSection(settings.normalization, settings.request);
-  DrawSinkIdSection(view.camera, settings.request);
-  DrawCameraPlacementSection(settings, view.camera);
+  DrawViewCameraSection(settings, view.camera);
 #ifdef PYTHON_BRIDGE
   if (view.pythonBridge) {
     if (DrawPythonBridgeSection(ui.analysisEdit.py, *view.pythonBridge)) {
@@ -170,6 +166,8 @@ void ShowSettingsUI(SettingsUIState& ui,
                       view.camera,
 	                      analysisJobs,
                       settings.fileNavigation,
+                      settings.snapshotFormat,
+                      settings.request.unitsDraft,
                       view.analysis,
                       ui,
                       windowCommands,
@@ -1059,10 +1057,6 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
       rt.request.openFormatDialogRequested = true;
     }
   }
-  ImGui::SameLine();
-  if (ImGui::Button("Edit Output Format")) {
-    rt.request.openOutputFormatDialogRequested = true;
-  }
 
   static const char* FileFormatNames[] = {
     "Auto", "HDF5", "Binary", "Gadget", "Framed"
@@ -1074,52 +1068,6 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
   if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
     format.readFormat = static_cast<FileFormat>(fmtIdx);
   }
-
-  ImGui::SeparatorText("Input field interpretation");
-  ImGui::TextDisabled(
-    "Used when the file does not provide enough metadata. HDF5/AREPO metadata overrides this when available.");
-  ImGui::TextDisabled(
-    "If a field is marked as code-unit, conversion uses Code units / load defaults.");
-  int densityUnitIndex = static_cast<int>(format.inputDensityUnit);
-  static const char* DensityUnitNames[] = {
-    "code mass density",
-    "nH [cm^-3]",
-    "mass density [g cm^-3]"
-  };
-  if (ImGui::Combo("Input density unit",
-                   &densityUnitIndex,
-                   DensityUnitNames,
-                   IM_ARRAYSIZE(DensityUnitNames))) {
-    format.inputDensityUnit =
-      static_cast<InputDensityUnit>(std::clamp(densityUnitIndex, 0, 2));
-  }
-  int temperatureUnitIndex = static_cast<int>(format.inputTemperatureUnit);
-  static const char* TemperatureUnitNames[] = {
-    "temperature [K]",
-    "code internal energy"
-  };
-  if (ImGui::Combo("Input thermal field",
-                   &temperatureUnitIndex,
-                   TemperatureUnitNames,
-                   IM_ARRAYSIZE(TemperatureUnitNames))) {
-    format.inputTemperatureUnit =
-      static_cast<InputTemperatureUnit>(std::clamp(temperatureUnitIndex, 0, 1));
-  }
-  int magneticFieldUnitIndex = static_cast<int>(format.inputMagneticFieldUnit);
-  static const char* MagneticFieldUnitNames[] = {
-    "B [Gauss]",
-    "code magnetic field"
-  };
-  if (ImGui::Combo("Input magnetic field unit",
-                   &magneticFieldUnitIndex,
-                   MagneticFieldUnitNames,
-                   IM_ARRAYSIZE(MagneticFieldUnitNames))) {
-    format.inputMagneticFieldUnit =
-      static_cast<InputMagneticFieldUnit>(
-        std::clamp(magneticFieldUnitIndex, 0, 1));
-  }
-  ImGui::TextDisabled(
-    "Positions, masses, velocities, and smoothing lengths remain stored in code units.");
 
   if (ImGui::Button("Mask Settings...")) {
     windowCommands.open(WindowId::Mask);
@@ -1184,17 +1132,15 @@ static double SnapshotExtractBackgroundMeanVolume(const SnapshotExtractUiState& 
   return dx * dy * dz;
 }
 
-static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav,
+static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
                                        SnapshotFormatState& format,
                                        const SettingsCameraView& camera,
                                        const UnitSystem& units,
                                        SettingsActionRequestState& request)
 {
-  if (!ImGui::CollapsingHeader("Extract Snapshot"))
-    return;
-
   auto& state = request.snapshotExtract;
   SyncSnapshotExtractUnitDefaults(state, fileNav, units);
+  ImGui::SeparatorText("Extract Snapshot");
   ImGui::TextDisabled("Raw HDF5 extract: rereads the source file and writes selected rows.");
   ImGui::TextDisabled("Region selection is evaluated in source code coordinates before output unit conversion.");
 
@@ -1259,7 +1205,9 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
   ImGui::Checkbox("use output format override##snapshot_extract",
                   &format.outputFormat.enabled);
   ImGui::SameLine();
-  ImGui::TextDisabled("edit in File Navigation");
+  if (ImGui::Button("Edit output format##snapshot_extract")) {
+    fileNav.request.openOutputFormatDialogRequested = true;
+  }
   ImGui::Checkbox("copy Header##snapshot_extract", &state.copyHeader);
   ImGui::SameLine();
   ImGui::Checkbox("copy Parameters##snapshot_extract", &state.copyParameters);
@@ -1482,9 +1430,7 @@ static void DrawSnapshotExtractSection(const FileNavigationRuntimeState& fileNav
 
 static void DrawNormalizationSection(NormalizationContext& normalization,
 				     SettingsActionRequestState& req) {
-  if (!ImGui::CollapsingHeader("Normalization"))
-    return;
-
+  ImGui::SeparatorText("Normalization");
   ImGui::InputFloat("Desired Maximum", &normalization.desiredMax, 0.f, 0.f, "%g");
   if (ImGui::Button("Normalize Positions")) {
     req.normalizeRequested = true;
@@ -1497,9 +1443,6 @@ static void DrawNormalizationSection(NormalizationContext& normalization,
 static void DrawSinkIdSection(const SettingsCameraView& camera,
 	                              SettingsActionRequestState& req)
 {
-  if (!ImGui::CollapsingHeader("set sink ID visualization"))
-    return;
-
   auto& labels = req.renderDraft.particleLabels;
   bool changed = false;
 
@@ -1542,11 +1485,9 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
 static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
 				       const SettingsCameraView& camera)
 {
-  if (!ImGui::CollapsingHeader("Set camera center"))
-    return;
-
   auto& req = rt.cameraPlacement;
 
+  ImGui::SeparatorText("Camera center");
   ImGui::InputFloat3("Center Coordinates (original)", req.centerInput, "%.3f");
   if (ImGui::Button("Fill with Current Target")) {
     req.centerInput[0] = camera.originalTarget[0];
@@ -1588,6 +1529,16 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   if (ImGui::Button("Disable Culling")) {
     req.clearCullingRequested = true;
   }
+}
+
+static void DrawViewCameraSection(SettingsRuntimeState& rt,
+                                  const SettingsCameraView& camera)
+{
+  if (!ImGui::CollapsingHeader("View / Camera"))
+    return;
+
+  DrawNormalizationSection(rt.normalization, rt.request);
+  DrawCameraPlacementSection(rt, camera);
 }
 
 #ifdef PYTHON_BRIDGE
@@ -1644,7 +1595,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
                                 const QuantityState& quantity,
                                 const SettingsCameraView& camera,
                                 const AnalysisJobRuntimeState& jobs,
-                                const FileNavigationRuntimeState& fileNav,
+                                FileNavigationRuntimeState& fileNav,
+                                SnapshotFormatState& snapshotFormat,
+                                const UnitSystem& units,
                                 const SettingsAnalysisResultView& result,
                                 SettingsUIState& ui,
                                 WindowCommandQueue& windowCommands,
@@ -1660,7 +1613,8 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     ANALYSIS_HALO_CATALOGUE,
     ANALYSIS_POWER_SPEC,
     ANALYSIS_DISK,
-    ANALYSIS_ISO_DENSITY
+    ANALYSIS_ISO_DENSITY,
+    ANALYSIS_SNAPSHOT_EXTRACT
   };
 		
   static PullDownItem analysisItems[] = {
@@ -1676,6 +1630,7 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
 	{ "extract disks", ANALYSIS_DISK },
 	{ "extract iso density", ANALYSIS_ISO_DENSITY },
 #endif
+    { "extract snapshot", ANALYSIS_SNAPSHOT_EXTRACT },
   };
 		
   // Find the currently selected label.
@@ -1700,6 +1655,14 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
   }
 		
   switch (ui.analysisMode) {  
+  case ANALYSIS_SNAPSHOT_EXTRACT: {
+    DrawSnapshotExtractSection(fileNav,
+                               snapshotFormat,
+                               camera,
+                               units,
+                               settingsReq);
+    break;
+  }
   case ANALYSIS_RADIAL_PROFILE: {
     if (ImGui::Button("Compute radial profile"))
       windowCommands.open(WindowId::RadialProfile);
@@ -2247,7 +2210,8 @@ static void DrawRenderingSection(const QuantityState& quantity,
     RENDER_STREAM_LINE,
     RENDER_ISO_CONTOUR,
     RENDER_VOLUME,
-    RENDER_VELOCITY_FIELD
+    RENDER_VELOCITY_FIELD,
+    RENDER_SINK_ID_VISUALIZATION
   };
 		
   static PullDownItem renderingItems[] = {
@@ -2262,6 +2226,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
     { "adaptive volume", RENDER_VOLUME },
 #endif
     { "velocity field", RENDER_VELOCITY_FIELD},
+    { "sink ID visualization", RENDER_SINK_ID_VISUALIZATION },
   };
 		
   // Find the currently selected label.
@@ -2286,6 +2251,10 @@ static void DrawRenderingSection(const QuantityState& quantity,
   }
 
   switch (ui.renderingMode) {
+  case RENDER_SINK_ID_VISUALIZATION: {
+    DrawSinkIdSection(camera, settingsReq);
+    break;
+  }
   case RENDER_PROJECTION_MAP: {
     if (ImGui::Button("make projection map"))
       windowCommands.open(WindowId::ProjectionMap);
@@ -2672,55 +2641,6 @@ static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
     return;
 
   auto& req = rt.request;
-  bool unitChanged = false;
-  auto& units = req.unitsDraft;
-  if (ImGui::CollapsingHeader("Code units / load defaults")) {
-    ImGui::TextDisabled(
-      "These values are the code units used to interpret code-unit fields.");
-    ImGui::TextDisabled(
-      "Changing them rescales loaded density/T/B when those fields came from code units.");
-    unitChanged |= ImGui::InputDouble("UnitLength_in_cm",
-                                      &units.length_cm,
-                                      0., 0., "%g");
-    unitChanged |= ImGui::InputDouble("UnitMass_in_g",
-                                      &units.mass_g,
-                                      0., 0., "%g");
-    unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s",
-                                      &units.velocity_cm_per_s,
-                                      0., 0., "%g");
-    unitChanged |= ImGui::InputDouble("Hubble",
-                                      &units.hubble,
-                                      0., 0., "%g");
-    unitChanged |= ImGui::Checkbox("ComovingCoordinate",
-                                   &units.useComovingCoordinate);
-
-    ImGui::SeparatorText("Presets");
-
-    if (ImGui::Button("AU"))   { units.setLengthToAU();      unitChanged = true; }
-    ImGui::SameLine();
-    if (ImGui::Button("pc"))   { units.setLengthToPC();      unitChanged = true; }
-    ImGui::SameLine();
-    if (ImGui::Button("kpc"))  { units.setLengthToKPC();     unitChanged = true; }
-    ImGui::SameLine();
-    if (ImGui::Button("Mpc"))  { units.setLengthToMPC();     unitChanged = true; }
-
-    if (ImGui::Button("Msun")) {
-      units.setMassToSolar();
-      unitChanged = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("1e10 Msun")) {
-      units.setMassTo1e10Solar();
-      unitChanged = true;
-    }
-
-  }
-
-  if (unitChanged) {
-    req.unitsDraftDirty = true;
-    req.applyUnitsRequested = true;
-    req.unitConversionRebuildRequested = true;
-  }
 
   if (ImGui::CollapsingHeader("Zoom Range")) {
     ImGui::InputFloat("Min Zoom", &rt.minZoom, 0.0f, 0.0f, "%g");

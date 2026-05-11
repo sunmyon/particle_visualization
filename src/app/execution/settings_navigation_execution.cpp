@@ -81,9 +81,12 @@ void RescaleLoadedInternalQuantitiesForUnitChange(SimulationBlock& block,
     if (ValidRescaleFactor(storage.densityToInternalFactor,
                            newFactor,
                            ratio)) {
-      for (auto& p : block.particles) {
-        p.density =
-          static_cast<float>(static_cast<double>(p.density) * ratio);
+      for (size_t i = 0; i < block.particles.size(); ++i) {
+        const float density = block.getQuantityOr(i, QuantityId::Density);
+        block.setQuantity(
+          i,
+          QuantityId::Density,
+          static_cast<float>(static_cast<double>(density) * ratio));
       }
     }
     storage.densityToInternalFactor = newFactor;
@@ -96,9 +99,13 @@ void RescaleLoadedInternalQuantitiesForUnitChange(SimulationBlock& block,
     if (ValidRescaleFactor(storage.temperatureToInternalFactor,
                            newFactor,
                            ratio)) {
-      for (auto& p : block.particles) {
-        p.temperature =
-          static_cast<float>(static_cast<double>(p.temperature) * ratio);
+      for (size_t i = 0; i < block.particles.size(); ++i) {
+        const float temperature =
+          block.getQuantityOr(i, QuantityId::Temperature);
+        block.setQuantity(
+          i,
+          QuantityId::Temperature,
+          static_cast<float>(static_cast<double>(temperature) * ratio));
       }
     }
     storage.temperatureToInternalFactor = newFactor;
@@ -166,11 +173,9 @@ void UpdateSnapshotExtractPreview(const SimulationDataset& particles,
                                   const SettingsActionRequestState& request,
                                   SnapshotExtractPreviewState& preview)
 {
+  (void)particles;
+
   const auto& state = request.snapshotExtract;
-  const float worldToRender =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? particles.simulationBlock.worldToRenderScale
-      : 1.0f;
 
   preview.valid = state.showRegion;
   preview.regionKind =
@@ -179,13 +184,13 @@ void UpdateSnapshotExtractPreview(const SimulationDataset& particles,
       : SnapshotExtractRegionKind::Box;
 
   const glm::vec3 center =
-    worldToRender * glm::vec3(state.center[0], state.center[1], state.center[2]);
+    glm::vec3(state.center[0], state.center[1], state.center[2]);
 
   CubeObject box;
   box.center = center;
-  box.halfSize = worldToRender * glm::vec3(state.halfSize[0],
-                                           state.halfSize[1],
-                                           state.halfSize[2]);
+  box.halfSize = glm::vec3(state.halfSize[0],
+                           state.halfSize[1],
+                           state.halfSize[2]);
   box.orientation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
   box.color = glm::vec3(1.0f, 0.75f, 0.2f);
   box.opacity = 0.18f;
@@ -194,7 +199,7 @@ void UpdateSnapshotExtractPreview(const SimulationDataset& particles,
 
   EllipsoidObject sphere;
   sphere.position = center;
-  sphere.radii = glm::vec3(worldToRender * state.radius);
+  sphere.radii = glm::vec3(state.radius);
   sphere.orientation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
   sphere.color = glm::vec3(1.0f, 0.75f, 0.2f);
   sphere.opacity = 0.18f;
@@ -724,11 +729,14 @@ static bool ResolveTrackingCenter(SimulationDataset& particles,
 
     if (track.followSinkParticleMostMassive || !found) {
       double massMax = -1.0;
-      for (const auto& p : particles.simulationBlock.particles) {
+      for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+        const auto& p = particles.simulationBlock.particles[i];
         if (p.type < 3) continue;
-        if (p.mass > massMax) {
+        const float mass =
+          particles.simulationBlock.getQuantityOr(i, QuantityId::Mass);
+        if (mass > massMax) {
           renderPosition(p, particles.simulationBlock.worldToRenderScale, targetPos);
-          massMax = p.mass;
+          massMax = mass;
           found = true;
         }
       }
@@ -744,9 +752,12 @@ static bool ResolveTrackingCenter(SimulationDataset& particles,
                            ? static_cast<double>(track.massCenterRadius) * static_cast<double>(track.massCenterRadius)
                            : -1.0;
 
-        for (const auto& p : particles.simulationBlock.particles) {
+        for (size_t i = 0; i < particles.simulationBlock.particles.size(); ++i) {
+          const auto& p = particles.simulationBlock.particles[i];
           if (p.type == 1 || p.type == 2) continue;
-          if (p.type == 0 && p.density < track.massCenterMinDensity) continue;
+          const float density =
+            particles.simulationBlock.getQuantityOr(i, QuantityId::Density);
+          if (p.type == 0 && density < track.massCenterMinDensity) continue;
           const glm::vec3 pos =
             renderPosition(p, particles.simulationBlock.worldToRenderScale);
 
@@ -756,10 +767,12 @@ static bool ResolveTrackingCenter(SimulationDataset& particles,
           const double dist2 = dx * dx + dy * dy + dz * dz;
           if (r2max > 0.0 && dist2 > r2max) continue;
 
-          dPos[0] += static_cast<double>(p.mass) * dx;
-          dPos[1] += static_cast<double>(p.mass) * dy;
-          dPos[2] += static_cast<double>(p.mass) * dz;
-          weight += static_cast<double>(p.mass);
+          const float mass =
+            particles.simulationBlock.getQuantityOr(i, QuantityId::Mass);
+          dPos[0] += static_cast<double>(mass) * dx;
+          dPos[1] += static_cast<double>(mass) * dy;
+          dPos[2] += static_cast<double>(mass) * dz;
+          weight += static_cast<double>(mass);
         }
 
         if (weight > 0.0) {

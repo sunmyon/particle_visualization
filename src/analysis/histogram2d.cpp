@@ -19,6 +19,10 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
   if (params.bins1 <= 0 || params.bins2 <= 0) {
     return result;
   }
+  if (!partblock.hasQuantityForType(params.var1, params.particleType) ||
+      !partblock.hasQuantityForType(params.var2, params.particleType)) {
+    return result;
+  }
 
   std::function<bool(const SimulationElement&)> condition =
     [](const SimulationElement&) { return true; };
@@ -30,8 +34,11 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
         return false;
       }
 
-      const glm::vec3 pos = renderPosition(p, ctx.worldToRenderScale);
-      const std::array<double, 3> pt = { pos.x, pos.y, pos.z };
+      const std::array<double, 3> pt = {
+        p.position[0],
+        p.position[1],
+        p.position[2]
+      };
 
       for (const auto& hull : *ctx.convexHulls) {
         if (hull && hull->isInside(pt)) {
@@ -215,7 +222,8 @@ Histogram2DComputer::compute(const SimulationBlock& partblock,
     int binIndex1 = std::min(params.bins1 - 1, static_cast<int>((v1 - min1) / binSize1));
     int binIndex2 = std::min(params.bins2 - 1, static_cast<int>((v2 - min2) / binSize2));
 
-    histogram[binIndex1][binIndex2] += p.mass;
+    histogram[binIndex1][binIndex2] +=
+      partblock.getQuantityOr(ipart, QuantityId::Mass);
   }
 
   std::vector<float> centers1(params.bins1, 0.0f);

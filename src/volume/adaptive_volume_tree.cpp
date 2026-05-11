@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "data/simulation_block.h"
-#include "data/sample_coordinates.h"
 #include "data/spatial/particle_octree.h"
 
 namespace {
@@ -665,11 +664,12 @@ BoundingBox ComputeParticleBounds(const SimulationBlock& block,
   bounds.min = glm::vec3(std::numeric_limits<float>::max());
   bounds.max = glm::vec3(-std::numeric_limits<float>::max());
 
-  for (const SimulationElement& p : block.particles) {
+  for (std::size_t i = 0; i < block.particles.size(); ++i) {
+    const SimulationElement& p = block.particles[i];
     const float h = params.expandBoundsByHsml
-      ? std::max(renderSupportRadius(p, block.worldToRenderScale), 0.0f)
+      ? std::max(block.getQuantityOr(i, QuantityId::Hsml), 0.0f)
       : 0.0f;
-    const glm::vec3 pos = renderPosition(p, block.worldToRenderScale);
+    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
     bounds.min = glm::min(bounds.min, pos - glm::vec3(h));
     bounds.max = glm::max(bounds.max, pos + glm::vec3(h));
   }
@@ -743,7 +743,7 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
   for (std::size_t i = 0; i < particles.particles.size(); ++i) {
     const SimulationElement& p = particles.particles[i];
     SimulationElementForTree out;
-    out.pos = renderPosition(p, particles.worldToRenderScale);
+    out.pos = glm::vec3(p.position[0], p.position[1], p.position[2]);
     out.val = getScalarValue(particles,
                              p,
                              static_cast<int>(i),
@@ -757,4 +757,12 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
                         params.maxDepth);
 
   return BuildAdaptiveVolumeTreeFromOctree(octree, params, sigmaMapper);
+}
+
+void ScaleAdaptiveVolumeTreeCoordinates(AdaptiveVolumeTree& tree, float scale)
+{
+  for (AdaptiveVolumeTreeNode& node : tree.nodes) {
+    node.boundsMin *= scale;
+    node.boundsMax *= scale;
+  }
 }

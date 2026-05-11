@@ -24,6 +24,8 @@ void UpdatePowerSpectrumRegionPreview(const SimulationDataset& particles,
                                       const PowerSpectrumRequestState& request,
                                       PowerSpectrumResultState& result)
 {
+  (void)particles;
+
   result.regionPreviewCpuUpdated = true;
   result.regionPreviewValid =
     request.useRegionBox &&
@@ -34,17 +36,13 @@ void UpdatePowerSpectrumRegionPreview(const SimulationDataset& particles,
     return;
   }
 
-  const float worldToRender =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? particles.simulationBlock.worldToRenderScale
-      : 1.0f;
   const float halfSide = 0.5f * request.regionSideLength;
 
   CubeObject cube;
-  cube.center = worldToRender * glm::vec3(request.regionCenter[0],
-                                          request.regionCenter[1],
-                                          request.regionCenter[2]);
-  cube.halfSize = worldToRender * glm::vec3(halfSide);
+  cube.center = glm::vec3(request.regionCenter[0],
+                          request.regionCenter[1],
+                          request.regionCenter[2]);
+  cube.halfSize = glm::vec3(halfSide);
   cube.orientation = glm::quat{1, 0, 0, 0};
   cube.color = glm::vec3(0.3f, 0.7f, 1.0f);
   cube.opacity = request.regionOpacity;
@@ -56,26 +54,19 @@ void UpdatePowerSpectrumAxisFromAngularMomentum(
   const SimulationDataset& particles,
   PowerSpectrumRequestState& request)
 {
-  const float worldToRender =
-    particles.simulationBlock.worldToRenderScale > 0.0f
-      ? particles.simulationBlock.worldToRenderScale
-      : 1.0f;
-
   const float side =
     request.regionSideLength > 0.0f ? request.regionSideLength : 1000.0f;
   const float xlen[3] = {
-    side * worldToRender,
-    side * worldToRender,
-    side * worldToRender
+    side,
+    side,
+    side
   };
-  const glm::vec3 center =
-    worldToRender * glm::vec3(request.regionCenter[0],
-                              request.regionCenter[1],
-                              request.regionCenter[2]);
+  const glm::vec3 center(request.regionCenter[0],
+                         request.regionCenter[1],
+                         request.regionCenter[2]);
 
   ProjectionAngularMomentumFrame frame =
-    ComputeAngularMomentumFrame(particles.simulationBlock.particles,
-                                worldToRender,
+    ComputeAngularMomentumFrame(particles.simulationBlock,
                                 center,
                                 xlen);
   if (!frame.valid) {

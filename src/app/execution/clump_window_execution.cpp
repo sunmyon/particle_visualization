@@ -153,18 +153,17 @@ static void BuildClumpPlotSamples(const std::vector<ClumpFinderRowView>& rows,
 
 static std::unordered_map<const StructureNode*, ClumpFinderAggregate>
 BuildNearbyStellarStats(const std::vector<StructureNode*>& nodes,
-                        const std::vector<SimulationElement>& particles,
-                        float worldToRenderScale,
+                        const SimulationBlock& block,
                         const FindClump::Params& params)
 {
   std::unordered_map<const StructureNode*, ClumpFinderAggregate> directStats;
   directStats.reserve(nodes.size());
 
   std::vector<ClumpGasSample> gasSamples;
-  gasSamples.reserve(particles.size());
+  gasSamples.reserve(block.particles.size());
 
   const float fixedLinkingLength =
-    params.linkingLength * RenderToWorldScaleOrOne(worldToRenderScale);
+    params.linkingLength * RenderToWorldScaleOrOne(block.worldToRenderScale);
   float maxRadius = 0.0f;
 
   for (const StructureNode* node : nodes) {
@@ -173,26 +172,30 @@ BuildNearbyStellarStats(const std::vector<StructureNode*>& nodes,
     }
     directStats.try_emplace(node);
     for (int idx : node->indices) {
-      if (idx < 0 || static_cast<size_t>(idx) >= particles.size()) {
+      if (idx < 0 || static_cast<size_t>(idx) >= block.particles.size()) {
         continue;
       }
-      const SimulationElement& particle = particles[static_cast<size_t>(idx)];
+      const size_t index = static_cast<size_t>(idx);
+      const SimulationElement& particle = block.particles[index];
       if (particle.type != 0) {
         continue;
       }
 
       float radius = fixedLinkingLength;
-      if (params.useHsml && particle.supportRadius > 0.0f) {
-        radius = particle.supportRadius * params.linkingLength_over_cell_size;
+      const float hsml = block.getQuantityOr(index, QuantityId::Hsml);
+      if (params.useHsml && hsml > 0.0f) {
+        radius = hsml * params.linkingLength_over_cell_size;
       }
       if (!std::isfinite(radius) || radius <= 0.0f) {
         continue;
       }
 
       ClumpGasSample sample;
-      sample.pos[0] = particle.position[0];
-      sample.pos[1] = particle.position[1];
-      sample.pos[2] = particle.position[2];
+      float pos[3] = {0.0f, 0.0f, 0.0f};
+      block.getVector(index, VectorId::OriginalPos, pos);
+      sample.pos[0] = pos[0];
+      sample.pos[1] = pos[1];
+      sample.pos[2] = pos[2];
       sample.radius = radius;
       sample.owner = node;
       gasSamples.push_back(sample);
@@ -212,20 +215,26 @@ BuildNearbyStellarStats(const std::vector<StructureNode*>& nodes,
   nanoflann::SearchParameters searchParams(10);
   const double maxRadius2 = static_cast<double>(maxRadius) * maxRadius;
 
-  for (const SimulationElement& particle : particles) {
+  for (size_t index = 0; index < block.particles.size(); ++index) {
+    const SimulationElement& particle = block.particles[index];
     if (particle.type < 3) {
       continue;
     }
-    const double mass = particle.mass;
+    const double mass = block.getQuantityOr(index, QuantityId::Mass);
     if (!std::isfinite(mass) || mass <= 0.0) {
       continue;
     }
 
     double query[3] = {
-      particle.position[0],
-      particle.position[1],
-      particle.position[2]
+      0.0,
+      0.0,
+      0.0
     };
+    float pos[3] = {0.0f, 0.0f, 0.0f};
+    block.getVector(index, VectorId::OriginalPos, pos);
+    query[0] = pos[0];
+    query[1] = pos[1];
+    query[2] = pos[2];
 
     using IndexType = typename ClumpGasKdTree::IndexType;
     using DistanceType = typename ClumpGasKdTree::DistanceType;
@@ -292,12 +301,11 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
       converter.factor(QuantityId::Density, UnitSpace::Physical);
     const double temperatureToDisplay =
       converter.factor(QuantityId::Temperature, UnitSpace::Physical);
-    const auto& particles = simulationData.simulationBlock.particles;
     std::unordered_map<const StructureNode*, ClumpFinderAggregate> directStellarStats =
       BuildNearbyStellarStats(clumpFind.nodes(),
-                              particles,
-                              simulationData.simulationBlock.worldToRenderScale,
+                              simulationData.simulationBlock,
                               clumpFind.params());
+    const auto& particles = simulationData.simulationBlock.particles;
 
     std::unordered_map<const StructureNode*, ClumpFinderAggregate> aggregateByNode;
     aggregateByNode.reserve(clumpFind.nodes().size());
@@ -331,17 +339,24 @@ void ExecuteClumpFinderWindowRequests(ClumpFinderWindowState& ui,
           if (idx < 0 || static_cast<size_t>(idx) >= particles.size()) {
             continue;
           }
-          const SimulationElement& particle = particles[static_cast<size_t>(idx)];
+          const size_t index = static_cast<size_t>(idx);
+          const SimulationElement& particle = particles[index];
           if (particle.type != 0) {
             continue;
           }
-          const double mass = particle.mass;
+          const double mass =
+            simulationData.simulationBlock.getQuantityOr(index,
+                                                         QuantityId::Mass);
           if (!std::isfinite(mass) || mass <= 0.0) {
             continue;
           }
           aggregate.gasMass += mass;
-          aggregate.densityMassWeighted += mass * particle.density;
-          aggregate.temperatureMassWeighted += mass * particle.temperature;
+          aggregate.densityMassWeighted +=
+            mass * simulationData.simulationBlock.getQuantityOr(
+                     index, QuantityId::Density);
+          aggregate.temperatureMassWeighted +=
+            mass * simulationData.simulationBlock.getQuantityOr(
+                     index, QuantityId::Temperature);
         }
 
         aggregateByNode[node] = aggregate;
@@ -914,11 +929,10 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
   const bool useAngularMomentumAxis = (ui.projectionBatchCursor == 0);
 
   float pos_center[3];
-  const float scale_from_phys = normalization.toNormalizedScale();
   const auto& snap = clumpSnapshots[static_cast<size_t>(ui.projectionBatchCursor)];
-  pos_center[0] = snap.pos[0] * scale_from_phys;
-  pos_center[1] = snap.pos[1] * scale_from_phys;
-  pos_center[2] = snap.pos[2] * scale_from_phys;
+  pos_center[0] = snap.pos[0];
+  pos_center[1] = snap.pos[1];
+  pos_center[2] = snap.pos[2];
 
   char fname_output[512];
   std::snprintf(fname_output, sizeof(fname_output),
@@ -935,9 +949,9 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
   frameParams.xoffset[0] = pos_center[0];
   frameParams.xoffset[1] = pos_center[1];
   frameParams.xoffset[2] = pos_center[2];
-  frameParams.xlen[0] = ui.mapLen * scale_from_phys;
-  frameParams.xlen[1] = ui.mapLen * scale_from_phys;
-  frameParams.xlen[2] = ui.mapLen * scale_from_phys;
+  frameParams.xlen[0] = ui.mapLen;
+  frameParams.xlen[1] = ui.mapLen;
+  frameParams.xlen[2] = ui.mapLen;
   frameParams.range_min = ui.mapValMin;
   frameParams.range_max = ui.mapValMax;
   frameParams.autoRange = false;
@@ -947,12 +961,10 @@ void ExecuteClumpChainWindowRequests(ClumpChainWindowState& ui,
 
   ProjectionMapContext context =
     BuildProjectionMapContext(frameParams,
-                              normalization.toPhysicalScale(),
                               current.loadedTime);
 
   if (useAngularMomentumAxis) {
-    auto frame = ComputeAngularMomentumFrame(particles.simulationBlock.particles,
-                                             particles.simulationBlock.worldToRenderScale,
+    auto frame = ComputeAngularMomentumFrame(particles.simulationBlock,
                                              context.center,
                                              frameParams.xlen);
     if (frame.valid) {

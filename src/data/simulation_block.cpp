@@ -21,180 +21,6 @@ double RebuildElapsedMs(RebuildProfileClock::time_point start)
     .count();
 }
 
-const SoAField* FindSoAField(const SimulationBlock& block,
-                             const char* key,
-                             int minComps)
-{
-  auto it = block.soa.find(key);
-  if (it == block.soa.end()) return nullptr;
-
-  const SoAField& f = it->second;
-  if (f.comps < minComps) return nullptr;
-  const size_t bytesPerElement = static_cast<size_t>(f.comps) *
-                                 dataTypeSize(f.type);
-  if (bytesPerElement == 0 ||
-      f.bytes.size() < block.particles.size() * bytesPerElement) {
-    return nullptr;
-  }
-  return &f;
-}
-
-float ReadSoAScalar(const SoAField* f, size_t i)
-{
-  if (!f) return 0.0f;
-  const uint8_t* p = f->ptr(i);
-  switch (f->type) {
-  case DataType::Float:
-    return *reinterpret_cast<const float*>(p);
-  case DataType::Double:
-    return static_cast<float>(*reinterpret_cast<const double*>(p));
-  case DataType::Int32:
-    return static_cast<float>(*reinterpret_cast<const int32_t*>(p));
-  case DataType::Int64:
-    return static_cast<float>(*reinterpret_cast<const int64_t*>(p));
-  }
-  return 0.0f;
-}
-
-bool ReadSoAVec3(const SoAField* f, size_t i, float out[3])
-{
-  if (!f || f->comps < 3) return false;
-  const uint8_t* p = f->ptr(i);
-  switch (f->type) {
-  case DataType::Float: {
-    const auto* v = reinterpret_cast<const float*>(p);
-    out[0] = v[0];
-    out[1] = v[1];
-    out[2] = v[2];
-    return true;
-  }
-  case DataType::Double: {
-    const auto* v = reinterpret_cast<const double*>(p);
-    out[0] = static_cast<float>(v[0]);
-    out[1] = static_cast<float>(v[1]);
-    out[2] = static_cast<float>(v[2]);
-    return true;
-  }
-  case DataType::Int32: {
-    const auto* v = reinterpret_cast<const int32_t*>(p);
-    out[0] = static_cast<float>(v[0]);
-    out[1] = static_cast<float>(v[1]);
-    out[2] = static_cast<float>(v[2]);
-    return true;
-  }
-  case DataType::Int64: {
-    const auto* v = reinterpret_cast<const int64_t*>(p);
-    out[0] = static_cast<float>(v[0]);
-    out[1] = static_cast<float>(v[1]);
-    out[2] = static_cast<float>(v[2]);
-    return true;
-  }
-  }
-  return false;
-}
-
-struct RebuildQuantityAccessor {
-  QuantityId q = QuantityId::Density;
-  const SoAField* primary = nullptr;
-  const SoAField* bfield = nullptr;
-  const SoAField* electron = nullptr;
-  const SoAField* h2 = nullptr;
-};
-
-RebuildQuantityAccessor MakeRebuildAccessor(const SimulationBlock& block,
-                                            QuantityId q)
-{
-  RebuildQuantityAccessor a;
-  a.q = q;
-  switch (q) {
-  case QuantityId::B:
-    a.bfield = FindSoAField(block, kBfieldKey, 3);
-    break;
-  case QuantityId::Beta:
-    a.bfield = FindSoAField(block, kBfieldKey, 3);
-    a.electron = FindSoAField(block, kElectronAbundanceKey, 1);
-    a.h2 = FindSoAField(block, kH2AbundanceKey, 1);
-    break;
-  case QuantityId::Metallicity:
-    a.primary = FindSoAField(block, kMetallicityKey, 1);
-    break;
-  case QuantityId::ElectronAbundance:
-    a.primary = FindSoAField(block, kElectronAbundanceKey, 1);
-    break;
-  case QuantityId::H2Abundance:
-    a.primary = FindSoAField(block, kH2AbundanceKey, 1);
-    break;
-  case QuantityId::HDAbundance:
-    a.primary = FindSoAField(block, kHDAbundanceKey, 1);
-    break;
-  case QuantityId::J21:
-    a.primary = FindSoAField(block, kJ21Key, 1);
-    break;
-  case QuantityId::Val:
-    a.primary = FindSoAField(block, kVal1Key, 1);
-    break;
-  case QuantityId::Val2:
-    a.primary = FindSoAField(block, kVal2Key, 1);
-    break;
-  default:
-    break;
-  }
-  return a;
-}
-
-float ReadRebuildQuantity(const RebuildQuantityAccessor& a,
-                          const SimulationElement& p,
-                          size_t i)
-{
-  switch (a.q) {
-  case QuantityId::Density:
-    return p.density;
-  case QuantityId::Temperature:
-    return p.temperature;
-  case QuantityId::Mass:
-    return p.mass;
-  case QuantityId::Hsml:
-    return p.supportRadius;
-  case QuantityId::PosX:
-    return p.position[0];
-  case QuantityId::PosY:
-    return p.position[1];
-  case QuantityId::PosZ:
-    return p.position[2];
-  case QuantityId::Radius:
-    return std::sqrt(p.position[0] * p.position[0] +
-                     p.position[1] * p.position[1] +
-                     p.position[2] * p.position[2]);
-  case QuantityId::B: {
-    float b[3];
-    if (!ReadSoAVec3(a.bfield, i, b)) return 0.0f;
-    return std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-  }
-  case QuantityId::Beta: {
-    float b[3];
-    if (!ReadSoAVec3(a.bfield, i, b)) return 0.0f;
-    const float b2 = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
-    if (b2 <= 0.0f) return 0.0f;
-    const float felec = ReadSoAScalar(a.electron, i);
-    const float fH2 = ReadSoAScalar(a.h2, i);
-    const double mu = 1.0 / (1.0 + physics_constants::XHe + felec - fH2);
-    return static_cast<float>(8.0 * M_PI *
-                              physics_constants::boltzmann_cgs *
-                              p.temperature * p.density * mu / b2);
-  }
-  case QuantityId::VRad:
-    return 0.0f;
-  case QuantityId::Metallicity:
-  case QuantityId::ElectronAbundance:
-  case QuantityId::H2Abundance:
-  case QuantityId::HDAbundance:
-  case QuantityId::J21:
-  case QuantityId::Val:
-  case QuantityId::Val2:
-    return ReadSoAScalar(a.primary, i);
-  }
-  return 0.0f;
-}
 } // namespace
 
 SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
@@ -203,12 +29,6 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
   worldToRenderScale = 1.0f;
   
   if (!particles.empty()) {
-    std::array<RebuildQuantityAccessor, kMaxQ> accessors;
-    for (int q = 0; q < catalog.nUIQ; ++q) {
-      accessors[static_cast<size_t>(q)] =
-        MakeRebuildAccessor(*this, catalog.uiQ[q]);
-    }
-
     result.originalMax = 0.;
     for (int q = 0; q < catalog.nUIQ; ++q) {
       for (int t = 0; t < kNumTypes; ++t) {
@@ -253,9 +73,12 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
         // renew min/max
         if (validType) {
           for (int q = 0; q < catalog.nUIQ; ++q) {
-            float v = ReadRebuildQuantity(accessors[static_cast<size_t>(q)],
-                                           p,
-                                           static_cast<size_t>(i));
+            float v = 0.0f;
+            const size_t index = static_cast<size_t>(i);
+            if (!hasQuantityAt(index, catalog.uiQ[q]) ||
+                !getQuantity(index, catalog.uiQ[q], v)) {
+              continue;
+            }
             localMin[q][type]  = std::min(localMin[q][type],  v);
             localMaxV[q][type] = std::max(localMaxV[q][type], v);
           }
@@ -284,7 +107,10 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
     // 4) set 0 to max/min values if no particle for each particle type
     for (int q = 0; q < catalog.nUIQ; ++q) {
       for (int t = 0; t < kNumTypes; ++t) {
-        if (npart_type[t] == 0) {
+        if (npart_type[t] == 0 ||
+            !hasQuantityForType(catalog.uiQ[q], t) ||
+            result.valueMin[q][t] == std::numeric_limits<float>::max() ||
+            result.valueMax[q][t] == -std::numeric_limits<float>::max()) {
           result.valueMin[q][t] = result.valueMax[q][t] = 0.0f;
         }
       }

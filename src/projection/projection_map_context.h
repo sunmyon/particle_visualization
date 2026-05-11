@@ -13,7 +13,6 @@ struct ProjectionMapContext {
   const float* colorMap = nullptr;
   int colorMapSize = 0;
 
-  double scaleToPhysical = 1.0;
   double time = 0.0;
 };
 

@@ -10,9 +10,14 @@
 void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
                                  AnalysisToolExecutionInput& input)
 {
+  const float worldToRenderScale =
+    input.particles.simulationBlock.worldToRenderScale;
+  const glm::vec3 radialProfileCenter =
+    input.camera.cameraTarget / worldToRenderScale;
+
   Histogram2DContext histCtx;
   histCtx.cameraCenter = &input.camera.cameraTarget;
-  histCtx.worldToRenderScale = input.particles.simulationBlock.worldToRenderScale;
+  histCtx.worldToRenderScale = worldToRenderScale;
 #ifdef USE_CONVEX_HULL
   auto visibleHulls = input.analysis.convexHulls.visibleHulls();
   histCtx.convexHulls = &visibleHulls;
@@ -22,8 +27,7 @@ void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
                                      tools.radialProfileRequest,
                                      input.analysis.radial,
                                      input.particles.simulationBlock,
-                                     input.camera.cameraTarget,
-                                     input.normalization,
+                                     radialProfileCenter,
                                      input.quantity);
 
   ExecuteHistogram2DWindowRequests(tools.histogram2D,

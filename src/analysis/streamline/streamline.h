@@ -146,15 +146,12 @@ class StreamlineComputer {
 
   std::unique_ptr<KDTreeType> m_kdTree;
 
-  Bounds makeGasBounds(const std::vector<SimulationElement>& particles,
-                       float worldToRenderScale) const;
+  Bounds makeGasBounds(const std::vector<SimulationElement>& particles) const;
   Bounds makeBoxBounds(const StreamlineBoxSpec& box) const;
   std::vector<SeedPoint> selectSeeds(const std::vector<SimulationElement>& particles,
-                                     float worldToRenderScale,
                                      const Bounds& bounds,
                                      int nSeeds) const;
   SeedPoint makeManualSeed(const std::vector<SimulationElement>& particles,
-                           float worldToRenderScale,
                            const std::array<float, 3>& seed) const;
   void estimate_gradB(const SimulationBlock& simulationBlock,
                       const Bounds& fieldBounds,

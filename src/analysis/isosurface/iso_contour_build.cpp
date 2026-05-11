@@ -1,7 +1,5 @@
 #include "analysis/isosurface/iso_contour_build.h"
 
-#include "data/sample_coordinates.h"
-
 #ifdef ISO_CONTOUR
 #include <cfloat>
 #include <algorithm>
@@ -52,7 +50,7 @@ std::vector<SimulationElementForTree> MakeIsoParticles(const SimulationBlock& bl
     const auto& pd = block.particles[ipart];
     float val = getScalarValue(block, pd, ipart, quantity);
     particles.push_back(
-      {renderPosition(pd, block.worldToRenderScale), val});
+      {glm::vec3(pd.position[0], pd.position[1], pd.position[2]), val});
   }
   return particles;
 }

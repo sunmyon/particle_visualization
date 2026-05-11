@@ -17,7 +17,9 @@ struct InputFilterConfig;
 
 class FindClump{
 public:
-  struct SimulationElementFiltered{
+  // Detached clump work item. Detection code reads this sample, not the
+  // backing SimulationElement storage.
+  struct ClumpParticleSample{
     float pos[3];
     float renderSupportRadius;
     float density;
@@ -28,21 +30,67 @@ public:
     int original_index;
   };
   
-  SimulationElementFiltered filter_particle_for_clump_find(const SimulationElement p,
-                                                      size_t index,
-                                                      float worldToRenderScale,
-                                                      const std::string &var) const{
-    SimulationElementFiltered p_f;
-    renderPosition(p, worldToRenderScale, p_f.pos);
+  bool quantityFromClumpVariable(const std::string& var, QuantityId& out) const
+  {
+    if (var == "x") {
+      out = QuantityId::PosX;
+    } else if (var == "y") {
+      out = QuantityId::PosY;
+    } else if (var == "z") {
+      out = QuantityId::PosZ;
+    } else if (var == "r") {
+      out = QuantityId::Radius;
+    } else if (var == "Density") {
+      out = QuantityId::Density;
+    } else if (var == "Temperature") {
+      out = QuantityId::Temperature;
+    } else if (var == "Hsml") {
+      out = QuantityId::Hsml;
+    } else if (var == "Mass") {
+      out = QuantityId::Mass;
+    } else {
+      return false;
+    }
+    return true;
+  }
 
-    p_f.renderSupportRadius = renderSupportRadius(p, worldToRenderScale);
-    p_f.mass = p.mass;  
-    p_f.density = p.density;  
-    p_f.val = p.getValue(var);
+  float sampleValueForClumpVariable(const SimulationElement& p,
+                                    size_t index,
+                                    const std::string& var) const
+  {
+    (void)p;
+    QuantityId quantity = QuantityId::Density;
+    if (sourceBlock_ && quantityFromClumpVariable(var, quantity)) {
+      return sourceBlock_->getQuantityOr(index, quantity);
+    }
+    return 0.0f;
+  }
+
+  ClumpParticleSample makeClumpParticleSample(const SimulationElement& p,
+                                              size_t index,
+                                              float worldToRenderScale,
+                                              const std::string &var) const{
+    ClumpParticleSample p_f;
+    if (sourceBlock_) {
+      sourceBlock_->getVector(index, VectorId::Pos, p_f.pos);
+    } else {
+      renderPosition(p, worldToRenderScale, p_f.pos);
+    }
+
+    p_f.renderSupportRadius = sourceBlock_
+      ? sourceBlock_->getQuantityOr(index, QuantityId::Hsml) * worldToRenderScale
+      : renderSupportRadius(p, worldToRenderScale);
+    p_f.mass = sourceBlock_
+      ? sourceBlock_->getQuantityOr(index, QuantityId::Mass)
+      : 0.0f;
+    p_f.density = sourceBlock_
+      ? sourceBlock_->getQuantityOr(index, QuantityId::Density)
+      : 0.0f;
+    p_f.val = sampleValueForClumpVariable(p, index, var);
 
     p_f.type = p.type;
-    p_f.ID = simulationBlockForIds_
-      ? simulationBlockForIds_->particleIdSigned(index)
+    p_f.ID = sourceBlock_
+      ? sourceBlock_->particleIdSigned(index)
       : static_cast<int64_t>(index);
 
     return p_f;
@@ -83,7 +131,7 @@ private:
   int snapshotIndex_prev;
 
   std::vector<StructureNode *> nodeList_next; //will be used for tracking clumps
-  const SimulationBlock* simulationBlockForIds_ = nullptr;
+  const SimulationBlock* sourceBlock_ = nullptr;
 
   void clearNodes(){
     std::vector<StructureNode*> uniqueNodes = nodeList;
@@ -117,7 +165,7 @@ private:
   };
 
   struct ParticleCloud {
-    std::vector<SimulationElementFiltered> pts;
+    std::vector<ClumpParticleSample> pts;
 
     inline size_t kdtree_get_point_count() const {
       return pts.size();
@@ -143,21 +191,21 @@ private:
   void union_sets(std::vector<int>& parent, int a, int b);
 
   void findClumpsDendrogram(std::vector<SimulationElement>& cloud, float worldToRenderScale, const std::string &var);
-  std::vector<SimulationElementFiltered> filterDendrogramGasParticles(
+  std::vector<ClumpParticleSample> filterDendrogramGasParticles(
     const std::vector<SimulationElement>& particles,
     float worldToRenderScale,
     double threshold,
     const std::string& var) const;
   std::vector<int> makeDendrogramDensityOrder(
-    const std::vector<SimulationElementFiltered>& particles) const;
+    const std::vector<ClumpParticleSample>& particles) const;
   void buildDendrogramHierarchy(const ParticleCloud& cloud,
                                 const std::vector<int>& sortedIndices,
                                 const std::vector<int>& rank);
   void pruneDendrogramHierarchy();
-  void finalizeDendrogramNodes(const std::vector<SimulationElementFiltered>& filteredParticles);
-  void calc_node_statistic(StructureNode *ns, const std::vector<SimulationElementFiltered>& p);
+  void finalizeDendrogramNodes(const std::vector<ClumpParticleSample>& filteredParticles);
+  void calc_node_statistic(StructureNode *ns, const std::vector<ClumpParticleSample>& p);
   void traverseHierarchy(StructureNode* node, std::vector<StructureNode*>& sortedNodes);
-  std::vector<SimulationElementFiltered> filterParticles(const std::vector<SimulationElement>& particles,
+  std::vector<ClumpParticleSample> filterParticles(const std::vector<SimulationElement>& particles,
                                                        float worldToRenderScale,
                                                        double threshold,
                                                        const std::string &var) const;
@@ -214,7 +262,7 @@ public:
   void sortNodesByHierarchy();
   
   void runFOF(SimulationBlock& block, const std::string &var){
-    simulationBlockForIds_ = &block;
+    sourceBlock_ = &block;
     clearNodes();
     findClumps(block.particles, block.worldToRenderScale, var);
 #ifdef USE_CONVEX_HULL
@@ -223,7 +271,7 @@ public:
   }
 
   void runDendrogram(SimulationBlock& block, const std::string &var){
-    simulationBlockForIds_ = &block;
+    sourceBlock_ = &block;
     clearNodes();
     findClumpsDendrogram(block.particles, block.worldToRenderScale, var);
 #ifdef USE_CONVEX_HULL

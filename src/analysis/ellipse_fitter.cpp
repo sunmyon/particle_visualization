@@ -28,9 +28,12 @@ std::vector<int> EllipseFitter::extractComponent(double thr, int seedIndex) cons
 	
 	std::vector<MyResultItem> ret;	
         nanoflann::SearchParameters sp;
-	float q[3];
-        renderPosition((*dataPtr_)[i], worldToRenderScale_, q);
-        const float h = renderSupportRadius((*dataPtr_)[i], worldToRenderScale_);
+	float q[3] = {
+          (*dataPtr_)[i].position[0],
+          (*dataPtr_)[i].position[1],
+          (*dataPtr_)[i].position[2]
+        };
+        const float h = (*dataPtr_)[i].supportRadius;
         kdtree_->radiusSearch(q, h * h, ret, sp);
         for (auto& r : ret) {
             int j = r.first;
@@ -76,7 +79,6 @@ bool EllipseFitter::computeEllipse(const SimulationBlock& block,
 {
   const std::vector<SimulationElement>& data = block.particles;
   dataPtr_ = &data;
-  worldToRenderScale_ = block.worldToRenderScale;
 
   int index_a, index_b;  
   size_t count = 0;
@@ -105,14 +107,16 @@ bool EllipseFitter::computeEllipse(const SimulationBlock& block,
   }
 
   // 2) Build the KD-tree dynamically.
-  PointCloud<SimulationElement> cloud{ &data, worldToRenderScale_ };
+  PointCloud<SimulationElement> cloud{ &data };
   kdtree_.reset(new KDTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams()));
   kdtree_->buildIndex();
   
   float posA[3];
   float posB[3];
-  renderPosition((*dataPtr_)[index_a], worldToRenderScale_, posA);
-  renderPosition((*dataPtr_)[index_b], worldToRenderScale_, posB);
+  for (int k = 0; k < 3; ++k) {
+    posA[k] = (*dataPtr_)[index_a].position[k];
+    posB[k] = (*dataPtr_)[index_b].position[k];
+  }
   int indexA = find_nearest_gas_particle(posA);
   int indexB = find_nearest_gas_particle(posB);
 
@@ -206,8 +210,9 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
 {
     centroid.setZero();
     for (int idx: comp){
-        const glm::vec3 pos =
-          renderPosition((*dataPtr_)[idx], worldToRenderScale_);
+        const glm::vec3 pos((*dataPtr_)[idx].position[0],
+                            (*dataPtr_)[idx].position[1],
+                            (*dataPtr_)[idx].position[2]);
         centroid.x() += pos.x;
         centroid.y() += pos.y;
         centroid.z() += pos.z;
@@ -216,8 +221,9 @@ void EllipseFitter::computePCA3D(const std::vector<int>& comp,
 
     Eigen::Matrix3d C = Eigen::Matrix3d::Zero();
     for (int idx: comp){
-        const glm::vec3 pos =
-          renderPosition((*dataPtr_)[idx], worldToRenderScale_);
+        const glm::vec3 pos((*dataPtr_)[idx].position[0],
+                            (*dataPtr_)[idx].position[1],
+                            (*dataPtr_)[idx].position[2]);
         Eigen::Vector3d d;
         d.x() = pos.x - centroid.x();
         d.y() = pos.y - centroid.y();

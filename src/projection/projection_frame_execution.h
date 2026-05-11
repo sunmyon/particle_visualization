@@ -13,7 +13,6 @@ struct ProjectionFrameExecutionContext {
   SimulationDataset& particles;
   ProjectionMapGenerator& generator;
   const UnitSystem& units;
-  double scaleToPhysical = 1.0;
 };
 
 struct ProjectionFrameOutputOptions {

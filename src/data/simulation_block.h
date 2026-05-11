@@ -317,6 +317,351 @@ struct SimulationBlock {
   bool writeSoAAs(const SoAView<T,1>& view, size_t i, T in) {
     return writeSoAAs<T>(view.key, i, in);
   }
+
+  static const char* quantitySoAKey(QuantityId q)
+  {
+    switch (q) {
+    case QuantityId::B:
+    case QuantityId::Beta:
+      return kBfieldKey;
+    case QuantityId::Metallicity:
+      return kMetallicityKey;
+    case QuantityId::ElectronAbundance:
+      return kElectronAbundanceKey;
+    case QuantityId::H2Abundance:
+      return kH2AbundanceKey;
+    case QuantityId::HDAbundance:
+      return kHDAbundanceKey;
+    case QuantityId::J21:
+      return kJ21Key;
+    case QuantityId::Val:
+      return kVal1Key;
+    case QuantityId::Val2:
+      return kVal2Key;
+    default:
+      return nullptr;
+    }
+  }
+
+  static const char* quantityLoadedFieldName(QuantityId q)
+  {
+    switch (q) {
+    case QuantityId::Density:
+      return "density";
+    case QuantityId::Temperature:
+      return "temperature";
+    case QuantityId::Mass:
+      return "mass";
+    case QuantityId::Hsml:
+      return "Hsml";
+    case QuantityId::B:
+    case QuantityId::Beta:
+      return kBfieldKey;
+    case QuantityId::Metallicity:
+      return kMetallicityKey;
+    case QuantityId::ElectronAbundance:
+      return kElectronAbundanceKey;
+    case QuantityId::H2Abundance:
+      return kH2AbundanceKey;
+    case QuantityId::HDAbundance:
+      return kHDAbundanceKey;
+    case QuantityId::J21:
+      return kJ21Key;
+    case QuantityId::Val:
+      return "value";
+    case QuantityId::Val2:
+      return "value2";
+    default:
+      return nullptr;
+    }
+  }
+
+  bool hasQuantityForType(QuantityId q, int type) const
+  {
+    if (type < 0 || type >= kNumTypes) {
+      return false;
+    }
+
+    switch (q) {
+    case QuantityId::Density:
+    case QuantityId::Temperature:
+    case QuantityId::Mass:
+    case QuantityId::Hsml:
+    case QuantityId::PosX:
+    case QuantityId::PosY:
+    case QuantityId::PosZ:
+    case QuantityId::Radius:
+    case QuantityId::VRad:
+      return true;
+    default:
+      break;
+    }
+
+    const char* key = quantitySoAKey(q);
+    if (!key) {
+      return false;
+    }
+    if (q == QuantityId::B || q == QuantityId::Beta) {
+      if (!hasSoAAs(soa_views::Bfield)) {
+        return false;
+      }
+    } else {
+      auto it = soa.find(key);
+      if (it == soa.end() || it->second.comps < 1) {
+        return false;
+      }
+    }
+
+    if (loadedFieldTypeMask.empty() && loadedFieldNames.empty()) {
+      return true;
+    }
+
+    const char* loadedName = quantityLoadedFieldName(q);
+    if (loadedName && hasLoadedFieldForType(loadedName, type)) {
+      return true;
+    }
+    return hasLoadedFieldForType(key, type);
+  }
+
+  bool hasQuantityAt(size_t i, QuantityId q) const
+  {
+    if (i >= particles.size()) {
+      return false;
+    }
+    return hasQuantityForType(q, static_cast<int>(particles[i].type));
+  }
+
+  bool getVector(size_t i, VectorId v, float out[3]) const
+  {
+    if (i >= particles.size()) {
+      return false;
+    }
+    const SimulationElement& p = particles[i];
+    switch (v) {
+    case VectorId::OriginalPos:
+      out[0] = p.position[0];
+      out[1] = p.position[1];
+      out[2] = p.position[2];
+      return true;
+    case VectorId::Pos:
+      renderPosition(p, worldToRenderScale, out);
+      return true;
+    case VectorId::Vel:
+      out[0] = p.vel[0];
+      out[1] = p.vel[1];
+      out[2] = p.vel[2];
+      return true;
+    case VectorId::Bfield:
+      out[0] = out[1] = out[2] = 0.0f;
+      if (!hasQuantityAt(i, QuantityId::B)) {
+        return false;
+      }
+      {
+        float b[3];
+        if (!readSoAAs(soa_views::Bfield, i, b)) {
+          return false;
+        }
+        out[0] = b[0];
+        out[1] = b[1];
+        out[2] = b[2];
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool setVector(size_t i, VectorId v, const float in[3])
+  {
+    if (i >= particles.size()) {
+      return false;
+    }
+    SimulationElement& p = particles[i];
+    switch (v) {
+    case VectorId::OriginalPos:
+      p.position[0] = in[0];
+      p.position[1] = in[1];
+      p.position[2] = in[2];
+      return true;
+    case VectorId::Pos: {
+      const float invScale =
+        (worldToRenderScale != 0.0f) ? 1.0f / worldToRenderScale : 1.0f;
+      p.position[0] = in[0] * invScale;
+      p.position[1] = in[1] * invScale;
+      p.position[2] = in[2] * invScale;
+      return true;
+    }
+    case VectorId::Vel:
+      p.vel[0] = in[0];
+      p.vel[1] = in[1];
+      p.vel[2] = in[2];
+      return true;
+    case VectorId::Bfield: {
+      float tmp[3] = {in[0], in[1], in[2]};
+      return writeSoAAs(soa_views::Bfield, i, tmp);
+    }
+    }
+    return false;
+  }
+
+  bool getQuantity(size_t i,
+                   QuantityId q,
+                   float& out,
+                   const float* center = nullptr,
+                   const float* vcenter = nullptr) const
+  {
+    out = 0.0f;
+    if (i >= particles.size()) {
+      return false;
+    }
+    const SimulationElement& p = particles[i];
+
+    switch (q) {
+    case QuantityId::Density:
+      out = p.density;
+      return true;
+    case QuantityId::Temperature:
+      out = p.temperature;
+      return true;
+    case QuantityId::Mass:
+      out = p.mass;
+      return true;
+    case QuantityId::Hsml:
+      out = p.supportRadius;
+      return true;
+    case QuantityId::PosX:
+      out = p.position[0];
+      return true;
+    case QuantityId::PosY:
+      out = p.position[1];
+      return true;
+    case QuantityId::PosZ:
+      out = p.position[2];
+      return true;
+    case QuantityId::Radius: {
+      const float cx = center ? center[0] : 0.0f;
+      const float cy = center ? center[1] : 0.0f;
+      const float cz = center ? center[2] : 0.0f;
+      const float dx = p.position[0] - cx;
+      const float dy = p.position[1] - cy;
+      const float dz = p.position[2] - cz;
+      out = std::sqrt(dx * dx + dy * dy + dz * dz);
+      return true;
+    }
+    case QuantityId::VRad: {
+      const float cx = center ? center[0] : 0.0f;
+      const float cy = center ? center[1] : 0.0f;
+      const float cz = center ? center[2] : 0.0f;
+      const float vcx = vcenter ? vcenter[0] : 0.0f;
+      const float vcy = vcenter ? vcenter[1] : 0.0f;
+      const float vcz = vcenter ? vcenter[2] : 0.0f;
+      const float dx = p.position[0] - cx;
+      const float dy = p.position[1] - cy;
+      const float dz = p.position[2] - cz;
+      const float r = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if (r <= 0.0f) {
+        return false;
+      }
+      const float dvx = dx * (p.vel[0] - vcx);
+      const float dvy = dy * (p.vel[1] - vcy);
+      const float dvz = dz * (p.vel[2] - vcz);
+      out = (dvx + dvy + dvz) / r;
+      return true;
+    }
+    case QuantityId::B: {
+      if (!hasQuantityAt(i, q)) {
+        return false;
+      }
+      float b[3];
+      if (!readSoAAs(soa_views::Bfield, i, b)) {
+        return false;
+      }
+      out = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+      return true;
+    }
+    case QuantityId::Beta: {
+      if (!hasQuantityAt(i, q)) {
+        return false;
+      }
+      float b[3];
+      if (!readSoAAs(soa_views::Bfield, i, b)) {
+        return false;
+      }
+      const float b2 = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+      if (b2 <= 0.0f) {
+        return false;
+      }
+      float felec = 0.0f;
+      readSoAAs(soa_views::ElectronAbundance, i, felec);
+      float fH2 = 0.0f;
+      readSoAAs(soa_views::H2Abundance, i, fH2);
+      const double mu = 1.0 / (1.0 + physics_constants::XHe + felec - fH2);
+      out = static_cast<float>(8.0 * M_PI *
+                               physics_constants::boltzmann_cgs *
+                               p.temperature * p.density * mu / b2);
+      return true;
+    }
+    case QuantityId::Metallicity:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::Metallicity, i, out);
+    case QuantityId::ElectronAbundance:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::ElectronAbundance, i, out);
+    case QuantityId::H2Abundance:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::H2Abundance, i, out);
+    case QuantityId::HDAbundance:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::HDAbundance, i, out);
+    case QuantityId::J21:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::J21, i, out);
+    case QuantityId::Val:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::Val1, i, out);
+    case QuantityId::Val2:
+      if (!hasQuantityAt(i, q)) return false;
+      return readSoAAs(soa_views::Val2, i, out);
+    }
+    return false;
+  }
+
+  float getQuantityOr(size_t i,
+                      QuantityId q,
+                      float fallback = 0.0f,
+                      const float* center = nullptr,
+                      const float* vcenter = nullptr) const
+  {
+    float out = fallback;
+    return getQuantity(i, q, out, center, vcenter) ? out : fallback;
+  }
+
+  bool setQuantity(size_t i, QuantityId q, float value)
+  {
+    if (i >= particles.size()) {
+      return false;
+    }
+    SimulationElement& p = particles[i];
+    switch (q) {
+    case QuantityId::Density:
+      p.density = value;
+      return true;
+    case QuantityId::Temperature:
+      p.temperature = value;
+      return true;
+    case QuantityId::Mass:
+      p.mass = value;
+      return true;
+    case QuantityId::Hsml:
+      p.supportRadius = value;
+      return true;
+    case QuantityId::Val:
+      return writeSoAAs(soa_views::Val1, i, value);
+    case QuantityId::Val2:
+      return writeSoAAs(soa_views::Val2, i, value);
+    default:
+      return false;
+    }
+  }
   
   void rebuildQuantities();
   
@@ -336,184 +681,23 @@ public:
 
 
 inline bool getVectorValue(const SimulationBlock& blk, const SimulationElement& p, size_t ipart, VectorId v, float out[3]) {
-  switch (v) {
-    case VectorId::OriginalPos: {
-      out[0]=p.position[0]; out[1]=p.position[1]; out[2]=p.position[2]; return true;
-    }
-    case VectorId::Pos: {
-      renderPosition(p, blk.worldToRenderScale, out);
-      return true;
-    }
-    case VectorId::Vel: {
-      out[0]=p.vel[0]; out[1]=p.vel[1]; out[2]=p.vel[2]; return true;
-    }
-    case VectorId::Bfield: {
-      float B[3];
-      out[0] = out[1] = out[2] = 0.;
-      if(blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)){
-	out[0]=B[0];out[1]=B[1];out[2]=B[2];
-      }
-      return true;
-    }
-  }
-  return false;
+  (void)p;
+  return blk.getVector(ipart, v, out);
 }
 
 inline void setVectorValue(SimulationBlock& blk, SimulationElement& p, size_t ipart, VectorId v, const float in[3]) {
-  switch (v) {
-  case VectorId::OriginalPos:
-    p.position[0]=in[0]; p.position[1]=in[1]; p.position[2]=in[2];
-    return;
-  case VectorId::Pos:
-    {
-      const float invScale =
-        (blk.worldToRenderScale != 0.0f) ? 1.0f / blk.worldToRenderScale : 1.0f;
-      p.position[0]=in[0] * invScale;
-      p.position[1]=in[1] * invScale;
-      p.position[2]=in[2] * invScale;
-    }
-    return;
-  case VectorId::Vel:
-    p.vel[0]=in[0]; p.vel[1]=in[1]; p.vel[2]=in[2];
-    return;
-  case VectorId::Bfield: {
-    float tmp[3] = {in[0], in[1], in[2]};
-    blk.writeSoAAs(soa_views::Bfield, ipart, tmp);
-    return;
-  }
-  }
+  (void)p;
+  blk.setVector(ipart, v, in);
 }
 
 inline float getScalarValue(const SimulationBlock& blk, const SimulationElement& p, int ipart, QuantityId q, const float* center = nullptr, const float* vcenter = nullptr) {
-  switch (q) {
-  case QuantityId::Density:     return p.density;
-  case QuantityId::Temperature: return p.temperature;
-  case QuantityId::Mass:
-    return p.mass;  // Adjust to match SimulationElement if needed.
-
-  case QuantityId::Hsml:
-    return p.supportRadius;
-
-  case QuantityId::PosX:        return p.position[0]; // or p.position[0]
-  case QuantityId::PosY:        return p.position[1];
-  case QuantityId::PosZ:        return p.position[2];
-
-  case QuantityId::Radius: {
-    const float cx = center ? center[0] : 0.0f;
-    const float cy = center ? center[1] : 0.0f;
-    const float cz = center ? center[2] : 0.0f;
-
-    const float dx = p.position[0] - cx;   // Use position when needed.
-    const float dy = p.position[1] - cy;
-    const float dz = p.position[2] - cz;
-    return std::sqrt(dx*dx + dy*dy + dz*dz);
-  }
-
-  case QuantityId::VRad: {
-    const float cx = center ? center[0] : 0.0f;
-    const float cy = center ? center[1] : 0.0f;
-    const float cz = center ? center[2] : 0.0f;
-
-    const float vcx = vcenter ? vcenter[0] : 0.0f;
-    const float vcy = vcenter ? vcenter[1] : 0.0f;
-    const float vcz = vcenter ? vcenter[2] : 0.0f;
-
-    const float dx = p.position[0] - cx;
-    const float dy = p.position[1] - cy;
-    const float dz = p.position[2] - cz;
-      
-    const float dvx = (p.position[0] - cx) * (p.vel[0] - vcx);
-    const float dvy = (p.position[1] - cy) * (p.vel[1] - vcy);
-    const float dvz = (p.position[2] - cz) * (p.vel[2] - vcz);
-    return (dvx + dvy + dvz)/sqrt(dx*dx + dy*dy + dz*dz);
-  }
-
-  case QuantityId::B: {
-    float B[3];
-    if (!blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)) return 0.0f;
-    return std::sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
-  }
-  case QuantityId::Beta: {
-    float B[3];
-    if (!blk.readSoAAs(soa_views::Bfield, (size_t)ipart, B)) return 0.0f;
-
-    const float B2 = B[0]*B[0] + B[1]*B[1] + B[2]*B[2];
-    if (B2 <= 0.0f) return 0.0f;
-
-    float felec = 0.0f;
-    blk.readSoAAs(soa_views::ElectronAbundance, (size_t)ipart, felec);
-
-    float fH2 = 0.0f;
-    blk.readSoAAs(soa_views::H2Abundance, (size_t)ipart, fH2);
-
-    const double mu = 1.0 / (1.0 + physics_constants::XHe + felec - fH2);
-    const float beta = (float)(
-			       8.0 * M_PI * physics_constants::boltzmann_cgs * p.temperature * p.density * mu / B2
-			       );
-    return beta;
-  }
-  case QuantityId::Metallicity: {
-    float z;
-    if (!blk.readSoAAs(soa_views::Metallicity, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::ElectronAbundance: {
-    float z;
-    if (!blk.readSoAAs(soa_views::ElectronAbundance, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::H2Abundance: {
-    float z;
-    if (!blk.readSoAAs(soa_views::H2Abundance, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::HDAbundance: {
-    float z;
-    if (!blk.readSoAAs(soa_views::HDAbundance, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::J21: {
-    float z;
-    if (!blk.readSoAAs(soa_views::J21, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::Val: {
-    float z;
-    if (!blk.readSoAAs(soa_views::Val1, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-  case QuantityId::Val2: {
-    float z;
-    if (!blk.readSoAAs(soa_views::Val2, (size_t)ipart, z)) return 0.0f;
-    return z;
-  }
-      
-  }
-  return 0.0f;
+  (void)p;
+  float out = 0.0f;
+  blk.getQuantity(static_cast<size_t>(ipart), q, out, center, vcenter);
+  return out;
 }
 
 inline void setScalarValue(SimulationBlock& blk, SimulationElement& p, size_t ipart, QuantityId q, float x) {
-  switch (q) {
-    case QuantityId::Density:
-      p.density = x;
-      return;
-    case QuantityId::Temperature:
-      p.temperature = x;
-      return;
-    case QuantityId::Mass:
-      p.mass = x;
-      return;
-    case QuantityId::Hsml:
-      p.supportRadius = x;
-      return;
-    case QuantityId::Val:
-      blk.writeSoAAs(soa_views::Val1, ipart, x);
-      return;
-    case QuantityId::Val2:
-      blk.writeSoAAs(soa_views::Val2, ipart, x);
-      return;
-    default:
-      // Derived quantities such as Radius, VRad, and B do not need setters.
-      return;
-  }
+  (void)p;
+  blk.setQuantity(ipart, q, x);
 }

@@ -108,9 +108,11 @@ struct RenderRuntimeState {
   RenderLayerState cubes;
   RenderLayerState ellipsoids;
   RenderLayerState isocontour;
+  float isoContourWorldToRenderScale = -1.0f;
 
 #ifdef VOLUME_RENDERING
   VolumeRenderState volume;
+  float volumeWorldToRenderScale = -1.0f;
 #endif
 
   RenderLayerState polyhedra;

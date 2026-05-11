@@ -74,8 +74,8 @@ struct ProjectionViewBlockSpec {
   bool centerSameAsMain = true;
   bool tiltSameAsMain = true;
 
-  float arrowLenXDefault = 100.0f;
-  char arrowLabelStrDefault[255] = "100 au";
+  float scaleBarFractionDefault = 0.1f;
+  char arrowLabelStrDefault[255] = "0.1 box";
 };
 
 struct ProjectionPanelSpec {
@@ -90,8 +90,8 @@ struct ProjectionPanelSpec {
 
   ProjectionPanelLabelMode timeLabelMode = ProjectionPanelLabelMode::Default;
   ProjectionPanelLabelMode scaleBarMode = ProjectionPanelLabelMode::Default;
-  float arrowLenX = 100.0f;
-  char arrowLabelStr[255] = "100 au";
+  float scaleBarFraction = 0.1f;
+  char arrowLabelStr[255] = "0.1 box";
 
   int starOverlayIndex = 1; // 0=off, 1..kProjectionMaxStarOverlays.
   int vectorOverlayIndex = 0; // 0=off, 1..kProjectionMaxVectorOverlays.
@@ -181,8 +181,8 @@ struct ProjectionMapParams {
   float lenZoomRegion = 0.0f;
 
   bool flagPlaceScale = false;
-  float arrowLenX = 100.0f;
-  char arrowLabelStr[255] = "100 au";
+  float scaleBarFraction = 0.1f;
+  char arrowLabelStr[255] = "0.1 box";
 
   bool flagTimeLabel = true;
   bool flagUseRedshift = false;
@@ -317,7 +317,7 @@ inline void ProjectionSyncViewBlockFromTopLevel(ProjectionMapParams& params,
   block.projectionSign = params.projectionSign;
   block.upAxis = params.upAxis;
   block.upSign = params.upSign;
-  block.arrowLenXDefault = params.arrowLenX;
+  block.scaleBarFractionDefault = params.scaleBarFraction;
   ProjectionCopyString(block.arrowLabelStrDefault,
                        sizeof(block.arrowLabelStrDefault),
                        params.arrowLabelStr);
@@ -353,7 +353,7 @@ inline void ProjectionSyncTopLevelFromViewBlock(ProjectionMapParams& params,
   params.projectionSign = block.projectionSign;
   params.upAxis = block.upAxis;
   params.upSign = block.upSign;
-  params.arrowLenX = block.arrowLenXDefault;
+  params.scaleBarFraction = block.scaleBarFractionDefault;
   ProjectionCopyString(params.arrowLabelStr,
                        sizeof(params.arrowLabelStr),
                        block.arrowLabelStrDefault);
@@ -427,7 +427,7 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
         (i < kProjectionMaxPanels && !params.multiPanelShowScale[i])
           ? ProjectionPanelLabelMode::Hide
           : ProjectionPanelLabelMode::Show;
-      panel.arrowLenX = params.arrowLenX;
+      panel.scaleBarFraction = params.scaleBarFraction;
       ProjectionCopyString(panel.arrowLabelStr,
                            sizeof(panel.arrowLabelStr),
                            params.arrowLabelStr);
@@ -560,9 +560,9 @@ inline void ProjectionApplyPanelToParams(ProjectionMapParams& params,
 
   const bool overrideScale =
     panel.scaleBarMode == ProjectionPanelLabelMode::Override;
-  params.arrowLenX = overrideScale
-    ? panel.arrowLenX
-    : block.arrowLenXDefault;
+  params.scaleBarFraction = overrideScale
+    ? panel.scaleBarFraction
+    : block.scaleBarFractionDefault;
   ProjectionCopyString(params.arrowLabelStr,
                        sizeof(params.arrowLabelStr),
                        overrideScale

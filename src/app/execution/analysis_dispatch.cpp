@@ -109,8 +109,7 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
     ProjectionFrameExecutionContext projectionCtx{
       *data.particles,
       *services.projectionMap2D,
-      runtime.quantity.units,
-      runtime.settings.normalization.toPhysicalScale()
+      runtime.quantity.units
     };
 
     ProjectionMapExecutionContext projectionMapCtx{

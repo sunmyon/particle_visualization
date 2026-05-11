@@ -751,8 +751,17 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                         runtime.settings.snapshotFormat.formatTokensGadget,
 #ifdef HAVE_HDF5
                         runtime.settings.snapshotFormat.formatTokensHdf5,
+                        runtime.settings.fileNavigation.input.filePath,
 #endif
-                        runtime.settings.snapshotFormat.readFormat);
+                        runtime.settings.snapshotFormat.readFormat,
+                        runtime.settings.snapshotFormat.inputDensityUnit,
+                        runtime.settings.snapshotFormat.inputTemperatureUnit,
+                        runtime.settings.snapshotFormat.inputMagneticFieldUnit,
+                        runtime.settings.request.unitsDraft,
+                        runtime.quantity.units,
+                        runtime.settings.request.unitsDraftDirty,
+                        runtime.settings.request.applyUnitsRequested,
+                        runtime.settings.request.unitConversionRebuildRequested);
   DrawOutputFormatDialog(tools.fileFormatDialog,
                          runtime.settings.snapshotFormat.outputFormat);
   DrawMaskWindow(tools.mask,
@@ -984,7 +993,6 @@ static void ExecuteRequests(AppDataState& data,
   AnalysisToolExecutionInput analysisToolInput{
     *data.particles,
     runtime.quantity,
-    runtime.settings.normalization,
     analysis,
     camera
   };

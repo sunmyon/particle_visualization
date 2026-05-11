@@ -72,3 +72,5 @@ AdaptiveVolumeTreeBuildResult BuildAdaptiveVolumeTreeFromParticles(
   const SimulationBlock& particles,
   const AdaptiveVolumeTreeBuildParams& params,
   const VolumeSigmaMapper& sigmaMapper);
+
+void ScaleAdaptiveVolumeTreeCoordinates(AdaptiveVolumeTree& tree, float scale);

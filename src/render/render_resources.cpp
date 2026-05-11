@@ -62,29 +62,30 @@ void BuildRenderParticles(const ParticleRenderInput& input,
   }
 }
 
-std::vector<float> BuildVelocityInstanceData(const std::vector<SimulationElement>& particles,
-                                             float worldToRenderScale,
+std::vector<float> BuildVelocityInstanceData(const SimulationBlock& block,
 					     const int velocity_subtraction)
 {
   std::vector<float> instanceData;
-  instanceData.reserve(particles.size() * 6);
+  instanceData.reserve(block.particles.size() * 6);
 
   const int stride = (velocity_subtraction > 0)
                    ? velocity_subtraction : 1;
 
-  for (size_t i = 0; i < particles.size(); ++i) {
+  for (size_t i = 0; i < block.particles.size(); ++i) {
     if (i % stride != 0) continue;
 
-    const auto& p = particles[i];
-    const glm::vec3 pos = renderPosition(p, worldToRenderScale);
+    const auto& p = block.particles[i];
+    const glm::vec3 pos = renderPosition(p, block.worldToRenderScale);
+    float vel[3] = {0.0f, 0.0f, 0.0f};
+    block.getVector(i, VectorId::Vel, vel);
 
     instanceData.push_back(pos.x);
     instanceData.push_back(pos.y);
     instanceData.push_back(pos.z);
 
-    instanceData.push_back(p.vel[0]);
-    instanceData.push_back(p.vel[1]);
-    instanceData.push_back(p.vel[2]);
+    instanceData.push_back(vel[0]);
+    instanceData.push_back(vel[1]);
+    instanceData.push_back(vel[2]);
   }
 
   return instanceData;
@@ -100,8 +101,7 @@ void UpdateVelocityRenderData(const ParticleRenderInput& input,
     return;
   }
 
-  velocityInstanceData = BuildVelocityInstanceData(input.block->particles,
-                                                   input.block->worldToRenderScale,
+  velocityInstanceData = BuildVelocityInstanceData(*input.block,
                                                    velocity_subtraction);
 }
 

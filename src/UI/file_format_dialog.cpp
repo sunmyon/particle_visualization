@@ -2,11 +2,55 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 
+#ifdef HAVE_HDF5
+#include "FileIO/hdf5_utils.h"
+#endif
+
 namespace {
+
+float TypeMaskColumnWidth()
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  float width = 0.0f;
+  for (int type = 0; type < 6; ++type) {
+    char label[8];
+    std::snprintf(label, sizeof(label), "%d", type);
+    width += ImGui::CalcTextSize(label).x + 2.0f * style.FramePadding.x;
+    if (type > 0) {
+      width += 4.0f;
+    }
+  }
+  return width + style.CellPadding.x;
+}
+
+void SetupTypeMaskColumn()
+{
+  ImGui::TableSetupColumn("Types",
+                          ImGuiTableColumnFlags_WidthFixed |
+                            ImGuiTableColumnFlags_NoResize,
+                          TypeMaskColumnWidth());
+}
+
+float DataTypeColumnWidth()
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  float textWidth = 0.0f;
+  for (int n = 0; n < kNumDataTypeChoices; ++n) {
+    textWidth =
+      std::max(textWidth, ImGui::CalcTextSize(kDataTypeChoices[n].name).x);
+  }
+  return textWidth + 2.0f * style.FramePadding.x +
+         2.0f * style.CellPadding.x + ImGui::GetFrameHeight();
+}
+
 
 bool IsFixedGadgetBlock(FieldKey key)
 {
@@ -40,6 +84,17 @@ int GadgetDomainIndexOr(const std::string& sourceName, int fallback)
   return fallback;
 }
 
+std::uint8_t GadgetDomainTypeMask(int domainIndex)
+{
+  switch (domainIndex) {
+  case 0: return 0x3fu;
+  case 1: return 0x01u;
+  case 2: return 0x21u;
+  case 3: return 0x01u;
+  default: return 0x01u;
+  }
+}
+
 int GadgetBlockRepeat(const std::string& sourceName)
 {
   const size_t sep = sourceName.find(':');
@@ -51,13 +106,10 @@ int GadgetBlockRepeat(const std::string& sourceName)
   }
 }
 
-void SetGadgetDomainSource(FieldSpec& spec, int domainIndex, int repeat)
+void SetGadgetTypeSource(FieldSpec& spec, int repeat)
 {
-  static const char* domains[] = { "all", "type0", "type0and5", "absolute" };
-  domainIndex = std::clamp(domainIndex, 0, 3);
   repeat = std::max(1, repeat);
-  spec.sourceName =
-    std::string(domains[domainIndex]) + ":" + std::to_string(repeat);
+  spec.sourceName = "types:" + std::to_string(repeat);
 }
 
 void ApplyGadgetBlockDefaults(FieldSpec& spec)
@@ -65,15 +117,17 @@ void ApplyGadgetBlockDefaults(FieldSpec& spec)
   if (spec.key == FieldKey::Dummy) {
     spec.type = DataType::Float;
     spec.count = 1;
-    spec.sourceName = "all:1";
+    spec.typeMask = 0x3fu;
+    spec.sourceName = "types:1";
     return;
   }
   ApplyDefaultFieldSpec(spec);
   if (IsFixedGadgetBlock(spec.key)) {
-    spec.sourceName = "all:1";
+    spec.typeMask = 0x3fu;
   } else {
-    spec.sourceName = "type0:1";
+    spec.typeMask = 0x01u;
   }
+  spec.sourceName = "types:1";
 }
 
 void SetAllGadgetFloatingTypes(std::vector<FieldSpec>& tokens, DataType type)
@@ -117,24 +171,65 @@ bool DrawGadgetTypeCombo(FieldSpec& spec)
   return changed;
 }
 
-void DrawFieldTypeMaskCheckboxes(FieldSpec& spec, const char* idPrefix)
+void DrawTypeMaskButtons(unsigned int& mask, const char* idPrefix)
 {
+  ImGui::PushID(idPrefix);
   for (int type = 0; type < 6; ++type) {
-    bool enabled =
-      (spec.typeMask & static_cast<std::uint8_t>(1u << type)) != 0;
-    char label[32];
-    std::snprintf(label, sizeof(label), "T%d##%s%d", type, idPrefix, type);
-    if (ImGui::Checkbox(label, &enabled)) {
+    const bool enabled =
+      (mask & static_cast<unsigned int>(1u << type)) != 0;
+    if (type > 0) {
+      ImGui::SameLine(0.0f, 4.0f);
+    }
+
+    if (enabled) {
+      ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    char label[8];
+    std::snprintf(label, sizeof(label), "%d", type);
+    if (ImGui::SmallButton(label)) {
+      const unsigned int bit = static_cast<unsigned int>(1u << type);
       if (enabled) {
-        spec.typeMask |= static_cast<std::uint8_t>(1u << type);
+        mask &= ~bit;
       } else {
-        spec.typeMask &= static_cast<std::uint8_t>(~(1u << type));
+        mask |= bit;
       }
     }
-    if (type != 2 && type != 5) {
-      ImGui::SameLine();
+    if (enabled) {
+      ImGui::PopStyleColor();
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("PartType%d", type);
     }
   }
+  ImGui::PopID();
+}
+
+void DrawFieldTypeMaskCheckboxes(FieldSpec& spec, const char* idPrefix)
+{
+  unsigned int mask = spec.typeMask;
+  DrawTypeMaskButtons(mask, idPrefix);
+  spec.typeMask = static_cast<std::uint8_t>(mask & 0x3fu);
+}
+
+void DrawGadgetTypeMaskEditor(FieldSpec& spec)
+{
+  const int legacyDomain = GadgetDomainIndexOr(spec.sourceName, -1);
+  if (legacyDomain >= 0) {
+    spec.typeMask = GadgetDomainTypeMask(legacyDomain);
+  }
+
+  const bool fixed = IsFixedGadgetBlock(spec.key);
+  if (fixed) {
+    spec.typeMask = 0x3fu;
+    ImGui::BeginDisabled();
+    DrawFieldTypeMaskCheckboxes(spec, "gadget_fixed_types");
+    ImGui::EndDisabled();
+    return;
+  }
+
+  DrawFieldTypeMaskCheckboxes(spec, "gadget_types");
+  SetGadgetTypeSource(spec, GadgetBlockRepeat(spec.sourceName));
 }
 
 bool HandleGadgetIndexDragDrop(std::vector<FieldSpec>& tokens, int rowIndex)
@@ -319,7 +414,7 @@ void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
     tokens.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("BinaryFormatTable", 6,
+  if (ImGui::BeginTable("BinaryFormatTable", 5,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
@@ -329,7 +424,6 @@ void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 130.0f);
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
     ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-    ImGui::TableSetupColumn("Move", ImGuiTableColumnFlags_WidthFixed, 72.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 42.0f);
     ImGui::TableHeadersRow();
 
@@ -380,16 +474,6 @@ void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
       if (spec.count < 0) spec.count = 0;
 
       ImGui::TableNextColumn();
-      if (ImGui::Button("^") && i > 0) {
-        std::swap(tokens[i], tokens[i - 1]);
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("v") &&
-          i + 1 < static_cast<int>(tokens.size())) {
-        std::swap(tokens[i], tokens[i + 1]);
-      }
-
-      ImGui::TableNextColumn();
       if (ImGui::Button("-")) {
         tokens.erase(tokens.begin() + i);
         ImGui::PopID();
@@ -431,7 +515,7 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
     tokens.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("GadgetFormatTable", 8,
+  if (ImGui::BeginTable("GadgetFormatTable", 7,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
@@ -439,11 +523,10 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
                         ImVec2(0.0f, 0.0f))) {
     ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
     ImGui::TableSetupColumn("Field / skip", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-    ImGui::TableSetupColumn("Domain", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+    SetupTypeMaskColumn();
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, DataTypeColumnWidth());
     ImGui::TableSetupColumn("Components", ImGuiTableColumnFlags_WidthFixed, 95.0f);
     ImGui::TableSetupColumn("Repeat", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-    ImGui::TableSetupColumn("Move", ImGuiTableColumnFlags_WidthFixed, 72.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 42.0f);
     ImGui::TableHeadersRow();
 
@@ -482,25 +565,10 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
       }
 
       ImGui::TableNextColumn();
-      if (spec.key == FieldKey::Dummy) {
-        static const char* domains[] = { "all", "type0", "type0+type5", "absolute" };
-        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
-        int repeat = GadgetBlockRepeat(spec.sourceName);
-        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
-        }
-      } else if (IsFixedGadgetBlock(spec.key)) {
-        ImGui::TextUnformatted("all");
-      } else {
-        static const char* domains[] = { "all", "type0", "type0+type5" };
-        int domainIndex = std::min(GadgetDomainIndexOr(spec.sourceName, 1), 2);
-        const int repeat = GadgetBlockRepeat(spec.sourceName);
-        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
-        }
-      }
+      DrawGadgetTypeMaskEditor(spec);
 
       ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
       DrawGadgetTypeCombo(spec);
 
       ImGui::TableNextColumn();
@@ -510,24 +578,13 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
 
       ImGui::TableNextColumn();
       if (spec.key == FieldKey::Dummy) {
-        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
         int repeat = GadgetBlockRepeat(spec.sourceName);
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputInt("##repeat", &repeat)) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
+          SetGadgetTypeSource(spec, repeat);
         }
       } else {
         ImGui::TextUnformatted("-");
-      }
-
-      ImGui::TableNextColumn();
-      if (ImGui::Button("^") && i > 0) {
-        std::swap(tokens[i], tokens[i - 1]);
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("v") &&
-          i + 1 < static_cast<int>(tokens.size())) {
-        std::swap(tokens[i], tokens[i + 1]);
       }
 
       ImGui::TableNextColumn();
@@ -544,9 +601,477 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
   }
 }
 
-#ifdef HAVE_HDF5
-void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
+void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
+                                 InputTemperatureUnit& inputTemperatureUnit,
+                                 InputMagneticFieldUnit& inputMagneticFieldUnit,
+                                 UnitSystem& unitsDraft,
+                                 const UnitSystem& currentUnits,
+                                 bool& unitsDraftDirty,
+                                 bool& applyUnitsRequested,
+                                 bool& unitConversionRebuildRequested)
 {
+  ImGui::SeparatorText("Input field interpretation");
+  ImGui::TextDisabled(
+    "Used when the file does not provide enough metadata. HDF5/AREPO metadata overrides this when available.");
+  ImGui::TextDisabled(
+    "If a field is marked as code-unit, conversion uses Code units / load defaults.");
+
+  int densityUnitIndex = static_cast<int>(inputDensityUnit);
+  static const char* DensityUnitNames[] = {
+    "code mass density",
+    "nH [cm^-3]",
+    "mass density [g cm^-3]"
+  };
+  ImGui::SetNextItemWidth(220.0f);
+  if (ImGui::Combo("Input density unit",
+                   &densityUnitIndex,
+                   DensityUnitNames,
+                   IM_ARRAYSIZE(DensityUnitNames))) {
+    inputDensityUnit =
+      static_cast<InputDensityUnit>(std::clamp(densityUnitIndex, 0, 2));
+  }
+
+  int temperatureUnitIndex = static_cast<int>(inputTemperatureUnit);
+  static const char* TemperatureUnitNames[] = {
+    "temperature [K]",
+    "code internal energy"
+  };
+  ImGui::SetNextItemWidth(220.0f);
+  if (ImGui::Combo("Input thermal field",
+                   &temperatureUnitIndex,
+                   TemperatureUnitNames,
+                   IM_ARRAYSIZE(TemperatureUnitNames))) {
+    inputTemperatureUnit =
+      static_cast<InputTemperatureUnit>(std::clamp(temperatureUnitIndex, 0, 1));
+  }
+
+  int magneticFieldUnitIndex = static_cast<int>(inputMagneticFieldUnit);
+  static const char* MagneticFieldUnitNames[] = {
+    "B [Gauss]",
+    "code magnetic field"
+  };
+  ImGui::SetNextItemWidth(220.0f);
+  if (ImGui::Combo("Input magnetic field unit",
+                   &magneticFieldUnitIndex,
+                   MagneticFieldUnitNames,
+                   IM_ARRAYSIZE(MagneticFieldUnitNames))) {
+    inputMagneticFieldUnit =
+      static_cast<InputMagneticFieldUnit>(
+        std::clamp(magneticFieldUnitIndex, 0, 1));
+  }
+
+  ImGui::TextDisabled(
+    "Positions, masses, velocities, and smoothing lengths remain stored in code units.");
+
+  ImGui::SeparatorText("Code units / load defaults");
+  ImGui::TextDisabled(
+    "These values are the code units used to interpret code-unit fields.");
+  ImGui::TextDisabled(
+    "Apply updates future loads and rescales loaded density/T/B when applicable.");
+
+  if (!unitsDraftDirty && !applyUnitsRequested) {
+    unitsDraft = currentUnits;
+  }
+
+  bool unitChanged = false;
+  const float unitInputWidth = 220.0f;
+  const float presetColumnX = 380.0f;
+  ImGui::SetNextItemWidth(220.0f);
+  unitChanged |= ImGui::InputDouble("UnitLength_in_cm",
+                                    &unitsDraft.length_cm,
+                                    0., 0., "%g");
+  ImGui::SameLine(presetColumnX);
+  if (ImGui::SmallButton("AU")) {
+    unitsDraft.setLengthToAU();
+    unitChanged = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("pc")) {
+    unitsDraft.setLengthToPC();
+    unitChanged = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("kpc")) {
+    unitsDraft.setLengthToKPC();
+    unitChanged = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Mpc")) {
+    unitsDraft.setLengthToMPC();
+    unitChanged = true;
+  }
+
+  ImGui::SetNextItemWidth(unitInputWidth);
+  unitChanged |= ImGui::InputDouble("UnitMass_in_g",
+                                    &unitsDraft.mass_g,
+                                    0., 0., "%g");
+  ImGui::SameLine(presetColumnX);
+  if (ImGui::SmallButton("Msun")) {
+    unitsDraft.setMassToSolar();
+    unitChanged = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("1e10 Msun")) {
+    unitsDraft.setMassTo1e10Solar();
+    unitChanged = true;
+  }
+
+  ImGui::SetNextItemWidth(unitInputWidth);
+  unitChanged |= ImGui::InputDouble("UnitVelocity_in_cm_per_s",
+                                    &unitsDraft.velocity_cm_per_s,
+                                    0., 0., "%g");
+  ImGui::SetNextItemWidth(unitInputWidth);
+  unitChanged |= ImGui::InputDouble("Hubble",
+                                    &unitsDraft.hubble,
+                                    0., 0., "%g");
+  unitChanged |= ImGui::Checkbox("ComovingCoordinate",
+                                 &unitsDraft.useComovingCoordinate);
+
+  if (unitChanged) {
+    unitsDraftDirty = true;
+  }
+
+  ImGui::BeginDisabled(!unitsDraftDirty || applyUnitsRequested);
+  if (ImGui::Button("Apply code units")) {
+    applyUnitsRequested = true;
+    unitConversionRebuildRequested = true;
+  }
+  ImGui::EndDisabled();
+  if (applyUnitsRequested) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("Applying...");
+  }
+}
+
+#ifdef HAVE_HDF5
+DataType Hdf5PreviewDataType(const HDF5Utils::H5DatasetMeta& meta)
+{
+  if (meta.cls == H5T_FLOAT) {
+    return meta.bytes > sizeof(float) ? DataType::Double : DataType::Float;
+  }
+  if (meta.cls == H5T_INTEGER) {
+    return meta.bytes > sizeof(int32_t) ? DataType::Int64 : DataType::Int32;
+  }
+  return DataType::Float;
+}
+
+int Hdf5PreviewComponentCount(const HDF5Utils::H5DatasetMeta& meta)
+{
+  if (meta.rank >= 2 && meta.dims[1] > 0) {
+    return static_cast<int>(std::min<hsize_t>(meta.dims[1], 1024));
+  }
+  return 1;
+}
+
+bool Hdf5DatasetShouldDefaultToAllTypes(const std::string& name)
+{
+  return name == GetDefaultHDF5DatasetName(FieldKey::Position) ||
+         name == GetDefaultHDF5DatasetName(FieldKey::Velocity) ||
+         name == GetDefaultHDF5DatasetName(FieldKey::Mass) ||
+         name == GetDefaultHDF5DatasetName(FieldKey::ID) ||
+         name == "IDs" ||
+         name == "ID" ||
+         name == "ParticleID";
+}
+
+std::string Hdf5MetadataMaskString(std::uint8_t mask)
+{
+  std::string out;
+  for (int ptype = 0; ptype < 6; ++ptype) {
+    if ((mask & static_cast<std::uint8_t>(1u << ptype)) == 0) {
+      continue;
+    }
+    if (!out.empty()) out += ",";
+    out += "T" + std::to_string(ptype);
+  }
+  return out.empty() ? "none" : out;
+}
+
+bool HasHdf5MetadataExtension(const std::filesystem::path& path)
+{
+  std::string ext = path.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return ext == ".h5" || ext == ".hdf5";
+}
+
+std::vector<std::string> DiscoverSplitHdf5MetadataParts(const std::string& path)
+{
+  namespace fs = std::filesystem;
+
+  const fs::path selected(path);
+  if (!HasHdf5MetadataExtension(selected)) {
+    return {path};
+  }
+
+  const fs::path parent = selected.parent_path();
+  const std::string filename = selected.filename().string();
+  const std::string suffix = selected.extension().string();
+  const size_t suffixPos = filename.size() - suffix.size();
+  const size_t partDot = filename.rfind('.', suffixPos > 0 ? suffixPos - 1 : 0);
+  if (partDot == std::string::npos || partDot >= suffixPos) {
+    return {path};
+  }
+
+  const std::string partToken =
+    filename.substr(partDot + 1, suffixPos - partDot - 1);
+  if (partToken.empty() ||
+      !std::all_of(partToken.begin(),
+                   partToken.end(),
+                   [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return {path};
+  }
+
+  const std::string prefix = filename.substr(0, partDot + 1);
+  std::map<int, std::string> parts;
+  try {
+    for (const auto& entry : fs::directory_iterator(parent)) {
+      if (!entry.is_regular_file()) continue;
+      const std::string name = entry.path().filename().string();
+      if (name.size() <= prefix.size() + suffix.size()) continue;
+      if (name.compare(0, prefix.size(), prefix) != 0) continue;
+      if (name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        continue;
+      }
+
+      const std::string token =
+        name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+      if (token.empty() ||
+          !std::all_of(token.begin(),
+                       token.end(),
+                       [](unsigned char c) { return std::isdigit(c) != 0; })) {
+        continue;
+      }
+      parts[std::stoi(token)] = entry.path().string();
+    }
+  } catch (const fs::filesystem_error&) {
+    return {path};
+  }
+
+  if (parts.size() <= 1 || parts.begin()->first != 0) {
+    return {path};
+  }
+
+  std::vector<std::string> out;
+  out.reserve(parts.size());
+  int expected = 0;
+  for (const auto& [partIndex, partPath] : parts) {
+    if (partIndex != expected) {
+      return {};
+    }
+    out.push_back(partPath);
+    ++expected;
+  }
+  return out;
+}
+
+void AccumulateHDF5MetadataPreview(FileFormatDialogState& state,
+                                   H5::H5File& file)
+{
+  for (int ptype = 0; ptype < 6; ++ptype) {
+    char groupPath[32];
+    std::snprintf(groupPath, sizeof(groupPath), "/PartType%d", ptype);
+    if (!HDF5Utils::groupExists(file, groupPath)) {
+      continue;
+    }
+
+    H5::Group group = file.openGroup(groupPath);
+    const hsize_t nobj = group.getNumObjs();
+    for (hsize_t i = 0; i < nobj; ++i) {
+      if (group.getObjTypeByIdx(i) != H5G_DATASET) {
+        continue;
+      }
+      const std::string name = group.getObjnameByIdx(i);
+      H5::DataSet ds = group.openDataSet(name);
+      const HDF5Utils::H5DatasetMeta meta = HDF5Utils::getDatasetMeta(ds);
+      if (meta.rank < 1 || meta.rank > 2) {
+        continue;
+      }
+      const DataType previewType = Hdf5PreviewDataType(meta);
+      const int previewCount = Hdf5PreviewComponentCount(meta);
+      std::cerr << "[HDF5MetadataScan] ptype=T" << ptype
+                << " dataset=" << name
+                << " type=" << GetDataTypeDisplayName(previewType)
+                << " count=" << previewCount
+                << " bit=0x" << std::hex
+                << static_cast<unsigned>(1u << ptype)
+                << std::dec << "\n";
+
+      auto it = std::find_if(
+        state.hdf5MetadataPreview.begin(),
+        state.hdf5MetadataPreview.end(),
+        [&](const Hdf5DatasetMetadataPreview& item) {
+          return item.sourceName == name;
+        });
+      const std::uint8_t typeMask = Hdf5DatasetShouldDefaultToAllTypes(name)
+        ? 0x3fu
+        : static_cast<std::uint8_t>(1u << ptype);
+      if (it == state.hdf5MetadataPreview.end()) {
+        Hdf5DatasetMetadataPreview preview;
+        preview.sourceName = name;
+        preview.type = previewType;
+        preview.count = previewCount;
+        preview.typeMask = typeMask;
+        state.hdf5MetadataPreview.push_back(std::move(preview));
+      } else {
+        it->typeMask =
+          static_cast<std::uint8_t>(it->typeMask | typeMask);
+      }
+    }
+  }
+}
+
+void ScanHDF5MetadataPreview(FileFormatDialogState& state, const char* path)
+{
+  state.hdf5MetadataPreview.clear();
+  state.hdf5MetadataPath = path ? path : "";
+  state.hdf5MetadataScanned = false;
+  state.hdf5MetadataMessage.clear();
+
+  if (state.hdf5MetadataPath.empty()) {
+    state.hdf5MetadataMessage = "No HDF5 file path is selected.";
+    return;
+  }
+
+  try {
+    H5SilenceErrors quiet(true);
+    const std::vector<std::string> parts =
+      DiscoverSplitHdf5MetadataParts(state.hdf5MetadataPath);
+    if (parts.empty()) {
+      state.hdf5MetadataMessage =
+        "HDF5 metadata scan failed: split snapshot parts are not contiguous.";
+      return;
+    }
+
+    for (const std::string& part : parts) {
+      H5::H5File file(part, H5F_ACC_RDONLY);
+      AccumulateHDF5MetadataPreview(state, file);
+    }
+
+    std::sort(state.hdf5MetadataPreview.begin(),
+              state.hdf5MetadataPreview.end(),
+              [](const Hdf5DatasetMetadataPreview& a,
+                 const Hdf5DatasetMetadataPreview& b) {
+                return a.sourceName < b.sourceName;
+              });
+    state.hdf5MetadataScanned = true;
+    state.hdf5MetadataMessage =
+      "Scanned " + std::to_string(state.hdf5MetadataPreview.size()) +
+      " HDF5 datasets from " + std::to_string(parts.size()) + " file(s).";
+    std::cerr << "[HDF5MetadataScan] path=" << state.hdf5MetadataPath
+              << " parts=" << parts.size()
+              << " datasets=" << state.hdf5MetadataPreview.size() << "\n";
+    for (const Hdf5DatasetMetadataPreview& preview :
+         state.hdf5MetadataPreview) {
+      std::cerr << "[HDF5MetadataScan] dataset=" << preview.sourceName
+                << " type=" << GetDataTypeDisplayName(preview.type)
+                << " count=" << preview.count
+                << " mask=0x" << std::hex
+                << static_cast<unsigned>(preview.typeMask & 0x3fu)
+                << std::dec << " ("
+                << Hdf5MetadataMaskString(preview.typeMask) << ")\n";
+    }
+  } catch (const H5::Exception& e) {
+    state.hdf5MetadataMessage =
+      std::string("HDF5 metadata scan failed: ") + e.getDetailMsg();
+  } catch (const std::exception& e) {
+    state.hdf5MetadataMessage =
+      std::string("HDF5 metadata scan failed: ") + e.what();
+  } catch (...) {
+    state.hdf5MetadataMessage = "HDF5 metadata scan failed.";
+  }
+}
+
+void ApplyHDF5MetadataPreview(FieldSpec& spec,
+                              const Hdf5DatasetMetadataPreview& preview)
+{
+  std::cerr << "[HDF5MetadataApply] field="
+            << GetFieldKeyDisplayName(spec.key)
+            << " source=" << preview.sourceName
+            << " type=" << GetDataTypeDisplayName(preview.type)
+            << " count=" << preview.count
+            << " mask=0x" << std::hex
+            << static_cast<unsigned>(preview.typeMask & 0x3fu)
+            << std::dec << " ("
+            << Hdf5MetadataMaskString(preview.typeMask) << ")\n";
+  spec.sourceName = preview.sourceName;
+  spec.type = preview.type;
+  spec.count = std::max(1, preview.count);
+  spec.typeMask = preview.typeMask;
+}
+
+std::string HDF5MetadataDatasetLabel(std::string sourceName)
+{
+  const size_t slash = sourceName.find_last_of('/');
+  if (slash != std::string::npos) {
+    sourceName = sourceName.substr(slash + 1);
+  }
+  return sourceName;
+}
+
+const Hdf5DatasetMetadataPreview* FindHDF5MetadataPreview(
+  const std::vector<Hdf5DatasetMetadataPreview>& preview,
+  const std::string& sourceName)
+{
+  const std::string label = HDF5MetadataDatasetLabel(sourceName);
+  auto it = std::find_if(
+    preview.begin(),
+    preview.end(),
+    [&](const Hdf5DatasetMetadataPreview& item) {
+      return item.sourceName == sourceName || item.sourceName == label;
+    });
+  return it == preview.end() ? nullptr : &(*it);
+}
+
+bool ApplyHDF5MetadataPreviewBySource(
+  FieldSpec& spec,
+  const std::vector<Hdf5DatasetMetadataPreview>& preview)
+{
+  if (const Hdf5DatasetMetadataPreview* item =
+        FindHDF5MetadataPreview(preview, spec.sourceName)) {
+    ApplyHDF5MetadataPreview(spec, *item);
+    return true;
+  }
+  return false;
+}
+
+void ApplyHDF5MetadataPreviewToMatchingFields(
+  std::vector<FieldSpec>& tokens,
+  const std::vector<Hdf5DatasetMetadataPreview>& preview)
+{
+  for (FieldSpec& spec : tokens) {
+    if (spec.sourceName.empty() || spec.sourceName == "dummy") {
+      continue;
+    }
+    ApplyHDF5MetadataPreviewBySource(spec, preview);
+  }
+}
+
+void DrawSimpleHDF5FormatEditor(FileFormatDialogState& state,
+                                std::vector<FieldSpec>& tokens,
+                                const char* metadataPath)
+{
+  if (ImGui::Button("Scan metadata")) {
+    ScanHDF5MetadataPreview(state, metadataPath);
+    if (state.hdf5MetadataScanned) {
+      ApplyHDF5MetadataPreviewToMatchingFields(tokens,
+                                               state.hdf5MetadataPreview);
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Clear metadata")) {
+    state.hdf5MetadataScanned = false;
+    state.hdf5MetadataPreview.clear();
+    state.hdf5MetadataPath.clear();
+    state.hdf5MetadataMessage.clear();
+  }
+  if (!state.hdf5MetadataMessage.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", state.hdf5MetadataMessage.c_str());
+  }
+
   if (ImGui::Button("Add field")) {
     FieldSpec spec;
     spec.key = FieldKey::Dummy;
@@ -554,7 +1079,7 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
     tokens.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("FieldTable", 7,
+  if (ImGui::BeginTable("HDF5InputFormatTable", 7,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
@@ -562,8 +1087,8 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
                         ImVec2(0.0f, 0.0f))) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 240.0f);
-    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 190.0f);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 168.0f);
+    SetupTypeMaskColumn();
     ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
     ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 120.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);
@@ -583,8 +1108,25 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
           FieldKey key = kAvailableFieldKeys[n];
           const bool selected = spec.key == key;
           if (ImGui::Selectable(GetFieldKeyDisplayName(key), selected)) {
+            const FieldSpec before = spec;
             spec.key = key;
             ApplyDefaultFieldSpec(spec);
+            if (state.hdf5MetadataScanned &&
+                !before.sourceName.empty() &&
+                before.sourceName != "dummy" &&
+                before.sourceName != "unknown") {
+              spec.sourceName = HDF5MetadataDatasetLabel(before.sourceName);
+              if (!ApplyHDF5MetadataPreviewBySource(
+                    spec,
+                    state.hdf5MetadataPreview)) {
+                spec.type = before.type;
+                spec.count = before.count;
+                spec.typeMask = before.typeMask;
+              }
+            } else if (state.hdf5MetadataScanned) {
+              ApplyHDF5MetadataPreviewBySource(spec,
+                                               state.hdf5MetadataPreview);
+            }
           }
           if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -593,11 +1135,29 @@ void DrawSimpleHDF5FormatEditor(std::vector<FieldSpec>& tokens)
 
       ImGui::TableNextColumn();
       {
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), "%s", spec.sourceName.c_str());
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##sourceName", buf, IM_ARRAYSIZE(buf))) {
-          spec.sourceName = buf;
+        if (state.hdf5MetadataScanned) {
+          const char* previewLabel = spec.sourceName.empty()
+            ? "<select dataset>"
+            : spec.sourceName.c_str();
+          ImGui::SetNextItemWidth(-1);
+          if (ImGui::BeginCombo("##sourceName", previewLabel)) {
+            for (const Hdf5DatasetMetadataPreview& preview :
+                 state.hdf5MetadataPreview) {
+              const bool selected = spec.sourceName == preview.sourceName;
+              if (ImGui::Selectable(preview.sourceName.c_str(), selected)) {
+                ApplyHDF5MetadataPreview(spec, preview);
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        } else {
+          char buf[128];
+          std::snprintf(buf, sizeof(buf), "%s", spec.sourceName.c_str());
+          ImGui::SetNextItemWidth(-1);
+          if (ImGui::InputText("##sourceName", buf, IM_ARRAYSIZE(buf))) {
+            spec.sourceName = buf;
+          }
         }
       }
 
@@ -679,17 +1239,16 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
     state.formatTokensEdit.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("GadgetFormatTable", 8,
+  if (ImGui::BeginTable("GadgetFormatTable", 7,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable)) {
     ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
     ImGui::TableSetupColumn("Field / skip", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-    ImGui::TableSetupColumn("Domain", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+    SetupTypeMaskColumn();
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, DataTypeColumnWidth());
     ImGui::TableSetupColumn("Components/element", ImGuiTableColumnFlags_WidthFixed, 130.0f);
     ImGui::TableSetupColumn("Repeat", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-    ImGui::TableSetupColumn("Move", ImGuiTableColumnFlags_WidthFixed, 72.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 42.0f);
     ImGui::TableHeadersRow();
 
@@ -728,25 +1287,10 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
       }
 
       ImGui::TableNextColumn();
-      if (spec.key == FieldKey::Dummy) {
-        static const char* domains[] = { "all", "type0", "type0+type5", "absolute" };
-        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
-        int repeat = GadgetBlockRepeat(spec.sourceName);
-        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
-        }
-      } else if (IsFixedGadgetBlock(spec.key)) {
-        ImGui::TextUnformatted("all");
-      } else {
-        static const char* domains[] = { "all", "type0", "type0+type5" };
-        int domainIndex = std::min(GadgetDomainIndexOr(spec.sourceName, 1), 2);
-        const int repeat = GadgetBlockRepeat(spec.sourceName);
-        if (ImGui::Combo("##domain", &domainIndex, domains, IM_ARRAYSIZE(domains))) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
-        }
-      }
+      DrawGadgetTypeMaskEditor(spec);
 
       ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
       DrawGadgetTypeCombo(spec);
 
       ImGui::TableNextColumn();
@@ -756,24 +1300,13 @@ void DrawGadgetFormatDialog(FileFormatDialogState& state,
 
       ImGui::TableNextColumn();
       if (spec.key == FieldKey::Dummy) {
-        int domainIndex = GadgetDomainIndexOr(spec.sourceName, 0);
         int repeat = GadgetBlockRepeat(spec.sourceName);
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputInt("##repeat", &repeat)) {
-          SetGadgetDomainSource(spec, domainIndex, repeat);
+          SetGadgetTypeSource(spec, repeat);
         }
       } else {
         ImGui::TextUnformatted("-");
-      }
-
-      ImGui::TableNextColumn();
-      if (ImGui::Button("^") && i > 0) {
-        std::swap(state.formatTokensEdit[i], state.formatTokensEdit[i - 1]);
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("v") &&
-          i + 1 < static_cast<int>(state.formatTokensEdit.size())) {
-        std::swap(state.formatTokensEdit[i], state.formatTokensEdit[i + 1]);
       }
 
       ImGui::TableNextColumn();
@@ -937,8 +1470,17 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            std::vector<FieldSpec>& gadgetFormatTokens,
 #ifdef HAVE_HDF5
                            std::vector<FieldSpec>& hdf5FormatTokens,
+                           const char* hdf5MetadataPath,
 #endif
-                           FileFormat& readFormat)
+                           FileFormat& readFormat,
+                           InputDensityUnit& inputDensityUnit,
+                           InputTemperatureUnit& inputTemperatureUnit,
+                           InputMagneticFieldUnit& inputMagneticFieldUnit,
+                           UnitSystem& unitsDraft,
+                           const UnitSystem& currentUnits,
+                           bool& unitsDraftDirty,
+                           bool& applyUnitsRequested,
+                           bool& unitConversionRebuildRequested)
 {
   if (!state.showFormatDialog) {
     state.inputFormatDialogInitialized = false;
@@ -973,6 +1515,18 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
   if (ImGui::BeginTabBar("InputFormatTabs")) {
     const bool selectingInitialTab = state.selectInputFormatTabOnOpen;
     const FileFormat initialTab = state.activeInputFormatTab;
+    if (ImGui::BeginTabItem("Common")) {
+      DrawCommonInputFormatEditor(inputDensityUnit,
+                                  inputTemperatureUnit,
+                                  inputMagneticFieldUnit,
+                                  unitsDraft,
+                                  currentUnits,
+                                  unitsDraftDirty,
+                                  applyUnitsRequested,
+                                  unitConversionRebuildRequested);
+      ImGui::EndTabItem();
+    }
+
     ImGuiTabItemFlags binaryFlags =
       selectingInitialTab && initialTab == FileFormat::Binary
         ? ImGuiTabItemFlags_SetSelected
@@ -1014,7 +1568,9 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
       if (drawThisTab) {
         state.activeInputFormatTab = FileFormat::HDF5;
         readFormat = FileFormat::HDF5;
-        DrawSimpleHDF5FormatEditor(state.hdf5FormatTokensEdit);
+        DrawSimpleHDF5FormatEditor(state,
+                                   state.hdf5FormatTokensEdit,
+                                   hdf5MetadataPath);
       }
       ImGui::EndTabItem();
     }
@@ -1029,6 +1585,19 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
     binaryFormatTokens = state.binaryFormatTokensEdit;
     gadgetFormatTokens = state.gadgetFormatTokensEdit;
 #ifdef HAVE_HDF5
+    std::cerr << "[HDF5FormatOK] final HDF5 input format tokens="
+              << state.hdf5FormatTokensEdit.size() << "\n";
+    for (const FieldSpec& spec : state.hdf5FormatTokensEdit) {
+      std::cerr << "[HDF5FormatOK] field="
+                << GetFieldKeyDisplayName(spec.key)
+                << " source=" << spec.sourceName
+                << " type=" << GetDataTypeDisplayName(spec.type)
+                << " count=" << spec.count
+                << " mask=0x" << std::hex
+                << static_cast<unsigned>(spec.typeMask & 0x3fu)
+                << std::dec << " ("
+                << Hdf5MetadataMaskString(spec.typeMask) << ")\n";
+    }
     hdf5FormatTokens = state.hdf5FormatTokensEdit;
 #endif
     state.showFormatDialog = false;
@@ -1078,7 +1647,7 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
     ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 64.0f);
     ImGui::TableSetupColumn("Missing", ImGuiTableColumnFlags_WidthFixed, 110.0f);
     ImGui::TableSetupColumn("Default", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    SetupTypeMaskColumn();
     ImGui::TableSetupColumn("Up", ImGuiTableColumnFlags_WidthFixed, 36.0f);
     ImGui::TableSetupColumn("Down", ImGuiTableColumnFlags_WidthFixed, 48.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 36.0f);
@@ -1166,20 +1735,7 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
       }
 
       ImGui::TableNextColumn();
-      for (int type = 0; type < 6; ++type) {
-        if (type > 0) ImGui::SameLine();
-        bool enabled =
-          (spec.typeMask & static_cast<unsigned int>(1u << type)) != 0;
-        char label[16];
-        std::snprintf(label, sizeof(label), "%d", type);
-        if (ImGui::Checkbox(label, &enabled)) {
-          if (enabled) {
-            spec.typeMask |= static_cast<unsigned int>(1u << type);
-          } else {
-            spec.typeMask &= ~static_cast<unsigned int>(1u << type);
-          }
-        }
-      }
+      DrawTypeMaskButtons(spec.typeMask, "hdf5_output_types");
 
       ImGui::TableNextColumn();
       if (ImGui::Button("^") && i > 0) {
@@ -1235,12 +1791,12 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
     return;
   }
 
-  if (ImGui::BeginTable("FieldTable", 7,
+  if (ImGui::BeginTable("LegacyHDF5InputFormatTable", 7,
                         ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 240.0f);
-    ImGui::TableSetupColumn("Types", ImGuiTableColumnFlags_WidthFixed, 190.0f);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 168.0f);
+    SetupTypeMaskColumn();
     ImGui::TableSetupColumn("dataType", ImGuiTableColumnFlags_WidthFixed, 100.0f);
     ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, 120.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 40.0f);

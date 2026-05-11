@@ -24,7 +24,6 @@
 #include "app/app_visibility_actions.h"
 #include "app/app_data_actions.h"
 #include "data/simulation_dataset.h"
-#include "data/sample_coordinates.h"
 #include "data/particle_selection.h"
 #include "data/clump_loader.h"
 #include "data/clump_store.h"
@@ -63,8 +62,7 @@ void ExecuteConvexHullRequests(SimulationDataset& particles,
     std::vector<glm::vec3> points;
     points.reserve(pts.size());
     for (const auto& p : pts) {
-      points.push_back(
-        renderPosition(p, particles.simulationBlock.worldToRenderScale));
+      points.emplace_back(p.position[0], p.position[1], p.position[2]);
     }
 
     ConvexHullEntry entry;

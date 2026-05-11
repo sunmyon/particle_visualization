@@ -1,7 +1,6 @@
 #include "app/execution/profile_histogram_execution.h"
 
 #include "app/state/analysis_state.h"
-#include "app/state/normalization_config.h"
 #include "app/state/runtime_state.h"
 #include "app/state/tool_window_state.h"
 #include "analysis/histogram2d.h"
@@ -11,8 +10,7 @@
 void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
                                  RadialProfileResultState& result,
                                  const SimulationBlock& partblock,
-                                 const glm::vec3& camCenter,
-                                 NormalizationContext& normalization,
+                                 const glm::vec3& dataCenter,
                                  QuantityState& quantity)
 {
   if (!request.runRequested) {
@@ -21,16 +19,10 @@ void ExecuteRadialProfileRequest(RadialProfileRequestState& request,
 
   static RadialProfileComputer computer;
   computer.setUnits(quantity.units);
-  const float renderToWorld = normalization.toPhysicalScale();
-  glm::vec3 profileCenter = camCenter;
-  if (request.params.useOriginal) {
-    profileCenter = camCenter * renderToWorld;
-  }
 
   result.result = computer.compute(partblock,
-                                   renderToWorld,
                                    request.params,
-                                   profileCenter);
+                                   dataCenter);
   result.computed = result.result.valid;
 
   if (request.params.autorange && result.result.valid) {

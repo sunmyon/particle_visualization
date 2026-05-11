@@ -4,6 +4,8 @@
 
 #include "FileIO/file_format_types.h"
 #include "app/state/file_format_dialog_state.h"
+#include "core/input_density_units.h"
+#include "core/units.h"
 
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens,
@@ -14,8 +16,17 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            std::vector<FieldSpec>& gadgetFormatTokens,
 #ifdef HAVE_HDF5
                            std::vector<FieldSpec>& hdf5FormatTokens,
+                           const char* hdf5MetadataPath,
 #endif
-                           FileFormat& readFormat);
+                           FileFormat& readFormat,
+                           InputDensityUnit& inputDensityUnit,
+                           InputTemperatureUnit& inputTemperatureUnit,
+                           InputMagneticFieldUnit& inputMagneticFieldUnit,
+                           UnitSystem& unitsDraft,
+                           const UnitSystem& currentUnits,
+                           bool& unitsDraftDirty,
+                           bool& applyUnitsRequested,
+                           bool& unitConversionRebuildRequested);
 
 #ifdef HAVE_HDF5
 void DrawHDF5FormatDialog(FileFormatDialogState& state,

@@ -17,13 +17,18 @@ struct ConvexHullEntry {
 
 struct ConvexHullRuntimeState {
   std::vector<ConvexHullEntry> entries;
+  float renderedWorldToRenderScale = -1.0f;
 
-  void clear() { entries.clear(); }
+  void clear() {
+    entries.clear();
+    renderedWorldToRenderScale = -1.0f;
+  }
   void resetGroup(const std::string& tag) {
     entries.erase(
       std::remove_if(entries.begin(), entries.end(),
                      [&](const ConvexHullEntry& e) { return e.tag == tag; }),
       entries.end());
+    renderedWorldToRenderScale = -1.0f;
   }
 
   std::vector<std::shared_ptr<IConvexHull>> visibleHulls() const {

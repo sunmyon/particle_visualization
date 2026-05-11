@@ -173,10 +173,12 @@ private:
   struct GadgetBlockField {
     FieldSpec spec;
     GadgetFieldDomain domain = GadgetFieldDomain::Type0;
+    uint8_t typeMask = 0x01u;
   };
 
   struct GadgetSkipBlock {
     GadgetFieldDomain domain = GadgetFieldDomain::All;
+    uint8_t typeMask = 0x3fu;
     DataType type = DataType::Float;
     int componentsPerElement = 1;
     int blockRepeat = 1;
@@ -627,12 +629,28 @@ private:
     format.blocks.push_back(block);
   }
 
+  static uint8_t gadgetDomainTypeMaskStatic_(GadgetFieldDomain domain)
+  {
+    switch (domain) {
+    case GadgetFieldDomain::Absolute: return 0x01u;
+    case GadgetFieldDomain::All: return 0x3fu;
+    case GadgetFieldDomain::Type0: return 0x01u;
+    case GadgetFieldDomain::Type0And5: return 0x21u;
+    }
+    return 0x01u;
+  }
+
   static void appendFieldBlock_(GadgetBinaryFormat& format,
                                 FieldSpec spec,
                                 GadgetFieldDomain domain)
   {
     GadgetBinaryBlockSpec block;
     block.kind = GadgetBinaryBlockKind::Field;
+    block.field.typeMask = static_cast<uint8_t>(spec.typeMask & 0x3fu);
+    if (block.field.typeMask == 0) {
+      block.field.typeMask = gadgetDomainTypeMaskStatic_(domain);
+      spec.typeMask = block.field.typeMask;
+    }
     block.field.spec = std::move(spec);
     block.field.domain = domain;
     format.blocks.push_back(std::move(block));
@@ -642,11 +660,15 @@ private:
                                GadgetFieldDomain domain,
                                DataType type,
                                int componentsPerElement,
-                               int blockRepeat)
+                               int blockRepeat,
+                               uint8_t typeMask = 0)
   {
     GadgetBinaryBlockSpec block;
     block.kind = GadgetBinaryBlockKind::Skip;
     block.skip.domain = domain;
+    block.skip.typeMask = typeMask != 0
+      ? static_cast<uint8_t>(typeMask & 0x3fu)
+      : gadgetDomainTypeMaskStatic_(domain);
     block.skip.type = type;
     block.skip.componentsPerElement = std::max(1, componentsPerElement);
     block.skip.blockRepeat = std::max(1, blockRepeat);
@@ -742,7 +764,8 @@ private:
                      domain,
                      type,
                      componentsPerElement,
-                     blockRepeat);
+                     blockRepeat,
+                     gadgetDomainTypeMaskStatic_(domain));
     return true;
   }
 
@@ -831,7 +854,11 @@ private:
                        domain,
                        spec.type,
                        std::max(1, spec.count),
-                       blockRepeat);
+                       blockRepeat,
+                       spec.sourceName == "types" ||
+                       spec.sourceName.rfind("types:", 0) == 0
+                         ? static_cast<uint8_t>(spec.typeMask & 0x3fu)
+                         : gadgetDomainTypeMaskStatic_(domain));
       return true;
     }
     case FieldKey::Type:
@@ -846,7 +873,12 @@ private:
                              false,
                              domain,
                              ignoredRepeat);
-      appendFieldBlock_(format, spec, domain);
+      FieldSpec fieldSpec = spec;
+      if (spec.sourceName != "types" &&
+          spec.sourceName.rfind("types:", 0) != 0) {
+        fieldSpec.typeMask = gadgetDomainTypeMaskStatic_(domain);
+      }
+      appendFieldBlock_(format, fieldSpec, domain);
       return true;
     }
     default:
@@ -858,7 +890,12 @@ private:
                              false,
                              domain,
                              ignoredRepeat);
-      appendFieldBlock_(format, spec, domain);
+      FieldSpec fieldSpec = spec;
+      if (spec.sourceName != "types" &&
+          spec.sourceName.rfind("types:", 0) != 0) {
+        fieldSpec.typeMask = gadgetDomainTypeMaskStatic_(domain);
+      }
+      appendFieldBlock_(format, fieldSpec, domain);
       return true;
     }
   }
@@ -1058,10 +1095,15 @@ private:
     os << gadgetBlockKindName_(block.kind);
     if (block.kind == GadgetBinaryBlockKind::Field) {
       os << "(" << GetFieldKeyDisplayName(block.field.spec.key)
-         << ", domain=" << gadgetDomainName_(block.field.domain)
+         << ", types=0x" << std::hex
+         << static_cast<unsigned>(block.field.typeMask & 0x3fu)
+         << std::dec
          << ", comps=" << block.field.spec.count << ")";
     } else if (block.kind == GadgetBinaryBlockKind::Skip) {
       os << "(domain=" << gadgetDomainName_(block.skip.domain)
+         << ", types=0x" << std::hex
+         << static_cast<unsigned>(block.skip.typeMask & 0x3fu)
+         << std::dec
          << ", type=" << GetDataTypeDisplayName(block.skip.type)
          << ", comps=" << block.skip.componentsPerElement
          << ", repeat=" << block.skip.blockRepeat << ")";
@@ -1178,7 +1220,7 @@ private:
         if (status == GadgetFieldBlockReadResult::Ok) {
           out.markLoadedFieldForTypeMask(
             GetFieldKeyDisplayName(block.field.spec.key),
-            gadgetDomainTypeMask_(block.field.domain));
+            existingTypeMask_(block.field.typeMask));
           break;
         }
         if (status == GadgetFieldBlockReadResult::MissingOptionalTail) {
@@ -1256,7 +1298,9 @@ private:
 
   bool skipGadgetBlock_(const GadgetSkipBlock& skip)
   {
-    const size_t domainCount = fieldDomainElementCount_(skip.domain);
+    const size_t domainCount = skip.domain == GadgetFieldDomain::Absolute
+      ? fieldDomainElementCount_(skip.domain)
+      : fieldTypeMaskElementCount_(skip.typeMask);
     const size_t expectedBytes =
       domainCount *
       static_cast<size_t>(std::max(1, skip.componentsPerElement)) *
@@ -1272,6 +1316,7 @@ private:
           " got=" + std::to_string(block.size()) +
           " expected=" + std::to_string(expectedBytes) +
           " domain=" + gadgetDomainName_(skip.domain) +
+          " typeMask=0x" + gadgetTypeMaskHex_(skip.typeMask) +
           " domainCount=" + std::to_string(domainCount) +
           " componentsPerElement=" +
           std::to_string(std::max(1, skip.componentsPerElement)) +
@@ -1360,6 +1405,16 @@ private:
                              false,
                              field.domain,
                              ignoredRepeat);
+      field.typeMask = static_cast<uint8_t>(spec.typeMask & 0x3fu);
+      if (spec.sourceName != "types" &&
+          spec.sourceName.rfind("types:", 0) != 0) {
+        field.typeMask = gadgetDomainTypeMaskStatic_(field.domain);
+        field.spec.typeMask = field.typeMask;
+      }
+      if (field.typeMask == 0) {
+        field.typeMask = gadgetDomainTypeMaskStatic_(field.domain);
+        field.spec.typeMask = field.typeMask;
+      }
 
       if (spec.key == FieldKey::InternalEnergy ||
           spec.key == FieldKey::Temperature) {
@@ -1404,6 +1459,35 @@ private:
     return 0;
   }
 
+  static std::string gadgetTypeMaskHex_(uint8_t mask)
+  {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned>(mask & 0x3fu));
+    return buf;
+  }
+
+  size_t fieldTypeMaskElementCount_(uint8_t mask) const
+  {
+    size_t count = 0;
+    for (int type = 0; type < 6; ++type) {
+      if ((mask & static_cast<uint8_t>(1u << type)) == 0) continue;
+      count += static_cast<size_t>(std::max(0, counts_[type]));
+    }
+    return count;
+  }
+
+  uint8_t existingTypeMask_(uint8_t mask) const
+  {
+    uint8_t out = 0;
+    for (int type = 0; type < 6; ++type) {
+      const uint8_t bit = static_cast<uint8_t>(1u << type);
+      if ((mask & bit) != 0 && counts_[type] > 0) {
+        out |= bit;
+      }
+    }
+    return out;
+  }
+
   uint8_t gadgetDomainTypeMask_(GadgetFieldDomain domain) const
   {
     switch (domain) {
@@ -1443,6 +1527,20 @@ private:
       return particleOffsetForType_(5) + (localIndex - gasCount);
     }
     return localIndex;
+  }
+
+  size_t outputIndexForTypeMask_(uint8_t mask, size_t localIndex) const
+  {
+    size_t cursor = 0;
+    for (int type = 0; type < 6; ++type) {
+      if ((mask & static_cast<uint8_t>(1u << type)) == 0) continue;
+      const size_t count = static_cast<size_t>(std::max(0, counts_[type]));
+      if (localIndex < cursor + count) {
+        return particleOffsetForType_(type) + (localIndex - cursor);
+      }
+      cursor += count;
+    }
+    return npart_;
   }
 
   static FieldSpec makeWritableGadgetSpec_(const FieldSpec& spec)
@@ -1498,7 +1596,8 @@ private:
   GadgetFieldBlockReadResult readGadgetFieldBlock_(SimulationBlock& out,
                                                    const GadgetBlockField& field)
   {
-    const size_t domainCount = fieldDomainElementCount_(field.domain);
+    const uint8_t fieldMask = static_cast<uint8_t>(field.typeMask & 0x3fu);
+    const size_t domainCount = fieldTypeMaskElementCount_(fieldMask);
     if (domainCount == 0) return GadgetFieldBlockReadResult::Ok;
 
     std::streampos before = file_.tellg();
@@ -1523,7 +1622,7 @@ private:
       lastGadgetError_ =
         "field block size mismatch: field=" +
         std::string(GetFieldKeyDisplayName(field.spec.key)) +
-        " domain=" + gadgetDomainName_(field.domain) +
+        " typeMask=0x" + gadgetTypeMaskHex_(fieldMask) +
         " domainCount=" + std::to_string(domainCount) +
         " comps=" + std::to_string(comps) +
         " got=" + std::to_string(block.size()) +
@@ -1549,12 +1648,12 @@ private:
     }
 
     for (size_t i = 0; i < domainCount; ++i) {
-      const size_t outIndex = outputIndexForDomain_(field.domain, i);
+      const size_t outIndex = outputIndexForTypeMask_(fieldMask, i);
       if (outIndex >= npart_) {
         lastGadgetError_ =
           "field output index out of range: field=" +
           std::string(GetFieldKeyDisplayName(field.spec.key)) +
-          " domain=" + gadgetDomainName_(field.domain) +
+          " typeMask=0x" + gadgetTypeMaskHex_(fieldMask) +
           " localIndex=" + std::to_string(i) +
           " outputIndex=" + std::to_string(outIndex) +
           " npart=" + std::to_string(npart_);

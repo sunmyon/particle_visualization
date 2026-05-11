@@ -1,5 +1,8 @@
 #include "frame_matrices.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "interaction/camera.h"
@@ -14,7 +17,14 @@ FrameMatrices BuildFrameMatrices(const CameraContext& camCtx,
   const float fovY = 45.0f;
   const float aspect = viewport.aspect();
 
-  fm.projection = glm::perspective(glm::radians(fovY), aspect, 0.1f, 1000.0f);
+  float cameraDistance = glm::length(camCtx.cameraPos - camCtx.cameraTarget);
+  if (!std::isfinite(cameraDistance) || cameraDistance <= 0.0f) {
+    cameraDistance = std::max(camCtx.distance, 1.0f);
+  }
+  fm.nearClip = std::clamp(cameraDistance * 1.0e-4f, 1.0e-5f, 0.1f);
+  fm.farClip = std::max(1000.0f, cameraDistance * 1000.0f);
+  fm.projection =
+    glm::perspective(glm::radians(fovY), aspect, fm.nearClip, fm.farClip);
   fm.viewportW = viewport.width;
   fm.viewportH = viewport.height;
 
