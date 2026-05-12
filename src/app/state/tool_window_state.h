@@ -63,6 +63,12 @@ struct ProjectionMapUIState {
   bool previewOpen = true;
   uint64_t observedPreviewVersion = 0;
 
+  bool layoutEditorOpen = false;
+  int selectedPanelIndex = 0;
+  int selectedViewBlockIndex = 0;
+  int selectedStarOverlayIndex = 0;
+  int selectedVectorOverlayIndex = 0;
+
   bool fontWindowOpen = false;
   bool fontListRefreshRequested = true;
   int currentFontIndex = 0;

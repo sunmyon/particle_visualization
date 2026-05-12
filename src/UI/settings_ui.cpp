@@ -206,6 +206,7 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
     request.renderDraft.diskOpacity = render.disks.opacity;
     request.renderDraft.ellipsoidOpacity = render.ellipsoids.opacity;
     request.renderDraft.isoContourOpacity = render.isocontour.opacity;
+    request.renderDraft.showIsoContour = render.isocontour.show;
     request.renderDraft.showColorbar = render.colorbar.show;
     request.renderDraft.showCoordAxes = render.coordAxes.show;
     request.renderDraft.showCrossGizmo = render.crossGizmo.show;
@@ -2596,6 +2597,14 @@ static void DrawRenderingSection(const QuantityState& quantity,
     }
 
     ImGui::SeparatorText("Rendering");
+    if (ImGui::Button(settingsReq.renderDraft.showIsoContour
+                      ? "Hide iso-contour"
+                      : "Show iso-contour")) {
+      settingsReq.renderDraft.showIsoContour =
+        !settingsReq.renderDraft.showIsoContour;
+      settingsReq.renderDraftDirty = true;
+      settingsReq.applyRenderRequested = true;
+    }
     if (ImGui::SliderFloat("Iso-contour opacity",
                            &settingsReq.renderDraft.isoContourOpacity,
                            0.0f,

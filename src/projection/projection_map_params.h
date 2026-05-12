@@ -221,12 +221,7 @@ struct ProjectionMapParams {
   };
 
   bool layoutInitialized = false;
-  bool layoutEditorOpen = false;
   int activeViewBlockIndex = 0;
-  int selectedPanelIndex = 0;
-  int selectedViewBlockIndex = 0;
-  int selectedStarOverlayIndex = 0;
-  int selectedVectorOverlayIndex = 0;
   int viewBlockCount = 1;
   int starOverlayCount = 1;
   int vectorOverlayCount = 1;
@@ -438,19 +433,10 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
 
   params.activeViewBlockIndex =
     std::clamp(params.activeViewBlockIndex, 0, params.viewBlockCount - 1);
-  params.selectedViewBlockIndex =
-    std::clamp(params.selectedViewBlockIndex, 0, params.viewBlockCount - 1);
-  params.selectedStarOverlayIndex =
-    std::clamp(params.selectedStarOverlayIndex, 0, params.starOverlayCount - 1);
-  params.selectedVectorOverlayIndex =
-    std::clamp(params.selectedVectorOverlayIndex, 0, params.vectorOverlayCount - 1);
   params.selectedAxis = std::clamp(params.selectedAxis, 0, 2);
   params.projectionSign = ProjectionNormalizeSign(params.projectionSign);
   params.upAxis = std::clamp(params.upAxis, 0, 2);
   params.upSign = ProjectionNormalizeSign(params.upSign);
-  const int panelLimit = params.multiPanelEnabled ? params.multiPanelCount : 1;
-  params.selectedPanelIndex =
-    std::clamp(params.selectedPanelIndex, 0, panelLimit - 1);
   for (int i = 1; i < params.viewBlockCount; ++i) {
     if (std::strcmp(params.viewBlocks[i].name, "main") == 0) {
       ProjectionSetDefaultViewBlockName(params, i);

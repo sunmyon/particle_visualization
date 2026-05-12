@@ -28,7 +28,6 @@ struct Histogram2DParams {
   bool logScaleY = true;
   bool logScaleColor = true;
   int particleType = 0;
-  bool selectedTypes[6] = {true, false, false, false, false, false};
   bool showScatter = false;
   int scatterMaxPoints = 10000;
 

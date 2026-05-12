@@ -916,8 +916,6 @@ void ProjectionSyncPanelCountFromGrid(ProjectionMapParams& params)
   params.multiPanelRows = std::clamp(params.multiPanelRows, 1, 3);
   params.multiPanelCols = std::clamp(params.multiPanelCols, 1, 6);
   params.multiPanelCount = ProjectionPanelGridCapacity(params);
-  params.selectedPanelIndex =
-    std::clamp(params.selectedPanelIndex, 0, params.multiPanelCount - 1);
 }
 
 void ProjectionCopySeedPanels(ProjectionMapParams& params, int oldCount)
@@ -934,17 +932,18 @@ void ProjectionCopySeedPanels(ProjectionMapParams& params, int oldCount)
 }
 
 bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
+                                ProjectionMapUIState& ui,
                                 const ProjectionMapViewContext& ctx,
                                 float renderToWorld)
 {
   static TransferFunctionEditor voronoiTransferEditor;
   bool dirty = false;
-  if (!params.layoutEditorOpen) return false;
+  if (!ui.layoutEditorOpen) return false;
 
   ProjectionEnsureLayoutInitialized(params);
 
   ImGui::SetNextWindowSize(ImVec2(1080, 520), ImGuiCond_Appearing);
-  ImGui::Begin("Projection layout editor", &params.layoutEditorOpen);
+  ImGui::Begin("Projection layout editor", &ui.layoutEditorOpen);
   ImGui::SetWindowFontScale(1.0f);
 
   if (ImGui::BeginTabBar("projection_layout_tabs")) {
@@ -989,7 +988,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
             std::clamp(panel.colormapIndex, 0, colormapCount - 1);
           ImGui::PushID(i);
           ImGui::TableNextRow();
-          if (params.selectedPanelIndex == i) {
+          if (ui.selectedPanelIndex == i) {
             ImGui::TableSetBgColor(
               ImGuiTableBgTarget_RowBg0,
               ImGui::GetColorU32(ImGuiCol_Header));
@@ -998,12 +997,12 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           char panelLabel[32];
           std::snprintf(panelLabel, sizeof(panelLabel), "%d", i + 1);
           if (ImGui::Selectable(panelLabel,
-                                params.selectedPanelIndex == i,
+                                ui.selectedPanelIndex == i,
                                 0,
                                 ImVec2(24.0f, 0.0f))) {
-            params.selectedPanelIndex = i;
+            ui.selectedPanelIndex = i;
             params.activeViewBlockIndex = panel.viewBlockIndex;
-            params.selectedViewBlockIndex = panel.viewBlockIndex;
+            ui.selectedViewBlockIndex = panel.viewBlockIndex;
             ProjectionSyncTopLevelFromViewBlock(params, panel.viewBlockIndex);
             dirty = true;
           }
@@ -1014,9 +1013,9 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                            &panel.viewBlockIndex,
                            blockNames.data(),
                            static_cast<int>(blockNames.size()))) {
-            params.selectedPanelIndex = i;
+            ui.selectedPanelIndex = i;
             params.activeViewBlockIndex = panel.viewBlockIndex;
-            params.selectedViewBlockIndex = panel.viewBlockIndex;
+            ui.selectedViewBlockIndex = panel.viewBlockIndex;
             ProjectionSyncTopLevelFromViewBlock(params, panel.viewBlockIndex);
             dirty = true;
           }
@@ -1120,8 +1119,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         ImGui::EndTable();
       }
 
-      params.selectedPanelIndex =
-        std::clamp(params.selectedPanelIndex, 0, panelCount - 1);
+      ui.selectedPanelIndex =
+        std::clamp(ui.selectedPanelIndex, 0, panelCount - 1);
       ImGui::EndTabItem();
     }
 
@@ -1145,7 +1144,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       ImGui::SameLine();
       if (ImGui::Button("Duplicate active") &&
           params.viewBlockCount < kProjectionMaxViewBlocks) {
-        const int src = std::clamp(params.selectedViewBlockIndex,
+        const int src = std::clamp(ui.selectedViewBlockIndex,
                                    0,
                                    params.viewBlockCount - 1);
         const int dst = params.viewBlockCount++;
@@ -1154,13 +1153,13 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         params.viewBlocks[dst].sizeSameAsMain = true;
         params.viewBlocks[dst].centerSameAsMain = true;
         params.viewBlocks[dst].tiltSameAsMain = true;
-        params.selectedViewBlockIndex = dst;
+        ui.selectedViewBlockIndex = dst;
         params.activeViewBlockIndex = dst;
         dirty = true;
       }
 
-      params.selectedViewBlockIndex =
-        std::clamp(params.selectedViewBlockIndex, 0, params.viewBlockCount - 1);
+      ui.selectedViewBlockIndex =
+        std::clamp(ui.selectedViewBlockIndex, 0, params.viewBlockCount - 1);
       std::vector<const char*> viewBlockNames;
       viewBlockNames.reserve(static_cast<size_t>(params.viewBlockCount));
       for (int i = 0; i < params.viewBlockCount; ++i) {
@@ -1169,19 +1168,19 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       ImGui::SameLine();
       ImGui::SetNextItemWidth(170.0f);
       if (ImGui::Combo("Edit block",
-                       &params.selectedViewBlockIndex,
+                       &ui.selectedViewBlockIndex,
                        viewBlockNames.data(),
                        static_cast<int>(viewBlockNames.size()))) {
-        params.activeViewBlockIndex = params.selectedViewBlockIndex;
+        params.activeViewBlockIndex = ui.selectedViewBlockIndex;
         ProjectionSyncTopLevelFromViewBlock(params,
-                                           params.selectedViewBlockIndex);
+                                           ui.selectedViewBlockIndex);
         dirty = true;
       }
       ProjectionViewBlockSpec& block =
-        params.viewBlocks[params.selectedViewBlockIndex];
+        params.viewBlocks[ui.selectedViewBlockIndex];
       ImGui::Separator();
       DrawProjectionLargeLabel(block.name);
-      const bool isMainBlock = params.selectedViewBlockIndex == 0;
+      const bool isMainBlock = ui.selectedViewBlockIndex == 0;
 
       DrawProjectionSubsectionBox("Block", [&]() {
         if (ImGui::BeginTable("ViewBlockIdentityGrid", 4)) {
@@ -1284,7 +1283,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                                   block.arrowLabelStrDefault,
                                   IM_ARRAYSIZE(block.arrowLabelStrDefault));
       });
-      if (dirty && params.selectedViewBlockIndex == params.activeViewBlockIndex) {
+      if (dirty && ui.selectedViewBlockIndex == params.activeViewBlockIndex) {
         ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
       }
       ImGui::EndTabItem();
@@ -1424,8 +1423,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         }
         dirty = true;
       }
-      params.selectedStarOverlayIndex =
-        std::clamp(params.selectedStarOverlayIndex,
+      ui.selectedStarOverlayIndex =
+        std::clamp(ui.selectedStarOverlayIndex,
                    0,
                    params.starOverlayCount - 1);
       std::vector<const char*> starPresetNames;
@@ -1436,11 +1435,11 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       ImGui::SameLine();
       ImGui::SetNextItemWidth(170.0f);
       dirty |= ImGui::Combo("Edit star field",
-                            &params.selectedStarOverlayIndex,
+                            &ui.selectedStarOverlayIndex,
                             starPresetNames.data(),
                             static_cast<int>(starPresetNames.size()));
       ProjectionStarOverlaySpec& starOverlay =
-        params.starOverlays[params.selectedStarOverlayIndex];
+        params.starOverlays[ui.selectedStarOverlayIndex];
       ImGui::Separator();
       DrawProjectionLargeLabel(starOverlay.name);
       const char* scalarLabels[] = {
@@ -1720,8 +1719,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         }
         dirty = true;
       }
-      params.selectedVectorOverlayIndex =
-        std::clamp(params.selectedVectorOverlayIndex,
+      ui.selectedVectorOverlayIndex =
+        std::clamp(ui.selectedVectorOverlayIndex,
                    0,
                    params.vectorOverlayCount - 1);
       std::vector<const char*> vectorPresetNames;
@@ -1732,11 +1731,11 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       ImGui::SameLine();
       ImGui::SetNextItemWidth(170.0f);
       dirty |= ImGui::Combo("Edit vector field",
-                            &params.selectedVectorOverlayIndex,
+                            &ui.selectedVectorOverlayIndex,
                             vectorPresetNames.data(),
                             static_cast<int>(vectorPresetNames.size()));
       ProjectionVectorOverlaySpec& overlay =
-        params.vectorOverlays[static_cast<size_t>(params.selectedVectorOverlayIndex)];
+        params.vectorOverlays[static_cast<size_t>(ui.selectedVectorOverlayIndex)];
       ImGui::Separator();
       DrawProjectionLargeLabel(overlay.name);
       const char* modeLabels[] = { "Arrows", "Streamlines" };
@@ -2099,7 +2098,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   }
 
   if (ImGui::Button("Edit layout")) {
-    params.layoutEditorOpen = true;
+    state.layoutEditorOpen = true;
   }
 
   DrawProjectionSectionHeader("Active view block");
@@ -2175,6 +2174,7 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   }
 
   paramsDirty |= DrawProjectionLayoutEditor(params,
+                                            state,
                                             ctx,
                                             renderToWorld);
 

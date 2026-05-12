@@ -18,6 +18,9 @@
 #include "FileIO/file_format_types.h"
 #include "core/input_density_units.h"
 #include "FileIO/snapshot_extract.h"
+#ifdef POWER_SPECTRUM
+#include "analysis/power_spectrum.h"
+#endif
 
 enum class SnapshotLoadOwner : uint8_t {
   None = 0,
@@ -192,11 +195,19 @@ struct EllipsoidAnalysisBatchRuntimeState {
   bool firstOutput = true;
 };
 
-struct StreamlinePreviewRequestState {
-  float seedCenter[3] = {0.f, 0.f, 0.f};
-  float seedSize[3]   = {100.f, 100.f, 100.f};
+struct StreamlineSeedRegionRequest {
+  float center[3] = {0.f, 0.f, 0.f};
+  float size[3]   = {100.f, 100.f, 100.f};
+};
+
+struct StreamlinePreviewStyle {
   float opacity       = 0.1f;
   bool showSeedBox    = true;
+};
+
+struct StreamlinePreviewRequestState {
+  StreamlineSeedRegionRequest seedRegion;
+  StreamlinePreviewStyle style;
 
   bool updateRequested = false;
   bool clearRequested  = false;
@@ -229,19 +240,14 @@ struct StellarDensityRequestState {
 };
 
 #ifdef POWER_SPECTRUM
-struct PowerSpectrumRequestState {
-  int gridSize = 64;
-  int fieldKind = 1; // 0: scalar, 1: vector.
-  QuantityId scalarQuantity = QuantityId::Density;
-  int vectorField = 1; // 0: velocity, 1: B field.
-  bool subtractMean = true;
-  bool useRegionBox = false;
-  float regionCenter[3] = {0.0f, 0.0f, 0.0f};
-  float regionSideLength = 1000.0f;
+struct PowerSpectrumPreviewStyle {
   float regionOpacity = 0.18f;
   bool showRegionBox = true;
-  float axisTiltDegrees[3] = {0.0f, 0.0f, 0.0f};
-  float analysisAxis[3] = {0.0f, 0.0f, 1.0f};
+};
+
+struct PowerSpectrumRequestState {
+  PowerSpectrumParams params;
+  PowerSpectrumPreviewStyle preview;
   bool setAxisFromAngularMomentumRequested = false;
   bool runRequested = false;
   bool clearRequested = false;
@@ -542,6 +548,7 @@ struct SettingsRenderEditDraft {
   float diskOpacity = 1.0f;
   float ellipsoidOpacity = 1.0f;
   float isoContourOpacity = 1.0f;
+  bool showIsoContour = false;
   bool showColorbar = true;
   bool showCoordAxes = true;
   bool showCrossGizmo = true;

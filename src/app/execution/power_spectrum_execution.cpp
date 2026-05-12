@@ -28,24 +28,24 @@ void UpdatePowerSpectrumRegionPreview(const SimulationDataset& particles,
 
   result.regionPreviewCpuUpdated = true;
   result.regionPreviewValid =
-    request.useRegionBox &&
-    request.showRegionBox &&
-    request.regionSideLength > 0.0f;
+    request.params.useRegionBox &&
+    request.preview.showRegionBox &&
+    request.params.regionSideLength > 0.0f;
 
   if (!result.regionPreviewValid) {
     return;
   }
 
-  const float halfSide = 0.5f * request.regionSideLength;
+  const float halfSide = 0.5f * request.params.regionSideLength;
 
   CubeObject cube;
-  cube.center = glm::vec3(request.regionCenter[0],
-                          request.regionCenter[1],
-                          request.regionCenter[2]);
+  cube.center = glm::vec3(request.params.regionCenter[0],
+                          request.params.regionCenter[1],
+                          request.params.regionCenter[2]);
   cube.halfSize = glm::vec3(halfSide);
   cube.orientation = glm::quat{1, 0, 0, 0};
   cube.color = glm::vec3(0.3f, 0.7f, 1.0f);
-  cube.opacity = request.regionOpacity;
+  cube.opacity = request.preview.regionOpacity;
   cube.tag = "power_spectrum_region";
   result.regionCube = std::move(cube);
 }
@@ -54,16 +54,17 @@ void UpdatePowerSpectrumAxisFromAngularMomentum(
   const SimulationDataset& particles,
   PowerSpectrumRequestState& request)
 {
+  PowerSpectrumParams& params = request.params;
   const float side =
-    request.regionSideLength > 0.0f ? request.regionSideLength : 1000.0f;
+    params.regionSideLength > 0.0f ? params.regionSideLength : 1000.0f;
   const float xlen[3] = {
     side,
     side,
     side
   };
-  const glm::vec3 center(request.regionCenter[0],
-                         request.regionCenter[1],
-                         request.regionCenter[2]);
+  const glm::vec3 center(params.regionCenter[0],
+                         params.regionCenter[1],
+                         params.regionCenter[2]);
 
   ProjectionAngularMomentumFrame frame =
     ComputeAngularMomentumFrame(particles.simulationBlock,
@@ -74,11 +75,11 @@ void UpdatePowerSpectrumAxisFromAngularMomentum(
   }
 
   const glm::vec3 axis = glm::normalize(frame.axis);
-  request.analysisAxis[0] = axis.x;
-  request.analysisAxis[1] = axis.y;
-  request.analysisAxis[2] = axis.z;
+  params.analysisAxis[0] = axis.x;
+  params.analysisAxis[1] = axis.y;
+  params.analysisAxis[2] = axis.z;
   StoreQuatAsEulerDegrees(BuildRotationFromZAxisTo(axis),
-                          request.axisTiltDegrees);
+                          params.axisTiltDegrees);
 }
 }  // namespace
 
@@ -109,23 +110,9 @@ void ExecutePowerSpectrumRequest(SimulationDataset& particles,
   }
   request.runRequested = false;
 
-  PowerSpectrumParams params;
-  params.gridSize = request.gridSize;
-  params.fieldKind = request.fieldKind;
-  params.scalarQuantity = request.scalarQuantity;
-  params.vectorField = request.vectorField;
-  params.subtractMean = request.subtractMean;
-  params.useRegionBox = request.useRegionBox;
-  for (int i = 0; i < 3; ++i) {
-    params.regionCenter[i] = request.regionCenter[i];
-    params.axisTiltDegrees[i] = request.axisTiltDegrees[i];
-    params.analysisAxis[i] = request.analysisAxis[i];
-  }
-  params.regionSideLength = request.regionSideLength;
-
   const PowerSpectrumComputer computer;
-  result.paramsUsed = params;
-  result.result = computer.compute(particles.simulationBlock, params);
+  result.paramsUsed = request.params;
+  result.result = computer.compute(particles.simulationBlock, request.params);
   result.computed = result.result.valid;
   ++result.version;
 }

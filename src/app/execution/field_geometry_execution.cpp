@@ -80,21 +80,21 @@ void ExecuteStreamlinePreviewRequest(const SimulationDataset& particles,
   result = StreamlinePreviewResultState{};
   result.cpuUpdated = true;
 
-  if (!request.showSeedBox) {
+  if (!request.style.showSeedBox) {
     return;
   }
 
   CubeObject cube;
-  cube.center  = glm::vec3(request.seedCenter[0],
-                           request.seedCenter[1],
-                           request.seedCenter[2]);
-  cube.halfSize = 0.5f * glm::vec3(request.seedSize[0],
-                                   request.seedSize[1],
-                                   request.seedSize[2]);
+  cube.center  = glm::vec3(request.seedRegion.center[0],
+                           request.seedRegion.center[1],
+                           request.seedRegion.center[2]);
+  cube.halfSize = 0.5f * glm::vec3(request.seedRegion.size[0],
+                                   request.seedRegion.size[1],
+                                   request.seedRegion.size[2]);
   
   cube.orientation = glm::quat{1, 0, 0, 0};
   cube.color   = glm::vec3(1.0f);
-  cube.opacity = request.opacity;
+  cube.opacity = request.style.opacity;
   cube.tag     = "streamline_seed_region";
 
   result.valid = true;

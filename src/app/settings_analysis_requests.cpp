@@ -21,22 +21,22 @@ void CopyCStr(char* dst, std::size_t dstSize, const char* src)
 }
 
 #ifdef POWER_SPECTRUM
-void SyncPowerSpectrumAxisVectorFromTilt(PowerSpectrumRequestState& request)
+void SyncPowerSpectrumAxisVectorFromTilt(PowerSpectrumParams& params)
 {
   const glm::quat qx =
-    glm::angleAxis(glm::radians(request.axisTiltDegrees[0]),
+    glm::angleAxis(glm::radians(params.axisTiltDegrees[0]),
                    glm::vec3(1.0f, 0.0f, 0.0f));
   const glm::quat qy =
-    glm::angleAxis(glm::radians(request.axisTiltDegrees[1]),
+    glm::angleAxis(glm::radians(params.axisTiltDegrees[1]),
                    glm::vec3(0.0f, 1.0f, 0.0f));
   const glm::quat qz =
-    glm::angleAxis(glm::radians(request.axisTiltDegrees[2]),
+    glm::angleAxis(glm::radians(params.axisTiltDegrees[2]),
                    glm::vec3(0.0f, 0.0f, 1.0f));
   const glm::vec3 axis =
     glm::normalize((qz * qy * qx) * glm::vec3(0.0f, 0.0f, 1.0f));
-  request.analysisAxis[0] = axis.x;
-  request.analysisAxis[1] = axis.y;
-  request.analysisAxis[2] = axis.z;
+  params.analysisAxis[0] = axis.x;
+  params.analysisAxis[1] = axis.y;
+  params.analysisAxis[2] = axis.z;
 }
 #endif
 }
@@ -55,26 +55,29 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
 
 #ifdef POWER_SPECTRUM
   if (!edit.powerSpectrumDirty) {
-    edit.powerSpectrum.gridSize = requests.powerSpectrum.gridSize;
-    edit.powerSpectrum.fieldKind = requests.powerSpectrum.fieldKind;
+    const PowerSpectrumParams& params = requests.powerSpectrum.params;
+    edit.powerSpectrum.gridSize = params.gridSize;
+    edit.powerSpectrum.fieldKind = params.fieldKind;
     edit.powerSpectrum.scalarQuantity =
-      requests.powerSpectrum.scalarQuantity;
-    edit.powerSpectrum.vectorField = requests.powerSpectrum.vectorField;
-    edit.powerSpectrum.subtractMean = requests.powerSpectrum.subtractMean;
-    edit.powerSpectrum.useRegionBox = requests.powerSpectrum.useRegionBox;
+      params.scalarQuantity;
+    edit.powerSpectrum.vectorField = params.vectorField;
+    edit.powerSpectrum.subtractMean = params.subtractMean;
+    edit.powerSpectrum.useRegionBox = params.useRegionBox;
     for (int i = 0; i < 3; ++i) {
       edit.powerSpectrum.regionCenter[i] =
-        requests.powerSpectrum.regionCenter[i];
+        params.regionCenter[i];
     }
     edit.powerSpectrum.regionSideLength =
-      requests.powerSpectrum.regionSideLength;
-    edit.powerSpectrum.regionOpacity = requests.powerSpectrum.regionOpacity;
-    edit.powerSpectrum.showRegionBox = requests.powerSpectrum.showRegionBox;
+      params.regionSideLength;
+    edit.powerSpectrum.regionOpacity =
+      requests.powerSpectrum.preview.regionOpacity;
+    edit.powerSpectrum.showRegionBox =
+      requests.powerSpectrum.preview.showRegionBox;
     for (int i = 0; i < 3; ++i) {
       edit.powerSpectrum.axisTiltDegrees[i] =
-        requests.powerSpectrum.axisTiltDegrees[i];
+        params.axisTiltDegrees[i];
       edit.powerSpectrum.analysisAxis[i] =
-        requests.powerSpectrum.analysisAxis[i];
+        params.analysisAxis[i];
     }
   }
 #endif
@@ -135,13 +138,13 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
   if (!edit.streamlinePreviewDirty) {
     for (int i = 0; i < 3; ++i) {
       edit.streamlinePreview.seedCenter[i] =
-        requests.streamlinePreview.seedCenter[i];
+        requests.streamlinePreview.seedRegion.center[i];
       edit.streamlinePreview.seedSize[i] =
-        requests.streamlinePreview.seedSize[i];
+        requests.streamlinePreview.seedRegion.size[i];
     }
-    edit.streamlinePreview.opacity = requests.streamlinePreview.opacity;
+    edit.streamlinePreview.opacity = requests.streamlinePreview.style.opacity;
     edit.streamlinePreview.showSeedBox =
-      requests.streamlinePreview.showSeedBox;
+      requests.streamlinePreview.style.showSeedBox;
   }
 
   if (!edit.streamlineBuildDirty) {
@@ -244,39 +247,40 @@ void SubmitPowerSpectrumRequest(SettingsPowerSpectrumEdit& edit,
 {
   if (!dirty && !edit.computeClicked && !edit.clearClicked) return;
 
-  request.gridSize = std::clamp(edit.gridSize, 8, 256);
-  request.fieldKind = std::clamp(edit.fieldKind, 0, 1);
-  request.scalarQuantity = edit.scalarQuantity;
-  request.vectorField = std::clamp(edit.vectorField, 0, 1);
-  request.subtractMean = edit.subtractMean;
-  request.useRegionBox = edit.useRegionBox;
+  PowerSpectrumParams& params = request.params;
+  params.gridSize = std::clamp(edit.gridSize, 8, 256);
+  params.fieldKind = std::clamp(edit.fieldKind, 0, 1);
+  params.scalarQuantity = edit.scalarQuantity;
+  params.vectorField = std::clamp(edit.vectorField, 0, 1);
+  params.subtractMean = edit.subtractMean;
+  params.useRegionBox = edit.useRegionBox;
   for (int i = 0; i < 3; ++i) {
-    request.regionCenter[i] = edit.regionCenter[i];
+    params.regionCenter[i] = edit.regionCenter[i];
   }
-  request.regionSideLength = std::max(0.0f, edit.regionSideLength);
-  request.regionOpacity = std::clamp(edit.regionOpacity, 0.0f, 1.0f);
-  request.showRegionBox = edit.showRegionBox;
+  params.regionSideLength = std::max(0.0f, edit.regionSideLength);
+  request.preview.regionOpacity = std::clamp(edit.regionOpacity, 0.0f, 1.0f);
+  request.preview.showRegionBox = edit.showRegionBox;
   for (int i = 0; i < 3; ++i) {
-    request.axisTiltDegrees[i] = edit.axisTiltDegrees[i];
-    request.analysisAxis[i] = edit.analysisAxis[i];
+    params.axisTiltDegrees[i] = edit.axisTiltDegrees[i];
+    params.analysisAxis[i] = edit.analysisAxis[i];
   }
   request.setAxisFromAngularMomentumRequested =
     edit.setAxisFromAngularMomentumClicked;
   if (!request.setAxisFromAngularMomentumRequested) {
-    SyncPowerSpectrumAxisVectorFromTilt(request);
+    SyncPowerSpectrumAxisVectorFromTilt(params);
     for (int i = 0; i < 3; ++i) {
-      edit.analysisAxis[i] = request.analysisAxis[i];
+      edit.analysisAxis[i] = params.analysisAxis[i];
     }
   }
   request.runRequested = edit.computeClicked;
   request.clearRequested = edit.clearClicked;
   request.regionUpdateRequested = true;
 
-  edit.gridSize = request.gridSize;
-  edit.fieldKind = request.fieldKind;
-  edit.vectorField = request.vectorField;
-  edit.regionSideLength = request.regionSideLength;
-  edit.regionOpacity = request.regionOpacity;
+  edit.gridSize = params.gridSize;
+  edit.fieldKind = params.fieldKind;
+  edit.vectorField = params.vectorField;
+  edit.regionSideLength = params.regionSideLength;
+  edit.regionOpacity = request.preview.regionOpacity;
   edit.setAxisFromAngularMomentumClicked = false;
   edit.computeClicked = false;
   edit.clearClicked = false;
@@ -416,11 +420,11 @@ void SubmitStreamlinePreviewRequest(SettingsStreamlinePreviewEdit& edit,
   if (!dirty && !edit.updateClicked && !edit.clearClicked) return;
 
   for (int i = 0; i < 3; ++i) {
-    request.seedCenter[i] = edit.seedCenter[i];
-    request.seedSize[i] = edit.seedSize[i];
+    request.seedRegion.center[i] = edit.seedCenter[i];
+    request.seedRegion.size[i] = edit.seedSize[i];
   }
-  request.opacity = edit.opacity;
-  request.showSeedBox = edit.showSeedBox;
+  request.style.opacity = edit.opacity;
+  request.style.showSeedBox = edit.showSeedBox;
   request.updateRequested = edit.updateClicked;
   request.clearRequested = edit.clearClicked;
 
