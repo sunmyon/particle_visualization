@@ -16,6 +16,7 @@ struct DerivedRebuildResult {
   DerivedLayerUpdate ellipsoid;
   DerivedLayerUpdate cube;
   DerivedLayerUpdate line;
+  DerivedLayerUpdate scaleGuide;
   DerivedLayerUpdate lineLayer;
   DerivedLayerUpdate polyhedron;
   DerivedLayerUpdate cuboidAnnotation;

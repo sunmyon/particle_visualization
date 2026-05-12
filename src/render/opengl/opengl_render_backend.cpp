@@ -1420,6 +1420,7 @@ void OpenGLRenderBackend::render(const RenderFrameState& frame,
 #endif
 
   overlay.particleLabels.draw(fm.view, fm.projection, viewport);
+  overlay.scaleGuideLabels.draw(camera, fm.view, fm.projection, viewport);
 
   GizmoDrawContext gctx;
   gctx.view            = fm.view;

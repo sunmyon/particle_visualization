@@ -392,6 +392,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/analysis/radial_profile.cpp
   ${SRC_DIR}/analysis/profile_histogram_export.cpp
   ${SRC_DIR}/render/particle_label_overlay.cpp
+  ${SRC_DIR}/render/scale_guide_label_overlay.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
   ${SRC_DIR}/platform/imgui_context.cpp
   ${SRC_DIR}/platform/window_context.cpp

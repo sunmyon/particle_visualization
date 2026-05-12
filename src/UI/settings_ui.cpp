@@ -129,7 +129,8 @@ static void DrawRenderingSection(const QuantityState& quantity,
                                  WindowCommandQueue& windowCommands,
 				 SettingsActionRequestState& settingsReq);
 
-static void DrawOtherSettingsSection(SettingsRuntimeState& rt);
+static void DrawOtherSettingsSection(SettingsRuntimeState& rt,
+                                     const SettingsCameraView& camera);
 
 void ShowSettingsUI(SettingsUIState& ui,
                     SettingsRuntimeState& settings,
@@ -180,7 +181,7 @@ void ShowSettingsUI(SettingsUIState& ui,
                        ui,
                        windowCommands,
                        settings.request);
-  DrawOtherSettingsSection(settings);
+  DrawOtherSettingsSection(settings, view.camera);
   DrawRenderSnapshotSection(settings.request);
 
   ImGui::End();
@@ -217,11 +218,11 @@ static void SyncSettingsDraftsFromRuntime(SettingsActionRequestState& request,
 }
 
 static void DrawCameraInfoSection(const SettingsCameraView& camera) {
-  ImGui::Text("Camera Position (original):   (%.4g, %.4g, %.4g)",
+  ImGui::Text("Camera Position:   (%.4g, %.4g, %.4g)",
               camera.originalPosition[0],
               camera.originalPosition[1],
               camera.originalPosition[2]);
-  ImGui::Text("Camera Target   (original):   (%.4g, %.4g, %.4g)",
+  ImGui::Text("Camera Target:     (%.4g, %.4g, %.4g)",
               camera.originalTarget[0],
               camera.originalTarget[1],
               camera.originalTarget[2]);
@@ -1030,6 +1031,12 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     rt.request.loadNextRequested = true;
   }
 
+  ImGui::SameLine();
+
+  if (ImGui::Button("Reload")) {
+    rt.request.reloadRequested = true;
+  }
+
   if (ImGui::InputInt("Batch Size", &nav.batchSize)) {
     rt.request.loadBatchRequested = true;
   }
@@ -1040,10 +1047,27 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     ImGui::Text("Loading...");
   }
 
-  if (ImGui::Button("Reload")) {
-    rt.request.reloadRequested = true;
-  }
+  static const char* FileFormatNames[] = {
+    "Auto", "HDF5", "Binary", "Gadget", "Framed"
+  };
+  static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
+                "FileFormatNames needs to match FileFormat::_Count");
 
+  int fmtIdx = static_cast<int>(format.readFormat);
+  float formatComboWidth = 0.0f;
+  for (const char* name : FileFormatNames) {
+    formatComboWidth = std::max(formatComboWidth, ImGui::CalcTextSize(name).x);
+  }
+  formatComboWidth += ImGui::GetFrameHeight() +
+                      2.0f * ImGui::GetStyle().FramePadding.x;
+
+  ImGui::TextUnformatted("Data format");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(formatComboWidth);
+  if (ImGui::Combo("##read_data_format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
+    format.readFormat = static_cast<FileFormat>(fmtIdx);
+  }
+  ImGui::SameLine();
   if (ImGui::Button("Edit Data Format")) {
 #ifdef HAVE_HDF5
     const bool useHdf5FormatDialog =
@@ -1058,23 +1082,15 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     }
   }
 
-  static const char* FileFormatNames[] = {
-    "Auto", "HDF5", "Binary", "Gadget", "Framed"
-  };
-  static_assert(static_cast<int>(FileFormat::_Count) == IM_ARRAYSIZE(FileFormatNames),
-                "FileFormatNames needs to match FileFormat::_Count");
+  if (ImGui::TreeNode("Advanced settings")) {
+    if (ImGui::Button("Mask Settings...")) {
+      windowCommands.open(WindowId::Mask);
+    }
 
-  int fmtIdx = static_cast<int>(format.readFormat);
-  if (ImGui::Combo("Read data format", &fmtIdx, FileFormatNames, IM_ARRAYSIZE(FileFormatNames))) {
-    format.readFormat = static_cast<FileFormat>(fmtIdx);
-  }
-
-  if (ImGui::Button("Mask Settings...")) {
-    windowCommands.open(WindowId::Mask);
-  }
-
-  if (ImGui::Button("Generate test data")) {
-    rt.request.generateTestDataRequested = true;
+    if (ImGui::Button("Generate test data")) {
+      rt.request.generateTestDataRequested = true;
+    }
+    ImGui::TreePop();
   }
 }
 
@@ -1430,13 +1446,12 @@ static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
 
 static void DrawNormalizationSection(NormalizationContext& normalization,
 				     SettingsActionRequestState& req) {
-  ImGui::SeparatorText("Normalization");
   ImGui::InputFloat("Desired Maximum", &normalization.desiredMax, 0.f, 0.f, "%g");
   if (ImGui::Button("Normalize Positions")) {
     req.normalizeRequested = true;
   }
 
-  ImGui::Text("Original max coordinate: %.3g", normalization.originalMax);
+  ImGui::Text("Max coordinate: %.3g", normalization.originalMax);
   ImGui::Text("Max coordinate is normalized to: %.3f", normalization.desiredMax);
 }
 
@@ -1448,7 +1463,7 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
 
   float queryRadiusOriginal =
     labels.queryRadius * camera.renderToWorldScale;
-  if (ImGui::InputFloat("radius (original)", &queryRadiusOriginal, 0.f, 0.f, "%g")) {
+  if (ImGui::InputFloat("radius", &queryRadiusOriginal, 0.f, 0.f, "%g")) {
     const float worldToRender =
       (camera.renderToWorldScale > 0.0f)
       ? 1.0f / camera.renderToWorldScale
@@ -1459,7 +1474,7 @@ static void DrawSinkIdSection(const SettingsCameraView& camera,
   changed |= ImGui::InputInt("number of particles", &labels.maxLabels);
   changed |= ImGui::Checkbox("sink particles only", &labels.sinkOnly);
 
-  ImGui::TextDisabled("Search center: (%.3g, %.3g, %.3g) original",
+  ImGui::TextDisabled("Search center: (%.3g, %.3g, %.3g)",
                       camera.originalTarget[0],
                       camera.originalTarget[1],
                       camera.originalTarget[2]);
@@ -1488,7 +1503,7 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   auto& req = rt.cameraPlacement;
 
   ImGui::SeparatorText("Camera center");
-  ImGui::InputFloat3("Center Coordinates (original)", req.centerInput, "%.3f");
+  ImGui::InputFloat3("Center Coordinates", req.centerInput, "%.3f");
   if (ImGui::Button("Fill with Current Target")) {
     req.centerInput[0] = camera.originalTarget[0];
     req.centerInput[1] = camera.originalTarget[1];
@@ -1513,8 +1528,8 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   }
 
   ImGui::SeparatorText("View Culling");    
-  ImGui::InputFloat("Culling radius (original)", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
-  ImGui::InputFloat3("Culling center (original)", &rt.viewFilter.center.x, "%.3f");
+  ImGui::InputFloat("Culling radius", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
+  ImGui::InputFloat3("Culling center", &rt.viewFilter.center.x, "%.3f");
 
   if (ImGui::Button("Use Camera Target")) {
     rt.viewFilter.center = glm::vec3(camera.originalTarget[0],
@@ -1835,12 +1850,12 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
         }
         edit.powerSpectrumDirty = true;
       }
-      if (ImGui::InputFloat3("center (original)##power_spectrum_region",
+      if (ImGui::InputFloat3("center##power_spectrum_region",
                              req.regionCenter,
                              "%.3f")) {
         edit.powerSpectrumDirty = true;
       }
-      if (ImGui::InputFloat("side length (original)##power_spectrum_region",
+      if (ImGui::InputFloat("side length##power_spectrum_region",
                             &req.regionSideLength,
                             0.0f,
                             0.0f,
@@ -2384,7 +2399,7 @@ static void DrawRenderingSection(const QuantityState& quantity,
       int removeSeed = -1;
       for (int i = 0; i < static_cast<int>(buildReq.manualSeeds.size()); ++i) {
         ImGui::PushID(i);
-        if (ImGui::InputFloat3("manual seed position (original)",
+        if (ImGui::InputFloat3("manual seed position",
                                buildReq.manualSeeds[i].data(), "%.3f")) {
           buildDirty = true;
           buildReq.buildClicked = true;
@@ -2410,11 +2425,11 @@ static void DrawRenderingSection(const QuantityState& quantity,
 
     bool previewDirty = false;
 
-    if (ImGui::InputFloat3("seed region center (original)",
+    if (ImGui::InputFloat3("seed region center",
 			   previewReq.seedCenter, "%.3f")) {
       previewDirty = true;
     }
-    if (ImGui::InputFloat3("seed region side length (original)",
+    if (ImGui::InputFloat3("seed region side length",
 			   previewReq.seedSize, "%.3f")) {
       previewDirty = true;
     }
@@ -2454,9 +2469,9 @@ static void DrawRenderingSection(const QuantityState& quantity,
     }
 
     if (buildReq.limitRegion) {
-      buildDirty |= ImGui::InputFloat3("stream line region center (original)",
+      buildDirty |= ImGui::InputFloat3("stream line region center",
                                        buildReq.regionCenter, "%.3f");
-      buildDirty |= ImGui::InputFloat3("stream line region side length (original)",
+      buildDirty |= ImGui::InputFloat3("stream line region side length",
                                        buildReq.regionSize, "%.3f");
     }
 
@@ -2634,18 +2649,172 @@ static void DrawRenderingSection(const QuantityState& quantity,
 }
 
 
-static void DrawOtherSettingsSection(SettingsRuntimeState& rt)
+static const char* ScaleGuideShapeLabel(ScaleGuideShapeType type)
+{
+  switch (type) {
+  case ScaleGuideShapeType::Circle:
+    return "Circle";
+  case ScaleGuideShapeType::Square:
+    return "Square";
+  case ScaleGuideShapeType::Box:
+    return "Box";
+  }
+  return "Circle";
+}
+
+static ScaleGuideObjectConfig MakeScaleGuideObject(ScaleGuideShapeType type,
+                                                   const SettingsCameraView& camera)
+{
+  ScaleGuideObjectConfig object;
+  object.type = type;
+  object.center[0] = camera.originalTarget[0];
+  object.center[1] = camera.originalTarget[1];
+  object.center[2] = camera.originalTarget[2];
+  return object;
+}
+
+static bool DrawScaleGuideObject(ScaleGuideObjectConfig& object,
+                                 int index,
+                                 const SettingsCameraView& camera)
+{
+  bool changed = false;
+  const char* planeLabels[] = { "XY", "XZ", "YZ" };
+  const char* circleModes[] = { "Powers of 10", "Fixed radius" };
+
+  ImGui::PushID(index);
+
+  changed |= ImGui::InputFloat3("Center", object.center, "%.4g");
+  if (ImGui::Button("Move to camera center")) {
+    object.center[0] = camera.originalTarget[0];
+    object.center[1] = camera.originalTarget[1];
+    object.center[2] = camera.originalTarget[2];
+    changed = true;
+  }
+
+  if (object.type == ScaleGuideShapeType::Circle ||
+      object.type == ScaleGuideShapeType::Square) {
+    changed |= ImGui::Combo("Plane",
+                            &object.plane,
+                            planeLabels,
+                            IM_ARRAYSIZE(planeLabels));
+  }
+
+  if (object.type == ScaleGuideShapeType::Circle) {
+    changed |= ImGui::Combo("Mode",
+                            &object.circleMode,
+                            circleModes,
+                            IM_ARRAYSIZE(circleModes));
+    if (object.circleMode == 0) {
+      ImGui::SetNextItemWidth(120.0f);
+      changed |= ImGui::InputFloat("Min radius",
+                                   &object.circleMinRadius,
+                                   0.0f,
+                                   0.0f,
+                                   "%g");
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(120.0f);
+      changed |= ImGui::InputFloat("Max radius",
+                                   &object.circleMaxRadius,
+                                   0.0f,
+                                   0.0f,
+                                   "%g");
+    } else {
+      changed |= ImGui::InputFloat("Radius",
+                                   &object.circleFixedRadius,
+                                   0.0f,
+                                   0.0f,
+                                   "%g");
+    }
+  } else if (object.type == ScaleGuideShapeType::Square) {
+    changed |= ImGui::InputFloat("Square size",
+                                 &object.squareSize,
+                                 0.0f,
+                                 0.0f,
+                                 "%g");
+  } else {
+    changed |= ImGui::InputFloat3("Box size", object.boxSize, "%g");
+  }
+
+  ImGui::PopID();
+  return changed;
+}
+
+static void DrawScaleGuideSection(ScaleGuideConfig& guide,
+                                  const SettingsCameraView& camera)
+{
+  if (!ImGui::CollapsingHeader("Scale Guide"))
+    return;
+
+  bool changed = false;
+
+  const char* shapeLabels[] = { "Circle", "Square", "Box" };
+  ImGui::SetNextItemWidth(120.0f);
+  ImGui::Combo("Add shape",
+               &guide.addShapeType,
+               shapeLabels,
+               IM_ARRAYSIZE(shapeLabels));
+  ImGui::SameLine();
+  if (ImGui::Button("Add")) {
+    guide.objects.push_back(MakeScaleGuideObject(
+      static_cast<ScaleGuideShapeType>(guide.addShapeType),
+      camera));
+    changed = true;
+  }
+
+  for (size_t i = 0; i < guide.objects.size(); ) {
+    ScaleGuideObjectConfig& object = guide.objects[i];
+    char label[64];
+    std::snprintf(label,
+                  sizeof(label),
+                  "%s %zu",
+                  ScaleGuideShapeLabel(object.type),
+                  i + 1);
+    ImGui::SeparatorText(label);
+    ImGui::PushID(static_cast<int>(i));
+    changed |= ImGui::Checkbox("Enabled", &object.enabled);
+    ImGui::SameLine();
+    const float removeWidth = ImGui::CalcTextSize("Remove").x +
+                              2.0f * ImGui::GetStyle().FramePadding.x;
+    const float cursorX = ImGui::GetCursorPosX();
+    const float targetX = std::max(cursorX,
+                                   ImGui::GetContentRegionAvail().x +
+                                     ImGui::GetCursorPosX() -
+                                     removeWidth);
+    ImGui::SetCursorPosX(targetX);
+    if (ImGui::SmallButton("Remove")) {
+      guide.objects.erase(guide.objects.begin() + static_cast<long>(i));
+      changed = true;
+      ImGui::PopID();
+      continue;
+    }
+    ImGui::PopID();
+
+    changed |= DrawScaleGuideObject(object, static_cast<int>(i), camera);
+    ++i;
+  }
+
+  if (changed) {
+    guide.dirty = true;
+  }
+}
+
+static void DrawOtherSettingsSection(SettingsRuntimeState& rt,
+                                     const SettingsCameraView& camera)
 {
   if (!ImGui::CollapsingHeader("Other settings"))
     return;
 
   auto& req = rt.request;
 
-  DrawNormalizationSection(rt.normalization, req);
+  DrawScaleGuideSection(rt.scaleGuide, camera);
 
   if (ImGui::CollapsingHeader("Zoom Range")) {
     ImGui::InputFloat("Min Zoom", &rt.minZoom, 0.0f, 0.0f, "%g");
     ImGui::InputFloat("Max Zoom", &rt.maxZoom, 0.0f, 0.0f, "%g");
+  }
+
+  if (ImGui::CollapsingHeader("Normalization")) {
+    DrawNormalizationSection(rt.normalization, req);
   }
 
   if (ImGui::CollapsingHeader("Render Overlays")) {

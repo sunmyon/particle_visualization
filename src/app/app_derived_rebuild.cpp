@@ -172,6 +172,40 @@ static DerivedLayerUpdate RebuildStreamlineDerivedState(StreamlineBuildResultSta
 }
 #endif
 
+static DerivedLayerUpdate RebuildScaleGuideDerivedState(ScaleGuideDerivedState& result,
+                                                        float worldToRenderScale,
+                                                        LineManager& lines,
+                                                        OverlayState& overlay)
+{
+  const bool scaleChanged =
+    std::abs(result.renderedWorldToRenderScale - worldToRenderScale) >
+    std::max(1.0e-6f, 1.0e-6f * std::abs(worldToRenderScale));
+
+  if (!result.cpuUpdated && !scaleChanged) {
+    return {};
+  }
+
+  lines.clearGroup("scale_guide");
+  overlay.scaleGuideLabels.clear();
+  result.renderedWorldToRenderScale = worldToRenderScale;
+
+  for (const LineObject& source : result.lines) {
+    LineObject line = source;
+    ApplyRenderScale(line, worldToRenderScale);
+    line.tag = "scale_guide";
+    lines.add(line);
+  }
+
+  std::vector<ScaleGuideLabelItem> renderLabels = result.labels;
+  for (ScaleGuideLabelItem& label : renderLabels) {
+    label.worldPos *= worldToRenderScale;
+    label.anchorWorldPos *= worldToRenderScale;
+  }
+  overlay.scaleGuideLabels.set(std::move(renderLabels));
+
+  return {true, !result.lines.empty()};
+}
+
 #ifdef POWER_SPECTRUM
 static DerivedLayerUpdate RebuildPowerSpectrumRegionDerivedState(PowerSpectrumResultState& result,
                                                                  float worldToRenderScale,
@@ -343,6 +377,12 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
                                   derived.scene.line);
 #endif
 
+  rebuild.scaleGuide =
+    RebuildScaleGuideDerivedState(derived.analysis.scaleGuide,
+                                  particles.simulationBlock.worldToRenderScale,
+                                  derived.scene.line,
+                                  derived.overlay);
+
 #ifdef POWER_SPECTRUM
   {
     const DerivedLayerUpdate powerRegion =
@@ -393,7 +433,8 @@ DerivedRebuildResult RebuildDerivedState(const SimulationDataset& particles,
                                        projection,
                                        particles.simulationBlock.worldToRenderScale);
 
-  if (rebuild.line.changed || rebuild.cuboidAnnotation.changed) {
+  if (rebuild.line.changed || rebuild.scaleGuide.changed ||
+      rebuild.cuboidAnnotation.changed) {
     rebuild.lineLayer.changed = true;
     rebuild.lineLayer.visible =
       derived.scene.line.show() || derived.scene.cuboidAnnotation.show();
@@ -425,6 +466,10 @@ void AcknowledgeDerivedRebuild(SimulationDataset& particles,
     derived.analysis.streamlineBuild.cpuUpdated = false;
   }
 #endif
+
+  if (rebuild.scaleGuide.changed) {
+    derived.analysis.scaleGuide.cpuUpdated = false;
+  }
 
 #ifdef POWER_SPECTRUM
   if (rebuild.cube.changed) {
@@ -471,6 +516,10 @@ void ApplyDerivedRenderInvalidation(const DerivedRebuildResult& rebuild,
     render.lines.cpuUpdated = true;
   }
 #endif
+
+  if (rebuild.scaleGuide.changed) {
+    render.lines.cpuUpdated = true;
+  }
 
 #ifdef USE_CONVEX_HULL
   if (rebuild.polyhedron.changed) {

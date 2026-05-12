@@ -2963,6 +2963,10 @@ public:
     frame.overlay.particleLabels.draw(frame.matrices.view,
                                       frame.matrices.projection,
                                       frame.viewport);
+    frame.overlay.scaleGuideLabels.draw(frame.camera,
+                                        frame.matrices.view,
+                                        frame.matrices.projection,
+                                        frame.viewport);
     DrawColorbarOverlay(frame);
     DrawGizmoOverlays(frame);
   }

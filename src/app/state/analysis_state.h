@@ -7,6 +7,7 @@
 #include "FileIO/snapshot_extract.h"
 #include "convex_hull_state.h"
 #include "image/rgb_image.h"
+#include "app/state/scale_guide_state.h"
 #include "render/scene_objects.h"
 
 struct DiskAnalysisResultState {
@@ -181,6 +182,7 @@ struct AnalysisDerivedState {
   RadialProfileResultState radial;
   Histogram2DResultState hist2D;
   SnapshotExtractPreviewState snapshotExtractPreview;
+  ScaleGuideDerivedState scaleGuide;
 #ifdef POWER_SPECTRUM
   PowerSpectrumResultState powerSpectrum;
 #endif

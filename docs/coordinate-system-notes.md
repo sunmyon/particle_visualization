@@ -26,9 +26,9 @@ by silently replacing invalid scales with fallback values.
 ## Current Geometry Ownership
 
 - Disk, ellipsoid, streamline seed boxes, streamline lines, snapshot extract
-  boxes/spheres, power-spectrum boxes, convex hull vertices, and projection
-  cuboid annotations are stored in `derived.analysis` or tool state as data
-  coordinates and converted when copied to `derived.scene`.
+  boxes/spheres, power-spectrum boxes, scale-guide lines, convex hull vertices,
+  and projection cuboid annotations are stored in `derived.analysis` or tool
+  state as data coordinates and converted when copied to `derived.scene`.
 - Iso-contour vertices are stored in data coordinates and scaled only when
   building render data.
 - Adaptive volume tree bounds are stored in data coordinates and scaled only

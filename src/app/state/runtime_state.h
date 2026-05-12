@@ -8,6 +8,7 @@
 
 #include "core/quantity.h"
 #include "app/state/normalization_config.h"
+#include "app/state/scale_guide_state.h"
 #include "app/state/input_filter_config.h"
 #include "app/state/view_filter_config.h"
 #include "app/state/tracking_view_state.h"
@@ -634,6 +635,7 @@ struct SettingsRuntimeState {
   InputFilterConfig inputFilter;
   SnapshotFormatState snapshotFormat;
   NormalizationContext normalization;
+  ScaleGuideConfig scaleGuide;
   FileNavigationRuntimeState fileNavigation;
   CameraPlacementRequestState cameraPlacement;
   TrackingTargetState tracking;

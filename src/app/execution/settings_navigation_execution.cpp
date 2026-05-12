@@ -33,6 +33,35 @@
 #include "render/scene_objects.h"
 
 namespace {
+constexpr const char* kScaleGuideTag = "scale_guide";
+
+std::string FormatScaleGuideRadius(float radius)
+{
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "r=%g", radius);
+  return std::string(buf);
+}
+
+std::string FormatScaleGuideVertex(const glm::vec3& p)
+{
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), "(%.4g, %.4g, %.4g)", p.x, p.y, p.z);
+  return std::string(buf);
+}
+
+void AppendScaleGuideLabel(const glm::vec3& pos,
+                           const glm::vec3& anchor,
+                           const std::string& text,
+                           std::vector<ScaleGuideLabelItem>& labels)
+{
+  ScaleGuideLabelItem label;
+  label.worldPos = pos;
+  label.anchorWorldPos = anchor;
+  label.usePixelDistanceCull = true;
+  label.text = text;
+  labels.push_back(std::move(label));
+}
+
 double SafeScaleFactorFromCurrent(const SnapshotCurrentState& current,
                                   bool interpretAsComoving)
 {
@@ -59,6 +88,216 @@ bool ValidRescaleFactor(double oldFactor, double newFactor, double& ratio)
   }
   ratio = newFactor / oldFactor;
   return std::isfinite(ratio) && ratio > 0.0 && ratio != 1.0;
+}
+
+glm::vec3 ScaleGuideCenter(const ScaleGuideObjectConfig& object)
+{
+  return glm::vec3(object.center[0], object.center[1], object.center[2]);
+}
+
+glm::vec3 ScaleGuidePlanePoint(const glm::vec3& center,
+                               int plane,
+                               float u,
+                               float v)
+{
+  switch (plane) {
+  case 1:
+    return glm::vec3(center.x + u, center.y, center.z + v);
+  case 2:
+    return glm::vec3(center.x, center.y + u, center.z + v);
+  case 0:
+  default:
+    return glm::vec3(center.x + u, center.y + v, center.z);
+  }
+}
+
+LineObject MakeScaleGuideLine()
+{
+  LineObject line;
+  line.color = glm::vec3(1.0f);
+  line.opacity = 1.0f;
+  line.tag = kScaleGuideTag;
+  return line;
+}
+
+void AppendScaleGuideCircle(const ScaleGuideObjectConfig& object,
+                            float radius,
+                            std::vector<LineObject>& out,
+                            std::vector<ScaleGuideLabelItem>& labels)
+{
+  if (!std::isfinite(radius) || radius <= 0.0f) {
+    return;
+  }
+
+  constexpr int segments = 192;
+  const glm::vec3 center = ScaleGuideCenter(object);
+  constexpr float pi = 3.14159265358979323846f;
+
+  LineObject line = MakeScaleGuideLine();
+  line.points.reserve(static_cast<size_t>(segments) + 1);
+  for (int i = 0; i <= segments; ++i) {
+    const float angle = 2.0f * pi * static_cast<float>(i) /
+                        static_cast<float>(segments);
+    line.points.push_back(
+      ScaleGuidePlanePoint(center,
+                           object.plane,
+                           radius * std::cos(angle),
+                           radius * std::sin(angle)));
+  }
+  out.push_back(std::move(line));
+
+  AppendScaleGuideLabel(ScaleGuidePlanePoint(center, object.plane, radius, 0.0f),
+                        center,
+                        FormatScaleGuideRadius(radius),
+                        labels);
+}
+
+void AppendScaleGuideCircles(const ScaleGuideObjectConfig& object,
+                             std::vector<LineObject>& out,
+                             std::vector<ScaleGuideLabelItem>& labels)
+{
+  if (object.circleMode == 1) {
+    AppendScaleGuideCircle(object, object.circleFixedRadius, out, labels);
+    return;
+  }
+
+  const float minRadius = object.circleMinRadius;
+  const float maxRadius = object.circleMaxRadius;
+  if (!std::isfinite(minRadius) || !std::isfinite(maxRadius) ||
+      minRadius <= 0.0f || maxRadius <= 0.0f || minRadius > maxRadius) {
+    return;
+  }
+
+  const int firstPower = static_cast<int>(std::ceil(std::log10(minRadius)));
+  const int lastPower = static_cast<int>(std::floor(std::log10(maxRadius)));
+  for (int power = firstPower; power <= lastPower; ++power) {
+    AppendScaleGuideCircle(object,
+                           std::pow(10.0f, static_cast<float>(power)),
+                           out,
+                           labels);
+  }
+}
+
+void AppendScaleGuideSquare(const ScaleGuideObjectConfig& object,
+                            std::vector<LineObject>& out,
+                            std::vector<ScaleGuideLabelItem>& labels)
+{
+  if (!std::isfinite(object.squareSize) ||
+      object.squareSize <= 0.0f) {
+    return;
+  }
+
+  const glm::vec3 center = ScaleGuideCenter(object);
+  const float halfSize = 0.5f * object.squareSize;
+  LineObject line = MakeScaleGuideLine();
+  line.points.reserve(5);
+  const glm::vec3 p0 = ScaleGuidePlanePoint(center, object.plane, -halfSize, -halfSize);
+  const glm::vec3 p1 = ScaleGuidePlanePoint(center, object.plane, +halfSize, -halfSize);
+  const glm::vec3 p2 = ScaleGuidePlanePoint(center, object.plane, +halfSize, +halfSize);
+  const glm::vec3 p3 = ScaleGuidePlanePoint(center, object.plane, -halfSize, +halfSize);
+  line.points.push_back(p0);
+  line.points.push_back(p1);
+  line.points.push_back(p2);
+  line.points.push_back(p3);
+  line.points.push_back(p0);
+  out.push_back(std::move(line));
+
+  AppendScaleGuideLabel(p0, center, FormatScaleGuideVertex(p0), labels);
+  AppendScaleGuideLabel(p1, center, FormatScaleGuideVertex(p1), labels);
+  AppendScaleGuideLabel(p2, center, FormatScaleGuideVertex(p2), labels);
+  AppendScaleGuideLabel(p3, center, FormatScaleGuideVertex(p3), labels);
+}
+
+void AppendScaleGuideEdge(const glm::vec3& a,
+                          const glm::vec3& b,
+                          std::vector<LineObject>& out)
+{
+  LineObject line = MakeScaleGuideLine();
+  line.points.push_back(a);
+  line.points.push_back(b);
+  out.push_back(std::move(line));
+}
+
+void AppendScaleGuideBox(const ScaleGuideObjectConfig& object,
+                         std::vector<LineObject>& out,
+                         std::vector<ScaleGuideLabelItem>& labels)
+{
+  const glm::vec3 size(object.boxSize[0], object.boxSize[1], object.boxSize[2]);
+  if (!std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z) ||
+      size.x <= 0.0f || size.y <= 0.0f || size.z <= 0.0f) {
+    return;
+  }
+
+  const glm::vec3 center = ScaleGuideCenter(object);
+  const glm::vec3 h = 0.5f * size;
+  const glm::vec3 p000 = center + glm::vec3(-h.x, -h.y, -h.z);
+  const glm::vec3 p100 = center + glm::vec3(+h.x, -h.y, -h.z);
+  const glm::vec3 p110 = center + glm::vec3(+h.x, +h.y, -h.z);
+  const glm::vec3 p010 = center + glm::vec3(-h.x, +h.y, -h.z);
+  const glm::vec3 p001 = center + glm::vec3(-h.x, -h.y, +h.z);
+  const glm::vec3 p101 = center + glm::vec3(+h.x, -h.y, +h.z);
+  const glm::vec3 p111 = center + glm::vec3(+h.x, +h.y, +h.z);
+  const glm::vec3 p011 = center + glm::vec3(-h.x, +h.y, +h.z);
+
+  AppendScaleGuideEdge(p000, p100, out);
+  AppendScaleGuideEdge(p100, p110, out);
+  AppendScaleGuideEdge(p110, p010, out);
+  AppendScaleGuideEdge(p010, p000, out);
+  AppendScaleGuideEdge(p001, p101, out);
+  AppendScaleGuideEdge(p101, p111, out);
+  AppendScaleGuideEdge(p111, p011, out);
+  AppendScaleGuideEdge(p011, p001, out);
+  AppendScaleGuideEdge(p000, p001, out);
+  AppendScaleGuideEdge(p100, p101, out);
+  AppendScaleGuideEdge(p110, p111, out);
+  AppendScaleGuideEdge(p010, p011, out);
+
+  AppendScaleGuideLabel(p000, center, FormatScaleGuideVertex(p000), labels);
+  AppendScaleGuideLabel(p100, center, FormatScaleGuideVertex(p100), labels);
+  AppendScaleGuideLabel(p110, center, FormatScaleGuideVertex(p110), labels);
+  AppendScaleGuideLabel(p010, center, FormatScaleGuideVertex(p010), labels);
+  AppendScaleGuideLabel(p001, center, FormatScaleGuideVertex(p001), labels);
+  AppendScaleGuideLabel(p101, center, FormatScaleGuideVertex(p101), labels);
+  AppendScaleGuideLabel(p111, center, FormatScaleGuideVertex(p111), labels);
+  AppendScaleGuideLabel(p011, center, FormatScaleGuideVertex(p011), labels);
+}
+
+void AppendScaleGuideObject(const ScaleGuideObjectConfig& object,
+                            std::vector<LineObject>& out,
+                            std::vector<ScaleGuideLabelItem>& labels)
+{
+  if (!object.enabled) {
+    return;
+  }
+
+  switch (object.type) {
+  case ScaleGuideShapeType::Circle:
+    AppendScaleGuideCircles(object, out, labels);
+    break;
+  case ScaleGuideShapeType::Square:
+    AppendScaleGuideSquare(object, out, labels);
+    break;
+  case ScaleGuideShapeType::Box:
+    AppendScaleGuideBox(object, out, labels);
+    break;
+  }
+}
+
+void UpdateScaleGuideDerivedState(ScaleGuideConfig& config,
+                                  ScaleGuideDerivedState& derived)
+{
+  if (!config.dirty) {
+    return;
+  }
+
+  derived.lines.clear();
+  derived.labels.clear();
+  for (const ScaleGuideObjectConfig& object : config.objects) {
+    AppendScaleGuideObject(object, derived.lines, derived.labels);
+  }
+
+  derived.cpuUpdated = true;
+  config.dirty = false;
 }
 
 void RescaleLoadedInternalQuantitiesForUnitChange(SimulationBlock& block,
@@ -310,6 +549,8 @@ void ExecuteSettingsActionRequests(SimulationDataset& particles,
                                    AnalysisDerivedState& analysis)
 {
   auto& req = settings.request;
+
+  UpdateScaleGuideDerivedState(settings.scaleGuide, analysis.scaleGuide);
 
   if (req.applyParticleVisualRequested) {
     particleVisual = req.particleVisualDraft;

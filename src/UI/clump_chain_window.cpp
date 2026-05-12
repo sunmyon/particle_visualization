@@ -314,7 +314,7 @@ static void DrawSelectedClumpChainPlot(ClumpChainWindowState& ui,
 static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui)
 {
   ImGui::PushItemWidth(100);
-  ImGui::InputFloat("len (original)", &ui.mapLen, 0.0f, 0.0f, "%g");
+  ImGui::InputFloat("len", &ui.mapLen, 0.0f, 0.0f, "%g");
   ImGui::InputFloat("val_min", &ui.mapValMin, 0.0f, 0.0f, "%g");
   ImGui::SameLine();
   ImGui::InputFloat("val_max", &ui.mapValMax, 0.0f, 0.0f, "%g");
