@@ -22,6 +22,7 @@ ConfigData ExtractConfigData(const FileNavigationRuntimeState& fileNav,
   config.persistent.formatTokens = format.formatTokens;
   config.persistent.formatTokensHdf5 = format.formatTokensHdf5;
   config.persistent.formatTokensGadget = format.formatTokensGadget;
+  config.persistent.customScalarLabels = format.customScalarLabels;
   config.persistent.outputFormat = format.outputFormat;
   config.persistent.inputDensityUnit = format.inputDensityUnit;
   config.persistent.inputTemperatureUnit = format.inputTemperatureUnit;

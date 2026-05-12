@@ -511,6 +511,8 @@ struct SnapshotFormatState {
   std::vector<FieldSpec> formatTokens = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensHdf5 = MakeDefaultSnapshotFormatTokens();
   std::vector<FieldSpec> formatTokensGadget = MakeDefaultGadgetFormatTokens();
+  std::array<std::string, kCustomScalarFieldCount> customScalarLabels =
+    MakeDefaultCustomScalarFieldLabels();
   SnapshotOutputFormatConfig outputFormat = [] {
     SnapshotOutputFormatConfig config;
     config.fields = MakeDefaultSnapshotOutputFields();

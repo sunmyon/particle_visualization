@@ -216,6 +216,22 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
       int tokenCount = std::stoi(line.substr(std::strlen("GadgetTokenCount=")));
       loadTokenList(infile, tokenCount, outConfig.persistent.formatTokensGadget);
     }
+    else if (startsWith(line, "CustomScalarLabel")) {
+      const size_t eq = line.find('=');
+      if (eq != std::string::npos) {
+        const std::string key = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        const std::string prefix = "CustomScalarLabel";
+        try {
+          const int index = std::stoi(key.substr(prefix.size())) - 1;
+          if (index >= 0 && index < kCustomScalarFieldCount) {
+            outConfig.persistent.customScalarLabels[
+              static_cast<std::size_t>(index)] = value;
+          }
+        } catch (...) {
+        }
+      }
+    }
     else if (startsWith(line, "OutputFormatEnabled=")) {
       outConfig.persistent.outputFormat.enabled =
         std::stoi(line.substr(std::strlen("OutputFormatEnabled="))) != 0;
@@ -390,6 +406,11 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
   saveTokenList(outfile, "TokenCount", config.persistent.formatTokens);
   saveTokenList(outfile, "HDF5TokenCount", config.persistent.formatTokensHdf5);
   saveTokenList(outfile, "GadgetTokenCount", config.persistent.formatTokensGadget);
+  for (int i = 0; i < kCustomScalarFieldCount; ++i) {
+    outfile << "CustomScalarLabel" << (i + 1) << "="
+            << config.persistent.customScalarLabels[static_cast<std::size_t>(i)]
+            << "\n";
+  }
   saveOutputFieldList(outfile, config.persistent.outputFormat);
   outfile << "InputDensityUnit="
           << static_cast<int>(config.persistent.inputDensityUnit) << "\n";

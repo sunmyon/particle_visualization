@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <cmath>
+#include <array>
 
 #include "data/data_type.h"
 
@@ -99,6 +100,18 @@ static constexpr const char* kJ21Key = "J21";
 static constexpr const char* kGammaKey = "Gamma";
 static constexpr const char* kVal1Key = "Val1";
 static constexpr const char* kVal2Key = "Val2";
+inline constexpr std::array<const char*, 10> kCustomScalarSoAKeys = {
+  kVal1Key,
+  kVal2Key,
+  "Custom3",
+  "Custom4",
+  "Custom5",
+  "Custom6",
+  "Custom7",
+  "Custom8",
+  "Custom9",
+  "Custom10"
+};
 static constexpr const char* kParticleIdKey = "ParticleID";
 
 template<typename T, int N>

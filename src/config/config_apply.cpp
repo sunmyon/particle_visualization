@@ -35,6 +35,7 @@ void ApplyConfigData(const ConfigData& config,
   if (!config.persistent.formatTokensGadget.empty()) {
     format.formatTokensGadget = config.persistent.formatTokensGadget;
   }
+  format.customScalarLabels = config.persistent.customScalarLabels;
   format.outputFormat = config.persistent.outputFormat;
   if (format.outputFormat.fields.empty()) {
     format.outputFormat.fields = MakeDefaultSnapshotOutputFields();

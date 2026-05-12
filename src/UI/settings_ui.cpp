@@ -48,6 +48,57 @@ static bool IsHDF5SnapshotPath(const char* path)
   return ext == ".hdf5" || ext == ".h5";
 }
 
+static bool DrawTypeMaskToggleButtons(unsigned int& mask, const char* idPrefix)
+{
+  bool changed = false;
+  ImGui::PushID(idPrefix);
+  const float buttonWidth = ImGui::GetFrameHeight() * 1.35f;
+  for (int type = 0; type < 6; ++type) {
+    const unsigned int bit = static_cast<unsigned int>(1u << type);
+    const bool selected = (mask & bit) != 0;
+    if (type > 0) {
+      ImGui::SameLine(0.0f, 4.0f);
+    }
+    if (selected) {
+      ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    char label[8];
+    std::snprintf(label, sizeof(label), "%d", type);
+    if (ImGui::Button(label, ImVec2(buttonWidth, 0.0f))) {
+      if (selected) {
+        mask &= ~bit;
+      } else {
+        mask |= bit;
+      }
+      changed = true;
+    }
+    if (selected) {
+      ImGui::PopStyleColor();
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("PartType%d", type);
+    }
+  }
+  ImGui::PopID();
+  return changed;
+}
+
+static bool DrawFramedTypeMaskToggleButtons(unsigned int& mask,
+                                            const char* idPrefix)
+{
+  const ImVec2 boxMin = ImGui::GetCursorScreenPos();
+  ImGui::BeginGroup();
+  const bool changed = DrawTypeMaskToggleButtons(mask, idPrefix);
+  ImGui::EndGroup();
+  const ImVec2 boxMax = ImGui::GetItemRectMax();
+  ImGui::GetWindowDrawList()->AddRect(boxMin,
+                                      boxMax,
+                                      ImGui::GetColorU32(ImGuiCol_Border),
+                                      4.0f);
+  return changed;
+}
+
 struct PullDownItem {
   const char* label;
   int mode;
@@ -852,6 +903,25 @@ static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
   if (!ImGui::CollapsingHeader("Particle Type Settings"))
     return;
 
+  unsigned int visibleMask = 0;
+  for (int type = 0; type < 6; ++type) {
+    if (!req.particleVisualDraft.types[type].hideParticles) {
+      visibleMask |= static_cast<unsigned int>(1u << type);
+    }
+  }
+  ImGui::TextDisabled("Visible particle types");
+  if (DrawFramedTypeMaskToggleButtons(visibleMask, "particle_type_visible")) {
+    for (int type = 0; type < 6; ++type) {
+      const unsigned int bit = static_cast<unsigned int>(1u << type);
+      req.particleVisualDraft.types[type].hideParticles =
+        (visibleMask & bit) == 0;
+    }
+    req.particleVisualDraftDirty = true;
+    req.applyParticleVisualRequested = true;
+    req.particleRenderDirtyRequested = true;
+  }
+  ImGui::Spacing();
+
   for (int i = 0; i < 6; i++) {
     std::string header = "Type " + std::to_string(i);
     if (ImGui::TreeNode(header.c_str())) {
@@ -885,28 +955,44 @@ static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
       std::string logLabel = "Use Log Scale##" + std::to_string(i);
       visualChanged |= ImGui::Checkbox(logLabel.c_str(), &cfg.useLogScale);
 				
-      std::string hideLabel = "Hide particle##" + std::to_string(i);
-      visualChanged |= ImGui::Checkbox(hideLabel.c_str(), &cfg.hideParticles);
-				
       QuantityId& sel = cfg.selectedQuantity;
+      const int typeQuantityCount =
+        quantity.catalog.nUIQByType[static_cast<size_t>(i)];
+      auto quantityAvailableForType = [&](QuantityId q) {
+        for (int qi = 0; qi < typeQuantityCount; ++qi) {
+          if (quantity.catalog.uiQByType[static_cast<size_t>(i)][qi] == q) {
+            return true;
+          }
+        }
+        return false;
+      };
+      if (typeQuantityCount > 0 && !quantityAvailableForType(sel)) {
+        sel = quantity.catalog.uiQByType[static_cast<size_t>(i)][0];
+        visualChanged = true;
+      }
 
       std::string quantityLabel = "Quantity##ptype_" + std::to_string(i);
-      if (ImGui::BeginCombo(quantityLabel.c_str(), QuantityLabel(sel))) {
-	for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
-	  QuantityId cand = quantity.catalog.uiQ[q];
-	  bool is_selected = (cand == sel);
-	  if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
-	    sel = cand;
-	    visualChanged = true;
-	  }
-	  if (is_selected) ImGui::SetItemDefaultFocus();
-	}
-	ImGui::EndCombo();
+      if (typeQuantityCount <= 0) {
+        ImGui::TextDisabled("No readable fields for this particle type");
+      } else if (ImGui::BeginCombo(quantityLabel.c_str(),
+                                   QuantityDisplayLabel(quantity, sel))) {
+        for (int q = 0; q < typeQuantityCount; ++q) {
+          QuantityId cand =
+            quantity.catalog.uiQByType[static_cast<size_t>(i)][q];
+          bool is_selected = (cand == sel);
+          if (ImGui::Selectable(QuantityDisplayLabel(quantity, cand),
+                                is_selected)) {
+            sel = cand;
+            visualChanged = true;
+          }
+          if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
       }
 				
       const int qidx = static_cast<int>(sel);
       ImGui::Text("Current particle %s range: [%g, %g]",
-		  QuantityLabel(sel),
+		  QuantityDisplayLabel(quantity, sel),
 		  quantity.range.valueMin[qidx][i],
 		  quantity.range.valueMax[qidx][i]);
 				
@@ -1759,17 +1845,22 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     auto& req = edit.stellarDensity;
     bool stellarDensityDirty = false;
 
-    ImGui::Text("Particle types to include:");
-    stellarDensityDirty |= ImGui::Checkbox("Type 0##stellar_density", &req.selectedTypes[0]); ImGui::SameLine();
-    stellarDensityDirty |= ImGui::Checkbox("Type 1##stellar_density", &req.selectedTypes[1]); ImGui::SameLine();
-    stellarDensityDirty |= ImGui::Checkbox("Type 2##stellar_density", &req.selectedTypes[2]);
-    stellarDensityDirty |= ImGui::Checkbox("Type 3##stellar_density", &req.selectedTypes[3]); ImGui::SameLine();
-    stellarDensityDirty |= ImGui::Checkbox("Type 4##stellar_density", &req.selectedTypes[4]); ImGui::SameLine();
-    stellarDensityDirty |= ImGui::Checkbox("Type 5##stellar_density", &req.selectedTypes[5]);
+    ImGui::TextDisabled("Particle types to include");
+    unsigned int selectedMask = 0;
+    for (int type = 0; type < 6; ++type) {
+      if (req.selectedTypes[type]) {
+        selectedMask |= static_cast<unsigned int>(1u << type);
+      }
+    }
+    if (DrawFramedTypeMaskToggleButtons(selectedMask, "stellar_density_type")) {
+      for (int type = 0; type < 6; ++type) {
+        const unsigned int bit = static_cast<unsigned int>(1u << type);
+        req.selectedTypes[type] = (selectedMask & bit) != 0;
+      }
+      stellarDensityDirty = true;
+    }
 
-    stellarDensityDirty |= ImGui::Checkbox("overwrite hsml##stellar_density",
-                                           &req.overwriteHsml);
-
+    ImGui::SameLine();
     if (ImGui::Button("Select 3,4,5##stellar_density")) {
       for (int t = 0; t < 6; ++t) req.selectedTypes[t] = false;
       req.selectedTypes[3] = true;
@@ -1777,6 +1868,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
       req.selectedTypes[5] = true;
       stellarDensityDirty = true;
     }
+
+    stellarDensityDirty |= ImGui::Checkbox("overwrite hsml##stellar_density",
+                                           &req.overwriteHsml);
 
     if (ImGui::Button("Compute stellar density##stellar_density")) {
       req.computeClicked = true;
@@ -1810,11 +1904,11 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
     }
     if (req.fieldKind == 0) {
       if (ImGui::BeginCombo("scalar quantity##power_spectrum",
-                            QuantityLabel(req.scalarQuantity))) {
+                            QuantityDisplayLabel(quantity, req.scalarQuantity))) {
         for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
           const QuantityId cand = quantity.catalog.uiQ[q];
           const bool selected = (cand == req.scalarQuantity);
-          if (ImGui::Selectable(QuantityLabel(cand), selected)) {
+          if (ImGui::Selectable(QuantityDisplayLabel(quantity, cand), selected)) {
             req.scalarQuantity = cand;
             edit.powerSpectrumDirty = true;
           }
@@ -2543,11 +2637,11 @@ static void DrawRenderingSection(const QuantityState& quantity,
     ImGui::SeparatorText("Tree construction");
 
     if (ImGui::BeginCombo("Iso-contour quantity",
-			  QuantityLabel(req.selectedQuantity))) {
+			  QuantityDisplayLabel(quantity, req.selectedQuantity))) {
       for (int q = 0; q < catalog.nUIQ; ++q) {
 	QuantityId cand = catalog.uiQ[q];
 	bool is_selected = (cand == req.selectedQuantity);
-	if (ImGui::Selectable(QuantityLabel(cand), is_selected)) {
+	if (ImGui::Selectable(QuantityDisplayLabel(quantity, cand), is_selected)) {
 	  req.selectedQuantity = cand;
           isoContourDirty = true;
 	}

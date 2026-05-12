@@ -138,11 +138,12 @@ void DrawVolumeRenderingSettingsSection(
   ImGui::SeparatorText("Volume tree");
 
   if (ImGui::BeginCombo("Volume quantity",
-                        QuantityLabel(volumeReq.selectedQuantity))) {
+                        QuantityDisplayLabel(quantity,
+                                             volumeReq.selectedQuantity))) {
     for (int q = 0; q < catalog.nUIQ; ++q) {
       QuantityId cand = catalog.uiQ[q];
       bool selected = (cand == volumeReq.selectedQuantity);
-      if (ImGui::Selectable(QuantityLabel(cand), selected)) {
+      if (ImGui::Selectable(QuantityDisplayLabel(quantity, cand), selected)) {
         volumeReq.selectedQuantity = cand;
         volumeDirty = true;
       }

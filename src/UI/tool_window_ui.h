@@ -42,7 +42,7 @@ void DrawRadialProfileUI(RadialProfileUIState& state,
                          const RadialProfileViewContext& ctx);
 
 struct Histogram2DViewContext {
-  const QuantityCatalogState& catalog;
+  const QuantityState& quantity;
   std::array<std::size_t, 6> particleTypeCounts{};
   PlotBatchExportViewContext exportContext;
 };

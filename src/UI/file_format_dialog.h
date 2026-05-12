@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <string>
 #include <vector>
 
 #include "FileIO/file_format_types.h"
@@ -22,6 +24,7 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            InputDensityUnit& inputDensityUnit,
                            InputTemperatureUnit& inputTemperatureUnit,
                            InputMagneticFieldUnit& inputMagneticFieldUnit,
+                           std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
                            UnitSystem& unitsDraft,
                            const UnitSystem& currentUnits,
                            bool& unitsDraftDirty,

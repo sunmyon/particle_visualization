@@ -41,6 +41,13 @@ void BuildQuantityCatalog(const SimulationBlock& block, QuantityCatalogState& ou
   push_if_has(soa_views::H2Abundance,       QuantityId::H2Abundance);
   push_if_has(soa_views::HDAbundance,       QuantityId::HDAbundance);
   push_if_has(soa_views::J21,               QuantityId::J21);
-  push_if_has(soa_views::Val1,              QuantityId::Val);
-  push_if_has(soa_views::Val2,              QuantityId::Val2);      
+  for (int i = 0; i < kCustomScalarQuantityCount; ++i) {
+    const char* key = kCustomScalarSoAKeys[static_cast<size_t>(i)];
+    auto it = block.soa.find(key);
+    if (it == block.soa.end() || it->second.comps < 1) {
+      continue;
+    }
+    pushAll(CustomScalarQuantityId(i));
+    pushUI(CustomScalarQuantityId(i));
+  }
 }

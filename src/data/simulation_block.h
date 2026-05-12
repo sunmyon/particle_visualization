@@ -334,12 +334,15 @@ struct SimulationBlock {
       return kHDAbundanceKey;
     case QuantityId::J21:
       return kJ21Key;
-    case QuantityId::Val:
-      return kVal1Key;
-    case QuantityId::Val2:
-      return kVal2Key;
     default:
-      return nullptr;
+      {
+        const int customIndex = CustomScalarQuantityIndex(q);
+        if (customIndex >= 0 &&
+            customIndex < static_cast<int>(kCustomScalarSoAKeys.size())) {
+          return kCustomScalarSoAKeys[static_cast<std::size_t>(customIndex)];
+        }
+        return nullptr;
+      }
     }
   }
 
@@ -367,12 +370,15 @@ struct SimulationBlock {
       return kHDAbundanceKey;
     case QuantityId::J21:
       return kJ21Key;
-    case QuantityId::Val:
-      return "value";
-    case QuantityId::Val2:
-      return "value2";
     default:
-      return nullptr;
+      {
+        const int customIndex = CustomScalarQuantityIndex(q);
+        if (customIndex >= 0 &&
+            customIndex < static_cast<int>(kCustomScalarSoAKeys.size())) {
+          return QuantityLabel(q);
+        }
+        return nullptr;
+      }
     }
   }
 
@@ -616,11 +622,19 @@ struct SimulationBlock {
       if (!hasQuantityAt(i, q)) return false;
       return readSoAAs(soa_views::J21, i, out);
     case QuantityId::Val:
-      if (!hasQuantityAt(i, q)) return false;
-      return readSoAAs(soa_views::Val1, i, out);
     case QuantityId::Val2:
+    case QuantityId::Custom3:
+    case QuantityId::Custom4:
+    case QuantityId::Custom5:
+    case QuantityId::Custom6:
+    case QuantityId::Custom7:
+    case QuantityId::Custom8:
+    case QuantityId::Custom9:
+    case QuantityId::Custom10: {
       if (!hasQuantityAt(i, q)) return false;
-      return readSoAAs(soa_views::Val2, i, out);
+      const char* key = quantitySoAKey(q);
+      return key ? readSoAAs<float>(key, i, out) : false;
+    }
     }
     return false;
   }
@@ -655,9 +669,18 @@ struct SimulationBlock {
       p.supportRadius = value;
       return true;
     case QuantityId::Val:
-      return writeSoAAs(soa_views::Val1, i, value);
     case QuantityId::Val2:
-      return writeSoAAs(soa_views::Val2, i, value);
+    case QuantityId::Custom3:
+    case QuantityId::Custom4:
+    case QuantityId::Custom5:
+    case QuantityId::Custom6:
+    case QuantityId::Custom7:
+    case QuantityId::Custom8:
+    case QuantityId::Custom9:
+    case QuantityId::Custom10: {
+      const char* key = quantitySoAKey(q);
+      return key ? writeSoAAs<float>(key, i, value) : false;
+    }
     default:
       return false;
     }

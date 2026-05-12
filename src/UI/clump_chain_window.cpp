@@ -326,7 +326,7 @@ static void DrawSelectedClumpProjectionSection(ClumpChainWindowState& ui)
                    IM_ARRAYSIZE(ui.mapOutputDir));
   ImGui::PopItemWidth();
 
-  const char* quantities2[] = {"Density", "Temperature", "val", "val2", "Hsml", "Mass"};
+  const char* quantities2[] = {"Density", "Temperature", "custom1", "custom2", "Hsml", "Mass"};
   ImGui::Combo("Quantity##evo",
                &ui.selectedProjectionVar,
                quantities2,

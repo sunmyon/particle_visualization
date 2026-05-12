@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <array>
 
 enum class FileFormat {
   Auto,       // Infer from extension, preserving legacy behavior.
@@ -27,6 +28,14 @@ enum class FieldKey {
   Temperature,
   Value,
   Value2,
+  Custom3,
+  Custom4,
+  Custom5,
+  Custom6,
+  Custom7,
+  Custom8,
+  Custom9,
+  Custom10,
   ID,
   InternalEnergy,
   ElectronAbundance,
@@ -39,6 +48,82 @@ enum class FieldKey {
   Type,
   Unknown
 };
+
+inline constexpr int kCustomScalarFieldCount = 10;
+
+inline const char* GetCustomScalarFieldDisplayName(int index)
+{
+  static constexpr std::array<const char*, kCustomScalarFieldCount> names = {
+    "custom1", "custom2", "custom3", "custom4", "custom5",
+    "custom6", "custom7", "custom8", "custom9", "custom10"
+  };
+  return (index >= 0 && index < kCustomScalarFieldCount) ? names[index] : "";
+}
+
+inline std::array<std::string, kCustomScalarFieldCount>
+MakeDefaultCustomScalarFieldLabels()
+{
+  std::array<std::string, kCustomScalarFieldCount> labels{};
+  for (int i = 0; i < kCustomScalarFieldCount; ++i) {
+    labels[static_cast<std::size_t>(i)] = GetCustomScalarFieldDisplayName(i);
+  }
+  return labels;
+}
+
+inline bool IsCustomScalarFieldKey(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::Value:
+  case FieldKey::Value2:
+  case FieldKey::Custom3:
+  case FieldKey::Custom4:
+  case FieldKey::Custom5:
+  case FieldKey::Custom6:
+  case FieldKey::Custom7:
+  case FieldKey::Custom8:
+  case FieldKey::Custom9:
+  case FieldKey::Custom10:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline int CustomScalarFieldIndex(FieldKey key)
+{
+  switch (key) {
+  case FieldKey::Value:    return 0;
+  case FieldKey::Value2:   return 1;
+  case FieldKey::Custom3:  return 2;
+  case FieldKey::Custom4:  return 3;
+  case FieldKey::Custom5:  return 4;
+  case FieldKey::Custom6:  return 5;
+  case FieldKey::Custom7:  return 6;
+  case FieldKey::Custom8:  return 7;
+  case FieldKey::Custom9:  return 8;
+  case FieldKey::Custom10: return 9;
+  default:                 return -1;
+  }
+}
+
+inline FieldKey CustomScalarFieldKey(int index)
+{
+  static constexpr std::array<FieldKey, kCustomScalarFieldCount> keys = {
+    FieldKey::Value,
+    FieldKey::Value2,
+    FieldKey::Custom3,
+    FieldKey::Custom4,
+    FieldKey::Custom5,
+    FieldKey::Custom6,
+    FieldKey::Custom7,
+    FieldKey::Custom8,
+    FieldKey::Custom9,
+    FieldKey::Custom10
+  };
+  return (index >= 0 && index < kCustomScalarFieldCount)
+    ? keys[index]
+    : FieldKey::Unknown;
+}
 
 enum class DestKind {
   AoSCore,
@@ -77,8 +162,16 @@ inline const char* GetFieldKeyDisplayName(FieldKey key) {
     case FieldKey::Mass: return "mass";
     case FieldKey::Density: return "density";
     case FieldKey::Temperature: return "temperature";
-    case FieldKey::Value: return "value";
-    case FieldKey::Value2: return "value2";
+    case FieldKey::Value: return GetCustomScalarFieldDisplayName(0);
+    case FieldKey::Value2: return GetCustomScalarFieldDisplayName(1);
+    case FieldKey::Custom3: return GetCustomScalarFieldDisplayName(2);
+    case FieldKey::Custom4: return GetCustomScalarFieldDisplayName(3);
+    case FieldKey::Custom5: return GetCustomScalarFieldDisplayName(4);
+    case FieldKey::Custom6: return GetCustomScalarFieldDisplayName(5);
+    case FieldKey::Custom7: return GetCustomScalarFieldDisplayName(6);
+    case FieldKey::Custom8: return GetCustomScalarFieldDisplayName(7);
+    case FieldKey::Custom9: return GetCustomScalarFieldDisplayName(8);
+    case FieldKey::Custom10: return GetCustomScalarFieldDisplayName(9);
     case FieldKey::ID: return "ID";
     case FieldKey::InternalEnergy: return "internalenergy";
     case FieldKey::ElectronAbundance: return "ElectronAbundance";
@@ -104,8 +197,18 @@ inline FieldKey GetFieldKeyFromDisplayName(std::string name) {
   if (name == "mass")              return FieldKey::Mass;
   if (name == "density")           return FieldKey::Density;
   if (name == "temperature")       return FieldKey::Temperature;
-  if (name == "value")             return FieldKey::Value;
-  if (name == "value2")            return FieldKey::Value2;
+  if (name == "custom1" || name == "value" || name == "val" ||
+      name == "val1")              return FieldKey::Value;
+  if (name == "custom2" || name == "value2" || name == "val2")
+                                  return FieldKey::Value2;
+  if (name == "custom3")           return FieldKey::Custom3;
+  if (name == "custom4")           return FieldKey::Custom4;
+  if (name == "custom5")           return FieldKey::Custom5;
+  if (name == "custom6")           return FieldKey::Custom6;
+  if (name == "custom7")           return FieldKey::Custom7;
+  if (name == "custom8")           return FieldKey::Custom8;
+  if (name == "custom9")           return FieldKey::Custom9;
+  if (name == "custom10")          return FieldKey::Custom10;
   if (name == "id")                return FieldKey::ID;
   if (name == "internalenergy")    return FieldKey::InternalEnergy;
   if (name == "electronabundance") return FieldKey::ElectronAbundance;
@@ -135,8 +238,16 @@ inline const char* GetDefaultHDF5DatasetName(FieldKey key) {
     case FieldKey::Gamma:             return "Gamma";
     case FieldKey::InternalEnergy:    return "InternalEnergy";
     case FieldKey::Metallicity:       return "Metallicity";
-    case FieldKey::Value:             return "Metallicity";
-    case FieldKey::Value2:            return "ElectronAbundance";
+    case FieldKey::Value:             return "custom1";
+    case FieldKey::Value2:            return "custom2";
+    case FieldKey::Custom3:           return "custom3";
+    case FieldKey::Custom4:           return "custom4";
+    case FieldKey::Custom5:           return "custom5";
+    case FieldKey::Custom6:           return "custom6";
+    case FieldKey::Custom7:           return "custom7";
+    case FieldKey::Custom8:           return "custom8";
+    case FieldKey::Custom9:           return "custom9";
+    case FieldKey::Custom10:          return "custom10";
     case FieldKey::Volume:            return "Volume";
     case FieldKey::Hsml:              return "SmoothingLength";
     case FieldKey::Type:              return "ParticleType";    
@@ -181,6 +292,14 @@ inline void ApplyDefaultFieldSpec(FieldSpec& spec) {
     case FieldKey::Metallicity:
     case FieldKey::Value:
     case FieldKey::Value2:
+    case FieldKey::Custom3:
+    case FieldKey::Custom4:
+    case FieldKey::Custom5:
+    case FieldKey::Custom6:
+    case FieldKey::Custom7:
+    case FieldKey::Custom8:
+    case FieldKey::Custom9:
+    case FieldKey::Custom10:
       spec.type = DataType::Float;
       spec.count = 1;
       spec.sourceName = GetDefaultHDF5SourceName(spec.key);
@@ -244,6 +363,14 @@ inline constexpr FieldKey kAvailableFieldKeys[] = {
   FieldKey::Temperature,
   FieldKey::Value,
   FieldKey::Value2,
+  FieldKey::Custom3,
+  FieldKey::Custom4,
+  FieldKey::Custom5,
+  FieldKey::Custom6,
+  FieldKey::Custom7,
+  FieldKey::Custom8,
+  FieldKey::Custom9,
+  FieldKey::Custom10,
   FieldKey::ID,
   FieldKey::InternalEnergy,
   FieldKey::ElectronAbundance,

@@ -1033,7 +1033,7 @@ bool FieldUsesBackgroundGrid(FieldKey key)
   case FieldKey::Gamma:
     return true;
   default:
-    return false;
+    return IsCustomScalarFieldKey(key);
   }
 }
 
@@ -1065,7 +1065,7 @@ bool FieldUsesNearestBackgroundValue(FieldKey key)
   case FieldKey::Gamma:
     return true;
   default:
-    return false;
+    return IsCustomScalarFieldKey(key);
   }
 }
 
@@ -1562,6 +1562,12 @@ std::vector<double> BackgroundDoubleRows(const FieldSpec& field,
       }
       break;
     default:
+      if (IsCustomScalarFieldKey(field.key) &&
+          nearestRows.size() == rows.size()) {
+        for (std::size_t c = 0; c < comps; ++c) {
+          rows[i * comps + c] = nearestRows[i * comps + c];
+        }
+      }
       break;
     }
   }
@@ -1667,6 +1673,10 @@ bool IsTypePseudoField(FieldKey key)
 
 std::string OutputDatasetName(const FieldSpec& field)
 {
+  if (IsCustomScalarFieldKey(field.key) && !field.sourceName.empty() &&
+      field.sourceName.find(':') == std::string::npos) {
+    return field.sourceName;
+  }
   const char* defaultName = GetDefaultHDF5DatasetName(field.key);
   if (defaultName && std::strcmp(defaultName, "unknown") != 0 &&
       std::strcmp(defaultName, "dummy") != 0) {
@@ -2365,11 +2375,16 @@ bool LoadedFieldAvailable(const SimulationBlock& block, FieldKey key, int ptype)
     return sourceMarked(key) && block.hasSoAAs(soa_views::J21);
   case FieldKey::Gamma:
     return sourceMarked(key) && block.hasSoAAs(soa_views::Gamma);
-  case FieldKey::Value:
-    return sourceMarked(key) && block.hasSoAAs(soa_views::Val1);
-  case FieldKey::Value2:
-    return sourceMarked(key) && block.hasSoAAs(soa_views::Val2);
   default:
+    {
+      const int customIndex = CustomScalarFieldIndex(key);
+      if (customIndex >= 0 &&
+          customIndex < static_cast<int>(kCustomScalarSoAKeys.size())) {
+        return sourceMarked(key) &&
+               block.soa.find(kCustomScalarSoAKeys[static_cast<std::size_t>(customIndex)]) !=
+                 block.soa.end();
+      }
+    }
     return false;
   }
 }
@@ -2473,20 +2488,6 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
         rows[row * comps] = static_cast<double>(value) * valueScale;
       }
       break;
-    case FieldKey::Value:
-      {
-        float value = 0.0f;
-        (void)block.readSoAAs(soa_views::Val1, index, value);
-        rows[row * comps] = static_cast<double>(value) * valueScale;
-      }
-      break;
-    case FieldKey::Value2:
-      {
-        float value = 0.0f;
-        (void)block.readSoAAs(soa_views::Val2, index, value);
-        rows[row * comps] = static_cast<double>(value) * valueScale;
-      }
-      break;
     case FieldKey::Volume:
       rows[row * comps] =
         static_cast<double>(p.supportRadius) *
@@ -2494,7 +2495,19 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
         static_cast<double>(p.supportRadius) * valueScale;
       break;
     default:
-      break;
+      {
+        const int customIndex = CustomScalarFieldIndex(field.key);
+        if (customIndex >= 0 &&
+            customIndex < static_cast<int>(kCustomScalarSoAKeys.size())) {
+          float value = 0.0f;
+          (void)block.readSoAAs<float>(
+            kCustomScalarSoAKeys[static_cast<std::size_t>(customIndex)],
+            index,
+            value);
+          rows[row * comps] = static_cast<double>(value) * valueScale;
+        }
+        break;
+      }
     }
   }
   if (!rows.empty()) {
@@ -2839,13 +2852,11 @@ bool IsGadgetExtractGasField(FieldKey key)
   case FieldKey::J21:
   case FieldKey::Gamma:
   case FieldKey::Metallicity:
-  case FieldKey::Value:
-  case FieldKey::Value2:
   case FieldKey::Bfield:
   case FieldKey::Hsml:
     return true;
   default:
-    return false;
+    return IsCustomScalarFieldKey(key);
   }
 }
 

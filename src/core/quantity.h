@@ -2,13 +2,42 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include "core/units.h"
 
 static constexpr int kMaxV = 4;
 enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
 
-static constexpr int kMaxQ = 18;
-enum class QuantityId : int { Density, Temperature, Val, Val2, Mass, Hsml, PosX, PosY, PosZ, Radius, VRad, B, Beta, Metallicity, ElectronAbundance, H2Abundance, HDAbundance, J21};
+static constexpr int kCustomScalarQuantityCount = 10;
+static constexpr int kMaxQ = 26;
+enum class QuantityId : int {
+  Density,
+  Temperature,
+  Val,
+  Val2,
+  Mass,
+  Hsml,
+  PosX,
+  PosY,
+  PosZ,
+  Radius,
+  VRad,
+  B,
+  Beta,
+  Metallicity,
+  ElectronAbundance,
+  H2Abundance,
+  HDAbundance,
+  J21,
+  Custom3,
+  Custom4,
+  Custom5,
+  Custom6,
+  Custom7,
+  Custom8,
+  Custom9,
+  Custom10
+};
 
 static constexpr int kNumTypes = 6;
 extern QuantityId selectedQuantity[6];
@@ -18,12 +47,67 @@ enum class UnitSpace : uint8_t {
   Comoving = 1
 };
 
+inline bool IsCustomScalarQuantity(QuantityId q)
+{
+  switch (q) {
+  case QuantityId::Val:
+  case QuantityId::Val2:
+  case QuantityId::Custom3:
+  case QuantityId::Custom4:
+  case QuantityId::Custom5:
+  case QuantityId::Custom6:
+  case QuantityId::Custom7:
+  case QuantityId::Custom8:
+  case QuantityId::Custom9:
+  case QuantityId::Custom10:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline int CustomScalarQuantityIndex(QuantityId q)
+{
+  switch (q) {
+  case QuantityId::Val:      return 0;
+  case QuantityId::Val2:     return 1;
+  case QuantityId::Custom3:  return 2;
+  case QuantityId::Custom4:  return 3;
+  case QuantityId::Custom5:  return 4;
+  case QuantityId::Custom6:  return 5;
+  case QuantityId::Custom7:  return 6;
+  case QuantityId::Custom8:  return 7;
+  case QuantityId::Custom9:  return 8;
+  case QuantityId::Custom10: return 9;
+  default:                   return -1;
+  }
+}
+
+inline QuantityId CustomScalarQuantityId(int index)
+{
+  static constexpr std::array<QuantityId, kCustomScalarQuantityCount> ids = {
+    QuantityId::Val,
+    QuantityId::Val2,
+    QuantityId::Custom3,
+    QuantityId::Custom4,
+    QuantityId::Custom5,
+    QuantityId::Custom6,
+    QuantityId::Custom7,
+    QuantityId::Custom8,
+    QuantityId::Custom9,
+    QuantityId::Custom10
+  };
+  return (index >= 0 && index < kCustomScalarQuantityCount)
+    ? ids[index]
+    : QuantityId::Density;
+}
+
 inline const char* QuantityLabel(QuantityId q) {
   switch (q) {
     case QuantityId::Density:     return "Density";
     case QuantityId::Temperature: return "Temperature";
-    case QuantityId::Val:         return "val";
-    case QuantityId::Val2:        return "val2";
+    case QuantityId::Val:         return "custom1";
+    case QuantityId::Val2:        return "custom2";
     case QuantityId::Mass:        return "Mass";
     case QuantityId::Hsml:        return "Hsml";
     case QuantityId::PosX:        return "x";
@@ -38,8 +122,27 @@ inline const char* QuantityLabel(QuantityId q) {
     case QuantityId::H2Abundance: return "fH2";
     case QuantityId::HDAbundance: return "fHD";
     case QuantityId::J21: return "J21";			
+    case QuantityId::Custom3:  return "custom3";
+    case QuantityId::Custom4:  return "custom4";
+    case QuantityId::Custom5:  return "custom5";
+    case QuantityId::Custom6:  return "custom6";
+    case QuantityId::Custom7:  return "custom7";
+    case QuantityId::Custom8:  return "custom8";
+    case QuantityId::Custom9:  return "custom9";
+    case QuantityId::Custom10: return "custom10";
   }
   return "Unknown";
+}
+
+inline std::array<std::string, kCustomScalarQuantityCount>
+MakeDefaultCustomScalarQuantityLabels()
+{
+  std::array<std::string, kCustomScalarQuantityCount> labels{};
+  for (int i = 0; i < kCustomScalarQuantityCount; ++i) {
+    labels[static_cast<std::size_t>(i)] =
+      std::string("custom") + std::to_string(i + 1);
+  }
+  return labels;
 }
 
 inline bool QuantityShowInUI(QuantityId q) {
@@ -175,6 +278,8 @@ struct QuantityState {
   QuantityRangeState range;
   UnitSystem units;
   QuantityConversionState conversion;
+  std::array<std::string, kCustomScalarQuantityCount> customScalarLabels =
+    MakeDefaultCustomScalarQuantityLabels();
 
   void rebuildConversion(double scaleFactor)
   {
@@ -194,3 +299,17 @@ struct QuantityState {
     return conversion.converter.factor(q, conversion.displaySpace);
   }
 };
+
+inline const char* QuantityDisplayLabel(const QuantityState& state,
+                                        QuantityId q)
+{
+  const int customIndex = CustomScalarQuantityIndex(q);
+  if (customIndex >= 0 && customIndex < kCustomScalarQuantityCount) {
+    const std::string& label =
+      state.customScalarLabels[static_cast<std::size_t>(customIndex)];
+    if (!label.empty()) {
+      return label.c_str();
+    }
+  }
+  return QuantityLabel(q);
+}

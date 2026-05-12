@@ -2,6 +2,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
@@ -604,12 +605,39 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
 void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
                                  InputTemperatureUnit& inputTemperatureUnit,
                                  InputMagneticFieldUnit& inputMagneticFieldUnit,
+                                 std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
+                                 unsigned int usedCustomScalarMask,
                                  UnitSystem& unitsDraft,
                                  const UnitSystem& currentUnits,
                                  bool& unitsDraftDirty,
                                  bool& applyUnitsRequested,
                                  bool& unitConversionRebuildRequested)
 {
+  ImGui::SeparatorText("Custom scalar UI labels");
+  if ((usedCustomScalarMask & ((1u << kCustomScalarFieldCount) - 1u)) == 0) {
+    ImGui::TextDisabled("No custom scalar fields are used by the current data formats.");
+  } else {
+    ImGui::TextDisabled("Internal slots stay custom1..custom10; these labels are only for UI display.");
+    const float slotWidth = ImGui::CalcTextSize("custom10").x +
+                            2.0f * ImGui::GetStyle().FramePadding.x;
+    for (int i = 0; i < kCustomScalarFieldCount; ++i) {
+      if ((usedCustomScalarMask & (1u << i)) == 0) {
+        continue;
+      }
+      ImGui::PushID(i);
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextUnformatted(GetCustomScalarFieldDisplayName(i));
+      ImGui::SameLine(slotWidth + 24.0f);
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "%s", customScalarLabels[static_cast<std::size_t>(i)].c_str());
+      ImGui::SetNextItemWidth(220.0f);
+      if (ImGui::InputText("##custom_scalar_label", buf, IM_ARRAYSIZE(buf))) {
+        customScalarLabels[static_cast<std::size_t>(i)] = buf;
+      }
+      ImGui::PopID();
+    }
+  }
+
   ImGui::SeparatorText("Input field interpretation");
   ImGui::TextDisabled(
     "Used when the file does not provide enough metadata. HDF5/AREPO metadata overrides this when available.");
@@ -741,6 +769,18 @@ void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
     ImGui::SameLine();
     ImGui::TextDisabled("Applying...");
   }
+}
+
+unsigned int UsedCustomScalarMask(const std::vector<FieldSpec>& tokens)
+{
+  unsigned int mask = 0;
+  for (const FieldSpec& spec : tokens) {
+    const int index = CustomScalarFieldIndex(spec.key);
+    if (index >= 0 && index < kCustomScalarFieldCount) {
+      mask |= (1u << index);
+    }
+  }
+  return mask;
 }
 
 #ifdef HAVE_HDF5
@@ -1476,6 +1516,7 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            InputDensityUnit& inputDensityUnit,
                            InputTemperatureUnit& inputTemperatureUnit,
                            InputMagneticFieldUnit& inputMagneticFieldUnit,
+                           std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
                            UnitSystem& unitsDraft,
                            const UnitSystem& currentUnits,
                            bool& unitsDraftDirty,
@@ -1516,9 +1557,17 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
     const bool selectingInitialTab = state.selectInputFormatTabOnOpen;
     const FileFormat initialTab = state.activeInputFormatTab;
     if (ImGui::BeginTabItem("Common")) {
+      unsigned int usedCustomScalarMask =
+        UsedCustomScalarMask(state.binaryFormatTokensEdit) |
+        UsedCustomScalarMask(state.gadgetFormatTokensEdit);
+#ifdef HAVE_HDF5
+      usedCustomScalarMask |= UsedCustomScalarMask(state.hdf5FormatTokensEdit);
+#endif
       DrawCommonInputFormatEditor(inputDensityUnit,
                                   inputTemperatureUnit,
                                   inputMagneticFieldUnit,
+                                  customScalarLabels,
+                                  usedCustomScalarMask,
                                   unitsDraft,
                                   currentUnits,
                                   unitsDraftDirty,

@@ -995,7 +995,8 @@ private:
                         GadgetFieldDomain::Type0);
       return true;
     }
-    if (name == "metallicity" || name == "metals" || name == "value") {
+    if (name == "metallicity" || name == "metals" || name == "value" ||
+        name == "custom1") {
       FieldSpec valueSpec;
       if (!requestedSpec_(fields, FieldKey::Value, valueSpec)) {
         valueSpec = requestedOrDefaultSpec_(fields, FieldKey::Metallicity);
@@ -1005,11 +1006,24 @@ private:
                         GadgetFieldDomain::Type0);
       return true;
     }
-    if (name == "value2" || name == "val2") {
+    if (name == "value2" || name == "val2" || name == "custom2") {
       appendFieldBlock_(format,
                         requestedOrDefaultSpec_(fields, FieldKey::Value2),
                         GadgetFieldDomain::Type0);
       return true;
+    }
+    if (name.rfind("custom", 0) == 0 && name.size() > 6) {
+      try {
+        const int customIndex = std::stoi(name.substr(6)) - 1;
+        const FieldKey key = CustomScalarFieldKey(customIndex);
+        if (key != FieldKey::Unknown) {
+          appendFieldBlock_(format,
+                            requestedOrDefaultSpec_(fields, key),
+                            GadgetFieldDomain::Type0);
+          return true;
+        }
+      } catch (...) {
+      }
     }
     if (name == "b" || name == "bfield" || name == "magneticfield") {
       appendFieldBlock_(format,
@@ -1348,11 +1362,8 @@ private:
     case FieldKey::J21:
     case FieldKey::Gamma:
     case FieldKey::Metallicity:
-    case FieldKey::Value:
-    case FieldKey::Value2:
-      return true;
     default:
-      return false;
+      return IsCustomScalarFieldKey(key);
     }
   }
 
@@ -1370,8 +1381,16 @@ private:
     case FieldKey::Metallicity:       return 7;
     case FieldKey::Value:             return 8;
     case FieldKey::Value2:            return 9;
-    case FieldKey::Bfield:            return 10;
-    case FieldKey::Hsml:              return 11;
+    case FieldKey::Custom3:           return 10;
+    case FieldKey::Custom4:           return 11;
+    case FieldKey::Custom5:           return 12;
+    case FieldKey::Custom6:           return 13;
+    case FieldKey::Custom7:           return 14;
+    case FieldKey::Custom8:           return 15;
+    case FieldKey::Custom9:           return 16;
+    case FieldKey::Custom10:          return 17;
+    case FieldKey::Bfield:            return 18;
+    case FieldKey::Hsml:              return 19;
     default:                          return 1000;
     }
   }

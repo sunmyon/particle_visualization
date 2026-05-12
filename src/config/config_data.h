@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,8 @@ struct PersistentSettings {
   std::vector<FieldSpec> formatTokens;
   std::vector<FieldSpec> formatTokensHdf5;
   std::vector<FieldSpec> formatTokensGadget;
+  std::array<std::string, kCustomScalarFieldCount> customScalarLabels =
+    MakeDefaultCustomScalarFieldLabels();
   SnapshotOutputFormatConfig outputFormat;
   InputDensityUnit inputDensityUnit = InputDensityUnit::CodeMassDensity;
   InputTemperatureUnit inputTemperatureUnit =

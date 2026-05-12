@@ -741,6 +741,8 @@ static void DrawToolWindows(AppRuntimeState& runtime,
   TopParticlesViewContext topParticlesCtx;
   topParticlesCtx.quantity = &runtime.quantity;
   topParticlesCtx.exportContext = plotExportCtx;
+  runtime.quantity.customScalarLabels =
+    runtime.settings.snapshotFormat.customScalarLabels;
   DrawTopParticlesUI(tools.topParticles,
                      tools.topParticlesRequest,
                      tools.topParticlesResult,
@@ -757,11 +759,14 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                         runtime.settings.snapshotFormat.inputDensityUnit,
                         runtime.settings.snapshotFormat.inputTemperatureUnit,
                         runtime.settings.snapshotFormat.inputMagneticFieldUnit,
+                        runtime.settings.snapshotFormat.customScalarLabels,
                         runtime.settings.request.unitsDraft,
                         runtime.quantity.units,
                         runtime.settings.request.unitsDraftDirty,
                         runtime.settings.request.applyUnitsRequested,
                         runtime.settings.request.unitConversionRebuildRequested);
+  runtime.quantity.customScalarLabels =
+    runtime.settings.snapshotFormat.customScalarLabels;
   DrawOutputFormatDialog(tools.fileFormatDialog,
                          runtime.settings.snapshotFormat.outputFormat);
   DrawMaskWindow(tools.mask,
@@ -805,7 +810,7 @@ static void DrawToolWindows(AppRuntimeState& runtime,
     }
   }
   Histogram2DViewContext histogram2DCtx{
-    runtime.quantity.catalog,
+    runtime.quantity,
     histogramTypeCounts,
     plotExportCtx
   };
