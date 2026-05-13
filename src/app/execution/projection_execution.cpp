@@ -339,15 +339,24 @@ static void ApplyMovieRequestToTracking(const ProjectionMovieRequestState& reque
 }
 
 static void ApplyMovieCameraTargetToProjectionParams(ProjectionMapParams& params,
-                                                     const glm::vec3& target)
+                                                     const glm::vec3& renderTarget,
+                                                     float worldToRenderScale)
 {
   ProjectionEnsureLayoutInitialized(params);
-  params.viewBlocks[0].xoffset[0] = target.x;
-  params.viewBlocks[0].xoffset[1] = target.y;
-  params.viewBlocks[0].xoffset[2] = target.z;
-  params.xoffset[0] = target.x;
-  params.xoffset[1] = target.y;
-  params.xoffset[2] = target.z;
+  const glm::vec3 dataTarget =
+    ProjectionRenderToData(renderTarget, worldToRenderScale);
+  const int centerBlockIndex = params.multiPanelEnabled
+    ? 0
+    : params.activeViewBlockIndex;
+  ProjectionViewBlockSpec& block = params.viewBlocks[centerBlockIndex];
+  ProjectionViewBlockSpec& target =
+    (centerBlockIndex != 0 && block.centerSameAsMain)
+      ? params.viewBlocks[0]
+      : block;
+  target.xoffset[0] = dataTarget.x;
+  target.xoffset[1] = dataTarget.y;
+  target.xoffset[2] = dataTarget.z;
+  ProjectionSyncTopLevelFromViewBlock(params, centerBlockIndex);
 }
 
 static bool PrepareProjectionMovieExecution(ProjectionMovieExecutionContext& ctx,
@@ -485,7 +494,8 @@ static void SubmitProjectionMovieFrameRequest(ProjectionMovieExecutionContext& c
 {
   request.params = ctx.runtime.projectionParams;
   ApplyMovieCameraTargetToProjectionParams(request.params,
-                                           ctx.camera.cameraTarget);
+                                           ctx.camera.cameraTarget,
+                                           ctx.projection.particles.simulationBlock.worldToRenderScale);
   request.paramsChanged = true;
   request.renderRequested = true;
 }

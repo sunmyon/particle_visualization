@@ -19,16 +19,16 @@ git clone --recurse-submodules <repo_url>
 git submodule update --init --recursive
 ```
 
-The repository keeps small vendored UI/header libraries as submodules
-(`imgui`, `stb`, `ImGuiFileDialog`) plus fallback checkouts for `glfw` and
-other optional build dependencies. Heavy science dependencies such as CGAL,
-GMP, MPFR, and VTK are not submodules.
+The repository keeps small vendored UI/header libraries under `external/`.
+Heavy science dependencies such as CGAL, GMP, MPFR, and VTK are not
+submodules.
 
 ## License
 
 This project is distributed under the MIT License. See `LICENSE`.
 
-Bundled third-party libraries keep their own licenses in `external/`.
+Bundled third-party libraries keep their own licenses in `external/`. See
+`THIRD_PARTY_NOTICES.md` for a summary.
 
 ## Debug Notes
 

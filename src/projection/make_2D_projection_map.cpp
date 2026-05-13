@@ -157,7 +157,7 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particle
 
   ProjectionMapParams panelParams = params;
   panelParams.multiPanelEnabled = false;
-  const int blockIndex = std::clamp(panelParams.panels[0].viewBlockIndex,
+  const int blockIndex = std::clamp(panelParams.activeViewBlockIndex,
                                     0,
                                     panelParams.viewBlockCount - 1);
   const ProjectionViewBlockSpec block =
@@ -318,20 +318,13 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
     insideParticles.push_back(pp);
   }
 
-  if (params.dataSource == DataSource::Gas) 
-    if(insideParticles.size() < 0.1 * params.npixel * params.npixel){
-      printf("too few particles inside specified region... npart=%ld while there are %dx%d pixels.\n",
-	     insideParticles.size(), params.npixel, params.npixel);
-      return {};
-    }
-    
   ProjectionMap map = buildProjectionMap(params, ctx);
   for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
 
   using namespace std::chrono;
   auto start = high_resolution_clock::now();
 
-  if (params.dataSource == DataSource::Gas) {
+  if (params.dataSource == DataSource::Gas && !insideParticles.empty()) {
     bool projectedOnGpu = false;
     if (params.useGpuProjection) {
       ProjectionGpuMapInput input;
@@ -722,6 +715,9 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       if (params.flagVoronoi) createVoronoiSliceMap(map, insideParticles, params, ctx);
       else             createProjectionMap(map, insideParticles);
     }
+  } else if (params.dataSource == DataSource::Gas) {
+    std::cerr << "No gas particles inside the projection region; "
+              << "writing a blank projection map." << std::endl;
   }
   else if (params.dataSource == DataSource::Stars) {
     bool normalize = (params.starQuantity != StarQuantity::Flux);
@@ -1141,6 +1137,11 @@ ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
   grid.width = map.npixel_x;
   grid.height = map.npixel_y;
   grid.depth = map.npixel_z;
+
+  if (filtered.empty()) {
+    return grid;
+  }
+
   grid.labels.assign(static_cast<size_t>(grid.width) *
                        static_cast<size_t>(grid.height) *
                        static_cast<size_t>(grid.depth),
