@@ -68,6 +68,7 @@ struct SnapshotOutputFieldSpec {
   FieldKey key = FieldKey::Unknown;
   DataType type = DataType::Double;
   int count = 1;
+  std::string sourceName;
   std::string outputName;
   SnapshotOutputMissingPolicy missingPolicy = SnapshotOutputMissingPolicy::Omit;
   std::vector<double> defaultValues;

@@ -885,7 +885,6 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
     addColorBarToMap(canvas,
                      map.cell_size,
-                     map.xlen[0],
                      map.colorMinVal,
                      map.colorMaxVal,
                      colorBarWidth,
@@ -942,7 +941,6 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
   addColorBarToMap(canvas,
                    map.cell_size,
-                   map.xlen[0],
                    rangeMin,
                    rangeMax,
                    colorBarWidth,
@@ -2146,7 +2144,6 @@ std::vector<double> generate_ticks(double min, double max, int n_desired) {
 
 void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					      double cell_size,
-					      double projectedBoxWidth,
 					      float minVal,
 					      float maxVal,
 					      int colorBarWidth,
@@ -2292,9 +2289,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   // draw spatial scale
   if(params.flagPlaceScale)
     {
-      double scaleBarLength =
-        static_cast<double>(params.scaleBarFraction) *
-        std::max(projectedBoxWidth, 0.0);
+      double scaleBarLength = static_cast<double>(params.scaleBarLength);
 
       int scaleBarLengthPixels = static_cast<int>(scaleBarLength / cell_size);
 	

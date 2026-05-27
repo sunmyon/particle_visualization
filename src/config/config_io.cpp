@@ -108,7 +108,8 @@ static void saveOutputFieldList(std::ofstream& outfile,
             << field.count << ","
             << field.outputName << ","
             << static_cast<int>(field.missingPolicy) << ","
-            << field.typeMask << ",";
+            << field.typeMask << ","
+            << field.sourceName << ",";
     for (std::size_t i = 0; i < field.defaultValues.size(); ++i) {
       if (i > 0) outfile << ";";
       outfile << field.defaultValues[i];
@@ -130,14 +131,14 @@ static void loadOutputFieldList(std::ifstream& infile,
 
     std::istringstream iss(line);
     std::string keyText, typeText, countText, outputName, policyText, maskText;
-    std::string defaultsText;
+    std::string restText;
     if (!std::getline(iss, keyText, ',')) continue;
     if (!std::getline(iss, typeText, ',')) continue;
     if (!std::getline(iss, countText, ',')) continue;
     if (!std::getline(iss, outputName, ',')) continue;
     if (!std::getline(iss, policyText, ',')) continue;
     if (!std::getline(iss, maskText, ',')) continue;
-    std::getline(iss, defaultsText);
+    std::getline(iss, restText);
 
     SnapshotOutputFieldSpec field;
     field.key = GetFieldKeyFromDisplayName(trim(keyText));
@@ -150,6 +151,13 @@ static void loadOutputFieldList(std::ifstream& infile,
       field.missingPolicy = static_cast<SnapshotOutputMissingPolicy>(policy);
     }
     field.typeMask = static_cast<unsigned int>(std::stoul(trim(maskText))) & 0x3fu;
+
+    std::string defaultsText = restText;
+    const std::size_t comma = restText.find(',');
+    if (comma != std::string::npos) {
+      field.sourceName = trim(restText.substr(0, comma));
+      defaultsText = restText.substr(comma + 1);
+    }
 
     std::stringstream defaults(defaultsText);
     std::string valueText;

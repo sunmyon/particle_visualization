@@ -52,6 +52,44 @@ float DataTypeColumnWidth()
          2.0f * style.CellPadding.x + ImGui::GetFrameHeight();
 }
 
+float OutputFieldColumnWidth()
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  float textWidth = 0.0f;
+  for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+    FieldKey key = kAvailableFieldKeys[n];
+    if (key == FieldKey::Dummy || key == FieldKey::Type ||
+        key == FieldKey::Unknown) {
+      continue;
+    }
+    textWidth =
+      std::max(textWidth, ImGui::CalcTextSize(GetFieldKeyDisplayName(key)).x);
+  }
+  return textWidth + 2.0f * style.FramePadding.x +
+         2.0f * style.CellPadding.x + ImGui::GetFrameHeight();
+}
+
+ImVec2 FormatTableContentSize(std::size_t rowCount,
+                              float reservedBottomHeight = 64.0f)
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float headerHeight =
+    ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.CellPadding.y;
+  const float rowHeight =
+    ImGui::GetFrameHeightWithSpacing() + 2.0f * style.CellPadding.y;
+  const float desiredHeight =
+    headerHeight + rowHeight * static_cast<float>(std::max<std::size_t>(rowCount, 1));
+  const float minHeight = headerHeight + rowHeight * 2.0f;
+  const float availableHeight = ImGui::GetContentRegionAvail().y;
+  const float maxHeight =
+    availableHeight > reservedBottomHeight + minHeight
+      ? availableHeight - reservedBottomHeight
+      : availableHeight;
+  const float height =
+    std::max(minHeight, std::min(desiredHeight, std::max(minHeight, maxHeight)));
+  return ImVec2(0.0f, height);
+}
+
 
 bool IsFixedGadgetBlock(FieldKey key)
 {
@@ -317,6 +355,7 @@ void ApplyOutputFieldDefaults(SnapshotOutputFieldSpec& spec)
   if (spec.outputName == "unknown" || spec.outputName == "dummy") {
     spec.outputName.clear();
   }
+  spec.sourceName = spec.outputName;
   spec.defaultValues.assign(static_cast<std::size_t>(spec.count), 0.0);
   switch (spec.key) {
   case FieldKey::Position:
@@ -330,6 +369,96 @@ void ApplyOutputFieldDefaults(SnapshotOutputFieldSpec& spec)
     break;
   }
 }
+
+std::string NormalizedDatasetName(std::string name)
+{
+  const size_t slash = name.find_last_of('/');
+  if (slash != std::string::npos) {
+    name = name.substr(slash + 1);
+  }
+  name.erase(std::remove_if(name.begin(),
+                            name.end(),
+                            [](unsigned char c) {
+                              return c == '_' || c == '-' || std::isspace(c);
+                            }),
+             name.end());
+  std::transform(name.begin(),
+                 name.end(),
+                 name.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return name;
+}
+
+FieldKey FieldKeyForHDF5DatasetName(const std::string& sourceName)
+{
+  const std::string normalized = NormalizedDatasetName(sourceName);
+  for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
+    FieldKey key = kAvailableFieldKeys[n];
+    if (key == FieldKey::Dummy || key == FieldKey::Type ||
+        key == FieldKey::Unknown || IsCustomScalarFieldKey(key)) {
+      continue;
+    }
+    if (normalized == NormalizedDatasetName(GetDefaultHDF5DatasetName(key)) ||
+        normalized == NormalizedDatasetName(GetFieldKeyDisplayName(key))) {
+      return key;
+    }
+  }
+  if (normalized == "particleids" || normalized == "ids") return FieldKey::ID;
+  if (normalized == "coordinates" || normalized == "coords") return FieldKey::Position;
+  if (normalized == "velocities") return FieldKey::Velocity;
+  if (normalized == "magneticfield") return FieldKey::Bfield;
+  if (normalized == "smoothinglength") return FieldKey::Hsml;
+  return FieldKey::Unknown;
+}
+
+#ifdef HAVE_HDF5
+std::vector<SnapshotOutputFieldSpec> MakeOutputFieldsFromHDF5Metadata(
+  const std::vector<Hdf5DatasetMetadataPreview>& preview)
+{
+  std::vector<SnapshotOutputFieldSpec> fields;
+  fields.reserve(preview.size());
+
+  int nextCustom = 0;
+  auto nextCustomKey = [&]() -> FieldKey {
+    while (nextCustom < kCustomScalarFieldCount) {
+      FieldKey key = CustomScalarFieldKey(nextCustom++);
+      const bool used = std::any_of(fields.begin(),
+                                    fields.end(),
+                                    [&](const SnapshotOutputFieldSpec& field) {
+                                      return field.key == key;
+                                    });
+      if (!used) return key;
+    }
+    return FieldKey::Unknown;
+  };
+
+  for (const Hdf5DatasetMetadataPreview& item : preview) {
+    FieldKey key = FieldKeyForHDF5DatasetName(item.sourceName);
+    if (key == FieldKey::Unknown) {
+      key = nextCustomKey();
+    }
+    if (key == FieldKey::Unknown) {
+      continue;
+    }
+
+    SnapshotOutputFieldSpec spec;
+    spec.key = key;
+    spec.sourceName = item.sourceName;
+    spec.outputName = item.sourceName;
+    spec.type = item.type;
+    spec.count = std::max(1, item.count);
+    spec.typeMask = item.typeMask & 0x3fu;
+    if (spec.typeMask == 0) {
+      spec.typeMask = DefaultFieldTypeMask(key);
+    }
+    spec.missingPolicy = SnapshotOutputMissingPolicy::Omit;
+    spec.defaultValues.assign(static_cast<std::size_t>(spec.count), 0.0);
+    fields.push_back(std::move(spec));
+  }
+
+  return fields;
+}
+#endif
 
 std::string DefaultValuesText(const SnapshotOutputFieldSpec& spec)
 {
@@ -420,7 +549,7 @@ void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_ScrollY,
-                        ImVec2(0.0f, 0.0f))) {
+                        FormatTableContentSize(tokens.size()))) {
     ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 130.0f);
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -521,7 +650,7 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_ScrollY,
-                        ImVec2(0.0f, 0.0f))) {
+                        FormatTableContentSize(tokens.size()))) {
     ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0f);
     ImGui::TableSetupColumn("Field / skip", ImGuiTableColumnFlags_WidthFixed, 140.0f);
     SetupTypeMaskColumn();
@@ -1124,7 +1253,7 @@ void DrawSimpleHDF5FormatEditor(FileFormatDialogState& state,
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_ScrollY,
-                        ImVec2(0.0f, 0.0f))) {
+                        FormatTableContentSize(tokens.size()))) {
     ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 20.0f);
     ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 100.0f);
     ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 168.0f);
@@ -1662,7 +1791,8 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
 }
 
 void DrawOutputFormatDialog(FileFormatDialogState& state,
-                            SnapshotOutputFormatConfig& outputFormat)
+                            SnapshotOutputFormatConfig& outputFormat,
+                            const char* hdf5MetadataPath)
 {
   if (!state.showOutputFormatDialog) return;
 
@@ -1679,6 +1809,26 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
     state.outputFormatEdit.fields = MakeDefaultSnapshotOutputFields();
   }
   ImGui::SameLine();
+#ifdef HAVE_HDF5
+  if (ImGui::Button("Scan HDF5 fields")) {
+    ScanHDF5MetadataPreview(state, hdf5MetadataPath);
+    if (state.hdf5MetadataScanned) {
+      state.outputFormatEdit.fields =
+        MakeOutputFieldsFromHDF5Metadata(state.hdf5MetadataPreview);
+      state.outputFormatEdit.enabled = true;
+    }
+  }
+  if (!state.hdf5MetadataMessage.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", state.hdf5MetadataMessage.c_str());
+  }
+#endif
+  if (ImGui::TreeNode("Advanced settings##output_format")) {
+    ImGui::Checkbox("add missing field##output_format",
+                    &state.outputFormatShowMissingFields);
+    ImGui::TreePop();
+  }
+
   if (ImGui::Button("Add output field")) {
     SnapshotOutputFieldSpec spec;
     spec.key = FieldKey::Density;
@@ -1686,19 +1836,25 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
     state.outputFormatEdit.fields.push_back(std::move(spec));
   }
 
-  if (ImGui::BeginTable("OutputFormatTable", 10,
+  const bool showMissing = state.outputFormatShowMissingFields;
+  const int columnCount = showMissing ? 8 : 6;
+  if (ImGui::BeginTable("OutputFormatTable", columnCount,
                         ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Borders |
                           ImGuiTableFlags_Resizable)) {
-    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+    ImGui::TableSetupColumn("Field",
+                            ImGuiTableColumnFlags_WidthFixed,
+                            OutputFieldColumnWidth());
     ImGui::TableSetupColumn("Output", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+    ImGui::TableSetupColumn("Type",
+                            ImGuiTableColumnFlags_WidthFixed,
+                            DataTypeColumnWidth());
     ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 64.0f);
-    ImGui::TableSetupColumn("Missing", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-    ImGui::TableSetupColumn("Default", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    if (showMissing) {
+      ImGui::TableSetupColumn("Missing", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+      ImGui::TableSetupColumn("Default", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    }
     SetupTypeMaskColumn();
-    ImGui::TableSetupColumn("Up", ImGuiTableColumnFlags_WidthFixed, 36.0f);
-    ImGui::TableSetupColumn("Down", ImGuiTableColumnFlags_WidthFixed, 48.0f);
     ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 36.0f);
     ImGui::TableHeadersRow();
 
@@ -1708,6 +1864,7 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
       ImGui::TableNextRow();
 
       ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
       if (ImGui::BeginCombo("##field", GetFieldKeyDisplayName(spec.key))) {
         for (int n = 0; n < kNumAvailableFieldKeys; ++n) {
           FieldKey key = kAvailableFieldKeys[n];
@@ -1736,6 +1893,7 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
       }
 
       ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1);
       if (ImGui::BeginCombo("##type", GetDataTypeDisplayName(spec.type))) {
         for (int n = 0; n < kNumDataTypeChoices; ++n) {
           const DataType type = kDataTypeChoices[n].type;
@@ -1755,49 +1913,38 @@ void DrawOutputFormatDialog(FileFormatDialogState& state,
         ParseDefaultValues(DefaultValuesText(spec).c_str(), spec);
       }
 
-      ImGui::TableNextColumn();
-      if (ImGui::BeginCombo("##missing", MissingPolicyName(spec.missingPolicy))) {
-        const SnapshotOutputMissingPolicy policies[] = {
-          SnapshotOutputMissingPolicy::Omit,
-          SnapshotOutputMissingPolicy::FillDefault,
-          SnapshotOutputMissingPolicy::Require
-        };
-        for (SnapshotOutputMissingPolicy policy : policies) {
-          const bool selected = spec.missingPolicy == policy;
-          if (ImGui::Selectable(MissingPolicyName(policy), selected)) {
-            spec.missingPolicy = policy;
+      if (showMissing) {
+        ImGui::TableNextColumn();
+        if (ImGui::BeginCombo("##missing", MissingPolicyName(spec.missingPolicy))) {
+          const SnapshotOutputMissingPolicy policies[] = {
+            SnapshotOutputMissingPolicy::Omit,
+            SnapshotOutputMissingPolicy::FillDefault,
+            SnapshotOutputMissingPolicy::Require
+          };
+          for (SnapshotOutputMissingPolicy policy : policies) {
+            const bool selected = spec.missingPolicy == policy;
+            if (ImGui::Selectable(MissingPolicyName(policy), selected)) {
+              spec.missingPolicy = policy;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
           }
-          if (selected) ImGui::SetItemDefaultFocus();
+          ImGui::EndCombo();
         }
-        ImGui::EndCombo();
-      }
 
-      ImGui::TableNextColumn();
-      {
-        std::string defaults = DefaultValuesText(spec);
-        char buf[192];
-        std::snprintf(buf, sizeof(buf), "%s", defaults.c_str());
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##defaults", buf, IM_ARRAYSIZE(buf))) {
-          ParseDefaultValues(buf, spec);
+        ImGui::TableNextColumn();
+        {
+          std::string defaults = DefaultValuesText(spec);
+          char buf[192];
+          std::snprintf(buf, sizeof(buf), "%s", defaults.c_str());
+          ImGui::SetNextItemWidth(-1);
+          if (ImGui::InputText("##defaults", buf, IM_ARRAYSIZE(buf))) {
+            ParseDefaultValues(buf, spec);
+          }
         }
       }
 
       ImGui::TableNextColumn();
       DrawTypeMaskButtons(spec.typeMask, "hdf5_output_types");
-
-      ImGui::TableNextColumn();
-      if (ImGui::Button("^") && i > 0) {
-        std::swap(state.outputFormatEdit.fields[i],
-                  state.outputFormatEdit.fields[i - 1]);
-      }
-
-      ImGui::TableNextColumn();
-      if (ImGui::Button("v") &&
-          i + 1 < static_cast<int>(state.outputFormatEdit.fields.size())) {
-        std::swap(state.outputFormatEdit.fields[i],
-                  state.outputFormatEdit.fields[i + 1]);
-      }
 
       ImGui::TableNextColumn();
       if (ImGui::Button("-")) {

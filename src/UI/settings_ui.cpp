@@ -1133,6 +1133,11 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
   if (isLoading) {
     ImGui::Text("Loading...");
   }
+  if (rt.lastLoadError[0] != '\0') {
+    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f),
+                       "Load failed: %s",
+                       rt.lastLoadError);
+  }
 
   static const char* FileFormatNames[] = {
     "Auto", "HDF5", "Binary", "Gadget", "Framed"

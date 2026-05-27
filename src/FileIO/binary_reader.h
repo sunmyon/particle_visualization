@@ -1,10 +1,12 @@
 #pragma once
-#pragma once
 #include "FileIO/element_reader.h"
 #include "FileIO/file_mask.h"
 #include "core/PerfTimer.h"
 #include "data/header_info.h"
 
+#include <cerrno>
+#include <cstring>
+#include <string>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -160,11 +162,16 @@ class BinaryReader final : public IElementReader {
   std::vector<char> ioBuf_;
   size_t npart_ = 0;
   size_t data_offset_ = 0;
+  std::string lastError_;
   
 public:
   bool open(const std::string& path, HeaderInfo& header) override {
+    lastError_.clear();
     file_.open(path, std::ios::binary);
-    if(!file_) return false;
+    if(!file_) {
+      lastError_ = "Binary open failed: " + std::string(std::strerror(errno));
+      return false;
+    }
 
     ioBuf_.resize(32 * 1024 * 1024);
     file_.rdbuf()->pubsetbuf(ioBuf_.data(),
@@ -175,7 +182,15 @@ public:
     int   n;
     file_.read(reinterpret_cast<char*>(&t), sizeof t);
     file_.read(reinterpret_cast<char*>(&n), sizeof n);
-    if(!file_) return false;
+    if(!file_) {
+      lastError_ = "Binary header read failed: expected float time and int particle count";
+      return false;
+    }
+
+    if (n < 0) {
+      lastError_ = "Binary header has negative particle count: " + std::to_string(n);
+      return false;
+    }
 
     header.time  = t;
     header.npart = n;
@@ -194,6 +209,10 @@ public:
     file_.close();
   }
 
+  std::string lastError() const override {
+    return lastError_;
+  }
+
   bool is_binary() override {
     return true;
   }
@@ -208,13 +227,20 @@ public:
 		 ParticleMask* mask = nullptr) override
   {
     TIME_SCOPE("BinaryReader readRange total");
+    lastError_.clear();
     
-    if(begin + count > npart_) return false;
+    if(begin + count > npart_) {
+      lastError_ = "Binary read range exceeds particle count";
+      return false;
+    }
     
     // record layout (ordered by FieldSpec)
     const BinaryReadLayout layout = buildBinaryReadLayout(fields);
 
-    if (layout.recordSize == 0) return false;
+    if (layout.recordSize == 0) {
+      lastError_ = "Binary format has zero record size";
+      return false;
+    }
       
     const bool masked = (mask != nullptr) && mask->active();
     binary_reader_detail::initOutputBlock(out, count, layout);
@@ -224,7 +250,10 @@ public:
       data_offset_ + static_cast<std::streamoff>(begin * layout.recordSize);
 
     const size_t recSz = layout.recordSize;
-    if (recSz == 0) return false;
+    if (recSz == 0) {
+      lastError_ = "Binary format has zero record size";
+      return false;
+    }
 
     const size_t targetBytes = 32u * 1024u * 1024u;
     
@@ -237,7 +266,10 @@ public:
     if (masked) {
       size_t thinCandidates = 0;
       file_.seekg(offset, std::ios::beg);
-      if (!file_) return false;
+      if (!file_) {
+        lastError_ = "Binary seek failed while preparing mask";
+        return false;
+      }
 
       size_t scanned = 0;
       while (scanned < count) {
@@ -245,7 +277,10 @@ public:
         const size_t bytes = recSz * n;
         file_.read(reinterpret_cast<char*>(buf.data()),
                    static_cast<std::streamsize>(bytes));
-        if (file_.gcount() != static_cast<std::streamsize>(bytes)) return false;
+        if (file_.gcount() != static_cast<std::streamsize>(bytes)) {
+          lastError_ = "Binary masked scan reached EOF before expected record data";
+          return false;
+        }
 
         for (size_t j = 0; j < n; ++j) {
           const CoreSample c =
@@ -262,7 +297,10 @@ public:
     }
 
     file_.seekg(offset, std::ios::beg);
-    if(!file_) return false;
+    if(!file_) {
+      lastError_ = "Binary seek failed before particle records";
+      return false;
+    }
 
     size_t done = 0;
     size_t written = 0;
@@ -276,8 +314,10 @@ public:
 		   static_cast<std::streamsize>(bytes));
       }
       
-      if (file_.gcount() != static_cast<std::streamsize>(bytes))
+      if (file_.gcount() != static_cast<std::streamsize>(bytes)) {
+        lastError_ = "Binary particle read reached EOF before expected record data";
         return false;
+      }
 
       {
 	TIME_SCOPE("dispatch fields");
@@ -316,14 +356,20 @@ class MMapReader final : public IElementReader {
   size_t size_ = 0;
   size_t npart_ = 0;
   size_t data_offset_ = 0;
+  std::string lastError_;
   
 public:
   bool open(const std::string& path, HeaderInfo& header) override {
+    lastError_.clear();
     fd_ = ::open(path.c_str(), O_RDONLY);
-    if (fd_ < 0) return false;
+    if (fd_ < 0) {
+      lastError_ = "Binary mmap open failed: " + std::string(std::strerror(errno));
+      return false;
+    }
 
     struct stat st{};
     if (::fstat(fd_, &st) != 0) {
+      lastError_ = "Binary mmap fstat failed: " + std::string(std::strerror(errno));
       close();
       return false;
     }
@@ -332,12 +378,14 @@ public:
     data_ = static_cast<uint8_t*>(::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0));
     if (data_ == MAP_FAILED) {
       data_ = nullptr;
+      lastError_ = "Binary mmap failed: " + std::string(std::strerror(errno));
       close();
       return false;
     }
 
     // ---- Read header: time(float), then npart(int) ----
     if (size_ < sizeof(float) + sizeof(int)) {
+      lastError_ = "Binary file is too small for the header";
       close();
       return false;
     }
@@ -352,6 +400,7 @@ public:
     header.flag_hdf5 = false;
 
     if (n < 0) { // Defensive check.
+      lastError_ = "Binary header has negative particle count: " + std::to_string(n);
       close();
       return false;
     }
@@ -372,6 +421,10 @@ public:
   bool is_binary() override {
     return true;
   }
+
+  std::string lastError() const override {
+    return lastError_;
+  }
   
   size_t elementCount() const override {
     return npart_;
@@ -383,16 +436,24 @@ public:
 		 ParticleMask* mask = nullptr) override
   {
     TIME_SCOPE("MMapReader readRange total");
+    lastError_.clear();
 
     const BinaryReadLayout layout = buildBinaryReadLayout(fields);
     
-    if (layout.recordSize == 0) return false;
-    if (begin + count > npart_) return false;
+    if (layout.recordSize == 0) {
+      lastError_ = "Binary format has zero record size";
+      return false;
+    }
+    if (begin + count > npart_) {
+      lastError_ = "Binary read range exceeds particle count";
+      return false;
+    }
 
     // Validate file size consistency.
     const size_t needBytes = data_offset_ + npart_ * layout.recordSize;
     if (needBytes > size_) {
       // Header npart is inconsistent with the actual file size.
+      lastError_ = "Binary file is smaller than header particle count and format require";
       return false;
     }
     
@@ -406,7 +467,10 @@ public:
       TIME_SCOPE("dispatch loop");
       const uint8_t* base = data_ + data_offset_ + begin * layout.recordSize;
       const uint8_t* end = base + count * layout.recordSize;
-      if(end > data_ + size_) return false;
+      if(end > data_ + size_) {
+        lastError_ = "Binary read range exceeds mapped file size";
+        return false;
+      }
 
       const bool masked = (mask != nullptr) && mask->active();
       if (masked) {

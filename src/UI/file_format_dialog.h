@@ -37,4 +37,5 @@ void DrawHDF5FormatDialog(FileFormatDialogState& state,
 #endif
 
 void DrawOutputFormatDialog(FileFormatDialogState& state,
-                            SnapshotOutputFormatConfig& outputFormat);
+                            SnapshotOutputFormatConfig& outputFormat,
+                            const char* hdf5MetadataPath);

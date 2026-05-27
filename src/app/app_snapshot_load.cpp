@@ -246,6 +246,7 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
 
   auto& fileNav = runtime.settings.fileNavigation;
   auto& nav = fileNav.navigation;
+  fileNav.lastLoadError[0] = '\0';
   const SnapshotNavigationState previousNavigation = nav;
   const bool hadPreviousParticles =
     data.particles && !data.particles->simulationBlock.particles.empty();
@@ -266,10 +267,14 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
                                                          runtime.settings.inputFilter);
     if (!ok) {
       nav = previousNavigation;
+      const char* message = loaded.errorMessage.empty()
+        ? "snapshot reader failed"
+        : loaded.errorMessage.c_str();
       MarkSnapshotLoadFailure(runtime.snapshotLoad,
                               req.owner,
                               req.targetStep,
-                              "snapshot reader failed");
+                              message);
+      CopyCStr(fileNav.lastLoadError, sizeof(fileNav.lastLoadError), message);
       req = SnapshotLoadRequestState{};
       return;
     }
@@ -282,6 +287,9 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
                               req.owner,
                               req.targetStep,
                               validation.message);
+      CopyCStr(fileNav.lastLoadError,
+               sizeof(fileNav.lastLoadError),
+               validation.message);
       req = SnapshotLoadRequestState{};
       return;
     }

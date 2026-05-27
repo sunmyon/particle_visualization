@@ -25,6 +25,7 @@ struct FileFormatDialogState {
   std::vector<Hdf5DatasetMetadataPreview> hdf5MetadataPreview;
 #endif
   bool showOutputFormatDialog = false;
+  bool outputFormatShowMissingFields = false;
   bool showFormatDialog = false;
   bool inputFormatDialogInitialized = false;
   bool selectInputFormatTabOnOpen = false;

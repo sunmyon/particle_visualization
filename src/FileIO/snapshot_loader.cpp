@@ -151,6 +151,7 @@ namespace {
     bool ok = false;
     size_t partIndex = 0;
     std::string path;
+    std::string errorMessage;
     HeaderInfo header{};
     SimulationBlock block{};
   };
@@ -372,7 +373,8 @@ namespace {
                               const SnapshotLoadParams& params,
                               HeaderInfo& header,
                               SimulationBlock& outBlock,
-                              const InputFilterConfig& filter)
+                              const InputFilterConfig& filter,
+                              std::string* errorMessage = nullptr)
   {
     header.UnitLength_in_cm         = params.units.length_cm;
     header.UnitMass_in_g            = params.units.mass_g;
@@ -384,11 +386,20 @@ namespace {
     header.input_magnetic_field_unit = params.inputMagneticFieldUnit;
 
     if (!sel.reader) {
+      if (errorMessage) {
+        *errorMessage = "No snapshot reader is available for this file format";
+      }
       return false;
     }
 
     if (!sel.reader->tryFixAndCheckBinary(sel.fullPath, header, sel.format)) {
       std::cerr << "the format is incorrect\n";
+      if (errorMessage) {
+        const std::string reason = sel.reader->lastError();
+        *errorMessage = "Binary format check failed: " +
+                        (reason.empty() ? std::string("field layout does not match the file")
+                                        : reason);
+      }
       return false;
     }
 
@@ -397,6 +408,10 @@ namespace {
       const std::string reason = sel.reader->lastError();
       if (!reason.empty()) {
         std::cerr << "  reason: " << reason << "\n";
+      }
+      if (errorMessage) {
+        *errorMessage = "Failed to open snapshot: " +
+                        (reason.empty() ? sel.fullPath : reason);
       }
       return false;
     }
@@ -422,6 +437,10 @@ namespace {
       std::cerr << "Failed to read particle data: " << sel.fullPath << "\n";
       if (!readError.empty()) {
         std::cerr << "  reason: " << readError << "\n";
+      }
+      if (errorMessage) {
+        *errorMessage = "Failed to read particle data: " +
+                        (readError.empty() ? sel.fullPath : readError);
       }
     }
     return ok;
@@ -570,7 +589,12 @@ namespace {
 
     ReaderSelection partSel = makeReaderSelectionForPath(params, partPath);
     result.ok =
-      readSelectionIntoBlock(partSel, params, result.header, result.block, filter);
+      readSelectionIntoBlock(partSel,
+                             params,
+                             result.header,
+                             result.block,
+                             filter,
+                             &result.errorMessage);
     return result;
   }
 }
@@ -597,11 +621,14 @@ bool SnapshotLoader::readFile(int fileNumber,
   ReaderSelection sel = makeReaderSelection(params, fileNumber);
   if (!sel.reader) {
     std::cerr << "Failed to select reader for file #" << fileNumber << "\n";
+    outResult.errorMessage =
+      "Failed to select snapshot reader for file #" + std::to_string(fileNumber);
     return false;
   }
 
   const std::vector<std::string> splitParts = discoverSplitHdf5Parts(sel.fullPath);
   if (splitParts.empty()) {
+    outResult.errorMessage = "Split HDF5 snapshot has missing parts near " + sel.fullPath;
     return false;
   }
 
@@ -623,6 +650,10 @@ bool SnapshotLoader::readFile(int fileNumber,
 
     auto mergePart = [&](SplitPartReadResult&& part) {
       if (!part.ok) {
+        outResult.errorMessage =
+          part.errorMessage.empty()
+            ? ("Failed to read split snapshot part: " + part.path)
+            : part.errorMessage;
         return false;
       }
       if (part.partIndex == 0) {
@@ -657,13 +688,19 @@ bool SnapshotLoader::readFile(int fileNumber,
           part = future.get();
         } catch (const std::exception& e) {
           std::cerr << "Split HDF5 parallel read failed: " << e.what() << "\n";
+          outResult.errorMessage =
+            std::string("Split HDF5 parallel read failed: ") + e.what();
           return false;
         } catch (...) {
           std::cerr << "Split HDF5 parallel read failed with an unknown exception\n";
+          outResult.errorMessage =
+            "Split HDF5 parallel read failed with an unknown exception";
           return false;
         }
         if (part.partIndex >= parts.size()) {
           std::cerr << "Split HDF5 parallel read returned an invalid part index\n";
+          outResult.errorMessage =
+            "Split HDF5 parallel read returned an invalid part index";
           return false;
         }
         parts[part.partIndex] = std::move(part);
@@ -716,11 +753,19 @@ bool SnapshotLoader::readFile(int fileNumber,
   bool ok = false;
   {
     TIME_SCOPE("read particle data");
-    ok = readSelectionIntoBlock(sel, params, header, outBlock, filter);
+    ok = readSelectionIntoBlock(sel,
+                                params,
+                                header,
+                                outBlock,
+                                filter,
+                                &outResult.errorMessage);
   }
 
   if (!ok) {
     std::cerr << "Failed to read particle data: " << sel.fullPath << "\n";
+    if (outResult.errorMessage.empty()) {
+      outResult.errorMessage = "Failed to read particle data: " + sel.fullPath;
+    }
     return false;
   }
 

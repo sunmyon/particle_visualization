@@ -768,7 +768,8 @@ static void DrawToolWindows(AppRuntimeState& runtime,
   runtime.quantity.customScalarLabels =
     runtime.settings.snapshotFormat.customScalarLabels;
   DrawOutputFormatDialog(tools.fileFormatDialog,
-                         runtime.settings.snapshotFormat.outputFormat);
+                         runtime.settings.snapshotFormat.outputFormat,
+                         runtime.settings.fileNavigation.input.filePath);
   DrawMaskWindow(tools.mask,
                  tools.maskRequest,
                  runtime.settings.inputFilter.mask);

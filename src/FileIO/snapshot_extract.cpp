@@ -15,6 +15,7 @@
 #include <fstream>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -45,6 +46,79 @@ bool LinkExists(hid_t loc, const std::string& name)
 bool DatasetExists(H5::H5File& file, const std::string& path)
 {
   return LinkExists(file.getId(), path);
+}
+
+bool HasHdf5Extension(const std::filesystem::path& path)
+{
+  std::string ext = path.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return ext == ".h5" || ext == ".hdf5";
+}
+
+std::vector<std::string> DiscoverSplitHdf5Parts(const std::string& part0Path)
+{
+  namespace fs = std::filesystem;
+
+  const fs::path selected(part0Path);
+  if (!HasHdf5Extension(selected)) {
+    return {part0Path};
+  }
+
+  const fs::path parent = selected.parent_path();
+  const std::string filename = selected.filename().string();
+  const std::string suffix = selected.extension().string();
+  const size_t suffixPos = filename.size() - suffix.size();
+  const size_t partDot = filename.rfind('.', suffixPos > 0 ? suffixPos - 1 : 0);
+  if (partDot == std::string::npos || partDot >= suffixPos) {
+    return {part0Path};
+  }
+
+  const std::string partToken = filename.substr(partDot + 1, suffixPos - partDot - 1);
+  if (partToken.empty() ||
+      !std::all_of(partToken.begin(),
+                   partToken.end(),
+                   [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return {part0Path};
+  }
+
+  const std::string prefix = filename.substr(0, partDot + 1);
+  std::map<int, std::string> parts;
+  for (const auto& entry : fs::directory_iterator(parent)) {
+    if (!entry.is_regular_file()) continue;
+    const std::string name = entry.path().filename().string();
+    if (name.size() <= prefix.size() + suffix.size()) continue;
+    if (name.compare(0, prefix.size(), prefix) != 0) continue;
+    if (name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+
+    const std::string token =
+      name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+    if (token.empty() ||
+        !std::all_of(token.begin(),
+                     token.end(),
+                     [](unsigned char c) { return std::isdigit(c) != 0; })) {
+      continue;
+    }
+    parts[std::stoi(token)] = entry.path().string();
+  }
+
+  if (parts.size() <= 1 || parts.begin()->first != 0) {
+    return {part0Path};
+  }
+
+  std::vector<std::string> out;
+  out.reserve(parts.size());
+  int expected = 0;
+  for (const auto& [partIndex, path] : parts) {
+    if (partIndex != expected) {
+      throw std::runtime_error("split HDF5 snapshot is missing part " +
+                               std::to_string(expected) +
+                               " near " + part0Path);
+    }
+    out.push_back(path);
+    ++expected;
+  }
+  return out;
 }
 
 template<typename T>
@@ -520,6 +594,7 @@ struct DatasetShape {
 struct BackgroundGridData {
   std::vector<double> coordinates;
   std::vector<std::uint64_t> nearestGasRows;
+  std::vector<std::size_t> nearestGasPartIndex;
   std::size_t count = 0;
   bool hasNearestGasRows = false;
   double cellVolume = 0.0;
@@ -539,6 +614,28 @@ struct ActiveOutputField {
   unsigned int typeMask = 0x3fu;
 };
 
+using Hdf5SplitKeepLists = std::vector<std::array<std::vector<std::uint64_t>, 6>>;
+
+std::size_t SplitKeepCount(const Hdf5SplitKeepLists& keepByPart, int ptype)
+{
+  std::size_t count = 0;
+  for (const auto& partKeep : keepByPart) {
+    count += partKeep[ptype].size();
+  }
+  return count;
+}
+
+std::array<std::size_t, 6> SumPartCounts(const std::vector<SourceHeader>& headers)
+{
+  std::array<std::size_t, 6> counts = {0, 0, 0, 0, 0, 0};
+  for (const SourceHeader& header : headers) {
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      counts[ptype] += header.counts[ptype];
+    }
+  }
+  return counts;
+}
+
 std::vector<double> ExpandedDefaultValues(const ActiveOutputField& field);
 
 void CompactBackgroundGridToEmptyCells(BackgroundGridData& grid,
@@ -550,8 +647,10 @@ void CompactBackgroundGridToEmptyCells(BackgroundGridData& grid,
   const double minDist2 = minDist * minDist;
   std::vector<double> compactCoords;
   std::vector<std::uint64_t> compactNearest;
+  std::vector<std::size_t> compactNearestPart;
   compactCoords.reserve(grid.coordinates.size());
   compactNearest.reserve(grid.nearestGasRows.size());
+  compactNearestPart.reserve(grid.nearestGasPartIndex.size());
 
   for (std::size_t i = 0; i < grid.count; ++i) {
     if (!(nearestDist2[i] > minDist2)) continue;
@@ -559,10 +658,14 @@ void CompactBackgroundGridToEmptyCells(BackgroundGridData& grid,
     compactCoords.push_back(grid.coordinates[3 * i + 1]);
     compactCoords.push_back(grid.coordinates[3 * i + 2]);
     compactNearest.push_back(grid.nearestGasRows[i]);
+    if (i < grid.nearestGasPartIndex.size()) {
+      compactNearestPart.push_back(grid.nearestGasPartIndex[i]);
+    }
   }
 
   grid.coordinates.swap(compactCoords);
   grid.nearestGasRows.swap(compactNearest);
+  grid.nearestGasPartIndex.swap(compactNearestPart);
   grid.count = grid.nearestGasRows.size();
   if (grid.count == 0) grid.hasNearestGasRows = false;
 }
@@ -806,47 +909,25 @@ void ReadUInt64Rows(H5::DataSet& ds,
   ds.read(out.data(), H5::PredType::NATIVE_UINT64, memSpace, fileSpace);
 }
 
-void CopyDatasetWithKeepList(H5::H5File& input,
-                             H5::Group& outGroup,
-                             int ptype,
-                             FieldKey key,
-                             const std::string& sourceName,
-                             const std::string& outputName,
-                             const std::vector<std::uint64_t>& keep,
-                             std::size_t outputRowCount,
-                             double valueScale,
-                             const std::array<double, 3>& coordinateOrigin,
-                             const SnapshotParticleIdTransform& idTransform)
+void CopyDatasetRowsWithKeepList(H5::DataSet& src,
+                                 H5::DataSet& dst,
+                                 const DatasetShape& shape,
+                                 const DatasetShape& outputShape,
+                                 const H5::DataType& dataType,
+                                 FieldKey key,
+                                 const std::vector<std::uint64_t>& keep,
+                                 std::size_t outputBegin,
+                                 double valueScale,
+                                 const std::array<double, 3>& coordinateOrigin,
+                                 const SnapshotParticleIdTransform& idTransform)
 {
-  H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
-  DatasetShape shape = GetDatasetShape(src);
   if (!keep.empty() && shape.sourceRows <= keep.back()) {
-    throw std::runtime_error("dataset '" + sourceName + "' is shorter than the keep list");
+    throw std::runtime_error("source dataset is shorter than the keep list");
   }
 
-  H5::DataType dataType = src.getDataType();
   const bool transformCoordinates = key == FieldKey::Position;
   const bool transformParticleIds = key == FieldKey::ID &&
                                     idTransform.offsetEnabled;
-  DatasetShape outputShape = shape;
-  if (transformCoordinates) {
-    outputShape.rowBytes =
-      sizeof(double) * static_cast<std::size_t>(outputShape.components);
-  } else if (transformParticleIds) {
-    outputShape.rowBytes =
-      sizeof(std::uint64_t) * static_cast<std::size_t>(outputShape.components);
-  }
-  H5::DataType outputType = dataType;
-  if (transformCoordinates) {
-    outputType = H5::DataType(H5::PredType::NATIVE_DOUBLE);
-  } else if (transformParticleIds) {
-    outputType = H5::DataType(H5::PredType::NATIVE_UINT64);
-  }
-  H5::DataSet dst = CreateOutputDataset(outGroup,
-                                        outputName,
-                                        outputType,
-                                        outputShape,
-                                        outputRowCount);
   if (keep.empty()) return;
   const bool scaleValues =
     std::isfinite(valueScale) &&
@@ -860,7 +941,7 @@ void CopyDatasetWithKeepList(H5::H5File& input,
   std::vector<std::uint64_t> idChunk;
   std::vector<std::uint64_t> idPacked;
   std::size_t keepCursor = 0;
-  std::size_t outCursor = 0;
+  std::size_t outCursor = outputBegin;
   while (keepCursor < keep.size()) {
     const std::size_t chunkBegin =
       static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) * kExtractChunkSize);
@@ -919,30 +1000,85 @@ void CopyDatasetWithKeepList(H5::H5File& input,
   }
 }
 
-void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
-                                          H5::Group& outGroup,
-                                          int ptype,
-                                          const std::string& sourceName,
-                                          const ActiveOutputField& outputField,
-                                          const std::vector<std::uint64_t>& keep,
-                                          std::size_t outputRowCount,
-                                          double valueScale,
-                                          const std::array<double, 3>& coordinateOrigin,
-                                          const SnapshotParticleIdTransform& idTransform)
+DatasetShape OutputShapeForRawCopy(const DatasetShape& sourceShape,
+                                   FieldKey key,
+                                   const SnapshotParticleIdTransform& idTransform)
+{
+  DatasetShape outputShape = sourceShape;
+  if (key == FieldKey::Position) {
+    outputShape.rowBytes =
+      sizeof(double) * static_cast<std::size_t>(outputShape.components);
+  } else if (key == FieldKey::ID && idTransform.offsetEnabled) {
+    outputShape.rowBytes =
+      sizeof(std::uint64_t) * static_cast<std::size_t>(outputShape.components);
+  }
+  return outputShape;
+}
+
+H5::DataType OutputTypeForRawCopy(const H5::DataType& sourceType,
+                                  FieldKey key,
+                                  const SnapshotParticleIdTransform& idTransform)
+{
+  if (key == FieldKey::Position) {
+    return H5::DataType(H5::PredType::NATIVE_DOUBLE);
+  }
+  if (key == FieldKey::ID && idTransform.offsetEnabled) {
+    return H5::DataType(H5::PredType::NATIVE_UINT64);
+  }
+  return sourceType;
+}
+
+void CopyDatasetWithKeepList(H5::H5File& input,
+                             H5::Group& outGroup,
+                             int ptype,
+                             FieldKey key,
+                             const std::string& sourceName,
+                             const std::string& outputName,
+                             const std::vector<std::uint64_t>& keep,
+                             std::size_t outputRowCount,
+                             double valueScale,
+                             const std::array<double, 3>& coordinateOrigin,
+                             const SnapshotParticleIdTransform& idTransform)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
-  DatasetShape sourceShape = GetDatasetShape(src);
-  if (!keep.empty() && sourceShape.sourceRows <= keep.back()) {
-    throw std::runtime_error("dataset '" + sourceName + "' is shorter than the keep list");
-  }
-
-  DatasetShape outputShape =
-    ShapeForFieldSpec(outputField.field, outputRowCount);
+  DatasetShape shape = GetDatasetShape(src);
+  H5::DataType dataType = src.getDataType();
+  DatasetShape outputShape = OutputShapeForRawCopy(shape, key, idTransform);
+  H5::DataType outputType = OutputTypeForRawCopy(dataType, key, idTransform);
   H5::DataSet dst = CreateOutputDataset(outGroup,
-                                        outputField.outputName,
-                                        NativeTypeForOutputField(outputField.field),
+                                        outputName,
+                                        outputType,
                                         outputShape,
                                         outputRowCount);
+  CopyDatasetRowsWithKeepList(src,
+                              dst,
+                              shape,
+                              outputShape,
+                              dataType,
+                              key,
+                              keep,
+                              0,
+                              valueScale,
+                              coordinateOrigin,
+                              idTransform);
+}
+
+void CopyDatasetRowsWithKeepListAsOutputField(
+  H5::DataSet& src,
+  H5::DataSet& dst,
+  const DatasetShape& sourceShape,
+  const DatasetShape& outputShape,
+  const ActiveOutputField& outputField,
+  const std::vector<std::uint64_t>& keep,
+  std::size_t outputBegin,
+  double valueScale,
+  const std::array<double, 3>& coordinateOrigin,
+  const SnapshotParticleIdTransform& idTransform)
+{
+  if (!keep.empty() && sourceShape.sourceRows <= keep.back()) {
+    throw std::runtime_error("source dataset is shorter than the keep list");
+  }
+
   if (keep.empty()) return;
 
   const std::size_t sourceComps =
@@ -956,7 +1092,7 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
   std::vector<std::uint64_t> idChunk;
   std::vector<std::uint64_t> idPacked;
   std::size_t keepCursor = 0;
-  std::size_t outCursor = 0;
+  std::size_t outCursor = outputBegin;
   while (keepCursor < keep.size()) {
     const std::size_t chunkBegin =
       static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
@@ -1010,6 +1146,38 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
     outCursor += keepEnd - keepCursor;
     keepCursor = keepEnd;
   }
+}
+
+void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
+                                          H5::Group& outGroup,
+                                          int ptype,
+                                          const std::string& sourceName,
+                                          const ActiveOutputField& outputField,
+                                          const std::vector<std::uint64_t>& keep,
+                                          std::size_t outputRowCount,
+                                          double valueScale,
+                                          const std::array<double, 3>& coordinateOrigin,
+                                          const SnapshotParticleIdTransform& idTransform)
+{
+  H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
+  DatasetShape sourceShape = GetDatasetShape(src);
+  DatasetShape outputShape =
+    ShapeForFieldSpec(outputField.field, outputRowCount);
+  H5::DataSet dst = CreateOutputDataset(outGroup,
+                                        outputField.outputName,
+                                        NativeTypeForOutputField(outputField.field),
+                                        outputShape,
+                                        outputRowCount);
+  CopyDatasetRowsWithKeepListAsOutputField(src,
+                                           dst,
+                                           sourceShape,
+                                           outputShape,
+                                           outputField,
+                                           keep,
+                                           0,
+                                           valueScale,
+                                           coordinateOrigin,
+                                           idTransform);
 }
 
 bool FieldUsesBackgroundGrid(FieldKey key)
@@ -1107,6 +1275,7 @@ BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
                static_cast<std::size_t>(nz);
   grid.coordinates.resize(grid.count * 3);
   grid.nearestGasRows.assign(grid.count, 0);
+  grid.nearestGasPartIndex.assign(grid.count, 0);
   grid.cellVolume = dx * dy * dz;
   grid.cellLength = std::cbrt(grid.cellVolume);
   grid.firstId = firstId;
@@ -1606,6 +1775,401 @@ void WriteBackgroundRows(H5::H5File& input,
   WriteDoubleRows(dst, shape, begin, grid.count, rows);
 }
 
+std::uint64_t MaxSelectedParticleIdSplit(
+  const std::vector<std::string>& partPaths,
+  const SourceHeader& source,
+  const Hdf5SplitKeepLists& keepByPart)
+{
+  std::uint64_t maxId = 0;
+  bool haveAny = false;
+  for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+    H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      const auto& keep = keepByPart[partIndex][ptype];
+      if (keep.empty()) continue;
+      const std::string path = DatasetPath(ptype, "ParticleIDs");
+      if (!DatasetExists(input, path)) continue;
+      H5::DataSet ds = input.openDataSet(path);
+      DatasetShape shape = GetDatasetShape(ds);
+      if (shape.components != 1 || shape.sourceRows <= keep.back()) continue;
+
+      std::vector<std::uint64_t> ids;
+      std::size_t keepCursor = 0;
+      while (keepCursor < keep.size()) {
+        const std::size_t chunkBegin =
+          static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
+                                   kExtractChunkSize);
+        const std::size_t chunkEnd =
+          std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                                static_cast<std::size_t>(shape.sourceRows));
+        std::size_t keepEnd = keepCursor;
+        while (keepEnd < keep.size() && keep[keepEnd] < chunkEnd) ++keepEnd;
+        ReadUInt64Rows(ds, shape, chunkBegin, chunkEnd - chunkBegin, ids);
+        for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+          const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+          maxId = std::max(maxId, ids[local]);
+          haveAny = true;
+        }
+        keepCursor = keepEnd;
+      }
+    }
+  }
+  if (haveAny) return maxId;
+  return static_cast<std::uint64_t>(
+    std::accumulate(source.counts.begin(), source.counts.end(), std::size_t{0}));
+}
+
+void AssignNearestGasRowsSplit(const std::vector<std::string>& partPaths,
+                               const Hdf5SplitKeepLists& keepByPart,
+                               double lengthScale,
+                               const std::array<double, 3>& coordinateOrigin,
+                               BackgroundGridData& grid)
+{
+  if (grid.count == 0) return;
+
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  std::vector<double> sourceCoords;
+  std::vector<std::uint64_t> sourceRows;
+  std::vector<std::size_t> sourceParts;
+
+  for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+    const auto& gasKeep = keepByPart[partIndex][0];
+    if (gasKeep.empty()) continue;
+    H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+    const std::string coordPath = DatasetPath(0, "Coordinates");
+    if (!DatasetExists(input, coordPath)) continue;
+    H5::DataSet coords = input.openDataSet(coordPath);
+    DatasetShape shape = GetDatasetShape(coords);
+    if (shape.components < 3 || shape.sourceRows <= gasKeep.back()) continue;
+
+    std::vector<double> coordChunk;
+    std::size_t keepCursor = 0;
+    while (keepCursor < gasKeep.size()) {
+      const std::size_t chunkBegin =
+        static_cast<std::size_t>((gasKeep[keepCursor] / kExtractChunkSize) *
+                                 kExtractChunkSize);
+      const std::size_t chunkEnd =
+        std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                              static_cast<std::size_t>(shape.sourceRows));
+      std::size_t keepEnd = keepCursor;
+      while (keepEnd < gasKeep.size() && gasKeep[keepEnd] < chunkEnd) ++keepEnd;
+
+      ReadDoubleRows(coords, shape, chunkBegin, chunkEnd - chunkBegin, coordChunk);
+      for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+        const std::size_t local = static_cast<std::size_t>(gasKeep[k]) - chunkBegin;
+        const double x =
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 0] -
+           coordinateOrigin[0]) * lengthScale;
+        const double y =
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 1] -
+           coordinateOrigin[1]) * lengthScale;
+        const double z =
+          (coordChunk[local * static_cast<std::size_t>(shape.components) + 2] -
+           coordinateOrigin[2]) * lengthScale;
+        const std::size_t sourceIndex = sourceRows.size();
+        sourceRows.push_back(gasKeep[k]);
+        sourceParts.push_back(partIndex);
+        sourceCoords.push_back(x);
+        sourceCoords.push_back(y);
+        sourceCoords.push_back(z);
+
+        const int ix = std::clamp(
+          static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+          0,
+          grid.cells[0] - 1);
+        const int iy = std::clamp(
+          static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+          0,
+          grid.cells[1] - 1);
+        const int iz = std::clamp(
+          static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+          0,
+          grid.cells[2] - 1);
+        bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+      }
+      keepCursor = keepEnd;
+    }
+  }
+
+  if (sourceRows.empty()) return;
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int nx = grid.cells[0];
+    const int ny = grid.cells[1];
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    std::size_t bestSourceIndex = 0;
+    bool found = false;
+    const int maxRadius = std::max({grid.cells[0], grid.cells[1], grid.cells[2]});
+    for (int r = 0; r <= maxRadius && !found; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const double dx = sourceCoords[3 * sourceIndex + 0] - gx;
+              const double dy = sourceCoords[3 * sourceIndex + 1] - gy;
+              const double dz = sourceCoords[3 * sourceIndex + 2] - gz;
+              const double dist2 = dx * dx + dy * dy + dz * dz;
+              if (dist2 < bestDist2) {
+                bestDist2 = dist2;
+                bestSourceIndex = sourceIndex;
+                found = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    grid.nearestGasRows[i] = sourceRows[bestSourceIndex];
+    grid.nearestGasPartIndex[i] = sourceParts[bestSourceIndex];
+    nearestDist2[i] = bestDist2;
+  }
+  grid.hasNearestGasRows = true;
+}
+
+void CullBackgroundGridNearSelectedParticlesSplit(
+  const std::vector<std::string>& partPaths,
+  const Hdf5SplitKeepLists& keepByPart,
+  double lengthScale,
+  const std::array<double, 3>& coordinateOrigin,
+  BackgroundGridData& grid)
+{
+  if (grid.count == 0) return;
+
+  std::vector<std::vector<std::size_t>> bins(grid.count);
+  std::vector<double> sourceCoords;
+
+  for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+    H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      const auto& keep = keepByPart[partIndex][ptype];
+      if (keep.empty()) continue;
+
+      const std::string coordPath = DatasetPath(ptype, "Coordinates");
+      if (!DatasetExists(input, coordPath)) continue;
+      H5::DataSet coords = input.openDataSet(coordPath);
+      DatasetShape shape = GetDatasetShape(coords);
+      if (shape.components < 3 || shape.sourceRows <= keep.back()) continue;
+
+      std::vector<double> coordChunk;
+      std::size_t keepCursor = 0;
+      while (keepCursor < keep.size()) {
+        const std::size_t chunkBegin =
+          static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
+                                   kExtractChunkSize);
+        const std::size_t chunkEnd =
+          std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                                static_cast<std::size_t>(shape.sourceRows));
+        std::size_t keepEnd = keepCursor;
+        while (keepEnd < keep.size() && keep[keepEnd] < chunkEnd) ++keepEnd;
+
+        ReadDoubleRows(coords, shape, chunkBegin, chunkEnd - chunkBegin, coordChunk);
+        for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+          const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+          const double x =
+            (coordChunk[local * static_cast<std::size_t>(shape.components) + 0] -
+             coordinateOrigin[0]) * lengthScale;
+          const double y =
+            (coordChunk[local * static_cast<std::size_t>(shape.components) + 1] -
+             coordinateOrigin[1]) * lengthScale;
+          const double z =
+            (coordChunk[local * static_cast<std::size_t>(shape.components) + 2] -
+             coordinateOrigin[2]) * lengthScale;
+          const std::size_t sourceIndex = sourceCoords.size() / 3;
+          sourceCoords.push_back(x);
+          sourceCoords.push_back(y);
+          sourceCoords.push_back(z);
+
+          const int ix = std::clamp(
+            static_cast<int>((x - grid.lo[0]) / grid.cellSize[0]),
+            0,
+            grid.cells[0] - 1);
+          const int iy = std::clamp(
+            static_cast<int>((y - grid.lo[1]) / grid.cellSize[1]),
+            0,
+            grid.cells[1] - 1);
+          const int iz = std::clamp(
+            static_cast<int>((z - grid.lo[2]) / grid.cellSize[2]),
+            0,
+            grid.cells[2] - 1);
+          bins[BackgroundGridFlatIndex(grid, ix, iy, iz)].push_back(sourceIndex);
+        }
+        keepCursor = keepEnd;
+      }
+    }
+  }
+
+  if (sourceCoords.empty()) return;
+
+  std::vector<double> nearestDist2(grid.count,
+                                   std::numeric_limits<double>::infinity());
+  const int nx = grid.cells[0];
+  const int ny = grid.cells[1];
+  const int maxSearchRadius = BackgroundGridCullSearchRadius(grid);
+  for (std::size_t i = 0; i < grid.count; ++i) {
+    const int ix0 = static_cast<int>(i % static_cast<std::size_t>(nx));
+    const int iy0 = static_cast<int>((i / static_cast<std::size_t>(nx)) %
+                                     static_cast<std::size_t>(ny));
+    const int iz0 = static_cast<int>(i / (static_cast<std::size_t>(nx) *
+                                          static_cast<std::size_t>(ny)));
+    const double gx = grid.coordinates[3 * i + 0];
+    const double gy = grid.coordinates[3 * i + 1];
+    const double gz = grid.coordinates[3 * i + 2];
+
+    double bestDist2 = std::numeric_limits<double>::infinity();
+    for (int r = 0; r <= maxSearchRadius; ++r) {
+      const int zBegin = std::max(0, iz0 - r);
+      const int zEnd = std::min(grid.cells[2] - 1, iz0 + r);
+      const int yBegin = std::max(0, iy0 - r);
+      const int yEnd = std::min(grid.cells[1] - 1, iy0 + r);
+      const int xBegin = std::max(0, ix0 - r);
+      const int xEnd = std::min(grid.cells[0] - 1, ix0 + r);
+      for (int iz = zBegin; iz <= zEnd; ++iz) {
+        for (int iy = yBegin; iy <= yEnd; ++iy) {
+          for (int ix = xBegin; ix <= xEnd; ++ix) {
+            if (std::max({std::abs(ix - ix0),
+                          std::abs(iy - iy0),
+                          std::abs(iz - iz0)}) != r) {
+              continue;
+            }
+            const auto& bin = bins[BackgroundGridFlatIndex(grid, ix, iy, iz)];
+            for (std::size_t sourceIndex : bin) {
+              const double dx = sourceCoords[3 * sourceIndex + 0] - gx;
+              const double dy = sourceCoords[3 * sourceIndex + 1] - gy;
+              const double dz = sourceCoords[3 * sourceIndex + 2] - gz;
+              bestDist2 = std::min(bestDist2, dx * dx + dy * dy + dz * dz);
+            }
+          }
+        }
+      }
+    }
+    nearestDist2[i] = bestDist2;
+  }
+  CompactBackgroundGridToEmptyCells(grid, nearestDist2);
+}
+
+std::vector<double> ReadNearestBackgroundRowsSplit(
+  const std::vector<std::string>& partPaths,
+  const std::string& sourceName,
+  const FieldSpec& field,
+  const DatasetShape& outputShape,
+  const BackgroundGridData& grid,
+  double valueScale)
+{
+  if (!FieldUsesNearestBackgroundValue(field.key) ||
+      !grid.hasNearestGasRows ||
+      grid.nearestGasRows.size() != grid.count ||
+      grid.nearestGasPartIndex.size() != grid.count) {
+    return {};
+  }
+
+  const std::size_t comps =
+    static_cast<std::size_t>(std::max<hsize_t>(1, outputShape.components));
+  std::vector<double> rows(grid.count * comps, 0.0);
+  std::vector<double> chunk;
+
+  for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+    std::vector<std::uint64_t> order;
+    for (std::size_t i = 0; i < grid.count; ++i) {
+      if (grid.nearestGasPartIndex[i] == partIndex) {
+        order.push_back(static_cast<std::uint64_t>(i));
+      }
+    }
+    if (order.empty()) continue;
+
+    H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+    const std::string sourcePath = DatasetPath(0, sourceName);
+    if (!DatasetExists(input, sourcePath)) continue;
+    H5::DataSet ds = input.openDataSet(sourcePath);
+    DatasetShape sourceShape = GetDatasetShape(ds);
+    if (sourceShape.sourceRows == 0 ||
+        sourceShape.components < outputShape.components) {
+      continue;
+    }
+
+    std::sort(order.begin(), order.end(), [&](std::uint64_t a, std::uint64_t b) {
+      return grid.nearestGasRows[static_cast<std::size_t>(a)] <
+             grid.nearestGasRows[static_cast<std::size_t>(b)];
+    });
+
+    std::size_t cursor = 0;
+    const std::size_t sourceComps =
+      static_cast<std::size_t>(sourceShape.components);
+    while (cursor < order.size()) {
+      const std::uint64_t row =
+        grid.nearestGasRows[static_cast<std::size_t>(order[cursor])];
+      const std::size_t chunkBegin =
+        static_cast<std::size_t>((row / kExtractChunkSize) * kExtractChunkSize);
+      const std::size_t chunkEnd =
+        std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                              static_cast<std::size_t>(sourceShape.sourceRows));
+      std::size_t end = cursor;
+      while (end < order.size() &&
+             grid.nearestGasRows[static_cast<std::size_t>(order[end])] < chunkEnd) {
+        ++end;
+      }
+      ReadDoubleRows(ds, sourceShape, chunkBegin, chunkEnd - chunkBegin, chunk);
+      for (std::size_t k = cursor; k < end; ++k) {
+        const std::size_t outRow = static_cast<std::size_t>(order[k]);
+        const std::size_t local =
+          static_cast<std::size_t>(grid.nearestGasRows[outRow]) - chunkBegin;
+        for (std::size_t c = 0; c < comps; ++c) {
+          rows[outRow * comps + c] =
+            chunk[local * sourceComps + c] * valueScale;
+        }
+      }
+      cursor = end;
+    }
+  }
+
+  return rows;
+}
+
+void WriteBackgroundRowsSplit(const std::vector<std::string>& partPaths,
+                              H5::DataSet& dst,
+                              const FieldSpec& field,
+                              const DatasetShape& shape,
+                              std::size_t begin,
+                              const BackgroundGridData& grid,
+                              const SnapshotBackgroundGridConfig& config,
+                              const std::string& sourceName,
+                              double valueScale)
+{
+  if (grid.count == 0 || !FieldUsesBackgroundGrid(field.key)) return;
+  if (field.key == FieldKey::ID) {
+    const std::vector<std::uint64_t> ids = BackgroundIdRows(grid);
+    WriteUInt64Rows(dst, shape, begin, grid.count, ids);
+    return;
+  }
+  const std::vector<double> nearestRows =
+    ReadNearestBackgroundRowsSplit(partPaths, sourceName, field, shape, grid, valueScale);
+  const std::vector<double> rows =
+    BackgroundDoubleRows(field, grid, config, nearestRows);
+  WriteDoubleRows(dst, shape, begin, grid.count, rows);
+}
+
 void FillExistingRowsForMissingDataset(H5::DataSet& dst,
                                        const FieldSpec& field,
                                        const DatasetShape& shape,
@@ -1729,11 +2293,16 @@ ActiveOutputField MakeActiveOutputField(
   active.typeMask = output.typeMask & 0x3fu;
 
   if (sourceNameIsHdf5Dataset) {
-    active.sourceName = DefaultOutputDatasetName(output.key);
-    if (const FieldSpec* input = FindInputField(inputFields, output.key)) {
+    if (!output.sourceName.empty()) {
+      active.sourceName = output.sourceName;
+    } else if (const FieldSpec* input = FindInputField(inputFields, output.key)) {
       active.sourceName = input->sourceName.empty()
         ? DefaultOutputDatasetName(output.key)
         : input->sourceName;
+    } else if (IsCustomScalarFieldKey(output.key) && !output.outputName.empty()) {
+      active.sourceName = output.outputName;
+    } else {
+      active.sourceName = DefaultOutputDatasetName(output.key);
     }
     active.field.sourceName = active.sourceName;
   }
@@ -1796,6 +2365,7 @@ SnapshotOutputFieldSpec MakeDefaultOutputField(FieldKey key,
   field.type = key == FieldKey::ID ? DataType::Int64 : DataType::Double;
   field.count = std::max(1, defaults.count);
   field.outputName = DefaultOutputDatasetName(key);
+  field.sourceName = field.outputName;
   field.missingPolicy = SnapshotOutputMissingPolicy::Omit;
   field.typeMask = typeMask & 0x3fu;
   field.defaultValues.assign(static_cast<std::size_t>(std::max(1, field.count)),
@@ -3686,6 +4256,379 @@ std::vector<SnapshotOutputFieldSpec> MakeDefaultSnapshotOutputFields()
   return fields;
 }
 
+SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
+  const SnapshotExtractJob& job,
+  const std::vector<std::string>& partPaths)
+{
+  SnapshotExtractReport report;
+  std::string extractContext = "initializing split HDF5 extract";
+  try {
+    if (partPaths.empty()) {
+      throw std::runtime_error("no split HDF5 parts were found");
+    }
+
+    std::filesystem::path outPath(job.outputPath);
+    if (outPath.has_parent_path()) {
+      std::filesystem::create_directories(outPath.parent_path());
+    }
+
+    extractContext = "reading split HDF5 source headers";
+    std::vector<SourceHeader> partHeaders(partPaths.size());
+    for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+      H5::H5File partFile(partPaths[partIndex], H5F_ACC_RDONLY);
+      partHeaders[partIndex] = ReadSourceHeader(partFile);
+    }
+
+    H5::H5File firstInput(partPaths.front(), H5F_ACC_RDONLY);
+    SourceHeader sourceHeader = ReadSourceHeader(firstInput);
+    sourceHeader.counts = SumPartCounts(partHeaders);
+    sourceHeader.flagDoublePrecision = 1;
+    ParametersInfo parameters = ReadParameters(firstInput, sourceHeader);
+
+    SnapshotExtractUnitConversion conversion = job.unitConversion;
+    if (conversion.enabled) {
+      conversion.sourceScaleFactor =
+        SafePositive(conversion.sourceScaleFactor, sourceHeader.time);
+      conversion.scaleFactor =
+        SafePositive(conversion.scaleFactor, conversion.sourceScaleFactor);
+      conversion.unitLengthCm = SafePositive(conversion.unitLengthCm, parameters.unitLength);
+      conversion.unitMassG = SafePositive(conversion.unitMassG, parameters.unitMass);
+      conversion.unitVelocityCmPerS =
+        SafePositive(conversion.unitVelocityCmPerS, parameters.unitVelocity);
+      conversion.hubbleParam = SafePositive(conversion.hubbleParam, parameters.hubbleParam);
+    }
+    ParametersInfo sourceParameters = ResolveSourceParameters(parameters, conversion);
+    if (conversion.enabled) {
+      conversion.unitLengthCm =
+        SafePositive(conversion.unitLengthCm, sourceParameters.unitLength);
+      conversion.unitMassG = SafePositive(conversion.unitMassG, sourceParameters.unitMass);
+      conversion.unitVelocityCmPerS =
+        SafePositive(conversion.unitVelocityCmPerS, sourceParameters.unitVelocity);
+      conversion.hubbleParam =
+        SafePositive(conversion.hubbleParam, sourceParameters.hubbleParam);
+    }
+    const ParametersInfo outputParameters =
+      ApplyUnitConversionToParameters(sourceParameters, conversion);
+    const double outputLengthScale =
+      conversion.enabled
+        ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
+          ComovingLengthScale(conversion)
+        : 1.0;
+    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
+
+    report.sourceCounts = sourceHeader.counts;
+    report.sourceParticles =
+      std::accumulate(sourceHeader.counts.begin(), sourceHeader.counts.end(), std::size_t{0});
+
+    Hdf5SplitKeepLists keepByPart(partPaths.size());
+    for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+      H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        extractContext = "building keep list for split part " +
+                         std::to_string(partIndex) +
+                         " PartType" + std::to_string(ptype);
+        keepByPart[partIndex][ptype] =
+          BuildKeepList(input, ptype, partHeaders[partIndex].counts[ptype], job.region);
+        report.selectedCounts[ptype] += keepByPart[partIndex][ptype].size();
+      }
+    }
+    report.extractedCounts = report.selectedCounts;
+    report.selectedParticles =
+      std::accumulate(report.selectedCounts.begin(),
+                      report.selectedCounts.end(),
+                      std::size_t{0});
+    report.extractedParticles = report.selectedParticles;
+
+    SnapshotBackgroundGridConfig background = job.backgroundGrid;
+    extractContext = "assigning split background grid IDs";
+    const std::uint64_t backgroundFirstId =
+      FirstBackgroundParticleId(MaxSelectedParticleIdSplit(partPaths,
+                                                           sourceHeader,
+                                                           keepByPart),
+                                job.particleIdTransform);
+    extractContext = "building split background grid";
+    BackgroundGridData backgroundGrid =
+      BuildBackgroundGrid(job.region,
+                          background,
+                          outputLengthScale,
+                          backgroundFirstId);
+    extractContext = "assigning nearest split gas rows for background grid";
+    AssignNearestGasRowsSplit(partPaths,
+                              keepByPart,
+                              outputLengthScale,
+                              coordinateOrigin,
+                              backgroundGrid);
+    extractContext = "culling occupied split background grid cells";
+    CullBackgroundGridNearSelectedParticlesSplit(partPaths,
+                                                 keepByPart,
+                                                 outputLengthScale,
+                                                 coordinateOrigin,
+                                                 backgroundGrid);
+    report.backgroundParticles = backgroundGrid.count;
+    report.suggestedMeanVolume =
+      backgroundGrid.count > 0 ? backgroundGrid.cellVolume : 0.0;
+    report.suggestedReferenceGasPartMass =
+      report.suggestedMeanVolume * background.density;
+    report.extractedCounts[0] += backgroundGrid.count;
+    report.extractedParticles += backgroundGrid.count;
+
+    extractContext = "opening output file '" + job.outputPath + "'";
+    H5::H5File output(job.outputPath, H5F_ACC_TRUNC);
+    std::array<double, 6> outputMassTable = sourceHeader.massTable;
+    const double outputMassScale = conversion.enabled
+      ? UnitChangeScale(sourceParameters.unitMass, conversion.unitMassG)
+      : 1.0;
+    for (double& mass : outputMassTable) {
+      if (mass != 0.0) mass *= outputMassScale;
+    }
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      if (report.extractedCounts[ptype] == 0) {
+        outputMassTable[ptype] = 0.0;
+      }
+    }
+
+    std::vector<FieldSpec> fields = NormalizeExtractFields(job.fields);
+    std::vector<ActiveOutputField> outputFields =
+      BuildActiveOutputFields(fields, job.outputFormat, true);
+    if (backgroundGrid.count > 0) {
+      EnsureBackgroundGridOutputFields(outputFields);
+    }
+
+    auto findSourceDatasetPart =
+      [&](int ptype, const std::string& sourceName) -> int {
+        const std::string path = DatasetPath(ptype, sourceName);
+        for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+          H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+          if (DatasetExists(input, path)) {
+            return static_cast<int>(partIndex);
+          }
+        }
+        return -1;
+      };
+
+    for (int ptype = 0; ptype < 6; ++ptype) {
+      const std::size_t keepRows = SplitKeepCount(keepByPart, ptype);
+      const std::size_t backgroundRows =
+        ptype == 0 ? backgroundGrid.count : std::size_t{0};
+      const std::size_t outputRows = keepRows + backgroundRows;
+      if (outputRows == 0) continue;
+
+      extractContext = "creating output group " + PartGroupName(ptype);
+      H5::Group outGroup = output.createGroup(PartGroupName(ptype));
+      bool copiedMassDataset = false;
+
+      for (const ActiveOutputField& outputField : outputFields) {
+        const FieldSpec& field = outputField.field;
+        if (IsTypePseudoField(field.key)) continue;
+        if (!OutputFieldAppliesToType(outputField, ptype)) continue;
+        const std::string sourceName = outputField.sourceName;
+        if (sourceName.empty() || sourceName == "unknown" || sourceName == "dummy") {
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::Require) {
+            throw std::runtime_error("required output field '" +
+                                     outputField.outputName +
+                                     "' has no input field mapping");
+          }
+          if (outputField.missingPolicy != SnapshotOutputMissingPolicy::FillDefault) {
+            ++report.skippedDatasets;
+            continue;
+          }
+        }
+
+        const int sourcePart =
+          sourceName.empty() ? -1 : findSourceDatasetPart(ptype, sourceName);
+        if (sourcePart < 0) {
+          if (backgroundRows > 0 &&
+              FieldCanBeSynthesizedForBackgroundGrid(field.key)) {
+            const std::string outputName = outputField.outputName;
+            extractContext = "creating split background-only dataset " +
+                             PartGroupName(ptype) + "/" + outputName +
+                             " from missing source '" + sourceName + "'";
+            DatasetShape shape = ShapeForFieldSpec(field, outputRows);
+            H5::DataSet dst = CreateOutputDataset(outGroup,
+                                                  outputName,
+                                                  NativeTypeForOutputField(field),
+                                                  shape,
+                                                  outputRows);
+            if (outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+              FillRowsWithDefaultValue(dst, outputField, shape, 0, keepRows);
+            } else {
+              FillExistingRowsForMissingDataset(dst,
+                                               field,
+                                               shape,
+                                               keepRows,
+                                               outputMassTable[ptype]);
+            }
+            const double valueScale =
+              DatasetValueScale(field.key, sourceParameters, conversion);
+            WriteBackgroundRowsSplit(partPaths,
+                                     dst,
+                                     field,
+                                     shape,
+                                     keepRows,
+                                     backgroundGrid,
+                                     background,
+                                     sourceName,
+                                     valueScale);
+            copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
+            ++report.copiedDatasets;
+            continue;
+          }
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::FillDefault) {
+            const std::string outputName = outputField.outputName;
+            DatasetShape shape = ShapeForFieldSpec(field, outputRows);
+            H5::DataSet dst = CreateOutputDataset(outGroup,
+                                                  outputName,
+                                                  NativeTypeForOutputField(field),
+                                                  shape,
+                                                  outputRows);
+            FillRowsWithDefaultValue(dst, outputField, shape, 0, outputRows);
+            copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
+            ++report.copiedDatasets;
+            continue;
+          }
+          if (outputField.missingPolicy == SnapshotOutputMissingPolicy::Require) {
+            throw std::runtime_error("required output dataset missing: " +
+                                     DatasetPath(ptype, sourceName));
+          }
+          if (field.key == FieldKey::Mass && sourceHeader.massTable[ptype] != 0.0) {
+            continue;
+          }
+          ++report.skippedDatasets;
+          continue;
+        }
+
+        const std::string outputName = outputField.outputName;
+        H5::H5File sampleInput(partPaths[static_cast<std::size_t>(sourcePart)],
+                               H5F_ACC_RDONLY);
+        H5::DataSet sampleSrc =
+          sampleInput.openDataSet(DatasetPath(ptype, sourceName));
+        DatasetShape sourceShape = GetDatasetShape(sampleSrc);
+        H5::DataType sourceType = sampleSrc.getDataType();
+        DatasetShape outputShape = job.outputFormat.enabled
+          ? ShapeForFieldSpec(field, outputRows)
+          : OutputShapeForRawCopy(sourceShape, field.key, job.particleIdTransform);
+        H5::DataType outputType = job.outputFormat.enabled
+          ? NativeTypeForOutputField(field)
+          : OutputTypeForRawCopy(sourceType, field.key, job.particleIdTransform);
+        H5::DataSet dst = CreateOutputDataset(outGroup,
+                                              outputName,
+                                              outputType,
+                                              outputShape,
+                                              outputRows);
+
+        const double valueScale = DatasetValueScale(field.key, sourceParameters, conversion);
+        std::size_t outCursor = 0;
+        for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+          const auto& keep = keepByPart[partIndex][ptype];
+          if (keep.empty()) continue;
+          H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+          const std::string sourcePath = DatasetPath(ptype, sourceName);
+          if (!DatasetExists(input, sourcePath)) {
+            throw std::runtime_error("split source dataset missing for selected rows: " +
+                                     sourcePath + " in " + partPaths[partIndex]);
+          }
+          H5::DataSet src = input.openDataSet(sourcePath);
+          DatasetShape partShape = GetDatasetShape(src);
+          if (job.outputFormat.enabled) {
+            CopyDatasetRowsWithKeepListAsOutputField(src,
+                                                     dst,
+                                                     partShape,
+                                                     outputShape,
+                                                     outputField,
+                                                     keep,
+                                                     outCursor,
+                                                     valueScale,
+                                                     coordinateOrigin,
+                                                     job.particleIdTransform);
+          } else {
+            H5::DataType partType = src.getDataType();
+            CopyDatasetRowsWithKeepList(src,
+                                        dst,
+                                        partShape,
+                                        outputShape,
+                                        partType,
+                                        field.key,
+                                        keep,
+                                        outCursor,
+                                        valueScale,
+                                        coordinateOrigin,
+                                        job.particleIdTransform);
+          }
+          outCursor += keep.size();
+        }
+
+        if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
+          WriteBackgroundRowsSplit(partPaths,
+                                   dst,
+                                   field,
+                                   outputShape,
+                                   keepRows,
+                                   backgroundGrid,
+                                   background,
+                                   sourceName,
+                                   valueScale);
+        }
+        copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
+        ++report.copiedDatasets;
+      }
+
+      if (copiedMassDataset) {
+        outputMassTable[ptype] = 0.0;
+      }
+    }
+
+    if (job.copyHeader) {
+      extractContext = "writing Header";
+      WriteHeader(output,
+                  sourceHeader,
+                  outputParameters,
+                  job.region,
+                  outputLengthScale,
+                  report.extractedCounts,
+                  outputMassTable);
+    }
+    if (job.copyParameters) {
+      extractContext = "writing Parameters";
+      WriteParameters(output, outputParameters, conversion);
+    }
+
+    std::ostringstream oss;
+    oss << "selected " << report.selectedParticles << " / "
+        << report.sourceParticles << " source particles from "
+        << partPaths.size() << " split files";
+    if (report.backgroundParticles > 0) {
+      oss << "; added particles=" << report.backgroundParticles;
+    }
+    oss << "; wrote " << report.extractedParticles
+        << " particles to " << job.outputPath;
+    if (report.suggestedMeanVolume > 0.0) {
+      oss << "\nSuggested value for MeanVolume=" << report.suggestedMeanVolume
+          << "\nSuggested value for ReferenceGasPartMass="
+          << report.suggestedReferenceGasPartMass;
+    }
+    if (job.particleIdTransform.offsetEnabled &&
+        job.particleIdTransform.offset > 0) {
+      oss << "\nParticleIDs offset=+" << job.particleIdTransform.offset;
+    }
+    if (conversion.enabled) {
+      oss << " (unit conversion enabled)";
+    }
+    report.message = oss.str();
+    report.ok = true;
+  } catch (const H5::Exception& e) {
+    report.ok = false;
+    report.message = "split HDF5 extract error while " + extractContext + ": " +
+                     e.getDetailMsg();
+  } catch (const std::exception& e) {
+    report.ok = false;
+    report.message = "split extract error while " + extractContext + ": " + e.what();
+  } catch (...) {
+    report.ok = false;
+    report.message = "unknown split extract error while " + extractContext;
+  }
+  return report;
+}
+
 SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
 {
   SnapshotExtractReport report;
@@ -3701,6 +4644,12 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
     std::filesystem::path outPath(job.outputPath);
     if (outPath.has_parent_path()) {
       std::filesystem::create_directories(outPath.parent_path());
+    }
+
+    const std::vector<std::string> inputParts =
+      DiscoverSplitHdf5Parts(job.inputPath);
+    if (inputParts.size() > 1) {
+      return ExtractSplitHdf5SnapshotRegion(job, inputParts);
     }
 
     extractContext = "opening input file '" + job.inputPath + "'";

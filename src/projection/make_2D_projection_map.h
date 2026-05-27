@@ -115,7 +115,6 @@ private:
 
   void addColorBarToMap(ImageCanvas& canvas,
 			double cell_size,
-			double projectedBoxWidth,
 			float minVal,
 			float maxVal,
 			int colorBarWidth,

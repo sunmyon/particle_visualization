@@ -529,6 +529,7 @@ struct FileNavigationRuntimeState {
   SnapshotNavigationState navigation;
   SnapshotInputState input;
   SnapshotCurrentState current;
+  char lastLoadError[512] = "";
   int tempSkipStep = 1;
   FileNavigationRequestState request;
 };
