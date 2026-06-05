@@ -73,7 +73,9 @@ struct ProjectionTfComponent {
   float width;
   float amplitude;
   uint logDomain;
-  float3 pad;
+  float pad0;
+  float pad1;
+  float pad2;
 };
 
 float cubicKernel(float u)
