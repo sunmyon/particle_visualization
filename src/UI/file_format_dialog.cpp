@@ -11,6 +11,10 @@
 #include <sstream>
 #include <string>
 
+#include "data/quantity_catalog_builder.h"
+#include "data/simulation_block.h"
+#include "data/simulation_dataset.h"
+
 #ifdef HAVE_HDF5
 #include "FileIO/hdf5_utils.h"
 #endif
@@ -38,6 +42,336 @@ void SetupTypeMaskColumn()
                           ImGuiTableColumnFlags_WidthFixed |
                             ImGuiTableColumnFlags_NoResize,
                           TypeMaskColumnWidth());
+}
+
+void RebuildQuantityCatalogAndRangesIfPossible(QuantityState& quantity,
+                                               SimulationDataset* particles,
+                                               float desiredMax)
+{
+  if (!particles) {
+    return;
+  }
+
+  BuildQuantityCatalog(particles->simulationBlock, quantity);
+  const auto stats = particles->simulationBlock.rebuild(desiredMax, quantity);
+  for (int q = 0; q < kMaxQ; ++q) {
+    for (int t = 0; t < kNumTypes; ++t) {
+      quantity.range.valueMin[q][t] = 0.0f;
+      quantity.range.valueMax[q][t] = 0.0f;
+    }
+  }
+  for (int q = 0; q < quantity.catalog.nUIQ; ++q) {
+    const int qidx = static_cast<int>(quantity.catalog.uiQ[q]);
+    if (qidx < 0 || qidx >= kMaxQ) {
+      continue;
+    }
+    for (int t = 0; t < kNumTypes; ++t) {
+      quantity.range.valueMin[qidx][t] = stats.valueMin[q][t];
+      quantity.range.valueMax[qidx][t] = stats.valueMax[q][t];
+    }
+  }
+  quantity.range.originalMax = stats.originalMax;
+}
+
+void AppendExpressionToken(std::string& expression, const char* token)
+{
+  auto trimRightSpaces = [&]() {
+    while (!expression.empty() && expression.back() == ' ') {
+      expression.pop_back();
+    }
+  };
+
+  const std::string_view t(token);
+  if (t == "+" || t == "-" || t == "*" || t == "/" || t == "^") {
+    trimRightSpaces();
+    if (!expression.empty()) {
+      expression += ' ';
+    }
+    expression += token;
+    expression += ' ';
+    return;
+  }
+  if (t == ",") {
+    trimRightSpaces();
+    expression += ", ";
+    return;
+  }
+  if (t == ")") {
+    trimRightSpaces();
+    expression += ')';
+    return;
+  }
+
+  if (!expression.empty() &&
+      expression.back() != ' ' &&
+      expression.back() != '(' &&
+      expression.back() != ',' &&
+      expression.back() != '+' &&
+      expression.back() != '-' &&
+      expression.back() != '*' &&
+      expression.back() != '/' &&
+      expression.back() != '^') {
+    expression += " ";
+  }
+  expression += token;
+}
+
+bool DrawExpressionTokenButton(const char* label,
+                               std::string& expression,
+                               const char* token = nullptr)
+{
+  if (!ImGui::Button(label)) {
+    return false;
+  }
+  AppendExpressionToken(expression, token ? token : label);
+  return true;
+}
+
+void DrawDerivedExpressionEditorWindow(QuantityState& quantity,
+                                       FileFormatDialogState& state)
+{
+  if (!state.derivedExpressionEditorOpen) {
+    return;
+  }
+
+  state.derivedExpressionEditorIndex =
+    std::clamp(state.derivedExpressionEditorIndex,
+               0,
+               kDerivedScalarQuantityCount - 1);
+  DerivedScalarQuantitySpec& spec =
+    state.derivedScalarsEdit[
+      static_cast<std::size_t>(state.derivedExpressionEditorIndex)];
+
+  ImGui::SetNextWindowSize(ImVec2(760, 520), ImGuiCond_Appearing);
+  if (!ImGui::Begin("Derived expression editor",
+                    &state.derivedExpressionEditorOpen)) {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::Text("%s  %s",
+              QuantityLabel(DerivedScalarQuantityId(
+                state.derivedExpressionEditorIndex)),
+              spec.label.empty() ? "" : spec.label.c_str());
+
+  char exprBuf[768];
+  std::snprintf(exprBuf, sizeof(exprBuf), "%s", spec.expression.c_str());
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::InputTextMultiline("##derived_expr_preview",
+                            exprBuf,
+                            IM_ARRAYSIZE(exprBuf),
+                            ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4.0f),
+                            ImGuiInputTextFlags_ReadOnly);
+
+  if (ImGui::Button("Backspace")) {
+    while (!spec.expression.empty() && spec.expression.back() == ' ') {
+      spec.expression.pop_back();
+    }
+    while (!spec.expression.empty() && spec.expression.back() != ' ') {
+      spec.expression.pop_back();
+    }
+    while (!spec.expression.empty() && spec.expression.back() == ' ') {
+      spec.expression.pop_back();
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Clear")) {
+    spec.expression.clear();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Close")) {
+    state.derivedExpressionEditorOpen = false;
+  }
+
+  ImGui::SeparatorText("Numbers");
+  ImGui::SetNextItemWidth(160.0f);
+  ImGui::InputDouble("Value", &state.derivedExpressionNumber, 0.0, 0.0, "%g");
+  ImGui::SameLine();
+  if (ImGui::Button("Insert number")) {
+    char numberBuf[64];
+    std::snprintf(numberBuf,
+                  sizeof(numberBuf),
+                  "%.17g",
+                  state.derivedExpressionNumber);
+    AppendExpressionToken(spec.expression, numberBuf);
+  }
+
+  ImGui::SeparatorText("Operators");
+  const char* ops[] = {"+", "-", "*", "/", "^", "(", ")", ","};
+  for (const char* op : ops) {
+    DrawExpressionTokenButton(op, spec.expression);
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+
+  ImGui::SeparatorText("Functions");
+  const struct {
+    const char* label;
+    const char* token;
+  } functions[] = {
+    {"abs(x)", "abs("},
+    {"sqrt(x)", "sqrt("},
+    {"cbrt(x)", "cbrt("},
+    {"log(x)", "log("},
+    {"log10(x)", "log10("},
+    {"exp(x)", "exp("},
+    {"min(x,y)", "min("},
+    {"max(x,y)", "max("},
+    {"pow(x,y)", "pow("}
+  };
+  for (const auto& fn : functions) {
+    DrawExpressionTokenButton(fn.label, spec.expression, fn.token);
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+
+  ImGui::SeparatorText("Constants");
+  for (const char* constant : {"zsun", "kb", "mh", "pi"}) {
+    DrawExpressionTokenButton(constant, spec.expression);
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+
+  ImGui::SeparatorText("Variables");
+  if (ImGui::BeginChild("DerivedExpressionVariables",
+                        ImVec2(0.0f, 0.0f),
+                        true)) {
+    const int columns = 3;
+    if (ImGui::BeginTable("DerivedExpressionVariableGrid",
+                          columns,
+                          ImGuiTableFlags_SizingStretchSame)) {
+      int column = 0;
+      for (int q = 0; q < quantity.catalog.nAllQ; ++q) {
+        const QuantityId candidate = quantity.catalog.allQ[q];
+        if (IsDerivedScalarQuantity(candidate)) {
+          continue;
+        }
+        if (column == 0) {
+          ImGui::TableNextRow();
+        }
+        ImGui::TableSetColumnIndex(column);
+        const char* token = QuantityLabel(candidate);
+        char label[192];
+        std::snprintf(label,
+                      sizeof(label),
+                      "%s##%s",
+                      QuantityDisplayLabel(quantity, candidate),
+                      token);
+        DrawExpressionTokenButton(label, spec.expression, token);
+        column = (column + 1) % columns;
+      }
+      ImGui::EndTable();
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::End();
+}
+
+void DrawDerivedScalarQuantityEditor(QuantityState& quantity,
+                                     FileFormatDialogState& state,
+                                     SimulationDataset* particles,
+                                     float desiredMax)
+{
+  ImGui::SeparatorText("Derived scalar quantities");
+  ImGui::TextDisabled(
+    "Expressions use base/custom quantity names, e.g. Density * Temperature or Metallicity / zsun.");
+  ImGui::TextDisabled("derived1..derived10 cannot reference other derived quantities.");
+  bool hasCompileError = false;
+
+  bool draftDirty = false;
+  bool applyRequested = false;
+  if (ImGui::BeginTable("DerivedScalarQuantityGrid", 5,
+                        ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_SizingStretchProp)) {
+    ImGui::TableSetupColumn("Use", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::GetFrameHeight() + 12.0f);
+    ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("derived10").x + 18.0f);
+    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("Pressure").x + 110.0f);
+    ImGui::TableSetupColumn("Expression", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Edit", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("Edit") .x +
+                              2.0f * ImGui::GetStyle().FramePadding.x + 16.0f);
+    ImGui::TableHeadersRow();
+
+    for (int i = 0; i < kDerivedScalarQuantityCount; ++i) {
+      DerivedScalarQuantitySpec& spec =
+        state.derivedScalarsEdit[static_cast<std::size_t>(i)];
+      ImGui::PushID(i);
+      ImGui::TableNextRow();
+
+      ImGui::TableSetColumnIndex(0);
+      draftDirty |= ImGui::Checkbox("##derived_enabled", &spec.enabled);
+
+      ImGui::TableSetColumnIndex(1);
+      ImGui::TextUnformatted(QuantityLabel(DerivedScalarQuantityId(i)));
+
+      ImGui::TableSetColumnIndex(2);
+      char labelBuf[128];
+      std::snprintf(labelBuf, sizeof(labelBuf), "%s", spec.label.c_str());
+      ImGui::SetNextItemWidth(-FLT_MIN);
+      if (ImGui::InputText("##derived_label",
+                           labelBuf,
+                           IM_ARRAYSIZE(labelBuf))) {
+        spec.label = labelBuf;
+        draftDirty = true;
+      }
+
+      ImGui::TableSetColumnIndex(3);
+      char exprBuf[512];
+      std::snprintf(exprBuf, sizeof(exprBuf), "%s", spec.expression.c_str());
+      ImGui::SetNextItemWidth(-FLT_MIN);
+      if (ImGui::InputText("##derived_expr",
+                           exprBuf,
+                           IM_ARRAYSIZE(exprBuf),
+                           ImGuiInputTextFlags_ReadOnly)) {}
+      if (!spec.compileError.empty()) {
+        hasCompileError = true;
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("%s", spec.compileError.c_str());
+        }
+      }
+
+      ImGui::TableSetColumnIndex(4);
+      if (ImGui::Button("Edit")) {
+        state.derivedExpressionEditorIndex = i;
+        state.derivedExpressionEditorOpen = true;
+      }
+
+      ImGui::PopID();
+    }
+
+    ImGui::EndTable();
+  }
+
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextDisabled("Edits are applied only when Apply is pressed.");
+  ImGui::SameLine();
+  if (ImGui::Button("Apply derived quantities")) {
+    applyRequested = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Revert derived edits")) {
+    state.derivedScalarsEdit = quantity.derivedScalars;
+  }
+
+  if (applyRequested) {
+    quantity.derivedScalars = state.derivedScalarsEdit;
+    CompileDerivedScalarQuantitySpecs(quantity);
+    state.derivedScalarsEdit = quantity.derivedScalars;
+    RebuildQuantityCatalogAndRangesIfPossible(quantity, particles, desiredMax);
+  }
+  (void)draftDirty;
+
+  if (hasCompileError) {
+    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.25f, 1.0f),
+                       "Some derived expressions failed to compile.");
+  }
+
+  DrawDerivedExpressionEditorWindow(quantity, state);
 }
 
 float DataTypeColumnWidth()
@@ -731,7 +1065,8 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
   }
 }
 
-void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
+void DrawCommonInputFormatEditor(FileFormatDialogState& state,
+                                 InputDensityUnit& inputDensityUnit,
                                  InputTemperatureUnit& inputTemperatureUnit,
                                  InputMagneticFieldUnit& inputMagneticFieldUnit,
                                  std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
@@ -740,7 +1075,10 @@ void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
                                  const UnitSystem& currentUnits,
                                  bool& unitsDraftDirty,
                                  bool& applyUnitsRequested,
-                                 bool& unitConversionRebuildRequested)
+                                 bool& unitConversionRebuildRequested,
+                                 QuantityState& quantity,
+                                 SimulationDataset* particles,
+                                 float desiredMax)
 {
   ImGui::SeparatorText("Custom scalar UI labels");
   if ((usedCustomScalarMask & ((1u << kCustomScalarFieldCount) - 1u)) == 0) {
@@ -766,6 +1104,8 @@ void DrawCommonInputFormatEditor(InputDensityUnit& inputDensityUnit,
       ImGui::PopID();
     }
   }
+
+  DrawDerivedScalarQuantityEditor(quantity, state, particles, desiredMax);
 
   ImGui::SeparatorText("Input field interpretation");
   ImGui::TextDisabled(
@@ -1650,7 +1990,10 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            const UnitSystem& currentUnits,
                            bool& unitsDraftDirty,
                            bool& applyUnitsRequested,
-                           bool& unitConversionRebuildRequested)
+                           bool& unitConversionRebuildRequested,
+                           QuantityState& quantity,
+                           SimulationDataset* particles,
+                           float desiredMax)
 {
   if (!state.showFormatDialog) {
     state.inputFormatDialogInitialized = false;
@@ -1663,6 +2006,7 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
 #ifdef HAVE_HDF5
     state.hdf5FormatTokensEdit = hdf5FormatTokens;
 #endif
+    state.derivedScalarsEdit = quantity.derivedScalars;
     if (readFormat == FileFormat::Gadget) {
       state.activeInputFormatTab = FileFormat::Gadget;
 #ifdef HAVE_HDF5
@@ -1692,7 +2036,8 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
 #ifdef HAVE_HDF5
       usedCustomScalarMask |= UsedCustomScalarMask(state.hdf5FormatTokensEdit);
 #endif
-      DrawCommonInputFormatEditor(inputDensityUnit,
+      DrawCommonInputFormatEditor(state,
+                                  inputDensityUnit,
                                   inputTemperatureUnit,
                                   inputMagneticFieldUnit,
                                   customScalarLabels,
@@ -1701,7 +2046,10 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                                   currentUnits,
                                   unitsDraftDirty,
                                   applyUnitsRequested,
-                                  unitConversionRebuildRequested);
+                                  unitConversionRebuildRequested,
+                                  quantity,
+                                  particles,
+                                  desiredMax);
       ImGui::EndTabItem();
     }
 
@@ -1760,6 +2108,8 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
 
   ImGui::Separator();
   if (ImGui::Button("OK")) {
+    quantity.derivedScalars = state.derivedScalarsEdit;
+    RebuildQuantityCatalogAndRangesIfPossible(quantity, particles, desiredMax);
     binaryFormatTokens = state.binaryFormatTokensEdit;
     gadgetFormatTokens = state.gadgetFormatTokensEdit;
 #ifdef HAVE_HDF5

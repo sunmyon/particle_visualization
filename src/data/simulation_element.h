@@ -98,19 +98,19 @@ static constexpr const char* kH2AbundanceKey = "H2Abundance";
 static constexpr const char* kHDAbundanceKey = "HDAbundance";
 static constexpr const char* kJ21Key = "J21";
 static constexpr const char* kGammaKey = "Gamma";
-static constexpr const char* kVal1Key = "Val1";
-static constexpr const char* kVal2Key = "Val2";
+static constexpr const char* kVal1Key = "custom1";
+static constexpr const char* kVal2Key = "custom2";
 inline constexpr std::array<const char*, 10> kCustomScalarSoAKeys = {
   kVal1Key,
   kVal2Key,
-  "Custom3",
-  "Custom4",
-  "Custom5",
-  "Custom6",
-  "Custom7",
-  "Custom8",
-  "Custom9",
-  "Custom10"
+  "custom3",
+  "custom4",
+  "custom5",
+  "custom6",
+  "custom7",
+  "custom8",
+  "custom9",
+  "custom10"
 };
 static constexpr const char* kParticleIdKey = "ParticleID";
 

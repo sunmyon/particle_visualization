@@ -23,6 +23,7 @@ struct QuantityState;
 struct RadialProfileRequestState;
 struct RadialProfileResultState;
 struct RadialProfileUIState;
+class SimulationDataset;
 struct TopParticlesRequestState;
 struct TopParticlesResultState;
 struct TopParticlesUIState;
@@ -56,13 +57,13 @@ struct ProjectionMapViewContext {
   WindowCommandQueue& windowCommands;
   const ProjectionMapToolState& tool;
   const NormalizationContext& normalization;
-  const QuantityState& quantity;
+  QuantityState& quantity;
   const CameraContext& camera;
 };
 
 void DrawProjectionMapUI(ProjectionMapUIState& state,
                          ProjectionMapRequestState& request,
-                         const ProjectionMapViewContext& ctx);
+                         ProjectionMapViewContext& ctx);
 
 void DrawProjectionFontSelectionUI(ProjectionMapUIState& state,
                                    ProjectionFontSelectionRequestState& request);

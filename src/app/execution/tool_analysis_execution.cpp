@@ -5,11 +5,14 @@
 #include "app/state/tool_window_state.h"
 #include "analysis/histogram2d.h"
 #include "data/simulation_dataset.h"
+#include "data/simulation_block.h"
 #include "interaction/camera.h"
 
 void ExecuteAnalysisToolRequests(ToolWindowUIState& tools,
                                  AnalysisToolExecutionInput& input)
 {
+  QuantityStateScope quantityScope(input.quantity);
+
   const float worldToRenderScale =
     input.particles.simulationBlock.worldToRenderScale;
   const glm::vec3 analysisCenter =

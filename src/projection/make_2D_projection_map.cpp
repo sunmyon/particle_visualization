@@ -280,11 +280,15 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       pp.val = getScalarValue(particles.simulationBlock,
                               p,
                               idx,
-                              projectionQuantity);
+                              projectionQuantity,
+                              nullptr,
+                              nullptr);
       pp.colorVal = getScalarValue(particles.simulationBlock,
                                    p,
                                    idx,
-                                   params.selectedVarGas);
+                                   params.selectedVarGas,
+                                   nullptr,
+                                   nullptr);
       pp.density =
         particles.simulationBlock.getQuantityOr(static_cast<size_t>(idx),
                                                 QuantityId::Density);
@@ -2153,95 +2157,342 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					      const ProjectionMapParams& params,
 					      const ProjectionMapContext& ctx)
 {
-  (void)colormap;
-  (void)countcolormap;
+  const int plotW = canvas.width();
+  const int plotH = canvas.height();
+  const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  const bool customPlacement =
+    placement == ProjectionColorBarPlacement::Custom;
+  const bool insetVerticalPreset =
+    placement == ProjectionColorBarPlacement::InsetVertical;
+  const bool insetHorizontalPreset =
+    placement == ProjectionColorBarPlacement::InsetHorizontal;
+  const bool inset =
+    insetVerticalPreset || insetHorizontalPreset || customPlacement;
+  const bool horizontal =
+    placement == ProjectionColorBarPlacement::Top ||
+    placement == ProjectionColorBarPlacement::Bottom ||
+    insetHorizontalPreset ||
+    (customPlacement && params.colorBarCustomHorizontal);
+  const bool showLegend = !inset;
+  const std::vector<const char*> tickFormats = inset
+    ? std::vector<const char*>{"%.2g", "%.3g", "%.4g", "%.5g", "%.6g"}
+    : std::vector<const char*>{"%.1f", "%.2f", "%.3g", "%.4g", "%.5g"};
+
   // Draw ticks and labels on the colorbar.
-  int nTicks = 5;
+  int nTicks = inset ? 3 : 5;
   std::vector<double> ticks = generate_ticks(minVal, maxVal, nTicks);
   nTicks = ticks.size();
-
-  int outW_init = canvas.width();
-  int outH_init = canvas.height();
+  std::vector<std::string> tickLabels(static_cast<size_t>(nTicks));
+  for (const char* format : tickFormats) {
+    for (int i = 0; i < nTicks; ++i) {
+      char buf[64];
+      std::snprintf(buf, sizeof(buf), format, ticks[i]);
+      tickLabels[static_cast<size_t>(i)] = buf;
+    }
+    bool uniqueVisibleLabels = true;
+    for (int i = 0; i < nTicks && uniqueVisibleLabels; ++i) {
+      if (ticks[i] < minVal || ticks[i] > maxVal) continue;
+      for (int j = i + 1; j < nTicks; ++j) {
+        if (ticks[j] < minVal || ticks[j] > maxVal) continue;
+        if (tickLabels[static_cast<size_t>(i)] ==
+            tickLabels[static_cast<size_t>(j)]) {
+          uniqueVisibleLabels = false;
+          break;
+        }
+      }
+    }
+    if (uniqueVisibleLabels) break;
+  }
     
-  const int charPixelSize = std::max(1, static_cast<int>(0.08f * outH_init));
-  const int charPixelSizeLabel = std::max(1, static_cast<int>(0.10f * outH_init));
+  const float tickFontScale = inset ? 0.055f : 0.08f;
+  const int charPixelSize = std::max(1, static_cast<int>(tickFontScale * plotH));
+  const int charPixelSizeLabel = std::max(1, static_cast<int>(0.10f * plotH));
 
   float maxTicksWidth = 0.0f;
-  char labelStr[64];
+  float maxTicksHeight = 0.0f;
+  float minTickTextY = 0.0f;
+  float maxTickTextY = 0.0f;
+  bool hasTickTextBBox = false;
   for (int i = 0; i < nTicks; ++i) {
-    std::snprintf(labelStr, sizeof(labelStr), "%.1f", ticks[i]);
+    const char* labelStr = tickLabels[static_cast<size_t>(i)].c_str();
     
     const float w =
       fontRenderer_.measureTextAdvance(labelStr,
 				       static_cast<float>(charPixelSize));
+    const TextBBox bbox =
+      fontRenderer_.measureTextBBox(labelStr,
+				    static_cast<float>(charPixelSize));
     
     maxTicksWidth = std::max(maxTicksWidth, w);
+    maxTicksHeight = std::max(maxTicksHeight, static_cast<float>(bbox.height));
+    if (!hasTickTextBBox) {
+      minTickTextY = bbox.minY;
+      maxTickTextY = bbox.maxY;
+      hasTickTextBBox = true;
+    } else {
+      minTickTextY = std::min(minTickTextY, bbox.minY);
+      maxTickTextY = std::max(maxTickTextY, bbox.maxY);
+    }
   }
   
   // Add padding.
-  int padding = 4;
-  int ticksWidth = static_cast<int>(ceil(maxTicksWidth)) + 2 * padding;
-  int rotateLabelWidth = charPixelSizeLabel + 2 * padding;
+  const int padding = 4;
+  const int ticksWidth = static_cast<int>(ceil(maxTicksWidth)) + 2 * padding;
+  const int ticksHeight = static_cast<int>(ceil(maxTicksHeight)) + 2 * padding;
+  const int labelWidth = showLegend ? charPixelSizeLabel + 2 * padding : 0;
+  const int labelHeight = showLegend ? charPixelSizeLabel + 2 * padding : 0;
+  const int barThickness = std::max(4, colorBarWidth);
+  const float denom = std::max(maxVal - minVal, 1.0e-30f);
 
-  // The output width includes the image, colorbar, tick labels, and rotated label.
-  int outW = outW_init + colorBarWidth + ticksWidth + rotateLabelWidth;
-  int outH = outH_init;
-  canvas.resizeKeepContent(outW, outH, 0);
+  int plotX0 = 0;
+  int plotY0 = 0;
+  int outW = plotW;
+  int outH = plotH;
+  int barX0 = 0;
+  int barY0 = 0;
+  int barW = barThickness;
+  int barH = plotH;
+  int tickLabelX = 0;
+  int tickLabelY = 0;
+  int titleX = 0;
+  int titleY = 0;
+  int insetBgX0 = 0;
+  int insetBgY0 = 0;
+  int insetBgX1 = 0;
+  int insetBgY1 = 0;
+  const int insetTextGap = std::max(2, padding);
 
-  // Draw the colorbar on the right side.
-  // y=0 is the top and y=outH is the bottom.
-  // Map values in [0, 1] to [0, outH - 1].
-  for (int py = 0; py < outH; py++) {
-    float t = 1.0f - float(py) / float(outH - 1); // Top to bottom maps 1 to 0.
-    float rF, gF, bF;
-    colormapLookup(t, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
-    unsigned char rC = (unsigned char)(rF * 255);
-    unsigned char gC = (unsigned char)(gF * 255);
-    unsigned char bC = (unsigned char)(bF * 255);
+  if (placement == ProjectionColorBarPlacement::Left) {
+    outW = labelWidth + ticksWidth + barThickness + plotW;
+    plotX0 = labelWidth + ticksWidth + barThickness;
+    barX0 = labelWidth + ticksWidth;
+    tickLabelX = labelWidth + ticksWidth / 2;
+    titleX = labelWidth / 2;
+    titleY = plotH / 2;
+    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+  } else if (placement == ProjectionColorBarPlacement::Top) {
+    outH = labelHeight + ticksHeight + barThickness + plotH;
+    plotY0 = labelHeight + ticksHeight + barThickness;
+    barX0 = 0;
+    barY0 = labelHeight + ticksHeight;
+    barW = plotW;
+    barH = barThickness;
+    tickLabelY = labelHeight + ticksHeight / 2;
+    titleX = plotW / 2;
+    titleY = labelHeight / 2;
+    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+  } else if (placement == ProjectionColorBarPlacement::Bottom) {
+    outH = plotH + barThickness + ticksHeight + labelHeight;
+    barX0 = 0;
+    barY0 = plotH;
+    barW = plotW;
+    barH = barThickness;
+    tickLabelY = barY0 + barH + ticksHeight / 2;
+    titleX = plotW / 2;
+    titleY = barY0 + barH + ticksHeight + labelHeight / 2;
+    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+  } else if (inset) {
+    const float insetX = customPlacement ? params.colorBarInsetX
+                                         : (horizontal ? 0.0f : 1.0f);
+    const float insetY = customPlacement ? params.colorBarInsetY
+                                         : (horizontal ? 1.0f : 0.0f);
+    const float insetLength = customPlacement ? params.colorBarInsetLength
+                                              : 0.34f;
+    const float insetThickness =
+      customPlacement ? params.colorBarInsetThickness : 0.035f;
+    int totalW = 0;
+    int totalH = 0;
+    if (horizontal) {
+      barW =
+        std::max(20,
+                 static_cast<int>(std::lround(insetLength *
+                                              static_cast<float>(plotW))));
+      barH =
+        std::max(4,
+                 static_cast<int>(std::lround(insetThickness *
+                                              static_cast<float>(plotH))));
+      barW = std::min(barW, plotW);
+      totalW = barW + ticksWidth;
+      totalH = barH + ticksHeight + labelHeight;
+      const int maxX = std::max(0, plotW - totalW - padding);
+      const int maxY = std::max(0, plotH - totalH - padding);
+      const int contentX0 = padding +
+        static_cast<int>(std::lround(insetX * static_cast<float>(maxX)));
+      barX0 = contentX0 + ticksWidth / 2;
+      barY0 = padding +
+        static_cast<int>(std::lround(insetY * static_cast<float>(maxY)));
+      tickLabelY =
+        static_cast<int>(std::lround(barY0 + barH + insetTextGap -
+                                     minTickTextY));
+      titleX = barX0 + barW / 2;
+      titleY = barY0 + barH + ticksHeight + labelHeight / 2;
+    } else {
+      barH =
+        std::max(20,
+                 static_cast<int>(std::lround(insetLength *
+                                              static_cast<float>(plotH))));
+      barW =
+        std::max(4,
+                 static_cast<int>(std::lround(insetThickness *
+                                              static_cast<float>(plotW))));
+      barH = std::min(barH, plotH);
+      totalW = barW + ticksWidth + labelWidth;
+      totalH = barH;
+      const int maxX = std::max(0, plotW - totalW - padding);
+      const int maxY = std::max(0, plotH - totalH - padding);
+      barX0 = padding +
+        static_cast<int>(std::lround(insetX * static_cast<float>(maxX)));
+      barY0 = padding +
+        static_cast<int>(std::lround(insetY * static_cast<float>(maxY)));
+      tickLabelX = barX0 + barW + ticksWidth / 2;
+      titleX = barX0 + barW + ticksWidth + labelWidth / 2;
+      titleY = barY0 + barH / 2;
+    }
+  } else {
+    outW = plotW + barThickness + ticksWidth + labelWidth;
+    barX0 = plotW;
+    barW = barThickness;
+    tickLabelX = barX0 + barW + ticksWidth / 2;
+    titleX = barX0 + barW + ticksWidth + labelWidth / 2;
+    titleY = plotH / 2;
+    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+  }
 
-    for (int px = 0; px < colorBarWidth; px++) {
-      int outX = outW_init + px;
-      canvas.setPixel(outX, py, rC, gC, bC);
+  if (inset) {
+    insetBgX0 = barX0;
+    insetBgY0 = barY0;
+    insetBgX1 = barX0 + barW;
+    insetBgY1 = barY0 + barH;
+    for (int i = 0; i < nTicks; ++i) {
+      if (ticks[i] < minVal || ticks[i] > maxVal)
+        continue;
+
+      const TextBBox bbox =
+        fontRenderer_.measureTextBBox(tickLabels[static_cast<size_t>(i)].c_str(),
+                                      static_cast<float>(charPixelSize));
+      const float frac = static_cast<float>((ticks[i] - minVal) / denom);
+      if (horizontal) {
+        const int tickX = barX0 + static_cast<int>(frac * (barW - 1));
+        const float originX =
+          static_cast<float>(tickX) - 0.5f * (bbox.minX + bbox.maxX);
+        insetBgX0 = std::min(insetBgX0,
+                             static_cast<int>(std::floor(originX + bbox.minX)));
+        insetBgX1 = std::max(insetBgX1,
+                             static_cast<int>(std::ceil(originX + bbox.maxX)));
+        insetBgY0 = std::min(insetBgY0,
+                             static_cast<int>(std::floor(tickLabelY + bbox.minY)));
+        insetBgY1 = std::max(insetBgY1,
+                             static_cast<int>(std::ceil(tickLabelY + bbox.maxY)));
+      } else {
+        const int tickY = barY0 +
+          static_cast<int>((1.0f - frac) * (barH - 1));
+        const float originX =
+          static_cast<float>(tickLabelX) -
+          0.5f * (bbox.minX + bbox.maxX);
+        insetBgX0 = std::min(insetBgX0,
+                             static_cast<int>(std::floor(originX + bbox.minX)));
+        insetBgX1 = std::max(insetBgX1,
+                             static_cast<int>(std::ceil(originX + bbox.maxX)));
+        insetBgY0 = std::min(insetBgY0,
+                             static_cast<int>(std::floor(tickY + bbox.minY)));
+        insetBgY1 = std::max(insetBgY1,
+                             static_cast<int>(std::ceil(tickY + bbox.maxY)));
+      }
+    }
+    const int bgPad = 2;
+    canvas.blendRect(insetBgX0 - bgPad,
+                     insetBgY0 - bgPad,
+                     insetBgX1 + bgPad,
+                     insetBgY1 + bgPad,
+                     0, 0, 0, 0.55f);
+  }
+
+  if (horizontal) {
+    for (int px = 0; px < barW; ++px) {
+      const float t = barW > 1 ? static_cast<float>(px) / static_cast<float>(barW - 1)
+                               : 0.0f;
+      float rF, gF, bF;
+      colormapLookup(t, rF, gF, bF, colormap, countcolormap);
+      const unsigned char rC = static_cast<unsigned char>(rF * 255);
+      const unsigned char gC = static_cast<unsigned char>(gF * 255);
+      const unsigned char bC = static_cast<unsigned char>(bF * 255);
+      for (int py = 0; py < barH; ++py) {
+        canvas.setPixel(barX0 + px, barY0 + py, rC, gC, bC);
+      }
+    }
+  } else {
+    for (int py = 0; py < barH; py++) {
+      const float t = barH > 1 ? 1.0f - static_cast<float>(py) /
+                                      static_cast<float>(barH - 1)
+                                : 0.0f;
+      float rF, gF, bF;
+      colormapLookup(t, rF, gF, bF, colormap, countcolormap);
+      const unsigned char rC = static_cast<unsigned char>(rF * 255);
+      const unsigned char gC = static_cast<unsigned char>(gF * 255);
+      const unsigned char bC = static_cast<unsigned char>(bF * 255);
+
+      for (int px = 0; px < barW; px++) {
+        canvas.setPixel(barX0 + px, barY0 + py, rC, gC, bC);
+      }
     }
   }
 
-  canvas.fillRect(outW_init + colorBarWidth,
-		  0,
-		  outW,
-		  outH,
-		  0, 0, 0);
-  
-  int labelAreaX = outW_init + colorBarWidth;
-  int labelCenterX = labelAreaX + ticksWidth / 2;
-  
   for (int i = 0; i < nTicks; i++) {
-    if(ticks[i] < minVal || ticks[i] > maxVal)
+    if (ticks[i] < minVal || ticks[i] > maxVal)
       continue;
 
-    float frac = (ticks[i] - minVal) / (maxVal - minVal);
-    int tickY = int((1.0f - frac) * (outH - 1));
-
-    int xLineStart = outW_init; 
-    int xLineEnd   = outW_init + 10;
-    canvas.drawHorizontalLine(xLineStart, xLineEnd, tickY, 255, 255, 255);
- 
-    fontRenderer_.drawValueCenteredBaseline(canvas,
-					    labelCenterX,
-					    tickY,
-					    ticks[i],
-					    static_cast<float>(charPixelSize),
-					    "%.1f");
+    const float frac = static_cast<float>((ticks[i] - minVal) / denom);
+    if (horizontal) {
+      const int tickX = barX0 + static_cast<int>(frac * (barW - 1));
+      if (placement == ProjectionColorBarPlacement::Top) {
+        canvas.drawVerticalLine(tickX,
+                                barY0,
+                                barY0 + std::min(10, barH),
+                                255, 255, 255);
+      } else {
+        canvas.drawVerticalLine(tickX,
+                                barY0 + std::max(0, barH - 10),
+                                barY0 + barH,
+                                255, 255, 255);
+      }
+      fontRenderer_.drawTextCenteredBaseline(
+        canvas,
+        tickX,
+        tickLabelY,
+        tickLabels[static_cast<size_t>(i)].c_str(),
+        static_cast<float>(charPixelSize));
+    } else {
+      const int tickY = barY0 + static_cast<int>((1.0f - frac) * (barH - 1));
+      if (placement == ProjectionColorBarPlacement::Left) {
+        canvas.drawHorizontalLine(barX0,
+                                  barX0 + std::min(10, barW),
+                                  tickY,
+                                  255, 255, 255);
+      } else {
+        canvas.drawHorizontalLine(barX0 + std::max(0, barW - 10),
+                                  barX0 + barW,
+                                  tickY,
+                                  255, 255, 255);
+      }
+      fontRenderer_.drawTextCenteredBaseline(
+        canvas,
+        tickLabelX,
+        tickY,
+        tickLabels[static_cast<size_t>(i)].c_str(),
+        static_cast<float>(charPixelSize));
+    }
   }
 
-  
-  {
-    int labelAreaX = outW_init + colorBarWidth + ticksWidth;
-    int center_x = labelAreaX + rotateLabelWidth / 2;
-    int center_y = outH / 2;
-
+  if (showLegend && horizontal) {
+    fontRenderer_.drawTextCenteredBaseline(canvas,
+					   titleX,
+					   titleY,
+					   barLabel,
+					   static_cast<float>(charPixelSizeLabel));
+  } else if (showLegend) {
     fontRenderer_.drawTextRotated90Centered(canvas,
-					    center_x,
-					    center_y,
+					    titleX,
+					    titleY,
 					    barLabel,
 					    static_cast<float>(charPixelSizeLabel));
   }
@@ -2263,8 +2514,8 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     float min_y = bbox.minY;
     
     // Choose the desired top-left text position.
-    int baseX = 10;
-    int baseY = 10;
+    int baseX = plotX0 + 10;
+    int baseY = plotY0 + 10;
 
     // Fill the padded text background with translucent black.
     int padding = 4;
@@ -2293,11 +2544,11 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 
       int scaleBarLengthPixels = static_cast<int>(scaleBarLength / cell_size);
 	
-      int arrowCenterX = outW_init / 2;
+      int arrowCenterX = plotX0 + plotW / 2;
       int arrowStartX = arrowCenterX - scaleBarLengthPixels / 2;
       int arrowEndX = arrowStartX + scaleBarLengthPixels;
       
-      int arrowStartY = outH - 30;
+      int arrowStartY = plotY0 + plotH - 30;
 
       canvas.drawHorizontalLine(arrowStartX, arrowEndX, arrowStartY, 255, 255, 255);
       fontRenderer_.drawTextCenteredBaseline(canvas,

@@ -37,11 +37,11 @@ bool SimulationDataset::setSimulationBlock(SimulationBlock&& newBlock, Simulatio
   const double moveMs = DatasetElapsedMs(moveStart);
 
   const auto catalogStart = DatasetProfileClock::now();
-  BuildQuantityCatalog(simulationBlock, quantity.catalog);
+  BuildQuantityCatalog(simulationBlock, quantity);
   const double catalogMs = DatasetElapsedMs(catalogStart);
 
   const auto rebuildStart = DatasetProfileClock::now();
-  auto stats = simulationBlock.rebuild(ctx.desiredMax, quantity.catalog);
+  auto stats = simulationBlock.rebuild(ctx.desiredMax, quantity);
   const double rebuildMs = DatasetElapsedMs(rebuildStart);
 
   const auto rangeStart = DatasetProfileClock::now();

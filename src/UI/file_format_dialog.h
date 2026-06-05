@@ -9,6 +9,9 @@
 #include "core/input_density_units.h"
 #include "core/units.h"
 
+class SimulationDataset;
+struct QuantityState;
+
 void DrawBinaryFormatDialog(FileFormatDialogState& state,
                             std::vector<FieldSpec>& formatTokens,
                             FileFormat readFormat);
@@ -29,7 +32,10 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            const UnitSystem& currentUnits,
                            bool& unitsDraftDirty,
                            bool& applyUnitsRequested,
-                           bool& unitConversionRebuildRequested);
+                           bool& unitConversionRebuildRequested,
+                           QuantityState& quantity,
+                           SimulationDataset* particles,
+                           float desiredMax);
 
 #ifdef HAVE_HDF5
 void DrawHDF5FormatDialog(FileFormatDialogState& state,

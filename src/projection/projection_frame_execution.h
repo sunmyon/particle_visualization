@@ -8,11 +8,13 @@
 
 class SimulationDataset;
 class ProjectionMapGenerator;
+struct QuantityState;
 
 struct ProjectionFrameExecutionContext {
   SimulationDataset& particles;
   ProjectionMapGenerator& generator;
   const UnitSystem& units;
+  const QuantityState& quantity;
 };
 
 struct ProjectionFrameOutputOptions {

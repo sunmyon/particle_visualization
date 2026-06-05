@@ -25,6 +25,7 @@ struct ProjectionMapContext;
 struct RgbImage;
 struct FluxSettings;
 struct UnitSystem;
+struct QuantityState;
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
                                                double time);

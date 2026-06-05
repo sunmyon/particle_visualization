@@ -6,6 +6,7 @@
 
 #include "FileIO/file_format_types.h"
 #include "FileIO/snapshot_extract.h"
+#include "core/quantity.h"
 
 #ifdef HAVE_HDF5
 struct Hdf5DatasetMetadataPreview {
@@ -36,5 +37,10 @@ struct FileFormatDialogState {
 #ifdef HAVE_HDF5
   std::vector<FieldSpec> hdf5FormatTokensEdit;
 #endif
+  std::array<DerivedScalarQuantitySpec, kDerivedScalarQuantityCount>
+    derivedScalarsEdit{};
+  bool derivedExpressionEditorOpen = false;
+  int derivedExpressionEditorIndex = 0;
+  double derivedExpressionNumber = 1.0;
   SnapshotOutputFormatConfig outputFormatEdit;
 };

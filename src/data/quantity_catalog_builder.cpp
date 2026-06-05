@@ -1,12 +1,26 @@
 #include "data/simulation_block.h"
 #include "core/quantity.h"
 
-void BuildQuantityCatalog(const SimulationBlock& block, QuantityCatalogState& out){
+void BuildQuantityCatalog(const SimulationBlock& block, QuantityState& quantity){
+  CompileDerivedScalarQuantitySpecs(quantity);
+
+  QuantityCatalogState& out = quantity.catalog;
   out.nAllQ = 0; out.nUIQ = 0;
   out.nUIQByType.fill(0);
 
   auto pushAll = [&](QuantityId q){ out.allQ[out.nAllQ++] = q; };
+  auto hasForAnyType = [&](QuantityId q) {
+    for (int type = 0; type < kNumTypes; ++type) {
+      if (block.hasQuantityForType(q, type)) {
+        return true;
+      }
+    }
+    return false;
+  };
   auto pushUI  = [&](QuantityId q){
+    if (!hasForAnyType(q)) {
+      return;
+    }
     out.uiQ[out.nUIQ++] = q;
     for (int type = 0; type < kNumTypes; ++type) {
       if (!block.hasQuantityForType(q, type)) {
@@ -44,10 +58,29 @@ void BuildQuantityCatalog(const SimulationBlock& block, QuantityCatalogState& ou
   for (int i = 0; i < kCustomScalarQuantityCount; ++i) {
     const char* key = kCustomScalarSoAKeys[static_cast<size_t>(i)];
     auto it = block.soa.find(key);
-    if (it == block.soa.end() || it->second.comps < 1) {
+    if (it == block.soa.end() || it->second.comps != 1) {
       continue;
     }
-    pushAll(CustomScalarQuantityId(i));
-    pushUI(CustomScalarQuantityId(i));
+    const QuantityId q = CustomScalarQuantityId(i);
+    if (!hasForAnyType(q)) {
+      continue;
+    }
+    pushAll(q);
+    pushUI(q);
   }
+
+  for (int i = 0; i < kDerivedScalarQuantityCount; ++i) {
+    const DerivedScalarQuantitySpec& spec =
+      quantity.derivedScalars[static_cast<std::size_t>(i)];
+    if (!spec.enabled || spec.expression.empty()) {
+      continue;
+    }
+    const QuantityId q = DerivedScalarQuantityId(i);
+    pushAll(q);
+    out.uiQ[out.nUIQ++] = q;
+    for (int type = 0; type < kNumTypes; ++type) {
+      out.uiQByType[type][out.nUIQByType[type]++] = q;
+    }
+  }
+
 }

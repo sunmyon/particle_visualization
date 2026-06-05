@@ -42,6 +42,7 @@ struct ProjectionToolExecutionInput {
   ClumpChain* clumpChain = nullptr;
   SimulationDataset& particles;
   const UnitSystem& units;
+  const QuantityState& quantity;
   ProjectionMapToolState& projectionMap;
   const SnapshotCurrentState& snapshotCurrent;
   SnapshotLoadRuntimeState& snapshotLoad;

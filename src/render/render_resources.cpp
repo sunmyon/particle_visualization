@@ -53,7 +53,9 @@ void BuildRenderParticles(const ParticleRenderInput& input,
     rp.val_show = getScalarValue(block,
                                  p,
                                  i,
-                                 visualConfig.types[type].selectedQuantity);
+                                 visualConfig.types[type].selectedQuantity,
+                                 nullptr,
+                                 nullptr);
 
     out.push_back(rp);
     if (stressOut && rp.flag_stress != 0) {

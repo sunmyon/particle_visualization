@@ -1286,7 +1286,7 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
       for (int ptype = 0; ptype < 6; ++ptype) {
         if (flag_skip_DM_ && ptype == 1) continue;
         try {
-          H5SilenceErrors quiet(ptype >= 1);
+          H5SilenceErrors quiet(true);
           H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
           (void)ds;
           mask |= (1u << ptype);
@@ -1312,7 +1312,7 @@ bool HDF5Reader::finalize_layout_from_hdf5_(BinaryReadLayout& layout)
         if (flag_skip_DM_ && ptype == 1) continue;
 
         try {
-          H5SilenceErrors quiet(ptype >= 1);
+          H5SilenceErrors quiet(true);
           H5::DataSet ds = openDataSetWithDAPL(partPath(ptype, dsName));
           const FieldKey storageKey =
             ((key == FieldKey::Hsml || key == FieldKey::Volume) &&

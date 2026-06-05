@@ -60,16 +60,30 @@ std::vector<unsigned char>& ImageCanvas::pixels() const{
 
 void ImageCanvas::resizeKeepContent(int newWidth, int newHeight, unsigned char value)
 {
+  resizeKeepContentAt(newWidth, newHeight, 0, 0, value);
+}
+
+void ImageCanvas::resizeKeepContentAt(int newWidth,
+                                      int newHeight,
+                                      int dstX,
+                                      int dstY,
+                                      unsigned char value)
+{
   std::vector<unsigned char> newRgb;
   newRgb.resize(static_cast<size_t>(newWidth) * newHeight * 3, value);
 
-  const int copyWidth = std::min(width_, newWidth);
-  const int copyHeight = std::min(height_, newHeight);
+  const int copyWidth = std::min(width_, newWidth - dstX);
+  const int copyHeight = std::min(height_, newHeight - dstY);
 
   for (int y = 0; y < copyHeight; ++y) {
+    const int outY = dstY + y;
+    if (outY < 0 || outY >= newHeight) continue;
     for (int x = 0; x < copyWidth; ++x) {
+      const int outX = dstX + x;
+      if (outX < 0 || outX >= newWidth) continue;
+
       const int oldIdx = 3 * (y * width_ + x);
-      const int newIdx = 3 * (y * newWidth + x);
+      const int newIdx = 3 * (outY * newWidth + outX);
 
       newRgb[newIdx + 0] = rgb_[oldIdx + 0];
       newRgb[newIdx + 1] = rgb_[oldIdx + 1];

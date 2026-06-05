@@ -38,6 +38,7 @@ extern "C" void objc_autoreleasePoolPop(void* pool);
 #include "app/settings_analysis_requests.h"
 #include "app/state/tool_window_commands.h"
 #include "data/simulation_dataset.h"
+#include "data/simulation_block.h"
 #include "render/render_system.h"
 
 #include "UI/common_ui.h"
@@ -764,7 +765,10 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                         runtime.quantity.units,
                         runtime.settings.request.unitsDraftDirty,
                         runtime.settings.request.applyUnitsRequested,
-                        runtime.settings.request.unitConversionRebuildRequested);
+                        runtime.settings.request.unitConversionRebuildRequested,
+                        runtime.quantity,
+                        data.particles,
+                        runtime.settings.normalization.desiredMax);
   runtime.quantity.customScalarLabels =
     runtime.settings.snapshotFormat.customScalarLabels;
   DrawOutputFormatDialog(tools.fileFormatDialog,
@@ -1008,6 +1012,7 @@ static void ExecuteRequests(AppDataState& data,
     services.clumpChain.get(),
     *data.particles,
     runtime.quantity.units,
+    runtime.quantity,
     runtime.analysisTools.projectionMap,
     runtime.settings.fileNavigation.current,
     runtime.snapshotLoad,
@@ -1181,18 +1186,22 @@ void RunFrame(AppState& app,
   UpdateRenderInteractionActivity(app.runtime,
                                   static_cast<float>(currentTime));
   
-  const ParticleRenderInput particleRenderInput =
-    MakeParticleRenderInput(*app.data.particles);
-  const ParticleRenderBuildResult buildResult =
-    UpdateRenderSceneData(particleRenderInput,
-                          app.runtime.particleVisual,
-                          app.view.camera,
-                          currentTime,
-                          render.backend && render.backend->capabilities().particles &&
-                            render.backend->isSoftwareRenderer(),
-                          app.runtime.render,
-                          app.derived,
-                          render);
+  ParticleRenderBuildResult buildResult;
+  {
+    QuantityStateScope quantityScope(app.runtime.quantity);
+    const ParticleRenderInput particleRenderInput =
+      MakeParticleRenderInput(*app.data.particles);
+    buildResult =
+      UpdateRenderSceneData(particleRenderInput,
+                            app.runtime.particleVisual,
+                            app.view.camera,
+                            currentTime,
+                            render.backend && render.backend->capabilities().particles &&
+                              render.backend->isSoftwareRenderer(),
+                            app.runtime.render,
+                            app.derived,
+                            render);
+  }
   AcknowledgeParticleRenderBuild(*app.data.particles, buildResult);
 
   const RenderViewport renderViewport = MakeRenderViewport(window);

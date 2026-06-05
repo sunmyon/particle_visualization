@@ -1,5 +1,5 @@
 #pragma once
 struct SimulationBlock;
-struct QuantityCatalogState;
+struct QuantityState;
 
-void BuildQuantityCatalog(const SimulationBlock&, QuantityCatalogState& out);
+void BuildQuantityCatalog(const SimulationBlock&, QuantityState& quantity);

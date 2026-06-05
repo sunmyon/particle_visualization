@@ -3,13 +3,15 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 #include "core/units.h"
 
 static constexpr int kMaxV = 4;
 enum class VectorId : int { Pos, OriginalPos, Vel, Bfield};
 
 static constexpr int kCustomScalarQuantityCount = 10;
-static constexpr int kMaxQ = 26;
+static constexpr int kDerivedScalarQuantityCount = 10;
+static constexpr int kMaxQ = 36;
 enum class QuantityId : int {
   Density,
   Temperature,
@@ -36,7 +38,17 @@ enum class QuantityId : int {
   Custom7,
   Custom8,
   Custom9,
-  Custom10
+  Custom10,
+  Derived1,
+  Derived2,
+  Derived3,
+  Derived4,
+  Derived5,
+  Derived6,
+  Derived7,
+  Derived8,
+  Derived9,
+  Derived10
 };
 
 static constexpr int kNumTypes = 6;
@@ -130,8 +142,59 @@ inline const char* QuantityLabel(QuantityId q) {
     case QuantityId::Custom8:  return "custom8";
     case QuantityId::Custom9:  return "custom9";
     case QuantityId::Custom10: return "custom10";
+    case QuantityId::Derived1: return "derived1";
+    case QuantityId::Derived2: return "derived2";
+    case QuantityId::Derived3: return "derived3";
+    case QuantityId::Derived4: return "derived4";
+    case QuantityId::Derived5: return "derived5";
+    case QuantityId::Derived6: return "derived6";
+    case QuantityId::Derived7: return "derived7";
+    case QuantityId::Derived8: return "derived8";
+    case QuantityId::Derived9: return "derived9";
+    case QuantityId::Derived10: return "derived10";
   }
   return "Unknown";
+}
+
+inline int DerivedScalarQuantityIndex(QuantityId q)
+{
+  switch (q) {
+  case QuantityId::Derived1: return 0;
+  case QuantityId::Derived2: return 1;
+  case QuantityId::Derived3: return 2;
+  case QuantityId::Derived4: return 3;
+  case QuantityId::Derived5: return 4;
+  case QuantityId::Derived6: return 5;
+  case QuantityId::Derived7: return 6;
+  case QuantityId::Derived8: return 7;
+  case QuantityId::Derived9: return 8;
+  case QuantityId::Derived10: return 9;
+  default:                   return -1;
+  }
+}
+
+inline bool IsDerivedScalarQuantity(QuantityId q)
+{
+  return DerivedScalarQuantityIndex(q) >= 0;
+}
+
+inline QuantityId DerivedScalarQuantityId(int index)
+{
+  static constexpr std::array<QuantityId, kDerivedScalarQuantityCount> ids = {
+    QuantityId::Derived1,
+    QuantityId::Derived2,
+    QuantityId::Derived3,
+    QuantityId::Derived4,
+    QuantityId::Derived5,
+    QuantityId::Derived6,
+    QuantityId::Derived7,
+    QuantityId::Derived8,
+    QuantityId::Derived9,
+    QuantityId::Derived10
+  };
+  return (index >= 0 && index < kDerivedScalarQuantityCount)
+    ? ids[index]
+    : QuantityId::Derived1;
 }
 
 inline std::array<std::string, kCustomScalarQuantityCount>
@@ -273,6 +336,41 @@ struct QuantityRangeState {
   std::array<std::array<float, kNumTypes>, kMaxQ> valueMax{};
 };
 
+enum class DerivedScalarInstructionKind : uint8_t {
+  Constant,
+  Quantity,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Pow,
+  Neg,
+  Abs,
+  Sqrt,
+  Cbrt,
+  Log,
+  Log10,
+  Exp,
+  Min,
+  Max
+};
+
+struct DerivedScalarInstruction {
+  DerivedScalarInstructionKind kind = DerivedScalarInstructionKind::Constant;
+  double value = 0.0;
+  QuantityId quantity = QuantityId::Density;
+};
+
+struct DerivedScalarQuantitySpec {
+  bool enabled = false;
+  std::string label;
+  std::string expression;
+  bool compiled = false;
+  std::string compiledExpression;
+  std::string compileError;
+  std::vector<DerivedScalarInstruction> program;
+};
+
 struct QuantityState {
   QuantityCatalogState catalog;
   QuantityRangeState range;
@@ -280,6 +378,8 @@ struct QuantityState {
   QuantityConversionState conversion;
   std::array<std::string, kCustomScalarQuantityCount> customScalarLabels =
     MakeDefaultCustomScalarQuantityLabels();
+  std::array<DerivedScalarQuantitySpec, kDerivedScalarQuantityCount>
+    derivedScalars{};
 
   void rebuildConversion(double scaleFactor)
   {
@@ -303,6 +403,14 @@ struct QuantityState {
 inline const char* QuantityDisplayLabel(const QuantityState& state,
                                         QuantityId q)
 {
+  const int derivedIndex = DerivedScalarQuantityIndex(q);
+  if (derivedIndex >= 0 && derivedIndex < kDerivedScalarQuantityCount) {
+    const std::string& label =
+      state.derivedScalars[static_cast<std::size_t>(derivedIndex)].label;
+    if (!label.empty()) {
+      return label.c_str();
+    }
+  }
   const int customIndex = CustomScalarQuantityIndex(q);
   if (customIndex >= 0 && customIndex < kCustomScalarQuantityCount) {
     const std::string& label =

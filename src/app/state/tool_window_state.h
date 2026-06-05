@@ -68,6 +68,8 @@ struct ProjectionMapUIState {
   int selectedViewBlockIndex = 0;
   int selectedStarOverlayIndex = 0;
   int selectedVectorOverlayIndex = 0;
+  bool colorBarCustomWindowOpen = false;
+  bool panelAllWindowOpen = false;
 
   bool fontWindowOpen = false;
   bool fontListRefreshRequested = true;
@@ -99,6 +101,7 @@ struct TopParticlesUIState {
   bool selectType[6] = {false, false, false, false, false, false};
 
   int selectedVar = 4;
+  QuantityId histogramQuantity = QuantityId::Density;
   int bins = 50;
 
   bool histogramLogScaleX = true;
@@ -135,6 +138,7 @@ struct TopParticlesRequestState {
   bool selectedTypes[6] = {false, false, false, false, false, false};
 
   int histogramSelectedVar = 4;
+  QuantityId histogramQuantity = QuantityId::Density;
   int histogramBins = 50;
   bool histogramLogScaleX = true;
   bool histogramLogScaleY = true;

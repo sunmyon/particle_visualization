@@ -28,8 +28,10 @@
 #include "analysis/profile_histogram_export.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 extern void UpdateCuboidTransformArcball(CuboidObject& cuboid,
                                          float oldX, float oldY,
@@ -43,6 +45,49 @@ struct ProjectionQuantityRange {
   float min = 1.0e-6f;
   float max = 1.0f;
 };
+
+std::string QuantityCatalogSignature(const QuantityState& quantity)
+{
+  const QuantityCatalogState& catalog = quantity.catalog;
+  std::string out = "all=" + std::to_string(catalog.nAllQ) +
+                    " ui=" + std::to_string(catalog.nUIQ);
+  out += " allQ:";
+  for (int i = 0; i < catalog.nAllQ; ++i) {
+    out += " ";
+    out += QuantityDisplayLabel(quantity, catalog.allQ[i]);
+  }
+  out += " uiQ:";
+  for (int i = 0; i < catalog.nUIQ; ++i) {
+    out += " ";
+    out += QuantityDisplayLabel(quantity, catalog.uiQ[i]);
+  }
+  out += " byType:";
+  for (int type = 0; type < kNumTypes; ++type) {
+    out += " T" + std::to_string(type) + "(" +
+           std::to_string(catalog.nUIQByType[type]) + ")=";
+    for (int i = 0; i < catalog.nUIQByType[type]; ++i) {
+      if (i > 0) out += ",";
+      out += QuantityDisplayLabel(quantity, catalog.uiQByType[type][i]);
+    }
+  }
+  return out;
+}
+
+void LogQuantityCatalogForUI(const char* origin,
+                             const QuantityState& quantity)
+{
+  static std::unordered_map<std::string, std::string> lastSignatures;
+  const std::string key = origin ? origin : "unknown";
+  const std::string signature = QuantityCatalogSignature(quantity);
+  auto it = lastSignatures.find(key);
+  if (it != lastSignatures.end() && it->second == signature) {
+    return;
+  }
+  lastSignatures[key] = signature;
+  std::fprintf(stderr, "[QuantityUI] origin=%s %s\n",
+               key.c_str(),
+               signature.c_str());
+}
 
 ProjectionQuantityRange ProjectionRangeForQuantity(const QuantityState& quantity,
                                                    QuantityId selected,
@@ -172,6 +217,7 @@ void SubmitTopParticleHistogramRequest(const TopParticlesUIState& state,
                                        TopParticlesRequestState& request)
 {
   request.histogramSelectedVar = state.selectedVar;
+  request.histogramQuantity = state.histogramQuantity;
   request.histogramBins = state.bins;
   request.histogramLogScaleX = state.histogramLogScaleX;
   request.histogramLogScaleY = state.histogramLogScaleY;
@@ -881,6 +927,7 @@ bool DrawProjectionQuantityCombo(const char* label,
 {
   bool dirty = false;
   const QuantityCatalogState& catalog = quantityState.catalog;
+  LogQuantityCatalogForUI("ProjectionQuantityCombo", quantityState);
   if (ImGui::BeginCombo(label, QuantityDisplayLabel(quantityState, quantity))) {
     for (int q = 0; q < catalog.nUIQ; ++q) {
       QuantityId cand = catalog.uiQ[q];
@@ -977,7 +1024,7 @@ void ProjectionCopySeedPanels(ProjectionMapParams& params, int oldCount)
 
 bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                                 ProjectionMapUIState& ui,
-                                const ProjectionMapViewContext& ctx,
+                                ProjectionMapViewContext& ctx,
                                 float renderToWorld)
 {
   static TransferFunctionEditor voronoiTransferEditor;
@@ -1006,22 +1053,167 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       }
       const ColormapDef* colormaps = AvailableColormaps();
       const int colormapCount = AvailableColormapCount();
+      const char* colorBarPositions[] = {
+        "Right",
+        "Left",
+        "Top",
+        "Bottom",
+        "Inset V",
+        "Inset H",
+        "Custom"
+      };
+      auto comboColumnWidthFromText = [] (float maxTextWidth) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        return std::ceil(maxTextWidth +
+                         2.0f * style.FramePadding.x +
+                         ImGui::GetFrameHeight() +
+                         style.ItemSpacing.x);
+      };
+      auto compactColumnWidthFromText = [] (const char* label) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        return std::ceil(std::max(ImGui::CalcTextSize(label).x,
+                                  ImGui::GetFrameHeight()) +
+                         2.0f * style.FramePadding.x);
+      };
+      auto maxLabelWidth = [] (const char* label, float current) {
+        if (!label) return current;
+        return std::max(current, ImGui::CalcTextSize(label).x);
+      };
+      float blockTextWidth = 0.0f;
+      for (const char* name : blockNames) {
+        blockTextWidth = maxLabelWidth(name, blockTextWidth);
+      }
+      float quantityTextWidth = 0.0f;
+      for (int q = 0; q < ctx.quantity.catalog.nUIQ; ++q) {
+        quantityTextWidth =
+          maxLabelWidth(QuantityDisplayLabel(ctx.quantity,
+                                             ctx.quantity.catalog.uiQ[q]),
+                        quantityTextWidth);
+      }
+      float colorTextWidth = 0.0f;
+      for (int cmap = 0; cmap < colormapCount; ++cmap) {
+        colorTextWidth = maxLabelWidth(colormaps[cmap].name, colorTextWidth);
+      }
+      auto overlayTextWidth = [&] (const char* fallbackPrefix,
+                                   int count,
+                                   auto&& nameAt) {
+        float width = ImGui::CalcTextSize("Off").x;
+        for (int i = 0; i < count; ++i) {
+          const char* itemLabel = nameAt(i);
+          std::string fallback;
+          if (!itemLabel || itemLabel[0] == '\0') {
+            fallback = std::string(fallbackPrefix) + " " +
+                       std::to_string(i + 1);
+            itemLabel = fallback.c_str();
+          }
+          width = maxLabelWidth(itemLabel, width);
+        }
+        return width;
+      };
+      const float blockColumnWidth =
+        comboColumnWidthFromText(blockTextWidth);
+      const float quantityColumnWidth =
+        comboColumnWidthFromText(quantityTextWidth);
+      const float colorColumnWidth =
+        comboColumnWidthFromText(colorTextWidth);
+      const float starColumnWidth =
+        comboColumnWidthFromText(overlayTextWidth(
+          "Star field",
+          params.starOverlayCount,
+          [&](int i) { return params.starOverlays[i].name; }));
+      const float vectorColumnWidth =
+        comboColumnWidthFromText(overlayTextWidth(
+          "Vector field",
+          params.vectorOverlayCount,
+          [&](int i) { return params.vectorOverlays[i].name; }));
+      const float indexColumnWidth =
+        std::ceil(std::max({ImGui::CalcTextSize("#").x,
+                            ImGui::CalcTextSize(
+                              std::to_string(std::max(panelCount, 10)).c_str()).x,
+                            ImGui::GetFrameHeight()}) +
+                  2.0f * ImGui::GetStyle().FramePadding.x);
+      const float logColumnWidth = compactColumnWidthFromText("Log");
+      const float autoColumnWidth = compactColumnWidthFromText("Auto");
+      const float scaleColumnWidth = compactColumnWidthFromText("Scale");
+      const float timeColumnWidth = compactColumnWidthFromText("Time");
+      const float tableHeight =
+        ImGui::GetTextLineHeightWithSpacing() * static_cast<float>(panelCount + 2);
+      const float tableWidth =
+        indexColumnWidth + blockColumnWidth + quantityColumnWidth +
+        colorColumnWidth + logColumnWidth + autoColumnWidth +
+        starColumnWidth + vectorColumnWidth + scaleColumnWidth + timeColumnWidth +
+        ImGui::GetStyle().ScrollbarSize + 2.0f * ImGui::GetStyle().CellPadding.x;
+      const float visibleTableWidth =
+        std::max(tableWidth, ImGui::GetContentRegionAvail().x);
+      auto drawCenteredCheckbox = [](const char* label, bool* value) {
+        const float boxWidth = ImGui::GetFrameHeight();
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > boxWidth) {
+          ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                               0.5f * (avail - boxWidth));
+        }
+        return ImGui::Checkbox(label, value);
+      };
+      auto drawOverlayCombo = [&](const char* label,
+                                  int& index,
+                                  int count,
+                                  const char* fallbackPrefix,
+                                  auto&& nameAt) {
+        index = std::clamp(index, 0, count);
+        const char* preview = "Off";
+        std::string fallback;
+        if (index > 0) {
+          preview = nameAt(index - 1);
+          if (!preview || preview[0] == '\0') {
+            fallback = std::string(fallbackPrefix) + " " +
+                       std::to_string(index);
+            preview = fallback.c_str();
+          }
+        }
+        bool changed = false;
+        if (ImGui::BeginCombo(label, preview)) {
+          if (ImGui::Selectable("Off", index == 0)) {
+            index = 0;
+            changed = true;
+          }
+          for (int i = 0; i < count; ++i) {
+            const bool selected = index == i + 1;
+            const char* itemLabel = nameAt(i);
+            std::string itemFallback;
+            if (!itemLabel || itemLabel[0] == '\0') {
+              itemFallback = std::string(fallbackPrefix) + " " +
+                             std::to_string(i + 1);
+              itemLabel = itemFallback.c_str();
+            }
+            if (ImGui::Selectable(itemLabel, selected)) {
+              index = i + 1;
+              changed = true;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        return changed;
+      };
 
       const ImGuiTableFlags tableFlags =
-        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-        ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+        ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter |
+        ImGuiTableFlags_RowBg | ImGuiTableFlags_NoSavedSettings |
         ImGuiTableFlags_SizingFixedFit;
       if (ImGui::BeginTable("projection_panels_table",
-                            7,
+                            10,
                             tableFlags,
-                            ImVec2(0.0f, 210.0f))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 34.0f);
-        ImGui::TableSetupColumn("Block", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-        ImGui::TableSetupColumn("Quantity", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-        ImGui::TableSetupColumn("Color", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn("Stars", ImGuiTableColumnFlags_WidthFixed, 115.0f);
-        ImGui::TableSetupColumn("Vector", ImGuiTableColumnFlags_WidthFixed, 115.0f);
-        ImGui::TableSetupColumn("Labels", ImGuiTableColumnFlags_WidthStretch);
+                            ImVec2(visibleTableWidth, tableHeight))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, indexColumnWidth);
+        ImGui::TableSetupColumn("Block", ImGuiTableColumnFlags_WidthFixed, blockColumnWidth);
+        ImGui::TableSetupColumn("Quantity", ImGuiTableColumnFlags_WidthFixed, quantityColumnWidth);
+        ImGui::TableSetupColumn("Color", ImGuiTableColumnFlags_WidthFixed, colorColumnWidth);
+        ImGui::TableSetupColumn("Log", ImGuiTableColumnFlags_WidthFixed, logColumnWidth);
+        ImGui::TableSetupColumn("Auto", ImGuiTableColumnFlags_WidthFixed, autoColumnWidth);
+        ImGui::TableSetupColumn("Stars", ImGuiTableColumnFlags_WidthFixed, starColumnWidth);
+        ImGui::TableSetupColumn("Vector", ImGuiTableColumnFlags_WidthFixed, vectorColumnWidth);
+        ImGui::TableSetupColumn("Scale", ImGuiTableColumnFlags_WidthFixed, scaleColumnWidth);
+        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, timeColumnWidth);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
         for (int i = 0; i < panelCount; ++i) {
@@ -1040,10 +1232,14 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           ImGui::TableSetColumnIndex(0);
           char panelLabel[32];
           std::snprintf(panelLabel, sizeof(panelLabel), "%d", i + 1);
+          const float panelSelectorWidth =
+            std::max(ImGui::GetContentRegionAvail().x,
+                     ImGui::CalcTextSize(panelLabel).x +
+                       2.0f * ImGui::GetStyle().FramePadding.x);
           if (ImGui::Selectable(panelLabel,
                                 ui.selectedPanelIndex == i,
                                 0,
-                                ImVec2(24.0f, 0.0f))) {
+                                ImVec2(panelSelectorWidth, 0.0f))) {
             ui.selectedPanelIndex = i;
             params.activeViewBlockIndex = panel.viewBlockIndex;
             ui.selectedViewBlockIndex = panel.viewBlockIndex;
@@ -1054,49 +1250,77 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           const bool rowClicked = ImGui::IsItemClicked();
 
           ImGui::TableSetColumnIndex(1);
-          ImGui::TextUnformatted(blockNames[panel.viewBlockIndex]);
+          ImGui::SetNextItemWidth(-FLT_MIN);
+          if (ImGui::Combo("##panel_block",
+                           &panel.viewBlockIndex,
+                           blockNames.data(),
+                           static_cast<int>(blockNames.size()))) {
+            params.activeViewBlockIndex = panel.viewBlockIndex;
+            ui.selectedViewBlockIndex = panel.viewBlockIndex;
+            ProjectionSyncTopLevelFromViewBlock(params, panel.viewBlockIndex);
+            dirty = true;
+          }
           ImGui::TableSetColumnIndex(2);
-          ImGui::TextUnformatted(QuantityDisplayLabel(ctx.quantity,
-                                                      panel.quantity));
+          ImGui::SetNextItemWidth(-FLT_MIN);
+          dirty |= DrawProjectionQuantityCombo("##panel_quantity",
+                                               panel.quantity,
+                                               ctx.quantity);
           ImGui::TableSetColumnIndex(3);
-          ImGui::Text("%s%s%s",
-                      colormaps[panel.colormapIndex].name,
-                      panel.flagLogScale ? " log" : "",
-                      panel.autoRange ? " auto" : " manual");
-
-          auto overlayLabel = [](int index,
-                                 const char* prefix,
-                                 int count) -> std::string {
-            if (index <= 0) return "Off";
-            return std::string(prefix) + " " +
-                   std::to_string(std::clamp(index, 1, count));
-          };
+          ImGui::SetNextItemWidth(-FLT_MIN);
+          if (ImGui::BeginCombo("##panel_color",
+                                colormaps[panel.colormapIndex].name)) {
+            for (int cmap = 0; cmap < colormapCount; ++cmap) {
+              const bool selected = panel.colormapIndex == cmap;
+              if (ImGui::Selectable(colormaps[cmap].name, selected)) {
+                panel.colormapIndex = cmap;
+                dirty = true;
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
 
           ImGui::TableSetColumnIndex(4);
-          const std::string starLabel =
-            overlayLabel(panel.starOverlayIndex,
-                         "Star field",
-                         params.starOverlayCount);
-          ImGui::TextUnformatted(starLabel.c_str());
+          dirty |= drawCenteredCheckbox("##panel_log", &panel.flagLogScale);
 
           ImGui::TableSetColumnIndex(5);
-          const std::string vectorLabel =
-            overlayLabel(panel.vectorOverlayIndex,
-                         "Vector field",
-                         params.vectorOverlayCount);
-          ImGui::TextUnformatted(vectorLabel.c_str());
+          dirty |= drawCenteredCheckbox("##panel_auto", &panel.autoRange);
 
           ImGui::TableSetColumnIndex(6);
-          const bool showTime = ProjectionResolveLabelMode(
-            panel.timeLabelMode,
-            true);
-          const bool showScale = ProjectionResolveLabelMode(
-            panel.scaleBarMode,
-            false);
-          ImGui::Text("%s%s%s",
-                      showTime ? "Time" : "",
-                      (showTime && showScale) ? " / " : "",
-                      showScale ? "Scale" : "");
+          ImGui::SetNextItemWidth(-FLT_MIN);
+          dirty |= drawOverlayCombo(
+            "##panel_stars",
+            panel.starOverlayIndex,
+            params.starOverlayCount,
+            "Star field",
+            [&](int overlayIndex) { return params.starOverlays[overlayIndex].name; });
+
+          ImGui::TableSetColumnIndex(7);
+          ImGui::SetNextItemWidth(-FLT_MIN);
+          dirty |= drawOverlayCombo(
+            "##panel_vector",
+            panel.vectorOverlayIndex,
+            params.vectorOverlayCount,
+            "Vector field",
+            [&](int overlayIndex) { return params.vectorOverlays[overlayIndex].name; });
+
+          ImGui::TableSetColumnIndex(8);
+          bool showScale = ProjectionResolveLabelMode(panel.scaleBarMode, false);
+          if (drawCenteredCheckbox("##panel_scale", &showScale)) {
+            panel.scaleBarMode = showScale
+              ? ProjectionPanelLabelMode::Show
+              : ProjectionPanelLabelMode::Hide;
+            dirty = true;
+          }
+
+          ImGui::TableSetColumnIndex(9);
+          bool showTime = ProjectionResolveLabelMode(panel.timeLabelMode, true);
+          if (drawCenteredCheckbox("##panel_time", &showTime)) {
+            panel.timeLabelMode = showTime
+              ? ProjectionPanelLabelMode::Show
+              : ProjectionPanelLabelMode::Hide;
+            dirty = true;
+          }
           if (rowClicked) {
             ui.selectedPanelIndex = i;
             params.activeViewBlockIndex = panel.viewBlockIndex;
@@ -1124,6 +1348,10 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                     "Panel %d",
                     ui.selectedPanelIndex + 1);
       DrawProjectionLargeLabel(panelTitle);
+      ImGui::SameLine();
+      if (ImGui::Button("Panel all...")) {
+        ui.panelAllWindowOpen = true;
+      }
 
       DrawProjectionSubsectionBox("Panel attributes", [&]() {
         if (ImGui::BeginTable("ActivePanelAttributesGrid", 2)) {
@@ -1187,47 +1415,35 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
           ImGui::EndTable();
         }
 
-        auto drawOverlayCombo = [&](const char* label,
-                                    int& index,
-                                    int count,
-                                    const char* fallbackPrefix,
-                                    auto&& nameAt) {
-          index = std::clamp(index, 0, count);
-          const char* preview = "Off";
-          std::string fallback;
-          if (index > 0) {
-            preview = nameAt(index - 1);
-            if (!preview || preview[0] == '\0') {
-              fallback = std::string(fallbackPrefix) + " " +
-                         std::to_string(index);
-              preview = fallback.c_str();
+        if (ImGui::BeginTable("ActivePanelColorBarGrid", 2)) {
+          float colorBarTextWidth = 0.0f;
+          for (const char* name : colorBarPositions) {
+            colorBarTextWidth = maxLabelWidth(name, colorBarTextWidth);
+          }
+          const float colorBarComboWidth =
+            comboColumnWidthFromText(colorBarTextWidth);
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          int colorBarPlacement =
+            static_cast<int>(activePanel.colorBarPlacement);
+          ImGui::SetNextItemWidth(colorBarComboWidth);
+          if (ImGui::Combo("Color bar##active_panel",
+                           &colorBarPlacement,
+                           colorBarPositions,
+                           IM_ARRAYSIZE(colorBarPositions))) {
+            activePanel.colorBarPlacement =
+              static_cast<ProjectionColorBarPlacement>(colorBarPlacement);
+            dirty = true;
+          }
+          if (activePanel.colorBarPlacement ==
+              ProjectionColorBarPlacement::Custom) {
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::Button("Customize##active_panel_colorbar")) {
+              ui.colorBarCustomWindowOpen = true;
             }
           }
-          bool changed = false;
-          if (ImGui::BeginCombo(label, preview)) {
-            if (ImGui::Selectable("Off", index == 0)) {
-              index = 0;
-              changed = true;
-            }
-            for (int i = 0; i < count; ++i) {
-              const bool selected = index == i + 1;
-              const char* itemLabel = nameAt(i);
-              std::string itemFallback;
-              if (!itemLabel || itemLabel[0] == '\0') {
-                itemFallback = std::string(fallbackPrefix) + " " +
-                               std::to_string(i + 1);
-                itemLabel = itemFallback.c_str();
-              }
-              if (ImGui::Selectable(itemLabel, selected)) {
-                index = i + 1;
-                changed = true;
-              }
-              if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-          }
-          return changed;
-        };
+          ImGui::EndTable();
+        }
 
         if (ImGui::BeginTable("ActivePanelOverlayGrid", 4)) {
           ImGui::TableNextRow();
@@ -2160,14 +2376,244 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
 	    ImGui::EndTabBar();
 	  }
 
-  ProjectionEnsureLayoutInitialized(params);
   ImGui::End();
+
+  if (ui.colorBarCustomWindowOpen) {
+    const int panelCount = params.multiPanelEnabled
+      ? ProjectionPanelGridCapacity(params)
+      : 1;
+    ui.selectedPanelIndex =
+      std::clamp(ui.selectedPanelIndex, 0, panelCount - 1);
+    ProjectionPanelSpec& panel = params.panels[ui.selectedPanelIndex];
+
+    ImGui::SetNextWindowSize(ImVec2(420, 180), ImGuiCond_Appearing);
+    ImGui::Begin("Custom color bar", &ui.colorBarCustomWindowOpen);
+    char title[64];
+    std::snprintf(title,
+                  sizeof(title),
+                  "Panel %d custom color bar",
+                  ui.selectedPanelIndex + 1);
+    DrawProjectionLargeLabel(title);
+
+    if (panel.colorBarPlacement != ProjectionColorBarPlacement::Custom) {
+      if (ImGui::Button("Use custom placement")) {
+        panel.colorBarPlacement = ProjectionColorBarPlacement::Custom;
+        dirty = true;
+      }
+    }
+
+    const char* orientations[] = { "Vertical", "Horizontal" };
+    int orientation = panel.colorBarCustomHorizontal ? 1 : 0;
+    float orientationTextWidth = 0.0f;
+    for (const char* label : orientations) {
+      orientationTextWidth =
+        std::max(orientationTextWidth, ImGui::CalcTextSize(label).x);
+    }
+    ImGui::SetNextItemWidth(
+      std::ceil(orientationTextWidth +
+                2.0f * ImGui::GetStyle().FramePadding.x +
+                ImGui::GetFrameHeight() +
+                ImGui::GetStyle().ItemSpacing.x));
+    if (ImGui::Combo("Orientation##custom_colorbar",
+                     &orientation,
+                     orientations,
+                     IM_ARRAYSIZE(orientations))) {
+      panel.colorBarCustomHorizontal = orientation == 1;
+      dirty = true;
+    }
+
+    if (ImGui::BeginTable("CustomColorBarGrid", 4)) {
+      const float unitInputWidth =
+        std::ceil(ImGui::CalcTextSize("0.000").x +
+                  2.0f * ImGui::GetStyle().FramePadding.x +
+                  ImGui::GetStyle().ItemSpacing.x);
+      ImGui::TableNextRow();
+      ImGui::TableSetColumnIndex(0);
+      ImGui::SetNextItemWidth(unitInputWidth);
+      dirty |= ImGui::InputFloat("X##custom_colorbar",
+                                 &panel.colorBarInsetX,
+                                 0.0f,
+                                 0.0f,
+                                 "%.3f");
+      ImGui::TableSetColumnIndex(1);
+      ImGui::SetNextItemWidth(unitInputWidth);
+      dirty |= ImGui::InputFloat("Y##custom_colorbar",
+                                 &panel.colorBarInsetY,
+                                 0.0f,
+                                 0.0f,
+                                 "%.3f");
+      ImGui::TableSetColumnIndex(2);
+      ImGui::SetNextItemWidth(unitInputWidth);
+      dirty |= ImGui::InputFloat("Length##custom_colorbar",
+                                 &panel.colorBarInsetLength,
+                                 0.0f,
+                                 0.0f,
+                                 "%.3f");
+      ImGui::TableSetColumnIndex(3);
+      ImGui::SetNextItemWidth(unitInputWidth);
+      dirty |= ImGui::InputFloat("Thick##custom_colorbar",
+                                 &panel.colorBarInsetThickness,
+                                 0.0f,
+                                 0.0f,
+                                 "%.3f");
+      ImGui::EndTable();
+    }
+    ImGui::End();
+  }
+
+  {
+    static bool initialized = false;
+    static bool applyColorBar = true;
+    static int colorBarPlacement = 0;
+    static bool colorBarCustomHorizontal = false;
+    static float colorBarInsetX = 0.78f;
+    static float colorBarInsetY = 0.08f;
+    static float colorBarInsetLength = 0.34f;
+    static float colorBarInsetThickness = 0.035f;
+    static bool showTime = true;
+    static bool showScale = false;
+
+    if (ui.panelAllWindowOpen && !initialized) {
+      const int panelCount = params.multiPanelEnabled
+        ? ProjectionPanelGridCapacity(params)
+        : 1;
+      ui.selectedPanelIndex =
+        std::clamp(ui.selectedPanelIndex, 0, panelCount - 1);
+      const ProjectionPanelSpec& panel = params.panels[ui.selectedPanelIndex];
+      colorBarPlacement = static_cast<int>(panel.colorBarPlacement);
+      colorBarCustomHorizontal = panel.colorBarCustomHorizontal;
+      colorBarInsetX = panel.colorBarInsetX;
+      colorBarInsetY = panel.colorBarInsetY;
+      colorBarInsetLength = panel.colorBarInsetLength;
+      colorBarInsetThickness = panel.colorBarInsetThickness;
+      showTime = ProjectionResolveLabelMode(panel.timeLabelMode, true);
+      showScale = ProjectionResolveLabelMode(panel.scaleBarMode, false);
+      initialized = true;
+    }
+
+    if (!ui.panelAllWindowOpen) {
+      initialized = false;
+    } else {
+      ImGui::SetNextWindowSize(ImVec2(520, 260), ImGuiCond_Appearing);
+      ImGui::Begin("Panel all settings", &ui.panelAllWindowOpen);
+      DrawProjectionLargeLabel("Apply to all panels");
+
+      if (ImGui::BeginTable("PanelAllScopeGrid", 3)) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Checkbox("Apply color bar##panel_all_scope", &applyColorBar);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Checkbox("Time##panel_all", &showTime);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Checkbox("Scale##panel_all", &showScale);
+        ImGui::EndTable();
+      }
+
+      const char* colorBarPositions[] = {
+        "Right",
+        "Left",
+        "Top",
+        "Bottom",
+        "Inset V",
+        "Inset H",
+        "Custom"
+      };
+      const char* orientations[] = { "Vertical", "Horizontal" };
+
+      ImGui::BeginDisabled(!applyColorBar);
+      if (ImGui::BeginTable("PanelAllColorBarGrid", 2)) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::SetNextItemWidth(130.0f);
+        ImGui::Combo("Color bar##panel_all",
+                     &colorBarPlacement,
+                     colorBarPositions,
+                     IM_ARRAYSIZE(colorBarPositions));
+        if (static_cast<ProjectionColorBarPlacement>(colorBarPlacement) ==
+            ProjectionColorBarPlacement::Custom) {
+          ImGui::TableSetColumnIndex(1);
+          int orientation = colorBarCustomHorizontal ? 1 : 0;
+          ImGui::SetNextItemWidth(130.0f);
+          if (ImGui::Combo("Orientation##panel_all_colorbar",
+                           &orientation,
+                           orientations,
+                           IM_ARRAYSIZE(orientations))) {
+            colorBarCustomHorizontal = orientation == 1;
+          }
+
+          ImGui::TableNextRow();
+          const float unitInputWidth =
+            std::ceil(ImGui::CalcTextSize("0.000").x +
+                      2.0f * ImGui::GetStyle().FramePadding.x +
+                      ImGui::GetStyle().ItemSpacing.x);
+          ImGui::TableSetColumnIndex(0);
+          ImGui::SetNextItemWidth(unitInputWidth);
+          ImGui::InputFloat("X##panel_all_colorbar",
+                            &colorBarInsetX,
+                            0.0f,
+                            0.0f,
+                            "%.3f");
+          ImGui::SameLine();
+          ImGui::SetNextItemWidth(unitInputWidth);
+          ImGui::InputFloat("Y##panel_all_colorbar",
+                            &colorBarInsetY,
+                            0.0f,
+                            0.0f,
+                            "%.3f");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::SetNextItemWidth(unitInputWidth);
+          ImGui::InputFloat("Length##panel_all_colorbar",
+                            &colorBarInsetLength,
+                            0.0f,
+                            0.0f,
+                            "%.3f");
+          ImGui::SameLine();
+          ImGui::SetNextItemWidth(unitInputWidth);
+          ImGui::InputFloat("Thick##panel_all_colorbar",
+                            &colorBarInsetThickness,
+                            0.0f,
+                            0.0f,
+                            "%.3f");
+        }
+        ImGui::EndTable();
+      }
+      ImGui::EndDisabled();
+
+      if (ImGui::Button("Apply to all panels")) {
+        const int panelCount = params.multiPanelEnabled
+          ? ProjectionPanelGridCapacity(params)
+          : 1;
+        for (int i = 0; i < panelCount; ++i) {
+          ProjectionPanelSpec& panel = params.panels[i];
+          if (applyColorBar) {
+            panel.colorBarPlacement =
+              static_cast<ProjectionColorBarPlacement>(colorBarPlacement);
+            panel.colorBarCustomHorizontal = colorBarCustomHorizontal;
+            panel.colorBarInsetX = colorBarInsetX;
+            panel.colorBarInsetY = colorBarInsetY;
+            panel.colorBarInsetLength = colorBarInsetLength;
+            panel.colorBarInsetThickness = colorBarInsetThickness;
+          }
+          panel.timeLabelMode = showTime
+            ? ProjectionPanelLabelMode::Show
+            : ProjectionPanelLabelMode::Hide;
+          panel.scaleBarMode = showScale
+            ? ProjectionPanelLabelMode::Show
+            : ProjectionPanelLabelMode::Hide;
+        }
+        dirty = true;
+      }
+      ImGui::End();
+    }
+  }
+
+  ProjectionEnsureLayoutInitialized(params);
   return dirty;
 }
 
 void DrawProjectionMapUI(ProjectionMapUIState& state,
                          ProjectionMapRequestState& request,
-                         const ProjectionMapViewContext& ctx)
+                         ProjectionMapViewContext& ctx)
 {
   if (!state.open) {
     state.selectMode = false;
@@ -2704,9 +3150,29 @@ void DrawTopParticlesUI(TopParticlesUIState& state,
   }
 
   ImGui::Text("Plot 1d histogram");
+  LogQuantityCatalogForUI("TopParticlesHistogram", quantity);
 
-  const char* quantities[] = { "x", "y", "z", "r", "Density", "Temperature", "Hsml", "Mass" };
-  ImGui::Combo("Quantity", &state.selectedVar, quantities, IM_ARRAYSIZE(quantities));
+  if (!quantity.catalog.nAllQ ||
+      !std::any_of(quantity.catalog.allQ.begin(),
+                   quantity.catalog.allQ.begin() + quantity.catalog.nAllQ,
+                   [&](QuantityId q) { return q == state.histogramQuantity; })) {
+    state.histogramQuantity =
+      quantity.catalog.nAllQ > 0 ? quantity.catalog.allQ[0] : QuantityId::Density;
+  }
+
+  if (ImGui::BeginCombo("Quantity",
+                        QuantityDisplayLabel(quantity,
+                                             state.histogramQuantity))) {
+    for (int q = 0; q < quantity.catalog.nAllQ; ++q) {
+      const QuantityId cand = quantity.catalog.allQ[q];
+      const bool selected = cand == state.histogramQuantity;
+      if (ImGui::Selectable(QuantityDisplayLabel(quantity, cand), selected)) {
+        state.histogramQuantity = cand;
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
 
   ImGui::InputInt("Number of bins", &state.bins);
   if (state.bins < 1) state.bins = 1;

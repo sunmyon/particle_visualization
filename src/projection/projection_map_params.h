@@ -11,6 +11,15 @@ enum class DataSource : int { Gas = 0, DM = 1, Stars = 2 };
 enum class StarQuantity : int { Density=0, Metallicity=1, Mass=2, Flux=3 };
 enum class ProjectionVoronoiMode : int { WeightedMean = 0, OpacityRendering = 1 };
 enum class ProjectionPanelLabelMode : int { Default = 0, Show = 1, Hide = 2, Override = 3 };
+enum class ProjectionColorBarPlacement : int {
+  Right = 0,
+  Left = 1,
+  Top = 2,
+  Bottom = 3,
+  InsetVertical = 4,
+  InsetHorizontal = 5,
+  Custom = 6
+};
 enum class ProjectionVectorField : int { Velocity = 0, MagneticField = 1 };
 enum class ProjectionVectorOverlayMode : int { Arrows = 0, Streamlines = 1 };
 enum class ProjectionVectorScaleMode : int { Linear = 0, Log = 1, Normalized = 2 };
@@ -87,6 +96,13 @@ struct ProjectionPanelSpec {
   bool autoRange = true;
   float rangeMin = 0.0f;
   float rangeMax = 1.0f;
+  ProjectionColorBarPlacement colorBarPlacement =
+    ProjectionColorBarPlacement::Right;
+  bool colorBarCustomHorizontal = false;
+  float colorBarInsetX = 0.78f;
+  float colorBarInsetY = 0.08f;
+  float colorBarInsetLength = 0.34f;
+  float colorBarInsetThickness = 0.035f;
 
   ProjectionPanelLabelMode timeLabelMode = ProjectionPanelLabelMode::Default;
   ProjectionPanelLabelMode scaleBarMode = ProjectionPanelLabelMode::Default;
@@ -173,6 +189,13 @@ struct ProjectionMapParams {
   bool autoRange = true;
   float range_min = 0.0f;
   float range_max = 1.0f;
+  ProjectionColorBarPlacement colorBarPlacement =
+    ProjectionColorBarPlacement::Right;
+  bool colorBarCustomHorizontal = false;
+  float colorBarInsetX = 0.78f;
+  float colorBarInsetY = 0.08f;
+  float colorBarInsetLength = 0.34f;
+  float colorBarInsetThickness = 0.035f;
 
   bool flagShowCuboid = false;
 
@@ -414,6 +437,12 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
       panel.autoRange = params.autoRange;
       panel.rangeMin = params.range_min;
       panel.rangeMax = params.range_max;
+      panel.colorBarPlacement = params.colorBarPlacement;
+      panel.colorBarCustomHorizontal = params.colorBarCustomHorizontal;
+      panel.colorBarInsetX = params.colorBarInsetX;
+      panel.colorBarInsetY = params.colorBarInsetY;
+      panel.colorBarInsetLength = params.colorBarInsetLength;
+      panel.colorBarInsetThickness = params.colorBarInsetThickness;
       panel.timeLabelMode =
         (i < kProjectionMaxPanels && !params.multiPanelShowTimeLabel[i])
           ? ProjectionPanelLabelMode::Hide
@@ -455,6 +484,19 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
       std::clamp(params.panels[i].vectorOverlayIndex,
                  0,
                  params.vectorOverlayCount);
+    params.panels[i].colorBarPlacement =
+      static_cast<ProjectionColorBarPlacement>(
+        std::clamp(static_cast<int>(params.panels[i].colorBarPlacement),
+                   0,
+                   6));
+    params.panels[i].colorBarInsetX =
+      std::clamp(params.panels[i].colorBarInsetX, 0.0f, 1.0f);
+    params.panels[i].colorBarInsetY =
+      std::clamp(params.panels[i].colorBarInsetY, 0.0f, 1.0f);
+    params.panels[i].colorBarInsetLength =
+      std::clamp(params.panels[i].colorBarInsetLength, 0.05f, 1.0f);
+    params.panels[i].colorBarInsetThickness =
+      std::clamp(params.panels[i].colorBarInsetThickness, 0.01f, 0.2f);
   }
   for (int i = 0; i < params.viewBlockCount; ++i) {
     ProjectionNormalizeViewBlockOrientation(params.viewBlocks[i]);
@@ -537,6 +579,12 @@ inline void ProjectionApplyPanelToParams(ProjectionMapParams& params,
   params.autoRange = panel.autoRange;
   params.range_min = panel.rangeMin;
   params.range_max = panel.rangeMax;
+  params.colorBarPlacement = panel.colorBarPlacement;
+  params.colorBarCustomHorizontal = panel.colorBarCustomHorizontal;
+  params.colorBarInsetX = panel.colorBarInsetX;
+  params.colorBarInsetY = panel.colorBarInsetY;
+  params.colorBarInsetLength = panel.colorBarInsetLength;
+  params.colorBarInsetThickness = panel.colorBarInsetThickness;
   params.flagTimeLabel =
     ProjectionResolveLabelMode(panel.timeLabelMode,
                                true);

@@ -5,6 +5,7 @@
 #include "app/execution/clump_batch_execution.h"
 #include "app/execution/projection_execution.h"
 #include "app/app_services.h"
+#include "data/simulation_block.h"
 
 void ExecuteAnalysisJobRequests(AppDataState& data,
                                 AppRuntimeState& runtime,
@@ -13,6 +14,8 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
                                 CameraContext& camera,
                                 int currentFileIndex)
 {
+  QuantityStateScope quantityScope(runtime.quantity);
+
 #ifdef GEOMETRICAL_ANALYSIS
   ExecuteSingleDiskAnalysisRequest(*data.particles,
 				   runtime.settings.normalization,
@@ -109,7 +112,8 @@ void ExecuteAnalysisJobRequests(AppDataState& data,
     ProjectionFrameExecutionContext projectionCtx{
       *data.particles,
       *services.projectionMap2D,
-      runtime.quantity.units
+      runtime.quantity.units,
+      runtime.quantity
     };
 
     ProjectionMapExecutionContext projectionMapCtx{

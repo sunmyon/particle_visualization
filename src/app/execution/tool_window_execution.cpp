@@ -58,9 +58,12 @@ SimulationElement* FindParticleByIndex(SimulationDataset& particles, size_t inde
 float TopParticleSortValue(const SimulationBlock& block,
                            const SimulationElement& p,
                            size_t index,
-                           QuantityId quantity)
+                           QuantityId quantityId)
 {
-  return getScalarValue(block, p, static_cast<int>(index), quantity);
+  return getScalarValue(block,
+                        p,
+                        static_cast<int>(index),
+                        quantityId);
 }
 
 } // namespace
@@ -74,10 +77,9 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
                                        SnapshotPostprocessState& post,
                                        const QuantityState& quantity)
 {
+  QuantityStateScope quantityScope(quantity);
+
   static constexpr int kHistorySizeMax = 10;
-  static constexpr const char* kQuantities[] = {
-    "x", "y", "z", "r", "Density", "Temperature", "Hsml", "Mass"
-  };
 
   if (post.refreshTopParticles) {
     for (int i = 0; i < 6; ++i) {
@@ -224,7 +226,10 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
       }
       if (p.type >= 0 && p.type < 6 && req.selectedTypes[p.type]) {
         const float value =
-          TopParticleSortValue(particles.simulationBlock, p, i, req.sortQuantity);
+          TopParticleSortValue(particles.simulationBlock,
+                               p,
+                               i,
+                               req.sortQuantity);
         if (!std::isfinite(value)) {
           continue;
         }
@@ -286,12 +291,18 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     return;
   }
 
-  const int quantityCount = static_cast<int>(sizeof(kQuantities) / sizeof(kQuantities[0]));
-  int selectedVar = req.histogramSelectedVar;
-  if (selectedVar < 0 || selectedVar >= quantityCount) {
-    selectedVar = 0;
+  QuantityId histogramQuantity = req.histogramQuantity;
+  bool quantityKnown = false;
+  for (int q = 0; q < quantity.catalog.nAllQ; ++q) {
+    if (quantity.catalog.allQ[q] == histogramQuantity) {
+      quantityKnown = true;
+      break;
+    }
   }
-  const std::string var = kQuantities[selectedVar];
+  if (!quantityKnown) {
+    histogramQuantity =
+      quantity.catalog.nAllQ > 0 ? quantity.catalog.allQ[0] : QuantityId::Density;
+  }
   const int bins = std::max(1, req.histogramBins);
 
   std::function<bool(const SimulationElement&)> includeParticle =
@@ -307,12 +318,16 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     };
   }
 
-  auto particleValue = [&](const SimulationElement& p) {
-    float value = p.getValue(var);
-    if (var == "Mass") {
-      value = static_cast<float>(quantity.toDisplay(QuantityId::Mass, value));
+  auto particleValue = [&](size_t index, const SimulationElement& p) {
+    (void)p;
+    float value = 0.0f;
+    if (!getQuantityValue(particles.simulationBlock,
+                          index,
+                          histogramQuantity,
+                          value)) {
+      return std::numeric_limits<float>::quiet_NaN();
     }
-    return value;
+    return static_cast<float>(quantity.toDisplay(histogramQuantity, value));
   };
 
   float valueMin = std::numeric_limits<float>::max();
@@ -325,7 +340,8 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     if (!(p.type >= 0 && p.type < 6 && req.selectedTypes[p.type])) continue;
     if (!includeParticle(p)) continue;
 
-    float value = particleValue(p);
+    float value = particleValue(i, p);
+    if (!std::isfinite(value)) continue;
     if (value == 0.0f) continue;
     if (req.histogramLogScaleX) {
       if (value <= 0.0f) continue;
@@ -366,7 +382,8 @@ void ExecuteTopParticlesWindowRequests(TopParticlesUIState& ui,
     if (!(p.type >= 0 && p.type < 6 && req.selectedTypes[p.type])) continue;
     if (!includeParticle(p)) continue;
 
-    float value = particleValue(p);
+    float value = particleValue(i, p);
+    if (!std::isfinite(value)) continue;
     if (value == 0.0f) continue;
     if (req.histogramLogScaleX) {
       if (value <= 0.0f) continue;

@@ -1,6 +1,7 @@
 #include "projection/projection_frame_execution.h"
 
 #include "image/image_io.h"
+#include "data/simulation_block.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_context.h"
 
@@ -98,6 +99,7 @@ ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& pr
                                              ProjectionFrameOutputOptions output)
 {
   ProjectionFrameResult result;
+  QuantityStateScope quantityScope(projection.quantity);
   ProjectionMapContext context =
     BuildProjectionMapContext(params,
                               time);

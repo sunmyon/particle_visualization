@@ -23,7 +23,8 @@ double RebuildElapsedMs(RebuildProfileClock::time_point start)
 
 } // namespace
 
-SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const QuantityCatalogState& catalog){
+SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const QuantityState& quantity){
+  const QuantityCatalogState& catalog = quantity.catalog;
   const auto totalStart = RebuildProfileClock::now();
   BuildResult result;
   worldToRenderScale = 1.0f;
@@ -75,8 +76,11 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
           for (int q = 0; q < catalog.nUIQ; ++q) {
             float v = 0.0f;
             const size_t index = static_cast<size_t>(i);
-            if (!hasQuantityAt(index, catalog.uiQ[q]) ||
-                !getQuantity(index, catalog.uiQ[q], v)) {
+            if (!getQuantityValue(*this,
+                                  index,
+                                  catalog.uiQ[q],
+                                  v,
+                                  &quantity)) {
               continue;
             }
             localMin[q][type]  = std::min(localMin[q][type],  v);
@@ -108,7 +112,8 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
     for (int q = 0; q < catalog.nUIQ; ++q) {
       for (int t = 0; t < kNumTypes; ++t) {
         if (npart_type[t] == 0 ||
-            !hasQuantityForType(catalog.uiQ[q], t) ||
+            (!IsDerivedScalarQuantity(catalog.uiQ[q]) &&
+             !hasQuantityForType(catalog.uiQ[q], t)) ||
             result.valueMin[q][t] == std::numeric_limits<float>::max() ||
             result.valueMax[q][t] == -std::numeric_limits<float>::max()) {
           result.valueMin[q][t] = result.valueMax[q][t] = 0.0f;

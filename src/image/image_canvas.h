@@ -10,6 +10,11 @@ public:
   std::vector<unsigned char>& pixels() const;
   
   void resizeKeepContent(int newWidth, int newHeight, unsigned char value);
+  void resizeKeepContentAt(int newWidth,
+                           int newHeight,
+                           int dstX,
+                           int dstY,
+                           unsigned char value);
   
   void setPixel(int x, int y,
                 unsigned char r,
