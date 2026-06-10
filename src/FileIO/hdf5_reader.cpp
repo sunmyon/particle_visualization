@@ -601,7 +601,8 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   double fileOpenMs = 0.0;
   try {
     const auto t0 = Hdf5ProfileClock::now();
-    file_ = H5::H5File(path, H5F_ACC_RDONLY);
+    try { file_.close(); } catch (...) {}
+    file_.openFile(path.c_str(), H5F_ACC_RDONLY);
     fileOpenMs = elapsed_ms(t0);
   } catch (const H5::FileIException& e) {
     lastError_ = "HDF5 open failed: " + e.getDetailMsg();
