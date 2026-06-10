@@ -194,6 +194,66 @@ inline bool TryApplySplitSnapshotPath(FileNavigationRuntimeState& rt,
   return true;
 }
 
+inline bool TryApplySplitHdf5PartFilePath(FileNavigationRuntimeState& rt,
+                                          const std::filesystem::path& selectedPath)
+{
+  std::string ext = selectedPath.extension().string();
+  for (char& c : ext) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (ext != ".hdf5" && ext != ".h5") {
+    return false;
+  }
+
+  const std::string stem = selectedPath.stem().string();
+  const size_t partDot = stem.find_last_of('.');
+  if (partDot == std::string::npos || partDot + 1 >= stem.size()) {
+    return false;
+  }
+
+  const std::string partToken = stem.substr(partDot + 1);
+  if (!std::all_of(partToken.begin(), partToken.end(),
+                   [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return false;
+  }
+
+  const std::string snapshotStem = stem.substr(0, partDot);
+  size_t fileNumStart = 0;
+  size_t fileNumLen = 0;
+  if (!FindLastDigitRunBefore(snapshotStem,
+                              snapshotStem.size(),
+                              fileNumStart,
+                              fileNumLen)) {
+    return false;
+  }
+
+  int snapshotIndex = -1;
+  try {
+    snapshotIndex = std::stoi(snapshotStem.substr(fileNumStart, fileNumLen));
+  } catch (...) {
+    return false;
+  }
+
+  std::string folder = selectedPath.parent_path().string();
+#ifdef _WIN32
+  const char sep = '\\';
+#else
+  const char sep = '/';
+#endif
+  if (!folder.empty() && folder.back() != sep) {
+    folder.push_back(sep);
+  }
+
+  const std::string fileFormat =
+    ReplaceDigitRunWithFormat(snapshotStem, fileNumStart, fileNumLen) +
+    "." + partToken + selectedPath.extension().string();
+
+  CopySnapshotCString(rt.input.folderPath, sizeof(rt.input.folderPath), folder.c_str());
+  CopySnapshotCString(rt.input.fileFormat, sizeof(rt.input.fileFormat), fileFormat.c_str());
+  rt.navigation.initialIndex = snapshotIndex;
+  return true;
+}
+
 inline void ApplySelectedSnapshotPath(FileNavigationRuntimeState& rt, const char* fullPath)
 {
   if (!fullPath || fullPath[0] == '\0') {
@@ -205,6 +265,16 @@ inline void ApplySelectedSnapshotPath(FileNavigationRuntimeState& rt, const char
   std::filesystem::path p(rt.input.filePath);
   const bool splitSnapshotPathApplied = TryApplySplitSnapshotPath(rt, p);
   if (splitSnapshotPathApplied) {
+    RecomputeCurrentFileIndex(rt);
+#ifdef HAVE_HDF5
+    rt.input.useHDF5 = true;
+#endif
+    RefreshSnapshotFilePath(rt);
+    return;
+  }
+
+  const bool splitHdf5PartPathApplied = TryApplySplitHdf5PartFilePath(rt, p);
+  if (splitHdf5PartPathApplied) {
     RecomputeCurrentFileIndex(rt);
 #ifdef HAVE_HDF5
     rt.input.useHDF5 = true;

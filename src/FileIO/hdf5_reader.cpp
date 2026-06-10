@@ -76,6 +76,141 @@ namespace {
     }
   }
 
+  bool openGroupIfExists(H5::H5File& file, const char* path, H5::Group& group)
+  {
+    try {
+      H5SilenceErrors quiet(true);
+      group = file.openGroup(path);
+      return true;
+    } catch (...) {
+      return false;
+    }
+  }
+
+  template<typename T>
+  bool readOptionalScalarAttribute(H5::Group& group,
+                                   const char* attrName,
+                                   T& value)
+  {
+    try {
+      if (!group.attrExists(attrName)) return false;
+      return HDF5Utils::readAttributeScalar(group, attrName, value);
+    } catch (...) {
+      return false;
+    }
+  }
+
+  template<typename T, size_t N>
+  bool readOptionalArrayAttribute(H5::Group& group,
+                                  const char* attrName,
+                                  T (&value)[N])
+  {
+    try {
+      if (!group.attrExists(attrName)) return false;
+      return HDF5Utils::readAttributeArray(group, attrName, value);
+    } catch (...) {
+      return false;
+    }
+  }
+
+  bool readScalarFromGroups(H5::Group* headerGroup,
+                            H5::Group* parametersGroup,
+                            const char* attrName,
+                            double& value,
+                            const char** sourceOut = nullptr)
+  {
+    double tmp = value;
+    if (headerGroup != nullptr &&
+        readOptionalScalarAttribute(*headerGroup, attrName, tmp)) {
+      value = tmp;
+      if (sourceOut != nullptr) *sourceOut = "/Header";
+      return true;
+    }
+    tmp = value;
+    if (parametersGroup != nullptr &&
+        readOptionalScalarAttribute(*parametersGroup, attrName, tmp)) {
+      value = tmp;
+      if (sourceOut != nullptr) *sourceOut = "/Parameters";
+      return true;
+    }
+    if (sourceOut != nullptr) *sourceOut = nullptr;
+    return false;
+  }
+
+  bool readPositiveScalarFromGroups(H5::Group* headerGroup,
+                                    H5::Group* parametersGroup,
+                                    const char* attrName,
+                                    double& value,
+                                    const char** sourceOut = nullptr)
+  {
+    double tmp = value;
+    const char* source = nullptr;
+    if (!readScalarFromGroups(headerGroup, parametersGroup, attrName, tmp, &source)) {
+      if (sourceOut != nullptr) *sourceOut = nullptr;
+      return false;
+    }
+    if (!std::isfinite(tmp) || tmp <= 0.0) {
+      if (sourceOut != nullptr) *sourceOut = nullptr;
+      return false;
+    }
+    value = tmp;
+    if (sourceOut != nullptr) *sourceOut = source;
+    return true;
+  }
+
+  template<typename T, size_t N>
+  bool readArrayFromGroups(H5::Group* headerGroup,
+                           H5::Group* parametersGroup,
+                           const char* attrName,
+                           T (&value)[N],
+                           const char** sourceOut = nullptr)
+  {
+    if (headerGroup != nullptr &&
+        readOptionalArrayAttribute(*headerGroup, attrName, value)) {
+      if (sourceOut != nullptr) *sourceOut = "/Header";
+      return true;
+    }
+    if (parametersGroup != nullptr &&
+        readOptionalArrayAttribute(*parametersGroup, attrName, value)) {
+      if (sourceOut != nullptr) *sourceOut = "/Parameters";
+      return true;
+    }
+    if (sourceOut != nullptr) *sourceOut = nullptr;
+    return false;
+  }
+
+  template<typename T>
+  bool readScalarFromGroups(H5::Group* headerGroup,
+                            H5::Group* parametersGroup,
+                            const char* attrName,
+                            T& value,
+                            const char** sourceOut = nullptr)
+  {
+    if (headerGroup != nullptr &&
+        readOptionalScalarAttribute(*headerGroup, attrName, value)) {
+      if (sourceOut != nullptr) *sourceOut = "/Header";
+      return true;
+    }
+    if (parametersGroup != nullptr &&
+        readOptionalScalarAttribute(*parametersGroup, attrName, value)) {
+      if (sourceOut != nullptr) *sourceOut = "/Parameters";
+      return true;
+    }
+    if (sourceOut != nullptr) *sourceOut = nullptr;
+    return false;
+  }
+
+  void logHdf5HeaderField(const char* attrName,
+                          bool ok,
+                          const char* source)
+  {
+    std::fprintf(stderr,
+                 "[HDF5Header] attr=%s status=%s source=%s\n",
+                 attrName,
+                 ok ? "read" : "skip",
+                 ok && source != nullptr ? source : "none");
+  }
+
   H5::PredType h5_memtype_from_source(DataType t)
   {
     switch(t){
@@ -490,156 +625,198 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
 		     0.75);
     
   bool hasHeader = false;
+  bool hasParameters = false;
+  H5::Group headerGroup;
+  H5::Group parametersGroup;
+
   double headerMs = 0.0;
   const auto headerStart = Hdf5ProfileClock::now();
-  try {
-    H5::Group hg = file_.openGroup("/Header");
-    hasHeader = true;
-
-    double time = 0.0;
-    (void)HDF5Utils::readAttributeScalar(hg, "Time", time);
-    header.time = (float)time;
-    header.has_redshift = false;
-
-    (void)HDF5Utils::readAttributeScalar(hg, "BoxSize", header.boxSize);
-    (void)HDF5Utils::readAttributeScalar(hg, "Omega0", header.Omega0);
-    (void)HDF5Utils::readAttributeScalar(hg, "OmegaLambda", header.OmegaLambda);
-    (void)HDF5Utils::readAttributeScalar(hg, "OmegaBaryon", header.OmegaBaryon);
-    (void)HDF5Utils::readAttributeScalar(hg, "HubbleParam", header.HubbleParam);
-    double headerUnitLength = header.UnitLength_in_cm;
-    if (HDF5Utils::readAttributeScalar(hg, "UnitLength_in_cm", headerUnitLength) &&
-        std::isfinite(headerUnitLength) && headerUnitLength > 0.0) {
-      header.UnitLength_in_cm = headerUnitLength;
-    }
-    double headerUnitMass = header.UnitMass_in_g;
-    if (HDF5Utils::readAttributeScalar(hg, "UnitMass_in_g", headerUnitMass) &&
-        std::isfinite(headerUnitMass) && headerUnitMass > 0.0) {
-      header.UnitMass_in_g = headerUnitMass;
-    }
-    double headerUnitVelocity = header.UnitVelocity_in_cm_per_s;
-    if (HDF5Utils::readAttributeScalar(hg,
-                                       "UnitVelocity_in_cm_per_s",
-                                       headerUnitVelocity) &&
-        std::isfinite(headerUnitVelocity) && headerUnitVelocity > 0.0) {
-      header.UnitVelocity_in_cm_per_s = headerUnitVelocity;
-    }
-
-    double z = 0.0;
-    if (HDF5Utils::readAttributeScalar(hg, "Redshift", z)) {
-      header.redshift = z;
-      header.has_redshift = true;
-    }
-      
-    // MassTable double[6]
-    double mt[6]{};
-    if (HDF5Utils::readAttributeArray(hg, "MassTable", mt)) {
-      for (int t=0;t<6;++t) {
-        mass_type_[t] = mt[t];
-        header.massTable[t] = mt[t];
-      }
-    } else {
-      for (int t=0;t<6;++t) {
-        mass_type_[t] = 0.0;
-        header.massTable[t] = 0.0;
-      }
-    }
-
-    // For split Gadget/AREPO HDF5 snapshots, NumPart_Total is the whole
-    // snapshot, while the datasets in this file contain NumPart_ThisFile.
-    // The reader's internal count_ must therefore prefer ThisFile.
-    unsigned int total32[6]{};
-    bool hasNumPartTotal = false;
-    if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", total32)) {
-      hasNumPartTotal = true;
-      for (int t=0;t<6;++t) header.NumPart_ThisFile[t] = static_cast<int>(total32[t]);
-    }
-
-    bool okThisFile = false;
-    {
-      unsigned int n32[6]{};
-      if (HDF5Utils::readAttributeArray(hg, "NumPart_ThisFile", n32)) {
-        for (int t=0;t<6;++t) count_[t] = static_cast<size_t>(n32[t]);
-        if (!hasNumPartTotal) {
-          for (int t=0;t<6;++t) header.NumPart_ThisFile[t] = static_cast<int>(n32[t]);
-        }
-        okThisFile = true;
-      }
-    }
-
-    if (!okThisFile) {
-      if (HDF5Utils::readAttributeArray(hg, "NumPart_Total", total32)) {
-        for (int t=0;t<6;++t) count_[t] = static_cast<size_t>(total32[t]);
-      }
-    }
-  } catch (...) {
-    hasHeader = false;
-    header.time = 0.0f;
-    header.redshift = 0.0;
-    header.has_redshift = false;
-    for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; }
-  }
+  hasHeader = openGroupIfExists(file_, "/Header", headerGroup);
   headerMs = elapsed_ms(headerStart);
+  std::fprintf(stderr,
+               "[HDF5Header] group=/Header status=%s\n",
+               hasHeader ? "open" : "missing");
 
   double parametersMs = 0.0;
   const auto parametersStart = Hdf5ProfileClock::now();
-  try {
-    H5::Group param = file_.openGroup("/Parameters");
-
-    double UnitLength_in_cm = header.UnitLength_in_cm;
-    if (HDF5Utils::readAttributeScalar(param, "UnitLength_in_cm", UnitLength_in_cm) &&
-        std::isfinite(UnitLength_in_cm) &&
-        UnitLength_in_cm > 0.0) {
-      header.UnitLength_in_cm = UnitLength_in_cm;
-    }
-
-    double UnitMass_in_g = header.UnitMass_in_g;
-    if (HDF5Utils::readAttributeScalar(param, "UnitMass_in_g", UnitMass_in_g) &&
-        std::isfinite(UnitMass_in_g) &&
-        UnitMass_in_g > 0.0) {
-      header.UnitMass_in_g = UnitMass_in_g;
-    }
-
-    double UnitVelocity_in_cm_per_s = header.UnitVelocity_in_cm_per_s;
-    if (HDF5Utils::readAttributeScalar(param, "UnitVelocity_in_cm_per_s", UnitVelocity_in_cm_per_s) &&
-        std::isfinite(UnitVelocity_in_cm_per_s) &&
-        UnitVelocity_in_cm_per_s > 0.0) {
-      header.UnitVelocity_in_cm_per_s = UnitVelocity_in_cm_per_s;
-    }
-
-    double HubbleParam = header.HubbleParam;
-    if (HDF5Utils::readAttributeScalar(param, "HubbleParam", HubbleParam) &&
-        std::isfinite(HubbleParam) &&
-        HubbleParam > 0.0) {
-      header.HubbleParam = HubbleParam;
-    }
-
-    bool flag_comoving = false;
-    (void)HDF5Utils::readAttributeScalar(param, "ComovingIntegrationOn", flag_comoving);
-    header.flag_comoving = flag_comoving;
-
-    bool flag_density_in_cgs = false;
-    (void)HDF5Utils::readAttributeScalar(param,
-                                         "FlagDensityInCgs",
-                                         flag_density_in_cgs);
-    header.flag_density_in_cgs = flag_density_in_cgs;
-
-    bool flag_B_in_cgs = false;
-    (void)HDF5Utils::readAttributeScalar(param,
-                                         "FlagBfieldInCgs",
-                                         flag_B_in_cgs);
-    header.flag_B_in_cgs = flag_B_in_cgs;
-  } catch (...) {
-    header.flag_comoving = false;
-    header.flag_density_in_cgs = true;
-    header.flag_B_in_cgs = true;
-  }
+  hasParameters = openGroupIfExists(file_, "/Parameters", parametersGroup);
   parametersMs = elapsed_ms(parametersStart);
+  std::fprintf(stderr,
+               "[HDF5Header] group=/Parameters status=%s\n",
+               hasParameters ? "open" : "missing");
+
+  H5::Group* headerPtr = hasHeader ? &headerGroup : nullptr;
+  H5::Group* parametersPtr = hasParameters ? &parametersGroup : nullptr;
+
+  const char* attrSource = nullptr;
+  double time = header.time;
+  bool attrOk = readScalarFromGroups(headerPtr, parametersPtr, "Time", time, &attrSource);
+  logHdf5HeaderField("Time", attrOk, attrSource);
+  if (attrOk) {
+    header.time = time;
+  }
+
+  header.has_redshift = false;
+  double z = header.redshift;
+  attrOk = readScalarFromGroups(headerPtr, parametersPtr, "Redshift", z, &attrSource);
+  logHdf5HeaderField("Redshift", attrOk, attrSource);
+  if (attrOk) {
+    header.redshift = z;
+    header.has_redshift = true;
+  }
+
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "BoxSize",
+                                header.boxSize,
+                                &attrSource);
+  logHdf5HeaderField("BoxSize", attrOk, attrSource);
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "Omega0",
+                                header.Omega0,
+                                &attrSource);
+  logHdf5HeaderField("Omega0", attrOk, attrSource);
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "OmegaLambda",
+                                header.OmegaLambda,
+                                &attrSource);
+  logHdf5HeaderField("OmegaLambda", attrOk, attrSource);
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "OmegaBaryon",
+                                header.OmegaBaryon,
+                                &attrSource);
+  logHdf5HeaderField("OmegaBaryon", attrOk, attrSource);
+  attrOk = readPositiveScalarFromGroups(headerPtr,
+                                        parametersPtr,
+                                        "HubbleParam",
+                                        header.HubbleParam,
+                                        &attrSource);
+  logHdf5HeaderField("HubbleParam", attrOk, attrSource);
+  attrOk = readPositiveScalarFromGroups(headerPtr,
+                                        parametersPtr,
+                                        "UnitLength_in_cm",
+                                        header.UnitLength_in_cm,
+                                        &attrSource);
+  logHdf5HeaderField("UnitLength_in_cm", attrOk, attrSource);
+  attrOk = readPositiveScalarFromGroups(headerPtr,
+                                        parametersPtr,
+                                        "UnitMass_in_g",
+                                        header.UnitMass_in_g,
+                                        &attrSource);
+  logHdf5HeaderField("UnitMass_in_g", attrOk, attrSource);
+  attrOk = readPositiveScalarFromGroups(headerPtr,
+                                        parametersPtr,
+                                        "UnitVelocity_in_cm_per_s",
+                                        header.UnitVelocity_in_cm_per_s,
+                                        &attrSource);
+  logHdf5HeaderField("UnitVelocity_in_cm_per_s", attrOk, attrSource);
+
+  double mt[6]{};
+  attrOk = readArrayFromGroups(headerPtr,
+                               parametersPtr,
+                               "MassTable",
+                               mt,
+                               &attrSource);
+  logHdf5HeaderField("MassTable", attrOk, attrSource);
+  if (attrOk) {
+    for (int t=0;t<6;++t) {
+      mass_type_[t] = mt[t];
+      header.massTable[t] = mt[t];
+    }
+  } else {
+    for (int t=0;t<6;++t) {
+      mass_type_[t] = 0.0;
+      header.massTable[t] = 0.0;
+    }
+  }
+
+  // For split Gadget/AREPO HDF5 snapshots, NumPart_Total is the whole
+  // snapshot, while the datasets in this file contain NumPart_ThisFile.
+  // The reader's internal count_ must therefore prefer ThisFile.
+  unsigned int total32[6]{};
+  bool hasNumPartTotal = false;
+  attrOk = readArrayFromGroups(headerPtr,
+                               parametersPtr,
+                               "NumPart_Total",
+                               total32,
+                               &attrSource);
+  logHdf5HeaderField("NumPart_Total", attrOk, attrSource);
+  if (attrOk) {
+    hasNumPartTotal = true;
+    for (int t=0;t<6;++t) {
+      header.NumPart_ThisFile[t] = static_cast<int>(total32[t]);
+    }
+  }
+
+  bool okThisFile = false;
+  {
+    unsigned int n32[6]{};
+    attrOk = readArrayFromGroups(headerPtr,
+                                 parametersPtr,
+                                 "NumPart_ThisFile",
+                                 n32,
+                                 &attrSource);
+    logHdf5HeaderField("NumPart_ThisFile", attrOk, attrSource);
+    if (attrOk) {
+      for (int t=0;t<6;++t) {
+        count_[t] = static_cast<size_t>(n32[t]);
+      }
+      if (!hasNumPartTotal) {
+        for (int t=0;t<6;++t) {
+          header.NumPart_ThisFile[t] = static_cast<int>(n32[t]);
+        }
+      }
+      okThisFile = true;
+    }
+  }
+
+  if (!okThisFile && hasNumPartTotal) {
+    for (int t=0;t<6;++t) {
+      count_[t] = static_cast<size_t>(total32[t]);
+    }
+  }
+
+  bool flag_comoving = header.flag_comoving;
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "ComovingIntegrationOn",
+                                flag_comoving,
+                                &attrSource);
+  logHdf5HeaderField("ComovingIntegrationOn", attrOk, attrSource);
+  if (attrOk) {
+    header.flag_comoving = flag_comoving;
+  }
+
+  bool flag_density_in_cgs = header.flag_density_in_cgs;
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "FlagDensityInCgs",
+                                flag_density_in_cgs,
+                                &attrSource);
+  logHdf5HeaderField("FlagDensityInCgs", attrOk, attrSource);
+  if (attrOk) {
+    header.flag_density_in_cgs = flag_density_in_cgs;
+  }
+
+  bool flag_B_in_cgs = header.flag_B_in_cgs;
+  attrOk = readScalarFromGroups(headerPtr,
+                                parametersPtr,
+                                "FlagBfieldInCgs",
+                                flag_B_in_cgs,
+                                &attrSource);
+  logHdf5HeaderField("FlagBfieldInCgs", attrOk, attrSource);
+  if (attrOk) {
+    header.flag_B_in_cgs = flag_B_in_cgs;
+  }
 
   bool allZero = true;
   for (int t=0;t<6;++t) if (count_[t] > 0) { allZero=false; break; }
 
   double inferCountsMs = 0.0;
-  if (!hasHeader || allZero) {
+  if (allZero) {
     const auto inferStart = Hdf5ProfileClock::now();
     for (int t=0;t<6;++t) {
       size_t n = inferCountFromDataset(file_, t, "Coordinates");
