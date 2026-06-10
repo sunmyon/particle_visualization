@@ -22,7 +22,6 @@ public:
     : rhoMin_(1.0f),
       rhoMax_(1e16f),
       yPlotMax_(100.0f),
-      ampSliderMax_(100.0f),
       logScale_(true)
   {
   }
@@ -103,29 +102,17 @@ public:
       const char* label = (c.type == TFShape::Gaussian ? "Gaussian" : (c.type == TFShape::Box ? "Box" : "Triangle"));
       ImGui::TextUnformatted(label);
       ImGui::Indent();
-      changed |= ImGui::InputFloat("center", &c.center, 0, 0, "%.3e");
-      changed |= ImGui::InputFloat(c.type == TFShape::Gaussian ? "sigma" : "half-width", &c.width, 0, 0, "%.3e");
+      changed |= ImGui::InputFloat("max value", &c.center, 0, 0, "%.3e");
+      changed |= ImGui::InputFloat("width", &c.width, 0, 0, "%.3e");
       if(c.type == TFShape::Gaussian)
 	changed |= ImGui::Checkbox("log-domain Gaussian", &c.logDomain);
       
-      changed |= ImGui::InputFloat("sigma amplitude [1/norm length]",
+      changed |= ImGui::InputFloat("opacity",
                                    &c.amp,
                                    0.0f,
                                    0.0f,
                                    "%.3g");
       c.amp = std::max(c.amp, 0.0f);
-      ImGui::SetNextItemWidth(180);
-      if (ImGui::InputFloat("amplitude slider max",
-                            &ampSliderMax_,
-                            0.0f,
-                            0.0f,
-                            "%.3g")) {
-        ampSliderMax_ = std::max(1.0e-6f, ampSliderMax_);
-      }
-      changed |= ImGui::SliderFloat("amplitude drag",
-                                    &c.amp,
-                                    0.0f,
-                                    ampSliderMax_);
       if (ImGui::Button("Remove")) { comps_.erase(comps_.begin() + i); changed = true; ImGui::Unindent(); ImGui::PopID(); break; }
       ImGui::Unindent();
       ImGui::Separator();
@@ -193,39 +180,8 @@ public:
     val_min = std::max(val_min, 1.0e-30f);
     val_max = std::max(val_max, val_min * 1.0001f);
 
-    const bool rangeChanged =
-      std::abs(std::log10(std::max(rhoMin_, 1.0e-30f)) -
-               std::log10(val_min)) > 1.0e-4f ||
-      std::abs(std::log10(std::max(rhoMax_, 1.0e-30f)) -
-               std::log10(val_max)) > 1.0e-4f;
-
-    if(flag_show == false || var != var_show_ || rangeChanged){
-      const float oldMin = rhoMin_;
-      const float oldMax = rhoMax_;
-      const bool preserveShape = flag_show && var == var_show_ && rangeChanged;
-
-      if (preserveShape) {
-        for (auto& c : comps_) {
-          const float x = x01FromRho(c.center);
-          const float left = handleX01(c, false);
-          const float right = handleX01(c, true);
-          rhoMin_ = val_min;
-          rhoMax_ = val_max;
-          c.center = rhoFromX01(x);
-          const float leftRho = rhoFromX01(left);
-          const float rightRho = rhoFromX01(right);
-          if (c.type == TFShape::Gaussian && c.logDomain) {
-            const float lo = std::log10(std::max(leftRho, 1.0e-30f));
-            const float hi = std::log10(std::max(rightRho, 1.0e-30f));
-            c.width = std::max(0.5f * std::abs(hi - lo), 1.0e-12f);
-          } else {
-            c.width = std::max(0.5f * std::abs(rightRho - leftRho), 1.0e-12f);
-          }
-          rhoMin_ = oldMin;
-          rhoMax_ = oldMax;
-        }
-      }
-
+    if(flag_show == false || var != var_show_ ||
+       rhoMin_ != val_min || rhoMax_ != val_max){
       rhoMin_ = val_min;
       rhoMax_ = val_max;
 
@@ -236,7 +192,7 @@ public:
 
 private:
   // State.
-  float rhoMin_, rhoMax_, yPlotMax_, ampSliderMax_;
+  float rhoMin_, rhoMax_, yPlotMax_;
   bool logScale_;
   bool showWindow_ = false;
   bool dirty_ = false;
