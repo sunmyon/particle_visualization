@@ -5,8 +5,15 @@
 #include "app/state/normalization_config.h"
 #include "data/quantity_catalog_builder.h"
 
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <utility>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace {
 using DatasetProfileClock = std::chrono::steady_clock;
@@ -114,8 +121,6 @@ namespace{
     double mass;
     int type;
     int index;
-    double density; // Density field.
-    // Other members can be added here.
   };
 
   // Data container for nanoflann.
@@ -164,16 +169,16 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
 					  double time,
 					  const UnitSystem& units)
 {
-  const int N_neighbours = 32;
+  const auto totalStart = DatasetProfileClock::now();
+  static constexpr size_t N_neighbours = 32;
 
-  bool flag_star = false;
-  if(selType[3] == true || selType[4] == true || selType[5] == true)
-    flag_star = true;
+  const bool flag_star = selType[3] || selType[4] || selType[5];
 
   std::vector<SimulationElement> & particles = simulationBlock.particles;
   
   // Extract only the selected particle types.
   std::vector<starParticle> filtered;
+  filtered.reserve(particles.size());
   for (size_t i=0;i<particles.size();i++)
     {
       const SimulationElement& p = particles[i];
@@ -190,20 +195,17 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
 	
       filtered.push_back(sp);      
     }
-  
-  std::vector<double> densities(filtered.size(), 0.0);
+  const double filterMs = DatasetElapsedMs(totalStart);
 
   // Copy into the data container. References or pointers can be used later if needed.
   StarParticleCloud cloud;
-  cloud.particles = filtered;
+  cloud.particles = std::move(filtered);
     
   // Build the kd-tree.
+  const auto treeStart = DatasetProfileClock::now();
   KDTreeType kdTree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
   kdTree.buildIndex();
-
-  // Containers for knnSearch results.
-  std::vector<KDTreeType::IndexType> ret_indexes(N_neighbours);
-  std::vector<float> out_dists_sqr(N_neighbours);
+  const double treeMs = DatasetElapsedMs(treeStart);
 
   double cosmofac = 1.;
   if(units.useComovingCoordinate)
@@ -216,9 +218,25 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
   if(hubble < 0.1 || hubble > 1.0)
     hubble = 1.;
   
-  nanoflann::SearchParameters params;
+  const double scale = ctx.toPhysicalScale();
+  const double physicalLengthPc = scale * cosmofac * units.length_pc;
+  const double physicalLengthCm = scale * cosmofac * units.length_cm;
+  const double surfaceDensityFactor =
+    units.mass_msun * hubble / std::max(physicalLengthPc * physicalLengthPc, 1.0e-300);
+  const double volumeDensityFactor =
+    units.mass_g * hubble * hubble /
+    std::max(physicalLengthCm * physicalLengthCm * physicalLengthCm, 1.0e-300);
+  const float invRenderScale =
+    1.0f / std::max(simulationBlock.worldToRenderScale, 1.0e-30f);
+
   // Search neighbors for each particle.
-  for (size_t i = 0; i < cloud.particles.size(); i++) {
+  const auto computeStart = DatasetProfileClock::now();
+  const std::ptrdiff_t nFiltered =
+    static_cast<std::ptrdiff_t>(cloud.particles.size());
+
+#pragma omp parallel for schedule(static) if(nFiltered > 1024)
+  for (std::ptrdiff_t ii = 0; ii < nFiltered; ++ii) {
+    const size_t i = static_cast<size_t>(ii);
     const auto& pi = cloud.particles[i];
     float query_pt[3] = {
       cloud.particles[i].pos[0],
@@ -226,7 +244,12 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
       cloud.particles[i].pos[2]
     };
 
-    size_t num_results = kdTree.knnSearch(&query_pt[0], N_neighbours, ret_indexes.data(), out_dists_sqr.data());    
+    std::array<KDTreeType::IndexType, N_neighbours> ret_indexes;
+    std::array<float, N_neighbours> out_dists_sqr;
+    size_t num_results = kdTree.knnSearch(&query_pt[0],
+                                          N_neighbours,
+                                          ret_indexes.data(),
+                                          out_dists_sqr.data());
     if (num_results == 0)
       continue;
 
@@ -253,20 +276,25 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
         
     // Area = pi * r^2.
     double area = M_PI * h * h;
-    double scale = ctx.toPhysicalScale();
     
     int original_index = cloud.particles[i].index;
     if(flag_star)
-      particles[original_index].density = totalMass * units.mass_msun
-	/ area / std::pow(scale * cosmofac * units.length_pc, 2.) * units.hubble;
+      particles[original_index].density = totalMass * surfaceDensityFactor / area;
     else
-      particles[original_index].density = density * units.mass_g / std::pow(scale * cosmofac * units.length_cm, 3.) * units.hubble * units.hubble;
+      particles[original_index].density = density * volumeDensityFactor;
 
     if(flag_overwrite_hsml)
-      particles[original_index].supportRadius =
-        h / std::max(simulationBlock.worldToRenderScale, 1.0e-30f);
-    
-    printf("i=%d mass=%g h=%g desnity=%g %g cosmofac=%g scale_len=%g hubble=%g\n"
-	   , original_index, totalMass, h, particles[original_index].density, density, cosmofac, scale * cosmofac * units.length_cm, units.hubble);
+      particles[original_index].supportRadius = static_cast<float>(h) * invRenderScale;
   }
+  const double computeMs = DatasetElapsedMs(computeStart);
+
+  particlesDirty = true;
+  std::fprintf(stderr,
+               "[Dataset] computeStellarDensity selected=%zu filter=%.3f ms "
+               "tree=%.3f ms compute=%.3f ms total=%.3f ms\n",
+               cloud.particles.size(),
+               filterMs,
+               treeMs,
+               computeMs,
+               DatasetElapsedMs(totalStart));
 }
