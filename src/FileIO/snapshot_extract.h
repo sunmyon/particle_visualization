@@ -25,6 +25,17 @@ enum class SnapshotExtractComovingMode {
   PhysicalToComoving = 2
 };
 
+enum class SnapshotExtractPositionFrame {
+  RegionLowerCornerZero = 0,
+  RegionCenterZero = 1,
+  MassCenterZero = 2
+};
+
+enum class SnapshotExtractVelocityFrame {
+  Preserve = 0,
+  MassCenterZero = 1
+};
+
 struct SnapshotExtractUnitConversion {
   bool enabled = false;
   double sourceUnitLengthCm = 3.0856775814913673e18;
@@ -58,6 +69,13 @@ struct SnapshotParticleIdTransform {
   std::uint64_t offset = 0;
 };
 
+struct SnapshotExtractFrameTransform {
+  SnapshotExtractPositionFrame positionFrame =
+    SnapshotExtractPositionFrame::RegionLowerCornerZero;
+  SnapshotExtractVelocityFrame velocityFrame =
+    SnapshotExtractVelocityFrame::Preserve;
+};
+
 enum class SnapshotOutputMissingPolicy {
   Omit = 0,
   FillDefault = 1,
@@ -88,6 +106,7 @@ struct SnapshotExtractJob {
   SnapshotExtractUnitConversion unitConversion;
   SnapshotBackgroundGridConfig backgroundGrid;
   SnapshotParticleIdTransform particleIdTransform;
+  SnapshotExtractFrameTransform frameTransform;
   std::vector<FieldSpec> fields;
   SnapshotOutputFormatConfig outputFormat;
   bool copyHeader = true;

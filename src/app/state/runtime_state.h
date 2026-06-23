@@ -589,6 +589,10 @@ struct SnapshotExtractUiState {
   double backgroundDensity = 1.0e-30;
   bool offsetParticleIds = false;
   std::uint64_t particleIdOffset = 1;
+  int positionFrame =
+    static_cast<int>(SnapshotExtractPositionFrame::RegionLowerCornerZero);
+  int velocityFrame =
+    static_cast<int>(SnapshotExtractVelocityFrame::Preserve);
   bool showUnitWindow = false;
   int comovingMode = static_cast<int>(SnapshotExtractComovingMode::Preserve);
   double targetUnitLengthCm = 3.0856775814913673e18;

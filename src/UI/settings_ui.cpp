@@ -114,7 +114,8 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
                                          const RenderBackendCapabilities& backend,
                                          SettingsActionRequestState& req);
 static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
-					    SettingsActionRequestState& req);
+					    SettingsActionRequestState& req,
+                                            WindowCommandQueue& windowCommands);
 static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
                                       SnapshotFormatState& format,
                                       bool isLoading,
@@ -200,7 +201,7 @@ void ShowSettingsUI(SettingsUIState& ui,
 
   DrawCameraInfoSection(view.camera);
   DrawPerformanceMemorySection(view.memory, view.backend, settings.request);
-  DrawParticleTypeSettingsSection(quantity, settings.request);
+  DrawParticleTypeSettingsSection(quantity, settings.request, windowCommands);
   DrawFileNavigationSection(settings.fileNavigation,
                             settings.snapshotFormat,
                             view.snapshotLoading,
@@ -899,9 +900,15 @@ static void DrawPerformanceMemorySection(const SettingsMemoryView& memory,
 }
 
 static void DrawParticleTypeSettingsSection(const QuantityState& quantity,
-					    SettingsActionRequestState& req) {
+					    SettingsActionRequestState& req,
+                                            WindowCommandQueue& windowCommands) {
   if (!ImGui::CollapsingHeader("Particle Type Settings"))
     return;
+
+  if (ImGui::Button("Particles Info")) {
+    windowCommands.open(WindowId::TopParticles);
+  }
+  ImGui::Spacing();
 
   unsigned int visibleMask = 0;
   for (int type = 0; type < 6; ++type) {
@@ -1320,6 +1327,35 @@ static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
   ImGui::SameLine();
   ImGui::Checkbox("copy Parameters##snapshot_extract", &state.copyParameters);
 
+  if (ImGui::TreeNodeEx("Output frame##snapshot_extract",
+                        ImGuiTreeNodeFlags_DefaultOpen)) {
+    const char* positionFrames[] = {
+      "origin at region lower corner",
+      "origin at region center",
+      "origin at selected mass center"
+    };
+    state.positionFrame =
+      std::clamp(state.positionFrame, 0, IM_ARRAYSIZE(positionFrames) - 1);
+    ImGui::Combo("position frame##snapshot_extract",
+                 &state.positionFrame,
+                 positionFrames,
+                 IM_ARRAYSIZE(positionFrames));
+
+    const char* velocityFrames[] = {
+      "keep input velocities",
+      "subtract selected mass-center velocity"
+    };
+    state.velocityFrame =
+      std::clamp(state.velocityFrame, 0, IM_ARRAYSIZE(velocityFrames) - 1);
+    ImGui::Combo("velocity frame##snapshot_extract",
+                 &state.velocityFrame,
+                 velocityFrames,
+                 IM_ARRAYSIZE(velocityFrames));
+    ImGui::TextDisabled(
+      "Mass-center options use the selected particles before background grid particles are added.");
+    ImGui::TreePop();
+  }
+
   if (ImGui::TreeNodeEx("Particle IDs##snapshot_extract",
                         ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::Checkbox("offset ParticleIDs##snapshot_extract",
@@ -1519,6 +1555,10 @@ static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
     job.backgroundGrid.density = state.backgroundDensity;
     job.particleIdTransform.offsetEnabled = state.offsetParticleIds;
     job.particleIdTransform.offset = state.particleIdOffset;
+    job.frameTransform.positionFrame =
+      static_cast<SnapshotExtractPositionFrame>(state.positionFrame);
+    job.frameTransform.velocityFrame =
+      static_cast<SnapshotExtractVelocityFrame>(state.velocityFrame);
     job.fields = ExtractFieldsForCurrentFormat(fileNav, format);
     job.outputFormat = format.outputFormat;
     if (job.outputFormat.fields.empty()) {

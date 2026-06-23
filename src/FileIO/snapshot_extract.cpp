@@ -534,6 +534,59 @@ std::array<double, 3> RegionLowerCorner(const SnapshotExtractRegion& region)
   return lo;
 }
 
+std::array<double, 3> RegionCenter(const SnapshotExtractRegion& region)
+{
+  return region.center;
+}
+
+struct ExtractResolvedFrame {
+  std::array<double, 3> coordinateOrigin = {0.0, 0.0, 0.0};
+  std::array<double, 3> velocityOrigin = {0.0, 0.0, 0.0};
+  bool subtractVelocity = false;
+};
+
+double TransformExtractValue(FieldKey key,
+                             std::size_t component,
+                             double value,
+                             double valueScale,
+                             const ExtractResolvedFrame& frame)
+{
+  if (key == FieldKey::Position && component < 3) {
+    value -= frame.coordinateOrigin[component];
+  } else if (key == FieldKey::Velocity && component < 3 &&
+             frame.subtractVelocity) {
+    value -= frame.velocityOrigin[component];
+  }
+  return value * valueScale;
+}
+
+ExtractResolvedFrame MakeResolvedFrame(
+  const SnapshotExtractJob& job,
+  const std::array<double, 3>& massCenter,
+  const std::array<double, 3>& massVelocity)
+{
+  ExtractResolvedFrame frame;
+  switch (job.frameTransform.positionFrame) {
+  case SnapshotExtractPositionFrame::RegionLowerCornerZero:
+    frame.coordinateOrigin = RegionLowerCorner(job.region);
+    break;
+  case SnapshotExtractPositionFrame::RegionCenterZero:
+    frame.coordinateOrigin = RegionCenter(job.region);
+    break;
+  case SnapshotExtractPositionFrame::MassCenterZero:
+    frame.coordinateOrigin = massCenter;
+    break;
+  }
+
+  frame.subtractVelocity =
+    job.frameTransform.velocityFrame ==
+    SnapshotExtractVelocityFrame::MassCenterZero;
+  if (frame.subtractVelocity) {
+    frame.velocityOrigin = massVelocity;
+  }
+  return frame;
+}
+
 void ReadCoordinateChunk(H5::DataSet& coordinates,
                          std::size_t begin,
                          std::size_t count,
@@ -615,6 +668,40 @@ struct ActiveOutputField {
 };
 
 using Hdf5SplitKeepLists = std::vector<std::array<std::vector<std::uint64_t>, 6>>;
+
+struct FrameAccumulator {
+  double weight = 0.0;
+  std::array<double, 3> position = {0.0, 0.0, 0.0};
+  std::array<double, 3> velocity = {0.0, 0.0, 0.0};
+  bool haveVelocity = false;
+
+  void add(const double pos[3], const double vel[3], double mass, bool hasVel)
+  {
+    const double w = mass > 0.0 && std::isfinite(mass) ? mass : 1.0;
+    weight += w;
+    for (int axis = 0; axis < 3; ++axis) {
+      position[axis] += w * pos[axis];
+      if (hasVel) velocity[axis] += w * vel[axis];
+    }
+    haveVelocity = haveVelocity || hasVel;
+  }
+
+  std::array<double, 3> centerOr(const std::array<double, 3>& fallback) const
+  {
+    if (!(weight > 0.0)) return fallback;
+    std::array<double, 3> out{};
+    for (int axis = 0; axis < 3; ++axis) out[axis] = position[axis] / weight;
+    return out;
+  }
+
+  std::array<double, 3> velocityOrZero() const
+  {
+    std::array<double, 3> out = {0.0, 0.0, 0.0};
+    if (!(weight > 0.0) || !haveVelocity) return out;
+    for (int axis = 0; axis < 3; ++axis) out[axis] = velocity[axis] / weight;
+    return out;
+  }
+};
 
 std::size_t SplitKeepCount(const Hdf5SplitKeepLists& keepByPart, int ptype)
 {
@@ -838,6 +925,94 @@ void ReadDoubleRows(H5::DataSet& ds,
   ds.read(out.data(), H5::PredType::NATIVE_DOUBLE, memSpace, fileSpace);
 }
 
+void AccumulateHdf5SelectedFrame(H5::H5File& input,
+                                 const SourceHeader& source,
+                                 int ptype,
+                                 const std::vector<std::uint64_t>& keep,
+                                 FrameAccumulator& acc)
+{
+  if (keep.empty()) return;
+  const std::string coordPath = DatasetPath(ptype, "Coordinates");
+  if (!DatasetExists(input, coordPath)) return;
+
+  H5::DataSet coords = input.openDataSet(coordPath);
+  DatasetShape coordShape = GetDatasetShape(coords);
+  if (coordShape.components < 3 || coordShape.sourceRows <= keep.back()) return;
+
+  const std::string velPath = DatasetPath(ptype, "Velocities");
+  const bool hasVelocities = DatasetExists(input, velPath);
+  H5::DataSet velocities;
+  DatasetShape velShape;
+  if (hasVelocities) {
+    velocities = input.openDataSet(velPath);
+    velShape = GetDatasetShape(velocities);
+  }
+  const bool useVelocities =
+    hasVelocities && velShape.components >= 3 && velShape.sourceRows > keep.back();
+
+  const std::string massPath = DatasetPath(ptype, "Masses");
+  const bool hasMasses = DatasetExists(input, massPath);
+  H5::DataSet masses;
+  DatasetShape massShape;
+  if (hasMasses) {
+    masses = input.openDataSet(massPath);
+    massShape = GetDatasetShape(masses);
+  }
+  const bool useMasses =
+    hasMasses && massShape.components >= 1 && massShape.sourceRows > keep.back();
+  const double constantMass =
+    (ptype >= 0 && ptype < 6) ? source.massTable[ptype] : 0.0;
+
+  std::vector<double> coordChunk;
+  std::vector<double> velChunk;
+  std::vector<double> massChunk;
+  std::size_t keepCursor = 0;
+  while (keepCursor < keep.size()) {
+    const std::size_t chunkBegin =
+      static_cast<std::size_t>((keep[keepCursor] / kExtractChunkSize) *
+                               kExtractChunkSize);
+    const std::size_t chunkEnd =
+      std::min<std::size_t>(chunkBegin + kExtractChunkSize,
+                            static_cast<std::size_t>(coordShape.sourceRows));
+    std::size_t keepEnd = keepCursor;
+    while (keepEnd < keep.size() && keep[keepEnd] < chunkEnd) ++keepEnd;
+
+    ReadDoubleRows(coords, coordShape, chunkBegin, chunkEnd - chunkBegin, coordChunk);
+    if (useVelocities) {
+      ReadDoubleRows(velocities, velShape, chunkBegin, chunkEnd - chunkBegin, velChunk);
+    }
+    if (useMasses) {
+      ReadDoubleRows(masses, massShape, chunkBegin, chunkEnd - chunkBegin, massChunk);
+    }
+
+    const std::size_t coordComps =
+      static_cast<std::size_t>(coordShape.components);
+    const std::size_t velComps =
+      useVelocities ? static_cast<std::size_t>(velShape.components) : 0;
+    const std::size_t massComps =
+      useMasses ? static_cast<std::size_t>(massShape.components) : 0;
+    for (std::size_t k = keepCursor; k < keepEnd; ++k) {
+      const std::size_t local = static_cast<std::size_t>(keep[k]) - chunkBegin;
+      const double pos[3] = {
+        coordChunk[local * coordComps + 0],
+        coordChunk[local * coordComps + 1],
+        coordChunk[local * coordComps + 2]
+      };
+      double vel[3] = {0.0, 0.0, 0.0};
+      if (useVelocities) {
+        vel[0] = velChunk[local * velComps + 0];
+        vel[1] = velChunk[local * velComps + 1];
+        vel[2] = velChunk[local * velComps + 2];
+      }
+      const double mass = useMasses
+        ? massChunk[local * massComps]
+        : constantMass;
+      acc.add(pos, vel, mass, useVelocities);
+    }
+    keepCursor = keepEnd;
+  }
+}
+
 void WriteDoubleRows(H5::DataSet& ds,
                      const DatasetShape& shape,
                      std::size_t begin,
@@ -918,7 +1093,7 @@ void CopyDatasetRowsWithKeepList(H5::DataSet& src,
                                  const std::vector<std::uint64_t>& keep,
                                  std::size_t outputBegin,
                                  double valueScale,
-                                 const std::array<double, 3>& coordinateOrigin,
+                                 const ExtractResolvedFrame& frame,
                                  const SnapshotParticleIdTransform& idTransform)
 {
   if (!keep.empty() && shape.sourceRows <= keep.back()) {
@@ -926,6 +1101,8 @@ void CopyDatasetRowsWithKeepList(H5::DataSet& src,
   }
 
   const bool transformCoordinates = key == FieldKey::Position;
+  const bool transformVelocities =
+    key == FieldKey::Velocity && frame.subtractVelocity;
   const bool transformParticleIds = key == FieldKey::ID &&
                                     idTransform.offsetEnabled;
   if (keep.empty()) return;
@@ -967,7 +1144,7 @@ void CopyDatasetRowsWithKeepList(H5::DataSet& src,
         }
       }
       WriteUInt64Rows(dst, outputShape, outCursor, keepEnd - keepCursor, idPacked);
-    } else if (transformCoordinates || scaleValues) {
+    } else if (transformCoordinates || transformVelocities || scaleValues) {
       ReadDoubleRows(src, shape, chunkBegin, chunkEnd - chunkBegin, doubleChunk);
       const std::size_t components = static_cast<std::size_t>(shape.components);
       doublePacked.resize((keepEnd - keepCursor) * components);
@@ -976,10 +1153,8 @@ void CopyDatasetRowsWithKeepList(H5::DataSet& src,
         const std::size_t outLocal = k - keepCursor;
         for (std::size_t c = 0; c < components; ++c) {
           double value = doubleChunk[local * components + c];
-          if (transformCoordinates && c < 3) {
-            value -= coordinateOrigin[c];
-          }
-          doublePacked[outLocal * components + c] = value * valueScale;
+          doublePacked[outLocal * components + c] =
+            TransformExtractValue(key, c, value, valueScale, frame);
         }
       }
       WriteDoubleRows(dst, outputShape, outCursor, keepEnd - keepCursor, doublePacked);
@@ -1002,10 +1177,12 @@ void CopyDatasetRowsWithKeepList(H5::DataSet& src,
 
 DatasetShape OutputShapeForRawCopy(const DatasetShape& sourceShape,
                                    FieldKey key,
-                                   const SnapshotParticleIdTransform& idTransform)
+                                   const SnapshotParticleIdTransform& idTransform,
+                                   const ExtractResolvedFrame& frame)
 {
   DatasetShape outputShape = sourceShape;
-  if (key == FieldKey::Position) {
+  if (key == FieldKey::Position ||
+      (key == FieldKey::Velocity && frame.subtractVelocity)) {
     outputShape.rowBytes =
       sizeof(double) * static_cast<std::size_t>(outputShape.components);
   } else if (key == FieldKey::ID && idTransform.offsetEnabled) {
@@ -1017,9 +1194,11 @@ DatasetShape OutputShapeForRawCopy(const DatasetShape& sourceShape,
 
 H5::DataType OutputTypeForRawCopy(const H5::DataType& sourceType,
                                   FieldKey key,
-                                  const SnapshotParticleIdTransform& idTransform)
+                                  const SnapshotParticleIdTransform& idTransform,
+                                  const ExtractResolvedFrame& frame)
 {
-  if (key == FieldKey::Position) {
+  if (key == FieldKey::Position ||
+      (key == FieldKey::Velocity && frame.subtractVelocity)) {
     return H5::DataType(H5::PredType::NATIVE_DOUBLE);
   }
   if (key == FieldKey::ID && idTransform.offsetEnabled) {
@@ -1037,14 +1216,14 @@ void CopyDatasetWithKeepList(H5::H5File& input,
                              const std::vector<std::uint64_t>& keep,
                              std::size_t outputRowCount,
                              double valueScale,
-                             const std::array<double, 3>& coordinateOrigin,
+                             const ExtractResolvedFrame& frame,
                              const SnapshotParticleIdTransform& idTransform)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
   DatasetShape shape = GetDatasetShape(src);
   H5::DataType dataType = src.getDataType();
-  DatasetShape outputShape = OutputShapeForRawCopy(shape, key, idTransform);
-  H5::DataType outputType = OutputTypeForRawCopy(dataType, key, idTransform);
+  DatasetShape outputShape = OutputShapeForRawCopy(shape, key, idTransform, frame);
+  H5::DataType outputType = OutputTypeForRawCopy(dataType, key, idTransform, frame);
   H5::DataSet dst = CreateOutputDataset(outGroup,
                                         outputName,
                                         outputType,
@@ -1059,7 +1238,7 @@ void CopyDatasetWithKeepList(H5::H5File& input,
                               keep,
                               0,
                               valueScale,
-                              coordinateOrigin,
+                              frame,
                               idTransform);
 }
 
@@ -1072,7 +1251,7 @@ void CopyDatasetRowsWithKeepListAsOutputField(
   const std::vector<std::uint64_t>& keep,
   std::size_t outputBegin,
   double valueScale,
-  const std::array<double, 3>& coordinateOrigin,
+  const ExtractResolvedFrame& frame,
   const SnapshotParticleIdTransform& idTransform)
 {
   if (!keep.empty() && sourceShape.sourceRows <= keep.back()) {
@@ -1133,10 +1312,13 @@ void CopyDatasetRowsWithKeepListAsOutputField(
           double value = c < sourceComps
             ? doubleChunk[local * sourceComps + c]
             : defaults[std::min(c, defaults.size() - 1)];
-          if (outputField.field.key == FieldKey::Position && c < 3) {
-            value -= coordinateOrigin[c];
+          if (c < sourceComps) {
+            value = TransformExtractValue(outputField.field.key,
+                                          c,
+                                          value,
+                                          valueScale,
+                                          frame);
           }
-          if (c < sourceComps) value *= valueScale;
           doublePacked[outLocal * outputComps + c] = value;
         }
       }
@@ -1156,7 +1338,7 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
                                           const std::vector<std::uint64_t>& keep,
                                           std::size_t outputRowCount,
                                           double valueScale,
-                                          const std::array<double, 3>& coordinateOrigin,
+                                          const ExtractResolvedFrame& frame,
                                           const SnapshotParticleIdTransform& idTransform)
 {
   H5::DataSet src = input.openDataSet(DatasetPath(ptype, sourceName));
@@ -1176,7 +1358,7 @@ void CopyDatasetWithKeepListAsOutputField(H5::H5File& input,
                                            keep,
                                            0,
                                            valueScale,
-                                           coordinateOrigin,
+                                           frame,
                                            idTransform);
 }
 
@@ -1240,6 +1422,7 @@ bool FieldUsesNearestBackgroundValue(FieldKey key)
 BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
                                        const SnapshotBackgroundGridConfig& config,
                                        double lengthScale,
+                                       const std::array<double, 3>& coordinateOrigin,
                                        std::uint64_t firstId)
 {
   BackgroundGridData grid;
@@ -1262,12 +1445,15 @@ BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
     }
   }
 
-  const double dx = (sourceHi[0] - sourceLo[0]) * lengthScale /
-                    static_cast<double>(nx);
-  const double dy = (sourceHi[1] - sourceLo[1]) * lengthScale /
-                    static_cast<double>(ny);
-  const double dz = (sourceHi[2] - sourceLo[2]) * lengthScale /
-                    static_cast<double>(nz);
+  const double sourceDx = (sourceHi[0] - sourceLo[0]) /
+                          static_cast<double>(nx);
+  const double sourceDy = (sourceHi[1] - sourceLo[1]) /
+                          static_cast<double>(ny);
+  const double sourceDz = (sourceHi[2] - sourceLo[2]) /
+                          static_cast<double>(nz);
+  const double dx = sourceDx * lengthScale;
+  const double dy = sourceDy * lengthScale;
+  const double dz = sourceDz * lengthScale;
   if (!(dx > 0.0 && dy > 0.0 && dz > 0.0)) return grid;
 
   grid.count = static_cast<std::size_t>(nx) *
@@ -1280,16 +1466,24 @@ BackgroundGridData BuildBackgroundGrid(const SnapshotExtractRegion& region,
   grid.cellLength = std::cbrt(grid.cellVolume);
   grid.firstId = firstId;
   grid.cells = {nx, ny, nz};
-  grid.lo = {0.0, 0.0, 0.0};
+  grid.lo = {(sourceLo[0] - coordinateOrigin[0]) * lengthScale,
+             (sourceLo[1] - coordinateOrigin[1]) * lengthScale,
+             (sourceLo[2] - coordinateOrigin[2]) * lengthScale};
   grid.cellSize = {dx, dy, dz};
 
   std::size_t cursor = 0;
   for (int iz = 0; iz < nz; ++iz) {
-    const double z = (static_cast<double>(iz) + 0.5) * dz;
+    const double sourceZ = sourceLo[2] +
+                           (static_cast<double>(iz) + 0.5) * sourceDz;
+    const double z = (sourceZ - coordinateOrigin[2]) * lengthScale;
     for (int iy = 0; iy < ny; ++iy) {
-      const double y = (static_cast<double>(iy) + 0.5) * dy;
+      const double sourceY = sourceLo[1] +
+                             (static_cast<double>(iy) + 0.5) * sourceDy;
+      const double y = (sourceY - coordinateOrigin[1]) * lengthScale;
       for (int ix = 0; ix < nx; ++ix) {
-        const double x = (static_cast<double>(ix) + 0.5) * dx;
+        const double sourceX = sourceLo[0] +
+                               (static_cast<double>(ix) + 0.5) * sourceDx;
+        const double x = (sourceX - coordinateOrigin[0]) * lengthScale;
         grid.coordinates[3 * cursor + 0] = x;
         grid.coordinates[3 * cursor + 1] = y;
         grid.coordinates[3 * cursor + 2] = z;
@@ -1614,7 +1808,8 @@ std::vector<double> ReadNearestBackgroundRows(H5::H5File& input,
                                               const FieldSpec& field,
                                               const DatasetShape& outputShape,
                                               const BackgroundGridData& grid,
-                                              double valueScale)
+                                              double valueScale,
+                                              const ExtractResolvedFrame& frame)
 {
   if (!FieldUsesNearestBackgroundValue(field.key) ||
       !grid.hasNearestGasRows ||
@@ -1668,7 +1863,11 @@ std::vector<double> ReadNearestBackgroundRows(H5::H5File& input,
         static_cast<std::size_t>(grid.nearestGasRows[outRow]) - chunkBegin;
       for (std::size_t c = 0; c < comps; ++c) {
         rows[outRow * comps + c] =
-          chunk[local * sourceComps + c] * valueScale;
+          TransformExtractValue(field.key,
+                                c,
+                                chunk[local * sourceComps + c],
+                                valueScale,
+                                frame);
       }
     }
     cursor = end;
@@ -1760,7 +1959,8 @@ void WriteBackgroundRows(H5::H5File& input,
                          const BackgroundGridData& grid,
                          const SnapshotBackgroundGridConfig& config,
                          const std::string& sourceName,
-                         double valueScale)
+                         double valueScale,
+                         const ExtractResolvedFrame& frame)
 {
   if (grid.count == 0 || !FieldUsesBackgroundGrid(field.key)) return;
   if (field.key == FieldKey::ID) {
@@ -1769,7 +1969,7 @@ void WriteBackgroundRows(H5::H5File& input,
     return;
   }
   const std::vector<double> nearestRows =
-    ReadNearestBackgroundRows(input, sourceName, field, shape, grid, valueScale);
+    ReadNearestBackgroundRows(input, sourceName, field, shape, grid, valueScale, frame);
   const std::vector<double> rows =
     BackgroundDoubleRows(field, grid, config, nearestRows);
   WriteDoubleRows(dst, shape, begin, grid.count, rows);
@@ -2076,7 +2276,8 @@ std::vector<double> ReadNearestBackgroundRowsSplit(
   const FieldSpec& field,
   const DatasetShape& outputShape,
   const BackgroundGridData& grid,
-  double valueScale)
+  double valueScale,
+  const ExtractResolvedFrame& frame)
 {
   if (!FieldUsesNearestBackgroundValue(field.key) ||
       !grid.hasNearestGasRows ||
@@ -2137,7 +2338,11 @@ std::vector<double> ReadNearestBackgroundRowsSplit(
           static_cast<std::size_t>(grid.nearestGasRows[outRow]) - chunkBegin;
         for (std::size_t c = 0; c < comps; ++c) {
           rows[outRow * comps + c] =
-            chunk[local * sourceComps + c] * valueScale;
+            TransformExtractValue(field.key,
+                                  c,
+                                  chunk[local * sourceComps + c],
+                                  valueScale,
+                                  frame);
         }
       }
       cursor = end;
@@ -2155,7 +2360,8 @@ void WriteBackgroundRowsSplit(const std::vector<std::string>& partPaths,
                               const BackgroundGridData& grid,
                               const SnapshotBackgroundGridConfig& config,
                               const std::string& sourceName,
-                              double valueScale)
+                              double valueScale,
+                              const ExtractResolvedFrame& frame)
 {
   if (grid.count == 0 || !FieldUsesBackgroundGrid(field.key)) return;
   if (field.key == FieldKey::ID) {
@@ -2164,7 +2370,7 @@ void WriteBackgroundRowsSplit(const std::vector<std::string>& partPaths,
     return;
   }
   const std::vector<double> nearestRows =
-    ReadNearestBackgroundRowsSplit(partPaths, sourceName, field, shape, grid, valueScale);
+    ReadNearestBackgroundRowsSplit(partPaths, sourceName, field, shape, grid, valueScale, frame);
   const std::vector<double> rows =
     BackgroundDoubleRows(field, grid, config, nearestRows);
   WriteDoubleRows(dst, shape, begin, grid.count, rows);
@@ -2400,6 +2606,8 @@ void WriteHeader(H5::H5File& output,
                  const SourceHeader& source,
                  const ParametersInfo& outputParameters,
                  const SnapshotExtractRegion& region,
+                 const SnapshotExtractFrameTransform& frameTransform,
+                 const ExtractResolvedFrame& frame,
                  double lengthScale,
                  const std::array<std::size_t, 6>& extractedCounts,
                  const std::array<double, 6>& outputMassTable)
@@ -2431,7 +2639,7 @@ void WriteHeader(H5::H5File& output,
                        outputParameters.hubbleParam);
 
   const int extractRegionShape = region.kind == SnapshotExtractRegionKind::Sphere ? 1 : 0;
-  const std::array<double, 3> coordinateOrigin = RegionLowerCorner(region);
+  const std::array<double, 3>& coordinateOrigin = frame.coordinateOrigin;
   std::array<double, 3> outputCenter = region.center;
   std::array<double, 3> outputHalfSize = region.halfSize;
   for (int axis = 0; axis < 3; ++axis) {
@@ -2471,6 +2679,22 @@ void WriteHeader(H5::H5File& output,
                        "ExtractLengthScaleApplied",
                        H5::PredType::NATIVE_DOUBLE,
                        lengthScale);
+  WriteArrayAttribute(header,
+                      "ExtractCoordinateOrigin",
+                      H5::PredType::NATIVE_DOUBLE,
+                      coordinateOrigin);
+  WriteArrayAttribute(header,
+                      "ExtractVelocityOrigin",
+                      H5::PredType::NATIVE_DOUBLE,
+                      frame.velocityOrigin);
+  WriteScalarAttribute(header,
+                       "ExtractPositionFrame",
+                       H5::PredType::NATIVE_INT,
+                       static_cast<int>(frameTransform.positionFrame));
+  WriteScalarAttribute(header,
+                       "ExtractVelocityFrame",
+                       H5::PredType::NATIVE_INT,
+                       static_cast<int>(frameTransform.velocityFrame));
 
   constexpr int one = 1;
   WriteScalarAttribute(header, "NumFilesPerSnapshot", H5::PredType::NATIVE_INT, one);
@@ -2811,7 +3035,8 @@ std::vector<double> LoadedBackgroundNearestRows(
   const FieldSpec& field,
   const DatasetShape& shape,
   const BackgroundGridData& grid,
-  double valueScale)
+  double valueScale,
+  const ExtractResolvedFrame& frame)
 {
   if (!FieldUsesNearestBackgroundValue(field.key) ||
       !grid.hasNearestGasRows ||
@@ -2826,11 +3051,16 @@ std::vector<double> LoadedBackgroundNearestRows(
     if (source >= block.particles.size()) continue;
     const SimulationElement& p = block.particles[source];
     switch (field.key) {
-    case FieldKey::Velocity:
-      for (std::size_t c = 0; c < std::min<std::size_t>(3, comps); ++c) {
-        rows[i * comps + c] = static_cast<double>(p.vel[c]) * valueScale;
-      }
-      break;
+      case FieldKey::Velocity:
+        for (std::size_t c = 0; c < std::min<std::size_t>(3, comps); ++c) {
+          rows[i * comps + c] =
+            TransformExtractValue(field.key,
+                                  c,
+                                  static_cast<double>(p.vel[c]),
+                                  valueScale,
+                                  frame);
+        }
+        break;
     case FieldKey::Bfield: {
       float b[3] = {0.0f, 0.0f, 0.0f};
       (void)block.readSoAAs(soa_views::Bfield, source, b);
@@ -2967,7 +3197,7 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
                               const BackgroundGridData& backgroundGrid,
                               const SnapshotBackgroundGridConfig& background,
                               double valueScale,
-                              const std::array<double, 3>& coordinateOrigin)
+                              const ExtractResolvedFrame& frame)
 {
   const std::size_t backgroundRows = backgroundGrid.count;
   const std::size_t outputRows = keep.size() + backgroundRows;
@@ -2987,12 +3217,21 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
     case FieldKey::Position:
       for (std::size_t c = 0; c < std::min<std::size_t>(3, comps); ++c) {
         rows[row * comps + c] =
-          (static_cast<double>(p.position[c]) - coordinateOrigin[c]) * valueScale;
+          TransformExtractValue(field.key,
+                                c,
+                                static_cast<double>(p.position[c]),
+                                valueScale,
+                                frame);
       }
       break;
     case FieldKey::Velocity:
       for (std::size_t c = 0; c < std::min<std::size_t>(3, comps); ++c) {
-        rows[row * comps + c] = static_cast<double>(p.vel[c]) * valueScale;
+        rows[row * comps + c] =
+          TransformExtractValue(field.key,
+                                c,
+                                static_cast<double>(p.vel[c]),
+                                valueScale,
+                                frame);
       }
       break;
     case FieldKey::Mass:
@@ -3089,7 +3328,8 @@ void WriteLoadedDoubleDataset(H5::Group& outGroup,
                                   field,
                                   shape,
                                   backgroundGrid,
-                                  valueScale);
+                                  valueScale,
+                                  frame);
     WriteLoadedBackgroundRows(dst,
                               field,
                               shape,
@@ -3851,6 +4091,114 @@ std::vector<std::uint8_t> ReadGadgetPositionBlock(
   throw std::runtime_error("Gadget position block is missing from the format");
 }
 
+bool ReadGadgetBlockForKey(const SnapshotExtractJob& job,
+                           const GadgetExtractHeader& header,
+                           const std::vector<GadgetExtractBlock>& plan,
+                           FieldKey key,
+                           std::vector<std::uint8_t>& bytes,
+                           DataType& storageType)
+{
+  const GadgetExtractBlock* target = FindGadgetPlanBlock(plan, key);
+  if (!target) return false;
+  if (target->kind == GadgetExtractBlockKind::Mass &&
+      GadgetDomainCount(header.source, GadgetExtractDomain::MassBlock) == 0) {
+    return false;
+  }
+
+  GadgetExtractInput input;
+  std::string error;
+  GadgetExtractHeader ignoredHeader;
+  if (!input.open(job.inputPath, ignoredHeader, error)) {
+    throw std::runtime_error(error);
+  }
+  if (!input.seekData(header.dataOffset, error)) {
+    throw std::runtime_error(error);
+  }
+
+  for (const GadgetExtractBlock& block : plan) {
+    if (block.kind == GadgetExtractBlockKind::Skip) {
+      SkipGadgetExtractBlock(input, header.source, block);
+      continue;
+    }
+    if (block.kind == GadgetExtractBlockKind::Mass &&
+        GadgetDomainCount(header.source, GadgetExtractDomain::MassBlock) == 0) {
+      continue;
+    }
+    std::vector<std::uint8_t> blockBytes;
+    if (!input.readBlock(blockBytes, error)) {
+      throw std::runtime_error("failed to read Gadget frame block: " + error);
+    }
+    if (&block != target) continue;
+    GadgetExtractBlock actual = block;
+    actual.field.key = key;
+    if (key == FieldKey::Position || key == FieldKey::Velocity) {
+      actual.field.count = 3;
+      actual.domain = GadgetExtractDomain::All;
+    } else if (key == FieldKey::Mass) {
+      actual.field.count = 1;
+      actual.domain = GadgetExtractDomain::MassBlock;
+    }
+    storageType = actual.field.type;
+    ValidateGadgetBlockBytes(actual, header.source, blockBytes, storageType);
+    bytes = std::move(blockBytes);
+    return true;
+  }
+  return false;
+}
+
+void AccumulateGadgetSelectedFrame(
+  const SourceHeader& source,
+  const std::vector<std::uint8_t>& positionBytes,
+  DataType positionType,
+  const std::vector<std::uint8_t>* velocityBytes,
+  DataType velocityType,
+  const std::vector<std::uint8_t>* massBytes,
+  DataType massType,
+  const std::array<std::vector<std::uint64_t>, 6>& keepByType,
+  FrameAccumulator& acc)
+{
+  for (int ptype = 0; ptype < 6; ++ptype) {
+    const std::vector<std::uint64_t> sourceRows =
+      GadgetSourceRowsForType(source, keepByType[ptype], ptype, GadgetExtractDomain::All);
+    const std::vector<std::uint64_t> massRows =
+      GadgetSourceRowsForType(source, keepByType[ptype], ptype, GadgetExtractDomain::MassBlock);
+    for (std::size_t i = 0; i < sourceRows.size(); ++i) {
+      const std::uint64_t sourceRow = sourceRows[i];
+      const double pos[3] = {
+        ReadGadgetDoubleValue(positionBytes,
+                              positionType,
+                              static_cast<std::size_t>(3 * sourceRow + 0)),
+        ReadGadgetDoubleValue(positionBytes,
+                              positionType,
+                              static_cast<std::size_t>(3 * sourceRow + 1)),
+        ReadGadgetDoubleValue(positionBytes,
+                              positionType,
+                              static_cast<std::size_t>(3 * sourceRow + 2))
+      };
+      double vel[3] = {0.0, 0.0, 0.0};
+      const bool hasVel = velocityBytes != nullptr;
+      if (hasVel) {
+        vel[0] = ReadGadgetDoubleValue(*velocityBytes,
+                                       velocityType,
+                                       static_cast<std::size_t>(3 * sourceRow + 0));
+        vel[1] = ReadGadgetDoubleValue(*velocityBytes,
+                                       velocityType,
+                                       static_cast<std::size_t>(3 * sourceRow + 1));
+        vel[2] = ReadGadgetDoubleValue(*velocityBytes,
+                                       velocityType,
+                                       static_cast<std::size_t>(3 * sourceRow + 2));
+      }
+      double mass = source.massTable[ptype];
+      if (mass <= 0.0 && massBytes != nullptr && i < massRows.size()) {
+        mass = ReadGadgetDoubleValue(*massBytes,
+                                     massType,
+                                     static_cast<std::size_t>(massRows[i]));
+      }
+      acc.add(pos, vel, mass, hasVel);
+    }
+  }
+}
+
 std::uint64_t MaxGadgetSelectedParticleId(
   const SnapshotExtractJob& job,
   const GadgetExtractHeader& header,
@@ -4070,7 +4418,7 @@ void WriteGadgetRawDoubleDataset(H5::Group& outGroup,
                                  const BackgroundGridData& backgroundGrid,
                                  const SnapshotBackgroundGridConfig& background,
                                  double valueScale,
-                                 const std::array<double, 3>& coordinateOrigin)
+                                 const ExtractResolvedFrame& frame)
 {
   const std::size_t backgroundRows = ptype == 0 ? backgroundGrid.count : 0;
   const std::size_t outputRows = keep.size() + backgroundRows;
@@ -4097,10 +4445,13 @@ void WriteGadgetRawDoubleDataset(H5::Group& outGroup,
                                 storageType,
                                 static_cast<std::size_t>(sourceRow) * sourceComps + c)
         : defaults[std::min(c, defaults.size() - 1)];
-      if (outputField.field.key == FieldKey::Position && c < 3) {
-        value -= coordinateOrigin[c];
+      if (c < sourceComps) {
+        value = TransformExtractValue(outputField.field.key,
+                                      c,
+                                      value,
+                                      valueScale,
+                                      frame);
       }
-      if (c < sourceComps) value *= valueScale;
       rows[i * outputComps + c] = value;
     }
   }
@@ -4118,10 +4469,15 @@ void WriteGadgetRawDoubleDataset(H5::Group& outGroup,
         const std::uint64_t sourceRow = backgroundGrid.nearestGasRows[i];
         for (std::size_t c = 0; c < std::min(outputComps, sourceComps); ++c) {
           nearestRows[i * outputComps + c] =
-            ReadGadgetDoubleValue(sourceBytes,
-                                  storageType,
-                                  static_cast<std::size_t>(sourceRow) *
-                                    sourceComps + c) * valueScale;
+            TransformExtractValue(outputField.field.key,
+                                  c,
+                                  ReadGadgetDoubleValue(
+                                    sourceBytes,
+                                    storageType,
+                                    static_cast<std::size_t>(sourceRow) *
+                                      sourceComps + c),
+                                  valueScale,
+                                  frame);
         }
       }
     }
@@ -4314,7 +4670,6 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
-    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
 
     report.sourceCounts = sourceHeader.counts;
     report.sourceParticles =
@@ -4339,6 +4694,28 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                       std::size_t{0});
     report.extractedParticles = report.selectedParticles;
 
+    FrameAccumulator frameAccumulator;
+    if (job.frameTransform.positionFrame ==
+          SnapshotExtractPositionFrame::MassCenterZero ||
+        job.frameTransform.velocityFrame ==
+          SnapshotExtractVelocityFrame::MassCenterZero) {
+      for (std::size_t partIndex = 0; partIndex < partPaths.size(); ++partIndex) {
+        H5::H5File input(partPaths[partIndex], H5F_ACC_RDONLY);
+        for (int ptype = 0; ptype < 6; ++ptype) {
+          AccumulateHdf5SelectedFrame(input,
+                                      sourceHeader,
+                                      ptype,
+                                      keepByPart[partIndex][ptype],
+                                      frameAccumulator);
+        }
+      }
+    }
+    const ExtractResolvedFrame frame =
+      MakeResolvedFrame(job,
+                        frameAccumulator.centerOr(RegionCenter(job.region)),
+                        frameAccumulator.velocityOrZero());
+    const std::array<double, 3>& coordinateOrigin = frame.coordinateOrigin;
+
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "assigning split background grid IDs";
     const std::uint64_t backgroundFirstId =
@@ -4351,6 +4728,7 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
       BuildBackgroundGrid(job.region,
                           background,
                           outputLengthScale,
+                          coordinateOrigin,
                           backgroundFirstId);
     extractContext = "assigning nearest split gas rows for background grid";
     AssignNearestGasRowsSplit(partPaths,
@@ -4468,7 +4846,8 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                                      backgroundGrid,
                                      background,
                                      sourceName,
-                                     valueScale);
+                                     valueScale,
+                                     frame);
             copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
             ++report.copiedDatasets;
             continue;
@@ -4506,10 +4885,10 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
         H5::DataType sourceType = sampleSrc.getDataType();
         DatasetShape outputShape = job.outputFormat.enabled
           ? ShapeForFieldSpec(field, outputRows)
-          : OutputShapeForRawCopy(sourceShape, field.key, job.particleIdTransform);
+          : OutputShapeForRawCopy(sourceShape, field.key, job.particleIdTransform, frame);
         H5::DataType outputType = job.outputFormat.enabled
           ? NativeTypeForOutputField(field)
-          : OutputTypeForRawCopy(sourceType, field.key, job.particleIdTransform);
+          : OutputTypeForRawCopy(sourceType, field.key, job.particleIdTransform, frame);
         H5::DataSet dst = CreateOutputDataset(outGroup,
                                               outputName,
                                               outputType,
@@ -4538,7 +4917,7 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                                                      keep,
                                                      outCursor,
                                                      valueScale,
-                                                     coordinateOrigin,
+                                                     frame,
                                                      job.particleIdTransform);
           } else {
             H5::DataType partType = src.getDataType();
@@ -4551,7 +4930,7 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                                         keep,
                                         outCursor,
                                         valueScale,
-                                        coordinateOrigin,
+                                        frame,
                                         job.particleIdTransform);
           }
           outCursor += keep.size();
@@ -4566,7 +4945,8 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                                    backgroundGrid,
                                    background,
                                    sourceName,
-                                   valueScale);
+                                   valueScale,
+                                   frame);
         }
         copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
         ++report.copiedDatasets;
@@ -4583,6 +4963,8 @@ SnapshotExtractReport ExtractSplitHdf5SnapshotRegion(
                   sourceHeader,
                   outputParameters,
                   job.region,
+                  job.frameTransform,
+                  frame,
                   outputLengthScale,
                   report.extractedCounts,
                   outputMassTable);
@@ -4687,7 +5069,6 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
-    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
     sourceHeader.flagDoublePrecision = 1;
 
     report.sourceCounts = sourceHeader.counts;
@@ -4708,6 +5089,25 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                       std::size_t{0});
     report.extractedParticles = report.selectedParticles;
 
+    FrameAccumulator frameAccumulator;
+    if (job.frameTransform.positionFrame ==
+          SnapshotExtractPositionFrame::MassCenterZero ||
+        job.frameTransform.velocityFrame ==
+          SnapshotExtractVelocityFrame::MassCenterZero) {
+      for (int ptype = 0; ptype < 6; ++ptype) {
+        AccumulateHdf5SelectedFrame(input,
+                                    sourceHeader,
+                                    ptype,
+                                    keepByType[ptype],
+                                    frameAccumulator);
+      }
+    }
+    const ExtractResolvedFrame frame =
+      MakeResolvedFrame(job,
+                        frameAccumulator.centerOr(RegionCenter(job.region)),
+                        frameAccumulator.velocityOrZero());
+    const std::array<double, 3>& coordinateOrigin = frame.coordinateOrigin;
+
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "assigning background grid IDs";
     const std::uint64_t backgroundFirstId =
@@ -4720,6 +5120,7 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
       BuildBackgroundGrid(job.region,
                           background,
                           outputLengthScale,
+                          coordinateOrigin,
                           backgroundFirstId);
     extractContext = "assigning nearest gas rows for background grid";
     AssignNearestGasRows(input,
@@ -4828,7 +5229,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                 backgroundGrid,
                                 background,
                                 sourceName,
-                                valueScale);
+                                valueScale,
+                                frame);
             copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
             ++report.copiedDatasets;
             continue;
@@ -4871,7 +5273,7 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                                keep,
                                                outputRows,
                                                valueScale,
-                                               coordinateOrigin,
+                                               frame,
                                                job.particleIdTransform);
         } else {
           CopyDatasetWithKeepList(input,
@@ -4883,7 +5285,7 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                                   keep,
                                   outputRows,
                                   valueScale,
-                                  coordinateOrigin,
+                                  frame,
                                   job.particleIdTransform);
         }
         if (backgroundRows > 0 && FieldUsesBackgroundGrid(field.key)) {
@@ -4900,7 +5302,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                               backgroundGrid,
                               background,
                               sourceName,
-                              valueScale);
+                              valueScale,
+                              frame);
         }
         copiedMassDataset = copiedMassDataset || field.key == FieldKey::Mass;
         ++report.copiedDatasets;
@@ -4917,6 +5320,8 @@ SnapshotExtractReport ExtractHdf5SnapshotRegion(const SnapshotExtractJob& job)
                   sourceHeader,
                   outputParameters,
                   job.region,
+                  job.frameTransform,
+                  frame,
                   outputLengthScale,
                   report.extractedCounts,
                   outputMassTable);
@@ -5019,7 +5424,8 @@ SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
-    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
+    const std::array<double, 3> initialCoordinateOrigin =
+      RegionLowerCorner(job.region);
 
     extractContext = "reading Gadget Coordinates for region selection";
     DataType positionType = DataType::Float;
@@ -5031,7 +5437,54 @@ SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob
                                   positionType,
                                   job.region,
                                   outputLengthScale,
-                                  coordinateOrigin);
+                                  initialCoordinateOrigin);
+    FrameAccumulator frameAccumulator;
+    if (job.frameTransform.positionFrame ==
+          SnapshotExtractPositionFrame::MassCenterZero ||
+        job.frameTransform.velocityFrame ==
+          SnapshotExtractVelocityFrame::MassCenterZero) {
+      std::vector<std::uint8_t> velocityBytes;
+      DataType velocityType = DataType::Float;
+      std::vector<std::uint8_t> massBytes;
+      DataType massType = DataType::Float;
+      const bool haveVelocities =
+        ReadGadgetBlockForKey(job,
+                              gadgetHeader,
+                              plan,
+                              FieldKey::Velocity,
+                              velocityBytes,
+                              velocityType);
+      const bool haveMasses =
+        ReadGadgetBlockForKey(job,
+                              gadgetHeader,
+                              plan,
+                              FieldKey::Mass,
+                              massBytes,
+                              massType);
+      AccumulateGadgetSelectedFrame(sourceHeader,
+                                    positionBytes,
+                                    positionType,
+                                    haveVelocities ? &velocityBytes : nullptr,
+                                    velocityType,
+                                    haveMasses ? &massBytes : nullptr,
+                                    massType,
+                                    selection.keepByType,
+                                    frameAccumulator);
+    }
+    const ExtractResolvedFrame frame =
+      MakeResolvedFrame(job,
+                        frameAccumulator.centerOr(RegionCenter(job.region)),
+                        frameAccumulator.velocityOrZero());
+    const std::array<double, 3>& coordinateOrigin = frame.coordinateOrigin;
+    if (coordinateOrigin != initialCoordinateOrigin) {
+      selection =
+        BuildGadgetExtractSelection(sourceHeader,
+                                    positionBytes,
+                                    positionType,
+                                    job.region,
+                                    outputLengthScale,
+                                    coordinateOrigin);
+    }
     for (int ptype = 0; ptype < 6; ++ptype) {
       report.selectedCounts[ptype] = selection.keepByType[ptype].size();
       report.extractedCounts[ptype] = report.selectedCounts[ptype];
@@ -5057,6 +5510,7 @@ SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob
       BuildBackgroundGrid(job.region,
                           background,
                           outputLengthScale,
+                          coordinateOrigin,
                           backgroundFirstId);
     AssignNearestGasRowsFromRawCoords(selection.selectedGasOutputCoords,
                                       selection.selectedGasLocalRows,
@@ -5215,7 +5669,7 @@ SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob
                                       backgroundGrid,
                                       background,
                                       valueScale,
-                                      coordinateOrigin);
+                                      frame);
         }
         ++report.copiedDatasets;
         if (outputKey == FieldKey::Mass) {
@@ -5290,6 +5744,8 @@ SnapshotExtractReport ExtractGadgetSnapshotRegionToHdf5(const SnapshotExtractJob
                   sourceHeader,
                   outputParameters,
                   job.region,
+                  job.frameTransform,
+                  frame,
                   outputLengthScale,
                   report.extractedCounts,
                   outputMassTable);
@@ -5376,7 +5832,6 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
         ? UnitChangeScale(sourceParameters.unitLength, conversion.unitLengthCm) *
           ComovingLengthScale(conversion)
         : 1.0;
-    const std::array<double, 3> coordinateOrigin = RegionLowerCorner(job.region);
     sourceHeader.flagDoublePrecision = 1;
 
     report.sourceCounts = sourceHeader.counts;
@@ -5394,12 +5849,34 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
                       std::size_t{0});
     report.extractedParticles = report.selectedParticles;
 
+    FrameAccumulator frameAccumulator;
+    if (job.frameTransform.positionFrame ==
+          SnapshotExtractPositionFrame::MassCenterZero ||
+        job.frameTransform.velocityFrame ==
+          SnapshotExtractVelocityFrame::MassCenterZero) {
+      for (const auto& keep : keepByType) {
+        for (std::size_t index : keep) {
+          if (index >= block.particles.size()) continue;
+          const SimulationElement& p = block.particles[index];
+          const double pos[3] = {p.position[0], p.position[1], p.position[2]};
+          const double vel[3] = {p.vel[0], p.vel[1], p.vel[2]};
+          frameAccumulator.add(pos, vel, p.mass, true);
+        }
+      }
+    }
+    const ExtractResolvedFrame frame =
+      MakeResolvedFrame(job,
+                        frameAccumulator.centerOr(RegionCenter(job.region)),
+                        frameAccumulator.velocityOrZero());
+    const std::array<double, 3>& coordinateOrigin = frame.coordinateOrigin;
+
     SnapshotBackgroundGridConfig background = job.backgroundGrid;
     extractContext = "building loaded background grid";
     BackgroundGridData backgroundGrid =
       BuildBackgroundGrid(job.region,
                           background,
                           outputLengthScale,
+                          coordinateOrigin,
                           FirstBackgroundParticleId(
                             MaxLoadedSelectedParticleId(block, keepByType),
                             job.particleIdTransform));
@@ -5528,7 +6005,7 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
                                    groupBackground,
                                    background,
                                    valueScale,
-                                   coordinateOrigin);
+                                   frame);
         }
         ++report.copiedDatasets;
       }
@@ -5540,6 +6017,8 @@ SnapshotExtractReport ExtractLoadedSnapshotRegionToHdf5(
                   sourceHeader,
                   outputParameters,
                   job.region,
+                  job.frameTransform,
+                  frame,
                   outputLengthScale,
                   report.extractedCounts,
                   outputMassTable);
