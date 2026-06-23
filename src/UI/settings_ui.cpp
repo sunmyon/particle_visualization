@@ -1456,6 +1456,13 @@ static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
                        0.0,
                        "%.8g");
     state.targetScaleFactor = std::max(1.0e-30, state.targetScaleFactor);
+    if (ImGui::TreeNodeEx("Advanced##snapshot_extract_units")) {
+      ImGui::Checkbox("apply cosmological velocity factor##snapshot_extract_units",
+                      &state.convertComovingVelocity);
+      ImGui::TextDisabled(
+        "When converting comoving <-> physical, Velocities use sqrt(a). InternalEnergy keeps the UnitVelocity^2 conversion only.");
+      ImGui::TreePop();
+    }
     ImGui::SeparatorText("Target code units");
     ImGui::TextDisabled("Source units are the loaded file Parameters; if absent, current Units are used.");
     ImGui::InputDouble("UnitLength_in_cm##snapshot_extract_units",
@@ -1550,6 +1557,7 @@ static void DrawSnapshotExtractSection(FileNavigationRuntimeState& fileNav,
     job.unitConversion.unitVelocityCmPerS = state.targetUnitVelocityCmPerS;
     job.unitConversion.hubbleParam = state.targetHubbleParam;
     job.unitConversion.scaleFactor = state.targetScaleFactor;
+    job.unitConversion.convertComovingVelocity = state.convertComovingVelocity;
     job.backgroundGrid.enabled = state.addBackgroundGrid;
     job.backgroundGrid.cellsPerAxis = state.backgroundCellsPerAxis;
     job.backgroundGrid.density = state.backgroundDensity;

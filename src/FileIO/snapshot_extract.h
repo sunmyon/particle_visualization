@@ -49,6 +49,7 @@ struct SnapshotExtractUnitConversion {
   double hubbleParam = 1.0;
   double scaleFactor = 1.0;
   SnapshotExtractComovingMode comovingMode = SnapshotExtractComovingMode::Preserve;
+  bool convertComovingVelocity = true;
 };
 
 struct SnapshotExtractRegion {

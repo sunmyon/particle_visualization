@@ -600,6 +600,7 @@ struct SnapshotExtractUiState {
   double targetUnitVelocityCmPerS = 1.0e5;
   double targetHubbleParam = 1.0;
   double targetScaleFactor = 1.0;
+  bool convertComovingVelocity = true;
   std::string unitDefaultsSourcePath;
 };
 

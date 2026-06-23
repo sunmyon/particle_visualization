@@ -503,6 +503,34 @@ void ApplyGadgetBlockDefaults(FieldSpec& spec)
   spec.sourceName = "types:1";
 }
 
+int NextCustomScalarFieldIndex(const std::vector<FieldSpec>& tokens)
+{
+  int maxIndex = -1;
+  for (const FieldSpec& spec : tokens) {
+    const int index = CustomScalarFieldIndex(spec.key);
+    if (index >= 0 && index < kCustomScalarFieldCount) {
+      maxIndex = std::max(maxIndex, index);
+    }
+  }
+  const int nextIndex = maxIndex + 1;
+  return nextIndex < kCustomScalarFieldCount ? nextIndex : -1;
+}
+
+void AppendCustomScalarToken(std::vector<FieldSpec>& tokens, bool gadgetFormat)
+{
+  const int index = NextCustomScalarFieldIndex(tokens);
+  if (index < 0) return;
+
+  FieldSpec spec;
+  spec.key = CustomScalarFieldKey(index);
+  if (gadgetFormat) {
+    ApplyGadgetBlockDefaults(spec);
+  } else {
+    ApplyDefaultFieldSpec(spec);
+  }
+  tokens.push_back(std::move(spec));
+}
+
 void SetAllGadgetFloatingTypes(std::vector<FieldSpec>& tokens, DataType type)
 {
   for (FieldSpec& spec : tokens) {
@@ -877,6 +905,16 @@ void DrawSimpleBinaryFormatEditor(std::vector<FieldSpec>& tokens)
     ApplyDefaultFieldSpec(spec);
     tokens.push_back(std::move(spec));
   }
+  ImGui::SameLine();
+  const int nextCustomIndex = NextCustomScalarFieldIndex(tokens);
+  ImGui::BeginDisabled(nextCustomIndex < 0);
+  if (ImGui::Button("Add custom")) {
+    AppendCustomScalarToken(tokens, false);
+  }
+  ImGui::EndDisabled();
+  if (nextCustomIndex >= 0 && ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Add %s", GetCustomScalarFieldDisplayName(nextCustomIndex));
+  }
 
   if (ImGui::BeginTable("BinaryFormatTable", 5,
                         ImGuiTableFlags_RowBg |
@@ -977,6 +1015,16 @@ void DrawSimpleGadgetFormatEditor(std::vector<FieldSpec>& tokens)
     spec.key = FieldKey::Dummy;
     ApplyGadgetBlockDefaults(spec);
     tokens.push_back(std::move(spec));
+  }
+  ImGui::SameLine();
+  const int nextCustomIndex = NextCustomScalarFieldIndex(tokens);
+  ImGui::BeginDisabled(nextCustomIndex < 0);
+  if (ImGui::Button("Add custom")) {
+    AppendCustomScalarToken(tokens, true);
+  }
+  ImGui::EndDisabled();
+  if (nextCustomIndex >= 0 && ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Add %s", GetCustomScalarFieldDisplayName(nextCustomIndex));
   }
 
   if (ImGui::BeginTable("GadgetFormatTable", 7,

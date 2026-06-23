@@ -394,6 +394,18 @@ double ComovingLengthScale(const SnapshotExtractUnitConversion& conversion)
   }
 }
 
+double ComovingVelocityScale(const SnapshotExtractUnitConversion& conversion)
+{
+  if (!conversion.convertComovingVelocity) return 1.0;
+  const double sqrtA = std::sqrt(SafePositive(conversion.scaleFactor, 1.0));
+  switch (conversion.comovingMode) {
+    case SnapshotExtractComovingMode::ComovingToPhysical: return sqrtA;
+    case SnapshotExtractComovingMode::PhysicalToComoving: return 1.0 / sqrtA;
+    case SnapshotExtractComovingMode::Preserve:
+    default: return 1.0;
+  }
+}
+
 ParametersInfo ApplyUnitConversionToParameters(
   ParametersInfo params,
   const SnapshotExtractUnitConversion& conversion)
@@ -443,8 +455,10 @@ double DatasetValueScale(FieldKey key,
     UnitChangeScale(source.unitLength, conversion.unitLengthCm) *
     ComovingLengthScale(conversion);
   const double massScale = UnitChangeScale(source.unitMass, conversion.unitMassG);
-  const double velocityScale =
+  const double unitVelocityScale =
     UnitChangeScale(source.unitVelocity, conversion.unitVelocityCmPerS);
+  const double velocityScale = unitVelocityScale *
+    ComovingVelocityScale(conversion);
 
   switch (key) {
     case FieldKey::Position:
@@ -460,7 +474,7 @@ double DatasetValueScale(FieldKey key,
       if (source.flagDensityInCgs != 0) return 1.0;
       return massScale / (lengthScale * lengthScale * lengthScale);
     case FieldKey::InternalEnergy:
-      return velocityScale * velocityScale;
+      return unitVelocityScale * unitVelocityScale;
     case FieldKey::Bfield:
       if (source.flagBfieldInCgs != 0) return 1.0;
       {
@@ -2756,6 +2770,12 @@ void WriteParameters(H5::H5File& output,
                        "SnapshotExtractScaleFactor",
                        H5::PredType::NATIVE_DOUBLE,
                        SafePositive(conversion.scaleFactor, 1.0));
+  const int convertComovingVelocity =
+    conversion.convertComovingVelocity ? 1 : 0;
+  WriteScalarAttribute(group,
+                       "SnapshotExtractConvertComovingVelocity",
+                       H5::PredType::NATIVE_INT,
+                       convertComovingVelocity);
 }
 
 std::vector<FieldSpec> NormalizeExtractFields(std::vector<FieldSpec> fields)
