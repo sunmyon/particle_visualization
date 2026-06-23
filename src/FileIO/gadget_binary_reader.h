@@ -1362,6 +1362,7 @@ private:
     case FieldKey::J21:
     case FieldKey::Gamma:
     case FieldKey::Metallicity:
+      return true;
     default:
       return IsCustomScalarFieldKey(key);
     }
