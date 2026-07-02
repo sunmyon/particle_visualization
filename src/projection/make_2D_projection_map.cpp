@@ -689,14 +689,20 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
           for (size_t i = 0; i < map.values.size(); ++i) {
             const float alpha =
               (i < output.weights.size()) ? output.weights[i] : 0.0f;
+            const float background = params.whiteBackground
+              ? std::clamp(1.0f - alpha, 0.0f, 1.0f)
+              : 0.0f;
             map.weights[i] = alpha;
             map.values[i] = alpha;
             map.image[i * 3 + 0] = static_cast<unsigned char>(
-              std::clamp(output.rgb[i * 3 + 0], 0.0f, 1.0f) * 255.0f);
+              std::clamp(output.rgb[i * 3 + 0] + background, 0.0f, 1.0f) *
+              255.0f);
             map.image[i * 3 + 1] = static_cast<unsigned char>(
-              std::clamp(output.rgb[i * 3 + 1], 0.0f, 1.0f) * 255.0f);
+              std::clamp(output.rgb[i * 3 + 1] + background, 0.0f, 1.0f) *
+              255.0f);
             map.image[i * 3 + 2] = static_cast<unsigned char>(
-              std::clamp(output.rgb[i * 3 + 2], 0.0f, 1.0f) * 255.0f);
+              std::clamp(output.rgb[i * 3 + 2] + background, 0.0f, 1.0f) *
+              255.0f);
           }
         } else {
           for (size_t i = 0; i < map.values.size(); ++i) {
@@ -782,7 +788,7 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
 
   std::vector<unsigned char> tiledRgb;
   tiledRgb.resize(static_cast<size_t>(panelWidth) * panelHeight * rows * cols * 3,
-                  0);
+                  params.whiteBackground ? 255 : 0);
   ImageCanvas canvas{tiledRgb, panelWidth * cols, panelHeight * rows};
 
   for (int i = 0; i < panelCount; ++i) {
@@ -901,14 +907,25 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
     return ToRgbImage(canvas);
   }
 
+  const bool useContributionMask =
+    params.dataSource == DataSource::Stars &&
+    map.weights.size() == map.values.size();
+  const auto hasContribution = [&](size_t i) {
+    return !useContributionMask ||
+           (std::isfinite(map.weights[i]) && map.weights[i] > 0.0f);
+  };
+
   float minVal = FLT_MAX;
-  for (auto val : map.values) {
+  for (size_t i = 0; i < map.values.size(); ++i) {
+    if (!hasContribution(i)) continue;
+    const float val = map.values[i];
     if (val < minVal && val > 0.0f) minVal = val;
   }
 
   if (map.flagLogScale) {
-    if (minVal > 0.0f) {
+    if (minVal != FLT_MAX) {
       for (size_t i = 0; i < map.values.size(); i++) {
+        if (!hasContribution(i)) continue;
         if (map.values[i] > 0.0f)
           map.values[i] = log10(map.values[i]);
         else
@@ -919,14 +936,44 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
     }
   }
 
-  map.minVal = *std::min_element(map.values.begin(), map.values.end());
-  map.maxVal = *std::max_element(map.values.begin(), map.values.end());
+  if (useContributionMask) {
+    map.minVal = FLT_MAX;
+    map.maxVal = -FLT_MAX;
+    for (size_t i = 0; i < map.values.size(); ++i) {
+      if (!hasContribution(i) || !std::isfinite(map.values[i])) continue;
+      const float value = static_cast<float>(map.values[i]);
+      map.minVal = std::min(map.minVal, value);
+      map.maxVal = std::max(map.maxVal, value);
+    }
+    if (map.minVal == FLT_MAX) {
+      map.minVal = 0.0f;
+      map.maxVal = 1.0f;
+    }
+  } else {
+    map.minVal = *std::min_element(map.values.begin(), map.values.end());
+    map.maxVal = *std::max_element(map.values.begin(), map.values.end());
+  }
 
-  float rangeMin = params.autoRange ? map.minVal : params.range_min;
+  float rangeMin = params.autoRange
+    ? map.minVal - (useContributionMask ? 1.0f : 0.0f)
+    : params.range_min;
   float rangeMax = params.autoRange ? map.maxVal : params.range_max;
+  if (rangeMax <= rangeMin) {
+    const float delta = std::max(std::abs(rangeMin) * 1.0e-6f, 1.0e-6f);
+    if (params.autoRange) {
+      rangeMax = rangeMin;
+      rangeMin -= delta;
+    } else {
+      rangeMax = rangeMin + delta;
+    }
+  }
 
   for (int i = 0; i < map.npixel_x * map.npixel_y; i++) {
-    float norm = (map.values[i] - rangeMin) / (rangeMax - rangeMin + 1.e-6f);
+    float norm = 0.0f;
+    if (hasContribution(static_cast<size_t>(i))) {
+      norm = (map.values[i] - rangeMin) /
+             (rangeMax - rangeMin + 1.e-6f);
+    }
     float rF, gF, bF;
     colormapLookup(norm, rF, gF, bF, ctx.colorMap, ctx.colorMapSize);
     unsigned char rC = (unsigned char)(rF * 255);
@@ -1379,12 +1426,18 @@ void ProjectionMapGenerator::renderCpuVoronoiLabelGrid(
       map.values[outIdx] = accumA;
       map.weights[outIdx] = accumA;
       const size_t rgbIdx = outIdx * 3;
+      const double background = params.whiteBackground
+        ? std::clamp(1.0 - accumA, 0.0, 1.0)
+        : 0.0;
       map.image[rgbIdx + 0] =
-        static_cast<unsigned char>(std::clamp(accumR, 0.0, 1.0) * 255.0);
+        static_cast<unsigned char>(
+          std::clamp(accumR + background, 0.0, 1.0) * 255.0);
       map.image[rgbIdx + 1] =
-        static_cast<unsigned char>(std::clamp(accumG, 0.0, 1.0) * 255.0);
+        static_cast<unsigned char>(
+          std::clamp(accumG + background, 0.0, 1.0) * 255.0);
       map.image[rgbIdx + 2] =
-        static_cast<unsigned char>(std::clamp(accumB, 0.0, 1.0) * 255.0);
+        static_cast<unsigned char>(
+          std::clamp(accumB + background, 0.0, 1.0) * 255.0);
     }
   }
 }
@@ -1442,7 +1495,7 @@ void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
 
       const int idx = j * map.npixel_x + i;
       map.values[idx] += val;
-      if (normalize) map.weights[idx] += 1.0f;
+      map.weights[idx] += 1.0f;
       continue;
     }
 
@@ -1476,7 +1529,7 @@ void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
         const int idx = j * map.npixel_x + i;
 
         map.values[idx] += (float)(val * w);
-        if (normalize) map.weights[idx] += (float)w;
+        map.weights[idx] += (float)w;
       }
     }
   }
@@ -2159,6 +2212,8 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 {
   const int plotW = canvas.width();
   const int plotH = canvas.height();
+  const unsigned char backgroundValue = params.whiteBackground ? 255 : 0;
+  const unsigned char foregroundValue = params.whiteBackground ? 0 : 255;
   const ProjectionColorBarPlacement placement = params.colorBarPlacement;
   const bool customPlacement =
     placement == ProjectionColorBarPlacement::Custom;
@@ -2238,7 +2293,10 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   // Add padding.
   const int padding = 4;
   const int ticksWidth = static_cast<int>(ceil(maxTicksWidth)) + 2 * padding;
-  const int ticksHeight = static_cast<int>(ceil(maxTicksHeight)) + 2 * padding;
+  const float tickTextHeight = hasTickTextBBox
+    ? maxTickTextY - minTickTextY
+    : maxTicksHeight;
+  const int ticksHeight = static_cast<int>(ceil(tickTextHeight)) + 2 * padding;
   const int labelWidth = showLegend ? charPixelSizeLabel + 2 * padding : 0;
   const int labelHeight = showLegend ? charPixelSizeLabel + 2 * padding : 0;
   const int barThickness = std::max(4, colorBarWidth);
@@ -2269,7 +2327,11 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     tickLabelX = labelWidth + ticksWidth / 2;
     titleX = labelWidth / 2;
     titleY = plotH / 2;
-    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+    canvas.resizeKeepContentAt(outW,
+                               outH,
+                               plotX0,
+                               plotY0,
+                               backgroundValue);
   } else if (placement == ProjectionColorBarPlacement::Top) {
     outH = labelHeight + ticksHeight + barThickness + plotH;
     plotY0 = labelHeight + ticksHeight + barThickness;
@@ -2277,20 +2339,30 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     barY0 = labelHeight + ticksHeight;
     barW = plotW;
     barH = barThickness;
-    tickLabelY = labelHeight + ticksHeight / 2;
+    tickLabelY = static_cast<int>(std::lround(barY0 - padding -
+                                              maxTickTextY));
     titleX = plotW / 2;
     titleY = labelHeight / 2;
-    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+    canvas.resizeKeepContentAt(outW,
+                               outH,
+                               plotX0,
+                               plotY0,
+                               backgroundValue);
   } else if (placement == ProjectionColorBarPlacement::Bottom) {
     outH = plotH + barThickness + ticksHeight + labelHeight;
     barX0 = 0;
     barY0 = plotH;
     barW = plotW;
     barH = barThickness;
-    tickLabelY = barY0 + barH + ticksHeight / 2;
+    tickLabelY = static_cast<int>(std::lround(barY0 + barH + padding -
+                                              minTickTextY));
     titleX = plotW / 2;
     titleY = barY0 + barH + ticksHeight + labelHeight / 2;
-    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+    canvas.resizeKeepContentAt(outW,
+                               outH,
+                               plotX0,
+                               plotY0,
+                               backgroundValue);
   } else if (inset) {
     const float insetX = customPlacement ? params.colorBarInsetX
                                          : (horizontal ? 0.0f : 1.0f);
@@ -2355,7 +2427,11 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     tickLabelX = barX0 + barW + ticksWidth / 2;
     titleX = barX0 + barW + ticksWidth + labelWidth / 2;
     titleY = plotH / 2;
-    canvas.resizeKeepContentAt(outW, outH, plotX0, plotY0, 0);
+    canvas.resizeKeepContentAt(outW,
+                               outH,
+                               plotX0,
+                               plotY0,
+                               backgroundValue);
   }
 
   if (inset) {
@@ -2404,7 +2480,10 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
                      insetBgY0 - bgPad,
                      insetBgX1 + bgPad,
                      insetBgY1 + bgPad,
-                     0, 0, 0, 0.55f);
+                     backgroundValue,
+                     backgroundValue,
+                     backgroundValue,
+                     0.55f);
   }
 
   if (horizontal) {
@@ -2448,38 +2527,52 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
         canvas.drawVerticalLine(tickX,
                                 barY0,
                                 barY0 + std::min(10, barH),
-                                255, 255, 255);
+                                foregroundValue,
+                                foregroundValue,
+                                foregroundValue);
       } else {
         canvas.drawVerticalLine(tickX,
                                 barY0 + std::max(0, barH - 10),
                                 barY0 + barH,
-                                255, 255, 255);
+                                foregroundValue,
+                                foregroundValue,
+                                foregroundValue);
       }
       fontRenderer_.drawTextCenteredBaseline(
         canvas,
         tickX,
         tickLabelY,
         tickLabels[static_cast<size_t>(i)].c_str(),
-        static_cast<float>(charPixelSize));
+        static_cast<float>(charPixelSize),
+        foregroundValue,
+        foregroundValue,
+        foregroundValue);
     } else {
       const int tickY = barY0 + static_cast<int>((1.0f - frac) * (barH - 1));
       if (placement == ProjectionColorBarPlacement::Left) {
         canvas.drawHorizontalLine(barX0,
                                   barX0 + std::min(10, barW),
                                   tickY,
-                                  255, 255, 255);
+                                  foregroundValue,
+                                  foregroundValue,
+                                  foregroundValue);
       } else {
         canvas.drawHorizontalLine(barX0 + std::max(0, barW - 10),
                                   barX0 + barW,
                                   tickY,
-                                  255, 255, 255);
+                                  foregroundValue,
+                                  foregroundValue,
+                                  foregroundValue);
       }
       fontRenderer_.drawTextCenteredBaseline(
         canvas,
         tickLabelX,
         tickY,
         tickLabels[static_cast<size_t>(i)].c_str(),
-        static_cast<float>(charPixelSize));
+        static_cast<float>(charPixelSize),
+        foregroundValue,
+        foregroundValue,
+        foregroundValue);
     }
   }
 
@@ -2488,13 +2581,19 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					   titleX,
 					   titleY,
 					   barLabel,
-					   static_cast<float>(charPixelSizeLabel));
+					   static_cast<float>(charPixelSizeLabel),
+					   foregroundValue,
+					   foregroundValue,
+					   foregroundValue);
   } else if (showLegend) {
     fontRenderer_.drawTextRotated90Centered(canvas,
 					    titleX,
 					    titleY,
 					    barLabel,
-					    static_cast<float>(charPixelSizeLabel));
+					    static_cast<float>(charPixelSizeLabel),
+					    foregroundValue,
+					    foregroundValue,
+					    foregroundValue);
   }
 
   if(params.flagTimeLabel){
@@ -2514,8 +2613,14 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     float min_y = bbox.minY;
     
     // Choose the desired top-left text position.
-    int baseX = plotX0 + 10;
-    int baseY = plotY0 + 10;
+    const int timeOffsetX = params.flagAdjustTimeLabelPosition
+      ? static_cast<int>(std::lround(params.timeLabelOffsetX))
+      : 0;
+    const int timeOffsetY = params.flagAdjustTimeLabelPosition
+      ? static_cast<int>(std::lround(params.timeLabelOffsetY))
+      : 0;
+    int baseX = plotX0 + 10 + timeOffsetX;
+    int baseY = plotY0 + 10 + timeOffsetY;
 
     // Fill the padded text background with translucent black.
     int padding = 4;
@@ -2524,7 +2629,14 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     int x1 = baseX + textW + padding;   // Bottom-right X.
     int y1 = baseY + textH + padding;   // Bottom-right Y.
 
-    canvas.blendRect(x0, y0, x1, y1, 0, 0, 0, 0.5f);
+    canvas.blendRect(x0,
+                     y0,
+                     x1,
+                     y1,
+                     backgroundValue,
+                     backgroundValue,
+                     backgroundValue,
+                     0.5f);
 
     // Draw the text. The renderer treats (pos_x, pos_y) as a centered position,
     // so place the center so the text's top-left corner lands at (baseX, baseY).
@@ -2533,7 +2645,10 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					    static_cast<int>(baseY - min_y),
 					    t,
 					    static_cast<float>(charPixelSizeLabel),
-					    params.timeFormatBuf);
+					    params.timeFormatBuf,
+					    foregroundValue,
+					    foregroundValue,
+					    foregroundValue);
   }
 
 
@@ -2544,18 +2659,70 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 
       int scaleBarLengthPixels = static_cast<int>(scaleBarLength / cell_size);
 	
-      int arrowCenterX = plotX0 + plotW / 2;
+      const int scaleOffsetX = params.flagAdjustScaleBarPosition
+        ? static_cast<int>(std::lround(params.scaleBarOffsetX))
+        : 0;
+      const int scaleOffsetY = params.flagAdjustScaleBarPosition
+        ? static_cast<int>(std::lround(params.scaleBarOffsetY))
+        : 0;
+      int arrowCenterX = plotX0 + plotW / 2 + scaleOffsetX;
       int arrowStartX = arrowCenterX - scaleBarLengthPixels / 2;
       int arrowEndX = arrowStartX + scaleBarLengthPixels;
       
-      int arrowStartY = plotY0 + plotH - 30;
+      int arrowStartY = plotY0 + plotH - 30 + scaleOffsetY;
+      const int scaleBarThickness =
+        std::clamp(params.scaleBarThickness, 1, 64);
+      const int scaleBarY0 = arrowStartY - (scaleBarThickness - 1) / 2;
+      const int scaleBarY1 = scaleBarY0 + scaleBarThickness;
 
-      canvas.drawHorizontalLine(arrowStartX, arrowEndX, arrowStartY, 255, 255, 255);
+      const TextBBox scaleLabelBBox =
+        fontRenderer_.measureTextBBox(params.arrowLabelStr,
+                                      static_cast<float>(charPixelSizeLabel));
+      const float scaleLabelOriginX =
+        static_cast<float>(arrowCenterX) -
+        0.5f * (scaleLabelBBox.minX + scaleLabelBBox.maxX);
+      const int scaleLabelBaselineY = scaleBarY0 - 10;
+      const int overlayX0 = std::min(
+        arrowStartX,
+        static_cast<int>(std::floor(scaleLabelOriginX +
+                                    scaleLabelBBox.minX)));
+      const int overlayX1 = std::max(
+        arrowEndX + 1,
+        static_cast<int>(std::ceil(scaleLabelOriginX +
+                                   scaleLabelBBox.maxX)));
+      const int overlayY0 = std::min(
+        scaleBarY0,
+        static_cast<int>(std::floor(scaleLabelBaselineY +
+                                    scaleLabelBBox.minY)));
+      const int overlayY1 = std::max(
+        scaleBarY1,
+        static_cast<int>(std::ceil(scaleLabelBaselineY +
+                                   scaleLabelBBox.maxY)));
+      const int overlayPadding = 4;
+      canvas.blendRect(overlayX0 - overlayPadding,
+                       overlayY0 - overlayPadding,
+                       overlayX1 + overlayPadding,
+                       overlayY1 + overlayPadding,
+                       backgroundValue,
+                       backgroundValue,
+                       backgroundValue,
+                       0.5f);
+
+      canvas.fillRect(arrowStartX,
+                      scaleBarY0,
+                      arrowEndX + 1,
+                      scaleBarY1,
+                      foregroundValue,
+                      foregroundValue,
+                      foregroundValue);
       fontRenderer_.drawTextCenteredBaseline(canvas,
 					     arrowCenterX,
-					     arrowStartY - 10,
+					     scaleLabelBaselineY,
 					     params.arrowLabelStr,
-					     static_cast<float>(charPixelSizeLabel));
+					     static_cast<float>(charPixelSizeLabel),
+					     foregroundValue,
+					     foregroundValue,
+					     foregroundValue);
     }
 }
 

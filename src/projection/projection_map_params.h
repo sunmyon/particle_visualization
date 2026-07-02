@@ -85,6 +85,10 @@ struct ProjectionViewBlockSpec {
 
   float scaleBarLengthDefault = 0.1f;
   char arrowLabelStrDefault[255] = "0.1";
+  bool adjustScaleBarPositionDefault = false;
+  float scaleBarOffsetXDefault = 0.0f;
+  float scaleBarOffsetYDefault = 0.0f;
+  int scaleBarThicknessDefault = 1;
 };
 
 struct ProjectionPanelSpec {
@@ -196,6 +200,7 @@ struct ProjectionMapParams {
   float colorBarInsetY = 0.08f;
   float colorBarInsetLength = 0.34f;
   float colorBarInsetThickness = 0.035f;
+  bool whiteBackground = false;
 
   bool flagShowCuboid = false;
 
@@ -206,10 +211,17 @@ struct ProjectionMapParams {
   bool flagPlaceScale = false;
   float scaleBarLength = 0.1f;
   char arrowLabelStr[255] = "0.1";
+  bool flagAdjustScaleBarPosition = false;
+  float scaleBarOffsetX = 0.0f;
+  float scaleBarOffsetY = 0.0f;
+  int scaleBarThickness = 1;
 
   bool flagTimeLabel = true;
   bool flagUseRedshift = false;
   char timeFormatBuf[255] = "t=%.3f";
+  bool flagAdjustTimeLabelPosition = false;
+  float timeLabelOffsetX = 0.0f;
+  float timeLabelOffsetY = 0.0f;
 
   char fileFormat[255] = "image_%04d.png";
   char folderPath[255] = "./output";
@@ -336,6 +348,10 @@ inline void ProjectionSyncViewBlockFromTopLevel(ProjectionMapParams& params,
   block.upAxis = params.upAxis;
   block.upSign = params.upSign;
   block.scaleBarLengthDefault = params.scaleBarLength;
+  block.adjustScaleBarPositionDefault = params.flagAdjustScaleBarPosition;
+  block.scaleBarOffsetXDefault = params.scaleBarOffsetX;
+  block.scaleBarOffsetYDefault = params.scaleBarOffsetY;
+  block.scaleBarThicknessDefault = params.scaleBarThickness;
   ProjectionCopyString(block.arrowLabelStrDefault,
                        sizeof(block.arrowLabelStrDefault),
                        params.arrowLabelStr);
@@ -372,6 +388,10 @@ inline void ProjectionSyncTopLevelFromViewBlock(ProjectionMapParams& params,
   params.upAxis = block.upAxis;
   params.upSign = block.upSign;
   params.scaleBarLength = block.scaleBarLengthDefault;
+  params.flagAdjustScaleBarPosition = block.adjustScaleBarPositionDefault;
+  params.scaleBarOffsetX = block.scaleBarOffsetXDefault;
+  params.scaleBarOffsetY = block.scaleBarOffsetYDefault;
+  params.scaleBarThickness = block.scaleBarThicknessDefault;
   ProjectionCopyString(params.arrowLabelStr,
                        sizeof(params.arrowLabelStr),
                        block.arrowLabelStrDefault);
@@ -500,6 +520,8 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
   }
   for (int i = 0; i < params.viewBlockCount; ++i) {
     ProjectionNormalizeViewBlockOrientation(params.viewBlocks[i]);
+    params.viewBlocks[i].scaleBarThicknessDefault =
+      std::clamp(params.viewBlocks[i].scaleBarThicknessDefault, 1, 64);
   }
   for (int i = 0; i < params.starOverlayCount; ++i) {
     if (params.starOverlays[i].name[0] == '\0') {
@@ -591,6 +613,11 @@ inline void ProjectionApplyPanelToParams(ProjectionMapParams& params,
   params.flagPlaceScale =
     ProjectionResolveLabelMode(panel.scaleBarMode,
                                false);
+  params.flagAdjustScaleBarPosition = block.adjustScaleBarPositionDefault;
+  params.scaleBarOffsetX = block.scaleBarOffsetXDefault;
+  params.scaleBarOffsetY = block.scaleBarOffsetYDefault;
+  params.scaleBarThickness =
+    std::clamp(block.scaleBarThicknessDefault, 1, 64);
 
   const bool overrideScale =
     panel.scaleBarMode == ProjectionPanelLabelMode::Override;

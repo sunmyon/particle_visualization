@@ -1672,6 +1672,29 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         dirty |= ImGui::InputText("Arrow label",
                                   block.arrowLabelStrDefault,
                                   IM_ARRAYSIZE(block.arrowLabelStrDefault));
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::SliderInt("Thickness (px)",
+                             &block.scaleBarThicknessDefault,
+                             1,
+                             16)) {
+          dirty = true;
+        }
+        dirty |= ImGui::Checkbox("Adjust position##projection_scale",
+                                 &block.adjustScaleBarPositionDefault);
+        if (block.adjustScaleBarPositionDefault) {
+          float scaleOffset[2] = {
+            block.scaleBarOffsetXDefault,
+            block.scaleBarOffsetYDefault
+          };
+          ImGui::SetNextItemWidth(180.0f);
+          if (ImGui::InputFloat2("Offset (px)##projection_scale",
+                                 scaleOffset,
+                                 "%.1f")) {
+            block.scaleBarOffsetXDefault = scaleOffset[0];
+            block.scaleBarOffsetYDefault = scaleOffset[1];
+            dirty = true;
+          }
+        }
       });
       if (dirty && ui.selectedViewBlockIndex == params.activeViewBlockIndex) {
         ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
@@ -1681,7 +1704,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
 
     if (ImGui::BeginTabItem("Rendering")) {
       ImGui::TextDisabled("Projection");
-      if (ImGui::BeginTable("ProjectionMethodGrid", 5)) {
+      if (ImGui::BeginTable("ProjectionMethodGrid", 6)) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         const char* methodLabels[] = { "Standard", "Voronoi" };
@@ -1726,6 +1749,10 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         ImGui::TableSetColumnIndex(4);
         dirty |= ImGui::Checkbox("GPU##projection_method",
                                  &params.useGpuProjection);
+
+        ImGui::TableSetColumnIndex(5);
+        dirty |= ImGui::Checkbox("White background##projection_method",
+                                 &params.whiteBackground);
         ImGui::EndTable();
       }
 
@@ -1776,6 +1803,22 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
                                      0.0f,
                                      "%g");
           ImGui::EndTable();
+        }
+        dirty |= ImGui::Checkbox("Adjust position##projection_time",
+                                 &params.flagAdjustTimeLabelPosition);
+        if (params.flagAdjustTimeLabelPosition) {
+          float timeOffset[2] = {
+            params.timeLabelOffsetX,
+            params.timeLabelOffsetY
+          };
+          ImGui::SetNextItemWidth(180.0f);
+          if (ImGui::InputFloat2("Offset (px)##projection_time",
+                                 timeOffset,
+                                 "%.1f")) {
+            params.timeLabelOffsetX = timeOffset[0];
+            params.timeLabelOffsetY = timeOffset[1];
+            dirty = true;
+          }
         }
       });
 
