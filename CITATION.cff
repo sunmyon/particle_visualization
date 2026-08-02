@@ -1,11 +1,12 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata below."
 title: "particle_visualization"
+type: software
 authors:
   - family-names: "Chon"
     given-names: "Sunmyon"
 version: 1.0.0
-data-released: 2026-08-02
+date-released: 2026-08-02
 repository-code: "https://github.com/sunmyon/particle_visualization"
 license: "MIT"
 abstract: >-
