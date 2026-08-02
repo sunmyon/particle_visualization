@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "particle_visualization"
+authors:
+  - family-names: "Chon"
+    given-names: "Sunmyon"
+repository-code: "https://github.com/sunmyon/particle_visualization"
+license: "MIT"
+abstract: >-
+  A visualization and analysis tool for particle, SPH-like, and cell-centred
+  mesh data, including Voronoi/AREPO-style simulation snapshots.
+keywords:
+  - scientific visualization
+  - astrophysical simulations
+  - particle data
+  - SPH
+  - AREPO
