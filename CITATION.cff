@@ -4,6 +4,8 @@ title: "particle_visualization"
 authors:
   - family-names: "Chon"
     given-names: "Sunmyon"
+version: 1.0.0
+data-released: 2026-08-02
 repository-code: "https://github.com/sunmyon/particle_visualization"
 license: "MIT"
 abstract: >-
