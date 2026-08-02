@@ -23,6 +23,11 @@ The repository keeps small vendored UI/header libraries under `external/`.
 Heavy science dependencies such as CGAL, GMP, MPFR, and VTK are not
 submodules.
 
+## Quick Start
+
+For first-run instructions on macOS and Linux, see
+`docs/quick-start.md`.
+
 ## License
 
 This project is distributed under the MIT License. See `LICENSE`.
@@ -122,12 +127,19 @@ What this does:
 
 1. Attempts to download `output_0000.dat` from known release URLs.
 2. If URLs are unavailable, generates a synthetic binary snapshot in the exact record layout expected by the default binary reader.
-3. Writes both `example/data/output_0000.dat` and `example/output_0000.dat`.
+3. Attempts to download the optional Gadget-format sample `ics_gadget.dat`.
+4. Writes downloaded/generated files under `example/data/` and mirrors the app-facing files under `example/`.
 
 You can override the primary URL with:
 
 ```bash
 PARTICLE_VIS_SAMPLE_URL="https://your-host/path/output_0000.dat" bash ./example/download_data.sh
+```
+
+The optional Gadget sample URL can be overridden separately:
+
+```bash
+PARTICLE_VIS_GADGET_SAMPLE_URL="https://your-host/path/ics_gadget.dat" bash ./example/download_data.sh
 ```
 
 ### Launch Wrapper (Recommended on Freya)

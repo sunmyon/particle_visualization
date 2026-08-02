@@ -25,9 +25,13 @@ class HDF5Reader final : public IElementReader {
   size_t IndexStart_[7]{};  // prefix sum
 
   bool   flag_skip_DM_ = false;
+  bool overrideInputInterpretation_ = false;
   
 public:
-  HDF5Reader() = default;
+  explicit HDF5Reader(bool overrideInputInterpretation = false)
+    : overrideInputInterpretation_(overrideInputInterpretation)
+  {
+  }
 
   bool is_binary() override { return false; }
   size_t elementCount() const override { return npart_; }

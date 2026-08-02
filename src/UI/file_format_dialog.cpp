@@ -1117,6 +1117,7 @@ void DrawCommonInputFormatEditor(FileFormatDialogState& state,
                                  InputDensityUnit& inputDensityUnit,
                                  InputTemperatureUnit& inputTemperatureUnit,
                                  InputMagneticFieldUnit& inputMagneticFieldUnit,
+                                 bool& overrideHdf5InputInterpretation,
                                  std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
                                  unsigned int usedCustomScalarMask,
                                  UnitSystem& unitsDraft,
@@ -1156,8 +1157,12 @@ void DrawCommonInputFormatEditor(FileFormatDialogState& state,
   DrawDerivedScalarQuantityEditor(quantity, state, particles, desiredMax);
 
   ImGui::SeparatorText("Input field interpretation");
+  ImGui::Checkbox("Override HDF5 metadata",
+                  &overrideHdf5InputInterpretation);
   ImGui::TextDisabled(
-    "Used when the file does not provide enough metadata. HDF5/AREPO metadata overrides this when available.");
+    "HDF5 uses density/B flags automatically; missing flags mean code-unit fields.");
+  ImGui::TextDisabled(
+    "Override makes HDF5 use these values. Binary and Gadget always use them.");
   ImGui::TextDisabled(
     "If a field is marked as code-unit, conversion uses Code units / load defaults.");
 
@@ -2033,6 +2038,7 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                            InputDensityUnit& inputDensityUnit,
                            InputTemperatureUnit& inputTemperatureUnit,
                            InputMagneticFieldUnit& inputMagneticFieldUnit,
+                           bool& overrideHdf5InputInterpretation,
                            std::array<std::string, kCustomScalarFieldCount>& customScalarLabels,
                            UnitSystem& unitsDraft,
                            const UnitSystem& currentUnits,
@@ -2088,6 +2094,7 @@ void DrawInputFormatDialog(FileFormatDialogState& state,
                                   inputDensityUnit,
                                   inputTemperatureUnit,
                                   inputMagneticFieldUnit,
+                                  overrideHdf5InputInterpretation,
                                   customScalarLabels,
                                   usedCustomScalarMask,
                                   unitsDraft,

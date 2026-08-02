@@ -106,6 +106,24 @@ namespace {
     }
   }
 
+  void resolveHdf5ThermalInterpretation(const SnapshotLoadParams& params,
+                                        HeaderInfo& header,
+                                        const SimulationBlock& outBlock)
+  {
+    if (!header.flag_hdf5 || params.overrideHdf5InputInterpretation) {
+      return;
+    }
+
+    if (outBlock.hasLoadedField(
+          GetFieldKeyDisplayName(FieldKey::Temperature))) {
+      header.input_temperature_unit = InputTemperatureUnit::Kelvin;
+    } else if (outBlock.hasLoadedField(
+                 GetFieldKeyDisplayName(FieldKey::InternalEnergy))) {
+      header.input_temperature_unit =
+        InputTemperatureUnit::CodeInternalEnergy;
+    }
+  }
+
   void finalizeQuantityStorageMetadata(const HeaderInfo& header,
                                        SimulationBlock& outBlock)
   {
@@ -320,7 +338,8 @@ namespace {
     case FileFormat::Auto:
 #ifdef HAVE_HDF5
       if (ext == ".h5" || ext == ".hdf5") {
-        sel.reader = std::make_unique<HDF5Reader>();
+        sel.reader = std::make_unique<HDF5Reader>(
+          params.overrideHdf5InputInterpretation);
         sel.format = params.formatTokensHdf5;
         break;
       }
@@ -335,7 +354,8 @@ namespace {
 
 #ifdef HAVE_HDF5
     case FileFormat::HDF5:
-      sel.reader = std::make_unique<HDF5Reader>();
+      sel.reader = std::make_unique<HDF5Reader>(
+        params.overrideHdf5InputInterpretation);
       sel.format = params.formatTokensHdf5;
       break;
 #endif
@@ -428,6 +448,7 @@ namespace {
     const std::string readError = ok ? std::string{} : sel.reader->lastError();
     sel.reader->close();
     if (ok) {
+      resolveHdf5ThermalInterpretation(params, header, outBlock);
       applyInputDensityInterpretation(header, outBlock);
       applyInputTemperatureInterpretation(header, outBlock);
       applyInputMagneticFieldInterpretation(header, outBlock);

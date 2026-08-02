@@ -76,6 +76,8 @@ static SnapshotLoadParams BuildSnapshotLoadParams(const AppRuntimeState& runtime
   p.inputDensityUnit = fmt.inputDensityUnit;
   p.inputTemperatureUnit = fmt.inputTemperatureUnit;
   p.inputMagneticFieldUnit = fmt.inputMagneticFieldUnit;
+  p.overrideHdf5InputInterpretation =
+    fmt.overrideHdf5InputInterpretation;
   p.units = runtime.quantity.units;
   return p;
 }
@@ -299,6 +301,14 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
                                      loaded.header,
                                      runtime.settings.normalization,
 				     runtime.quantity);
+    auto& format = runtime.settings.snapshotFormat;
+    if (loaded.header.flag_hdf5 &&
+        !format.overrideHdf5InputInterpretation) {
+      format.inputDensityUnit = loaded.header.input_density_unit;
+      format.inputTemperatureUnit = loaded.header.input_temperature_unit;
+      format.inputMagneticFieldUnit =
+        loaded.header.input_magnetic_field_unit;
+    }
     UpdateSnapshotCurrentState(loaded.header, runtime.quantity.units, fileNav.current);
     fileNav.current.loadedParticleCount = data.particles->simulationBlock.size();
   }

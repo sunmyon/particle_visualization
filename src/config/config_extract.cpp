@@ -27,6 +27,8 @@ ConfigData ExtractConfigData(const FileNavigationRuntimeState& fileNav,
   config.persistent.inputDensityUnit = format.inputDensityUnit;
   config.persistent.inputTemperatureUnit = format.inputTemperatureUnit;
   config.persistent.inputMagneticFieldUnit = format.inputMagneticFieldUnit;
+  config.persistent.overrideHdf5InputInterpretation =
+    format.overrideHdf5InputInterpretation;
   config.persistent.visual = visual;
   config.persistent.mask = mask;
   config.persistent.desiredMax = desired_max;

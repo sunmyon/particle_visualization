@@ -28,6 +28,7 @@ struct PersistentSettings {
     InputTemperatureUnit::CodeInternalEnergy;
   InputMagneticFieldUnit inputMagneticFieldUnit =
     InputMagneticFieldUnit::CodeMagneticField;
+  bool overrideHdf5InputInterpretation = false;
 
   ParticleVisualConfig visual;
   ParticleMaskConfig mask;

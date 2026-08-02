@@ -43,6 +43,8 @@ void ApplyConfigData(const ConfigData& config,
   format.inputDensityUnit = config.persistent.inputDensityUnit;
   format.inputTemperatureUnit = config.persistent.inputTemperatureUnit;
   format.inputMagneticFieldUnit = config.persistent.inputMagneticFieldUnit;
+  format.overrideHdf5InputInterpretation =
+    config.persistent.overrideHdf5InputInterpretation;
 
   visual = config.persistent.visual;
   mask = config.persistent.mask;

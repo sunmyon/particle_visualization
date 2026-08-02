@@ -23,6 +23,7 @@ render_snapshots/
 /.vcpkg-cache/
 example/data/
 example/output_0000.dat
+example/ics_gadget.dat
 
 config.txt
 particle_vis
@@ -40,6 +41,8 @@ particle_vis.exe
 *.dll
 *.log
 *.tmp
+__pycache__/
+*.pyc
 
 jupyter_work/*
 !jupyter_work/shm_reader.py

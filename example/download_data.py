@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Fetch or generate an app-readable default snapshot.
+"""Fetch or generate app-readable example snapshots.
 
 The application defaults to reading ./example/output_0000.dat, so this script
-always ensures that file exists and follows the expected binary layout.
+always ensures that file exists and follows the expected binary layout. It also
+fetches optional example snapshots used for format-specific manual testing.
 """
 
 import math
 import os
 import shutil
 import struct
+import subprocess
 import urllib.request
 
 
@@ -17,6 +19,9 @@ DEST_DIR = os.path.join(BASE_DIR, "data")
 TARGET_NAME = "output_0000.dat"
 TARGET_IN_DATA = os.path.join(DEST_DIR, TARGET_NAME)
 TARGET_AT_EXAMPLE_ROOT = os.path.join(BASE_DIR, TARGET_NAME)
+GADGET_SAMPLE_NAME = "ics_gadget.dat"
+GADGET_SAMPLE_IN_DATA = os.path.join(DEST_DIR, GADGET_SAMPLE_NAME)
+GADGET_SAMPLE_AT_EXAMPLE_ROOT = os.path.join(BASE_DIR, GADGET_SAMPLE_NAME)
 
 # Keep legacy URLs for compatibility. Some installations may still host these.
 REMOTE_CANDIDATES = [
@@ -24,6 +29,13 @@ REMOTE_CANDIDATES = [
     "https://github.com/sunmyon/particle_visualization/releases/download/test_data_ver1.0/output_0000.dat",
     "https://github.com/sunmyon/particle_visualization/releases/download/test_data_ver1.0/cloud_SF_Zsolar.dat",
 ]
+
+GADGET_SAMPLE_CANDIDATES = [
+    os.environ.get("PARTICLE_VIS_GADGET_SAMPLE_URL", "").strip(),
+    "https://github.com/sunmyon/particle_visualization/releases/download/test_data_ver1.0/ics_gadget.dat",
+]
+GITHUB_REPO = "sunmyon/particle_visualization"
+EXAMPLE_RELEASE_TAG = "test_data_ver1.0"
 
 
 def ensure_dirs() -> None:
@@ -41,6 +53,38 @@ def try_download(url: str, out_path: str) -> bool:
         return True
     except Exception as exc:
         print(f"Download failed: {url} ({exc})")
+        return False
+
+
+def try_download_release_asset(asset_name: str, out_path: str) -> bool:
+    if not shutil.which("gh"):
+        return False
+
+    try:
+        print(f"Trying GitHub release asset via gh: {asset_name}")
+        subprocess.run(
+            [
+                "gh",
+                "release",
+                "download",
+                EXAMPLE_RELEASE_TAG,
+                "--repo",
+                GITHUB_REPO,
+                "--pattern",
+                asset_name,
+                "--dir",
+                DEST_DIR,
+                "--clobber",
+            ],
+            check=True,
+        )
+        downloaded_path = os.path.join(DEST_DIR, asset_name)
+        if downloaded_path != out_path:
+            shutil.move(downloaded_path, out_path)
+        print(f"Downloaded: {out_path}")
+        return True
+    except Exception as exc:
+        print(f"GitHub release asset download failed: {asset_name} ({exc})")
         return False
 
 
@@ -105,26 +149,34 @@ def write_synthetic_snapshot(out_path: str, n_particles: int = 2048) -> None:
             )
 
 
-def mirror_to_example_root(src_path: str) -> None:
-    # The app defaults to ./example/output_0000.dat. Keep this synchronized.
-    shutil.copy2(src_path, TARGET_AT_EXAMPLE_ROOT)
-    print(f"Prepared default snapshot: {TARGET_AT_EXAMPLE_ROOT}")
+def mirror_to_example_root(src_path: str, dst_path: str) -> None:
+    # Keep app-facing paths at example/*.dat while storing downloads in example/data/.
+    shutil.copy2(src_path, dst_path)
+    print(f"Prepared example snapshot: {dst_path}")
+
+
+def fetch_first_available(urls: list[str], out_path: str) -> bool:
+    for url in urls:
+        if try_download(url, out_path):
+            return True
+    return False
 
 
 def main() -> int:
     ensure_dirs()
 
-    ok = False
-    for url in REMOTE_CANDIDATES:
-        if try_download(url, TARGET_IN_DATA):
-            ok = True
-            break
-
-    if not ok:
+    if not fetch_first_available(REMOTE_CANDIDATES, TARGET_IN_DATA):
         # Network or URL can be unavailable in cluster environments.
         write_synthetic_snapshot(TARGET_IN_DATA)
 
-    mirror_to_example_root(TARGET_IN_DATA)
+    mirror_to_example_root(TARGET_IN_DATA, TARGET_AT_EXAMPLE_ROOT)
+
+    if (fetch_first_available(GADGET_SAMPLE_CANDIDATES, GADGET_SAMPLE_IN_DATA) or
+            try_download_release_asset(GADGET_SAMPLE_NAME, GADGET_SAMPLE_IN_DATA)):
+        mirror_to_example_root(GADGET_SAMPLE_IN_DATA, GADGET_SAMPLE_AT_EXAMPLE_ROOT)
+    else:
+        print("Optional Gadget sample unavailable; continuing without it.")
+
     print("Data setup complete.")
     return 0
 

@@ -30,5 +30,6 @@ struct SnapshotLoadParams {
     InputTemperatureUnit::CodeInternalEnergy;
   InputMagneticFieldUnit inputMagneticFieldUnit =
     InputMagneticFieldUnit::CodeMagneticField;
+  bool overrideHdf5InputInterpretation = false;
   UnitSystem units;
 };

@@ -583,15 +583,29 @@ bool HDF5Reader::readRange(SimulationBlock& out,
 bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   lastError_.clear();
   const auto totalStart = Hdf5ProfileClock::now();
-  // HDF5 files may omit /Parameters. Do not let units/comoving flags from the
-  // previously loaded snapshot leak into this file.
-  header.UnitLength_in_cm = physics_constants::pc_cm;
-  header.UnitMass_in_g = physics_constants::solar_mass_g;
-  header.UnitVelocity_in_cm_per_s = 1.0e5;
-  header.HubbleParam = 1.0;
-  header.flag_comoving = false;
-  header.flag_density_in_cgs = true;
-  header.flag_B_in_cgs = true;
+  // The caller supplies fallback code units and optional interpretation
+  // overrides. HDF5 attributes define the automatic interpretation.
+  if (!std::isfinite(header.UnitLength_in_cm) ||
+      header.UnitLength_in_cm <= 0.0) {
+    header.UnitLength_in_cm = physics_constants::pc_cm;
+  }
+  if (!std::isfinite(header.UnitMass_in_g) ||
+      header.UnitMass_in_g <= 0.0) {
+    header.UnitMass_in_g = physics_constants::solar_mass_g;
+  }
+  if (!std::isfinite(header.UnitVelocity_in_cm_per_s) ||
+      header.UnitVelocity_in_cm_per_s <= 0.0) {
+    header.UnitVelocity_in_cm_per_s = 1.0e5;
+  }
+  if (!std::isfinite(header.HubbleParam) || header.HubbleParam <= 0.0) {
+    header.HubbleParam = 1.0;
+  }
+  header.flag_density_in_cgs = overrideInputInterpretation_
+    ? header.input_density_unit != InputDensityUnit::CodeMassDensity
+    : false;
+  header.flag_B_in_cgs = overrideInputInterpretation_
+    ? header.input_magnetic_field_unit == InputMagneticFieldUnit::Gauss
+    : false;
 
   npart_ = 0;
   for (int t=0;t<6;++t) { mass_type_[t]=0.0; count_[t]=0; IndexStart_[t]=0; }
@@ -836,13 +850,19 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   header.npart     = (int)npart_;
   header.flag_hdf5 = true;
     
-  header.input_density_unit = header.flag_density_in_cgs
-    ? InputDensityUnit::NumberDensityNH
-    : InputDensityUnit::CodeMassDensity;
-  header.input_temperature_unit = InputTemperatureUnit::Kelvin;
-  header.input_magnetic_field_unit = header.flag_B_in_cgs
-    ? InputMagneticFieldUnit::Gauss
-    : InputMagneticFieldUnit::CodeMagneticField;
+  if (!overrideInputInterpretation_) {
+    header.input_density_unit = header.flag_density_in_cgs
+      ? InputDensityUnit::NumberDensityNH
+      : InputDensityUnit::CodeMassDensity;
+  }
+  if (!overrideInputInterpretation_) {
+    header.input_temperature_unit = InputTemperatureUnit::Kelvin;
+  }
+  if (!overrideInputInterpretation_) {
+    header.input_magnetic_field_unit = header.flag_B_in_cgs
+      ? InputMagneticFieldUnit::Gauss
+      : InputMagneticFieldUnit::CodeMagneticField;
+  }
   factor_density_ = InputDensityToInternalNHFactor(header.input_density_unit,
                                                    header.UnitMass_in_g,
                                                    header.UnitLength_in_cm,
@@ -864,6 +884,7 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
   std::fprintf(stderr,
                "[HDF5] open path=%s npart=%zu counts=[%zu,%zu,%zu,%zu,%zu,%zu] "
                "hasHeader=%s hasRedshift=%s comoving=%s densityCgs=%s bfieldCgs=%s "
+               "inputOverride=%s densityUnit=%s densityFactor=%.9g "
                "fileOpen=%.3f ms header=%.3f ms parameters=%.3f ms "
                "inferCounts=%.3f ms total=%.3f ms\n",
                path.c_str(),
@@ -879,6 +900,9 @@ bool HDF5Reader::open(const std::string& path, HeaderInfo& header){
                yes_no(header.flag_comoving),
                yes_no(header.flag_density_in_cgs),
                yes_no(header.flag_B_in_cgs),
+               yes_no(overrideInputInterpretation_),
+               GetInputDensityUnitDisplayName(header.input_density_unit),
+               factor_density_,
                fileOpenMs,
                headerMs,
                parametersMs,

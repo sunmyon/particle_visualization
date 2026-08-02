@@ -276,6 +276,11 @@ bool LoadConfigFile(const std::string& filename, ConfigData& outConfig)
           static_cast<InputMagneticFieldUnit>(unit);
       }
     }
+    else if (startsWith(line, "OverrideHDF5InputInterpretation=")) {
+      outConfig.persistent.overrideHdf5InputInterpretation =
+        std::stoi(line.substr(
+          std::strlen("OverrideHDF5InputInterpretation="))) != 0;
+    }
     else if (startsWith(line, "ParticleType")) {
       // ParticleType0_Size=...
       size_t pos = line.find('_');
@@ -426,6 +431,9 @@ bool SaveConfigFile(const std::string& filename, const ConfigData& config)
           << static_cast<int>(config.persistent.inputTemperatureUnit) << "\n";
   outfile << "InputMagneticFieldUnit="
           << static_cast<int>(config.persistent.inputMagneticFieldUnit) << "\n";
+  outfile << "OverrideHDF5InputInterpretation="
+          << (config.persistent.overrideHdf5InputInterpretation ? 1 : 0)
+          << "\n";
 
   for (int i = 0; i < 6; i++) {
     const auto& cfg = config.persistent.visual.types[i];
