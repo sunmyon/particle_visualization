@@ -1668,6 +1668,8 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
   }
 
   ImGui::SeparatorText("View Culling");    
+  ImGui::Checkbox("Enable sphere culling", &rt.viewFilter.sphereEnabled);
+  ImGui::BeginDisabled(!rt.viewFilter.sphereEnabled);
   ImGui::InputFloat("Culling radius", &rt.viewFilter.radiusCullingSphere, 0.f, 0.f, "%g");
   ImGui::InputFloat3("Culling center", &rt.viewFilter.center.x, "%.3f");
 
@@ -1676,6 +1678,27 @@ static void DrawCameraPlacementSection(SettingsRuntimeState& rt,
                                      camera.originalTarget[1],
                                      camera.originalTarget[2]);
   }
+  ImGui::EndDisabled();
+
+  ImGui::Spacing();
+  ImGui::Checkbox("Enable slice plane", &rt.viewFilter.sliceEnabled);
+  ImGui::BeginDisabled(!rt.viewFilter.sliceEnabled);
+  ImGui::InputFloat3("Slice point", &rt.viewFilter.slicePoint.x, "%.3f");
+  if (ImGui::Button("Use Camera Target##slice")) {
+    rt.viewFilter.slicePoint = glm::vec3(camera.originalTarget[0],
+                                         camera.originalTarget[1],
+                                         camera.originalTarget[2]);
+  }
+  const char* sliceAxes[] = {"X plane", "Y plane", "Z plane"};
+  rt.viewFilter.sliceAxis = std::clamp(rt.viewFilter.sliceAxis, 0, 2);
+  ImGui::Combo("Slice axis", &rt.viewFilter.sliceAxis, sliceAxes, IM_ARRAYSIZE(sliceAxes));
+  int sliceSide = rt.viewFilter.sliceDirection < 0 ? 1 : 0;
+  const char* sliceSides[] = {"Hide + side", "Hide - side"};
+  if (ImGui::Combo("Slice side", &sliceSide, sliceSides, IM_ARRAYSIZE(sliceSides))) {
+    rt.viewFilter.sliceDirection = sliceSide == 1 ? -1 : 1;
+  }
+  ImGui::TextDisabled("Particles on the selected side of the plane are hidden.");
+  ImGui::EndDisabled();
 
   if (ImGui::Button("Apply Culling")) {
     req.applyCullingRequested = true;
