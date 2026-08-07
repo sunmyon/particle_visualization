@@ -48,7 +48,27 @@ std::string PdfEscape(const std::string& text)
 
 double TextWidth(const std::string& text, double size)
 {
-  return static_cast<double>(text.size()) * size * 0.55;
+  double units = 0.0;
+  for (unsigned char c : text) {
+    if (c >= '0' && c <= '9') {
+      units += 0.56;
+    } else if (c == '.' || c == ',' || c == ':' || c == ';') {
+      units += 0.28;
+    } else if (c == '-' || c == '+') {
+      units += 0.34;
+    } else if (c == ' ' || c == '\t') {
+      units += 0.28;
+    } else if (c >= 'A' && c <= 'Z') {
+      units += 0.66;
+    } else if (c == 'm' || c == 'w' || c == 'M' || c == 'W') {
+      units += 0.78;
+    } else if (c == 'i' || c == 'l' || c == 'I') {
+      units += 0.25;
+    } else {
+      units += 0.50;
+    }
+  }
+  return units * size;
 }
 
 struct PdfTextBBox {
@@ -70,6 +90,36 @@ PdfTextBBox MeasureTextBBox(const std::string& text, double size)
   bbox.width = bbox.maxX - bbox.minX;
   bbox.height = bbox.maxY - bbox.minY;
   return bbox;
+}
+
+double CenterBaselineForTextY(double centerY, const PdfTextBBox& bbox)
+{
+  return centerY - 0.5 * (bbox.minY + bbox.maxY);
+}
+
+double ClampTextBaselineY(double baseline,
+                          const PdfTextBBox& bbox,
+                          double topLimit,
+                          double bottomLimit)
+{
+  const double minBaseline = topLimit - bbox.minY;
+  const double maxBaseline = bottomLimit - bbox.maxY;
+  if (minBaseline > maxBaseline) {
+    return 0.5 * (minBaseline + maxBaseline);
+  }
+  return std::clamp(baseline, minBaseline, maxBaseline);
+}
+
+double ClampTextCenterX(double centerX,
+                        const PdfTextBBox& bbox,
+                        double leftLimit,
+                        double rightLimit)
+{
+  const double halfWidth = 0.5 * bbox.width;
+  if (leftLimit + halfWidth > rightLimit - halfWidth) {
+    return 0.5 * (leftLimit + rightLimit);
+  }
+  return std::clamp(centerX, leftLimit + halfWidth, rightLimit - halfWidth);
 }
 
 std::vector<double> GenerateTicks(double minVal, double maxVal, int desired)
@@ -489,21 +539,33 @@ void AddVectorAnnotations(std::ostringstream& out,
       const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
       if (layout.horizontal) {
         const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
-        const double originX = x - 0.5 * (bbox.minX + bbox.maxX);
+        const double labelX =
+          ClampTextCenterX(x, bbox, 0.0, static_cast<double>(layout.pageW));
+        const double labelY =
+          ClampTextBaselineY(layout.tickLabelY,
+                             bbox,
+                             0.0,
+                             static_cast<double>(layout.pageH));
+        const double originX = labelX - 0.5 * (bbox.minX + bbox.maxX);
         bgX0 = std::min(bgX0, originX + bbox.minX);
         bgX1 = std::max(bgX1, originX + bbox.maxX);
-        bgY0 = std::min(bgY0, layout.tickLabelY + bbox.minY);
-        bgY1 = std::max(bgY1, layout.tickLabelY + bbox.maxY);
+        bgY0 = std::min(bgY0, labelY + bbox.minY);
+        bgY1 = std::max(bgY1, labelY + bbox.maxY);
       } else {
         const double y =
           layout.barY0 + (1.0 - frac) * std::max(1, layout.barH - 1);
+        const double labelY =
+          ClampTextBaselineY(CenterBaselineForTextY(y, bbox),
+                             bbox,
+                             0.0,
+                             static_cast<double>(layout.pageH));
         const double originX =
           static_cast<double>(layout.tickLabelX) -
           0.5 * (bbox.minX + bbox.maxX);
         bgX0 = std::min(bgX0, originX + bbox.minX);
         bgX1 = std::max(bgX1, originX + bbox.maxX);
-        bgY0 = std::min(bgY0, y + bbox.minY);
-        bgY1 = std::max(bgY1, y + bbox.maxY);
+        bgY0 = std::min(bgY0, labelY + bbox.minY);
+        bgY1 = std::max(bgY1, labelY + bbox.maxY);
       }
     }
     out << "/GS55 gs\n";
@@ -550,6 +612,7 @@ void AddVectorAnnotations(std::ostringstream& out,
     if (tick < info.colorMinVal || tick > info.colorMaxVal) continue;
     const double frac = (tick - info.colorMinVal) / denom;
     const std::string label = FormatTick(tick, layout.inset);
+    const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
     if (layout.horizontal) {
       const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
       if (params.colorBarPlacement == ProjectionColorBarPlacement::Top) {
@@ -560,7 +623,18 @@ void AddVectorAnnotations(std::ostringstream& out,
                     layout.barY0 + std::max(0, layout.barH - 10),
                     x, layout.barY0 + layout.barH, 1.0);
       }
-      DrawText(out, layout, label, x, layout.tickLabelY, layout.tickFontSize);
+      DrawText(out,
+               layout,
+               label,
+               ClampTextCenterX(x,
+                                bbox,
+                                0.0,
+                                static_cast<double>(layout.pageW)),
+               ClampTextBaselineY(layout.tickLabelY,
+                                  bbox,
+                                  0.0,
+                                  static_cast<double>(layout.pageH)),
+               layout.tickFontSize);
     } else {
       const double y = layout.barY0 + (1.0 - frac) * std::max(1, layout.barH - 1);
       if (params.colorBarPlacement == ProjectionColorBarPlacement::Left) {
@@ -571,7 +645,14 @@ void AddVectorAnnotations(std::ostringstream& out,
                     layout.barX0 + std::max(0, layout.barW - 10), y,
                     layout.barX0 + layout.barW, y, 1.0);
       }
-      DrawText(out, layout, label, layout.tickLabelX, y + layout.tickFontSize * 0.35,
+      DrawText(out,
+               layout,
+               label,
+               layout.tickLabelX,
+               ClampTextBaselineY(CenterBaselineForTextY(y, bbox),
+                                  bbox,
+                                  0.0,
+                                  static_cast<double>(layout.pageH)),
                layout.tickFontSize);
     }
   }
@@ -592,7 +673,8 @@ void AddVectorAnnotations(std::ostringstream& out,
     }
     std::snprintf(timeStr, sizeof(timeStr), params.timeFormatBuf, t);
     const std::string label = timeStr;
-    const double size = layout.labelFontSize;
+    const double size =
+      std::max(1.0, static_cast<double>(layout.labelFontSize) * 0.78);
     const PdfTextBBox bbox = MeasureTextBBox(label, size);
     const double offsetX = params.flagAdjustTimeLabelPosition
       ? params.timeLabelOffsetX
