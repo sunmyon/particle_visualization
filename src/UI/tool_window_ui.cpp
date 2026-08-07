@@ -1708,7 +1708,7 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
       if (ImGui::BeginTable("ProjectionMethodGrid", 6)) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        const char* methodLabels[] = { "Standard", "Voronoi" };
+        const char* methodLabels[] = { "SPH", "Voronoi" };
         int method = params.flagVoronoi ? 1 : 0;
         ImGui::SetNextItemWidth(116.0f);
         if (ImGui::Combo("Method##projection_method",

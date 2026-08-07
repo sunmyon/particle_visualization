@@ -293,7 +293,7 @@ ProjectionParticleSample MakeProjectionParticleSample(const SimulationBlock& blo
   sample.pos[2] = p.position[2];
   sample.mass = block.getQuantityOr(index, QuantityId::Mass);
   sample.density = block.getQuantityOr(index, QuantityId::Density);
-  sample.hsml = p.supportRadius;
+  sample.hsml = block.getQuantityOr(index, QuantityId::Hsml);
   return sample;
 }
 } // namespace
@@ -490,7 +490,6 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   }
 
   ProjectionMap map = buildProjectionMap(params, ctx);
-  for (int k = 0; k < 3; ++k) map.xmin[k] = xmin[k];
 
   using namespace std::chrono;
   auto start = high_resolution_clock::now();
@@ -505,9 +504,9 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
       input.dx = map.dx;
       input.dy = map.dy;
       input.dz = map.dz;
-      input.xminLocal[0] = map.xmin[0] - map.center.x;
-      input.xminLocal[1] = map.xmin[1] - map.center.y;
-      input.xminLocal[2] = map.xmin[2] - map.center.z;
+      input.xminLocal[0] = map.xmin[0];
+      input.xminLocal[1] = map.xmin[1];
+      input.xminLocal[2] = map.xmin[2];
       input.center = map.center;
       input.uAxis = map.uAxis;
       input.vAxis = map.vAxis;
@@ -1030,36 +1029,6 @@ ProjectionMapGenerator::buildProjectionMap(const ProjectionMapParams& params,
                                            const ProjectionMapContext& ctx) const
 {
   ProjectionMap map;
-  for (int k = 0; k < 3; ++k) {
-    map.xlen[k] = params.xlen[k];
-    map.xmin[k] = ctx.center[k] - 0.5f * params.xlen[k];
-  }
-
-  printf("xlen=%g %g %g xmin=%g %g %g center=%g %g %g\n",
-         params.xlen[0], params.xlen[1], params.xlen[2],
-         map.xmin[0], map.xmin[1], map.xmin[2],
-         ctx.center.x, ctx.center.y, ctx.center.z);
-
-  map.npixel = params.npixel;
-  map.cell_size = std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);
-  map.dx = map.cell_size;
-  map.dy = map.cell_size;
-
-  map.npixel_x = static_cast<int>(params.xlen[0] / map.cell_size);
-  map.npixel_y = static_cast<int>(params.xlen[1] / map.cell_size);
-  map.values.resize(map.npixel_x * map.npixel_y, 0.0f);
-  map.weights.resize(map.npixel_x * map.npixel_y, 0.0f);
-
-  if (params.flagVoronoi) {
-    map.npixel_z = params.step_z;
-    if (params.step_z % 2 == 0) map.npixel_z = params.step_z - 1;
-
-    map.dz = 0.0f;
-    if (params.step_z > 1) {
-      map.dz = map.xlen[2] / static_cast<float>(map.npixel_z);
-    }
-  }
-
   map.flagDensityWeight = params.flagDensityWeight;
   map.flagLogScale = params.flagLogScale;
 
@@ -1085,6 +1054,49 @@ ProjectionMapGenerator::buildProjectionMap(const ProjectionMapParams& params,
   }
   map.vAxis = glm::normalize(vAxis);
   map.uAxis = glm::normalize(glm::cross(map.vAxis, map.wAxis));
+
+  const auto dominantAxisIndex = [&](const glm::vec3& direction) {
+    int best = 0;
+    float bestDot = -1.0f;
+    for (int k = 0; k < 3; ++k) {
+      const float d = std::abs(glm::dot(direction, axes[k]));
+      if (d > bestDot) {
+        bestDot = d;
+        best = k;
+      }
+    }
+    return best;
+  };
+  const int uLenAxis = dominantAxisIndex(map.uAxis);
+  const int vLenAxis = dominantAxisIndex(map.vAxis);
+  const int wLenAxis = dominantAxisIndex(map.wAxis);
+  map.xlen[0] = params.xlen[uLenAxis];
+  map.xlen[1] = params.xlen[vLenAxis];
+  map.xlen[2] = params.xlen[wLenAxis];
+  map.xmin[0] = -0.5f * map.xlen[0];
+  map.xmin[1] = -0.5f * map.xlen[1];
+  map.xmin[2] = -0.5f * map.xlen[2];
+
+  map.npixel = params.npixel;
+  map.cell_size =
+    std::max(map.xlen[0], map.xlen[1]) / static_cast<float>(params.npixel);
+  map.dx = map.cell_size;
+  map.dy = map.cell_size;
+
+  map.npixel_x = std::max(1, static_cast<int>(map.xlen[0] / map.cell_size));
+  map.npixel_y = std::max(1, static_cast<int>(map.xlen[1] / map.cell_size));
+  map.values.resize(map.npixel_x * map.npixel_y, 0.0f);
+  map.weights.resize(map.npixel_x * map.npixel_y, 0.0f);
+
+  if (params.flagVoronoi) {
+    map.npixel_z = params.step_z;
+    if (params.step_z % 2 == 0) map.npixel_z = params.step_z - 1;
+
+    map.dz = 0.0f;
+    if (params.step_z > 1) {
+      map.dz = map.xlen[2] / static_cast<float>(map.npixel_z);
+    }
+  }
 
   map.center = ctx.center;
   return map;
@@ -1343,12 +1355,17 @@ float ProjectionMapGenerator::kernel(float u) {
 void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::vector<ProjectionParticleSample>& particles)
 {
   float xmin_local[3];
-  xmin_local[0] = map.xmin[0] - map.center.x;
-  xmin_local[1] = map.xmin[1] - map.center.y;
-  xmin_local[2] = map.xmin[2] - map.center.z;
+  xmin_local[0] = map.xmin[0];
+  xmin_local[1] = map.xmin[1];
+  xmin_local[2] = map.xmin[2];
 
   for (const auto& p : particles) {    
     float hsml = p.hsml;
+    if (hsml <= 0.0f || !std::isfinite(hsml) ||
+        !std::isfinite(p.mass) || !std::isfinite(p.density) ||
+        !std::isfinite(p.val)) {
+      continue;
+    }
     float hsml2 = hsml * hsml;
 
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
@@ -1385,7 +1402,8 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
 	if (dist <= hsml) {
 	  float u = dist / hsml;
 	  float weight = kernel(u);	  	  
-	  float w_j = p.mass / hsml / hsml2 / p.density;
+	  float w_j = p.mass / hsml / hsml2 /
+                      std::max(p.density, 1.0e-30f);
 	  weight *= w_j;
 
 	  if(map.flagDensityWeight == true)
@@ -1419,9 +1437,9 @@ void ProjectionMapGenerator::createVoronoiSliceMap(
   HashFloat(cacheKey, map.dx);
   HashFloat(cacheKey, map.dy);
   HashFloat(cacheKey, map.dz);
-  HashFloat(cacheKey, map.xmin[0] - map.center.x);
-  HashFloat(cacheKey, map.xmin[1] - map.center.y);
-  HashFloat(cacheKey, map.xmin[2] - map.center.z);
+  HashFloat(cacheKey, map.xmin[0]);
+  HashFloat(cacheKey, map.xmin[1]);
+  HashFloat(cacheKey, map.xmin[2]);
   for (int k = 0; k < 3; ++k) {
     HashFloat(cacheKey, map.uAxis[k]);
     HashFloat(cacheKey, map.vAxis[k]);
@@ -1494,9 +1512,9 @@ ProjectionMapGenerator::buildCpuVoronoiLabelGrid(
                      -1);
 
   float xmin_local[3];
-  xmin_local[0] = map.xmin[0] - map.center.x;
-  xmin_local[1] = map.xmin[1] - map.center.y;
-  xmin_local[2] = map.xmin[2] - map.center.z;
+  xmin_local[0] = map.xmin[0];
+  xmin_local[1] = map.xmin[1];
+  xmin_local[2] = map.xmin[2];
 
   // Copy into the data container. References or pointers could be used later if needed.
   VoronoiParticleCloud cloud;
@@ -1751,11 +1769,11 @@ void ProjectionMapGenerator::createStarMap(ProjectionMap &map,
                                            float sigma_pix,
                                            bool normalize)
 {
-  // map.xmin is in world coords; map.center is world center
+  // map.xmin is the projection-plane lower corner relative to map.center.
   float xmin_local[3];
-  xmin_local[0] = map.xmin[0] - map.center.x;
-  xmin_local[1] = map.xmin[1] - map.center.y;
-  xmin_local[2] = map.xmin[2] - map.center.z;
+  xmin_local[0] = map.xmin[0];
+  xmin_local[1] = map.xmin[1];
+  xmin_local[2] = map.xmin[2];
 
   // Convert sigma from pixels to length units
   const float sigma_len_min = 0.5f * map.dx; // avoid too sharp kernels
