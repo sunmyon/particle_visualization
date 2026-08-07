@@ -220,6 +220,7 @@ void ExecuteStellarDensityRequest(SimulationDataset& particles,
   }
 
   particles.computeStellarDensity(sel,
+                                  request.overwriteDensity,
                                   request.overwriteHsml,
                                   normalization,
                                   time,

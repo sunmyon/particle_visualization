@@ -49,6 +49,8 @@ void SyncSettingsAnalysisDraftsFromRuntime(SettingsAnalysisEditState& edit,
       edit.stellarDensity.selectedTypes[i] =
         requests.stellarDensity.selectedTypes[i];
     }
+    edit.stellarDensity.overwriteDensity =
+      requests.stellarDensity.overwriteDensity;
     edit.stellarDensity.overwriteHsml =
       requests.stellarDensity.overwriteHsml;
   }
@@ -233,6 +235,7 @@ void SubmitStellarDensityRequest(SettingsStellarDensityEdit& edit,
   for (int i = 0; i < 6; ++i) {
     request.selectedTypes[i] = edit.selectedTypes[i];
   }
+  request.overwriteDensity = edit.overwriteDensity;
   request.overwriteHsml = edit.overwriteHsml;
   request.runRequested = edit.computeClicked;
 

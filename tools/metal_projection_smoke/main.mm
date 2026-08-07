@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 
-int main()
+static bool RunCase(const char* label, float hsml)
 {
   const char* countEnv = std::getenv("PARTICLE_VIS_METAL_PROJECTION_SMOKE_COUNT");
   const int particleCount = countEnv ? std::max(1, std::atoi(countEnv)) : 1;
@@ -26,7 +26,7 @@ int main()
   particle.val = 2.0f;
   particle.density = 1.0f;
   particle.mass = 1.0f;
-  particle.hsml = 0.1f;
+  particle.hsml = hsml;
   input.particles.resize(static_cast<std::size_t>(particleCount), particle);
   for (int i = 0; i < particleCount; ++i) {
     const float t = static_cast<float>(i % 1024) / 1023.0f;
@@ -37,8 +37,8 @@ int main()
 
   MetalProjectionMapOutput output;
   if (!RunMetalProjectionMap(input, output)) {
-    std::cerr << "metal_projection_smoke failed\n";
-    return 1;
+    std::cerr << "metal_projection_smoke failed: " << label << "\n";
+    return false;
   }
 
   std::size_t nonzero = 0;
@@ -49,7 +49,15 @@ int main()
       weightSum += weight;
     }
   }
-  std::cout << "metal_projection_smoke nonzero=" << nonzero
+  std::cout << "metal_projection_smoke " << label
+            << " nonzero=" << nonzero
             << " weightSum=" << weightSum << "\n";
-  return nonzero > 0 ? 0 : 1;
+  return nonzero > 0;
+}
+
+int main()
+{
+  const bool resolved = RunCase("resolved", 0.1f);
+  const bool subpixel = RunCase("subpixel", 0.001f);
+  return (resolved && subpixel) ? 0 : 1;
 }

@@ -180,16 +180,16 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
     request.moveCenterToCameraRequested = false;
   }
 
-  if (request.setAxisFromAngularMomentumRequested) {
+  if (request.setCenterToMassCenterRequested) {
     const ProjectionViewBlockSpec activeBlock =
       ProjectionResolveViewBlock(params, params.activeViewBlockIndex);
-    ProjectionAngularMomentumFrame frame =
-      ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock,
-                                  glm::vec3(activeBlock.xoffset[0],
-                                            activeBlock.xoffset[1],
-                                            activeBlock.xoffset[2]),
-                                  activeBlock.xlen);
-    if (frame.valid) {
+    glm::vec3 massCenter(0.0f);
+    if (ComputeProjectionMassCenter(ctx.projection.particles.simulationBlock,
+                                    glm::vec3(activeBlock.xoffset[0],
+                                              activeBlock.xoffset[1],
+                                              activeBlock.xoffset[2]),
+                                    activeBlock.xlen,
+                                    massCenter)) {
       ProjectionEnsureLayoutInitialized(params);
       ProjectionViewBlockSpec& main = params.viewBlocks[0];
       ProjectionViewBlockSpec& block =
@@ -198,9 +198,37 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
         (params.activeViewBlockIndex != 0 && block.centerSameAsMain)
           ? main
           : block;
-      centerTarget.xoffset[0] = frame.center.x;
-      centerTarget.xoffset[1] = frame.center.y;
-      centerTarget.xoffset[2] = frame.center.z;
+      centerTarget.xoffset[0] = massCenter.x;
+      centerTarget.xoffset[1] = massCenter.y;
+      centerTarget.xoffset[2] = massCenter.z;
+      ProjectionSyncTopLevelFromViewBlock(params, params.activeViewBlockIndex);
+      if (tool) {
+        tool->params = params;
+        SyncInteractiveCuboidFromParams(*tool);
+        if (cuboidAnnotation) {
+          MarkProjectionToolChanged(*tool, *cuboidAnnotation);
+        }
+      }
+      request.params = params;
+    }
+    request.setCenterToMassCenterRequested = false;
+  }
+
+  if (request.setAxisFromAngularMomentumRequested) {
+    const ProjectionViewBlockSpec activeBlock =
+      ProjectionResolveViewBlock(params, params.activeViewBlockIndex);
+    ProjectionAngularMomentumFrame frame =
+      ComputeAngularMomentumFrame(ctx.projection.particles.simulationBlock,
+                                  glm::vec3(activeBlock.xoffset[0],
+                                            activeBlock.xoffset[1],
+                                            activeBlock.xoffset[2]),
+                                  activeBlock.xlen,
+                                  false);
+    if (frame.valid) {
+      ProjectionEnsureLayoutInitialized(params);
+      ProjectionViewBlockSpec& main = params.viewBlocks[0];
+      ProjectionViewBlockSpec& block =
+        params.viewBlocks[params.activeViewBlockIndex];
       ProjectionViewBlockSpec& tiltTarget =
         (params.activeViewBlockIndex != 0 && block.tiltSameAsMain)
           ? main
@@ -214,6 +242,7 @@ ProjectionFrameResult ExecuteProjectionMapRequests(ProjectionMapRequestState& re
           MarkProjectionToolChanged(*tool, *cuboidAnnotation);
         }
       }
+      request.params = params;
     }
     request.setAxisFromAngularMomentumRequested = false;
   }

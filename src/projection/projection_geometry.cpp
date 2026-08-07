@@ -4,6 +4,8 @@
 #include "projection/projection_geometry.h"
 #include "data/simulation_block.h"
 
+#include <cmath>
+
 glm::quat UpdateTransformFromEuler(float *eulerAngles)
 {
   glm::quat qx = glm::angleAxis(glm::radians(eulerAngles[0]), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -16,7 +18,8 @@ glm::quat UpdateTransformFromEuler(float *eulerAngles)
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
     const SimulationBlock& block,
     const glm::vec3& initialCenter,
-    const float xlen[3])
+    const float xlen[3],
+    bool recenter)
 {
   ProjectionAngularMomentumFrame result;
   result.center = initialCenter;
@@ -28,57 +31,88 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
     xmax[k] =  0.5f * xlen[k];
   }
 
-  double weightedPos[3] = {0.0, 0.0, 0.0};
   double weightedVel[3] = {0.0, 0.0, 0.0};
   double totalMass = 0.0;
-  double totalWeight = 0.0;
+  glm::vec3 center = initialCenter;
 
-  const double lenCrit2 =
-    4.0 * (xlen[0] * xlen[0] +
-           xlen[1] * xlen[1] +
-           xlen[2] * xlen[2]);
+  if (recenter) {
+    double weightedPos[3] = {0.0, 0.0, 0.0};
+    double totalWeight = 0.0;
+    const double lenCrit2 =
+      4.0 * (xlen[0] * xlen[0] +
+             xlen[1] * xlen[1] +
+             xlen[2] * xlen[2]);
 
-  for (size_t i = 0; i < block.particles.size(); ++i) {
-    const auto& p = block.particles[i];
-    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
-    const glm::vec3 localPos = pos - initialCenter;
+    for (size_t i = 0; i < block.particles.size(); ++i) {
+      const auto& p = block.particles[i];
+      const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
+      const glm::vec3 localPos = pos - initialCenter;
 
-    const double r2 =
-      static_cast<double>(localPos.x) * localPos.x +
-      static_cast<double>(localPos.y) * localPos.y +
-      static_cast<double>(localPos.z) * localPos.z;
+      const double r2 =
+        static_cast<double>(localPos.x) * localPos.x +
+        static_cast<double>(localPos.y) * localPos.y +
+        static_cast<double>(localPos.z) * localPos.z;
 
-    if (r2 >= lenCrit2) {
-      continue;
+      if (r2 >= lenCrit2) {
+        continue;
+      }
+
+      const double mass =
+        static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
+      const double weight =
+        static_cast<double>(block.getQuantityOr(i, QuantityId::Density));
+      float vel[3] = {0.0f, 0.0f, 0.0f};
+      block.getVector(i, VectorId::Vel, vel);
+
+      weightedPos[0] += pos.x * weight;
+      weightedPos[1] += pos.y * weight;
+      weightedPos[2] += pos.z * weight;
+
+      weightedVel[0] += mass * vel[0];
+      weightedVel[1] += mass * vel[1];
+      weightedVel[2] += mass * vel[2];
+
+      totalMass += mass;
+      totalWeight += weight;
     }
 
-    const double mass =
-      static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
-    const double weight =
-      static_cast<double>(block.getQuantityOr(i, QuantityId::Density));
-    float vel[3] = {0.0f, 0.0f, 0.0f};
-    block.getVector(i, VectorId::Vel, vel);
+    if (totalMass <= 0.0 || totalWeight <= 0.0) {
+      return result;
+    }
 
-    weightedPos[0] += pos.x * weight;
-    weightedPos[1] += pos.y * weight;
-    weightedPos[2] += pos.z * weight;
+    center = glm::vec3(
+      static_cast<float>(weightedPos[0] / totalWeight),
+      static_cast<float>(weightedPos[1] / totalWeight),
+      static_cast<float>(weightedPos[2] / totalWeight));
+  } else {
+    for (size_t i = 0; i < block.particles.size(); ++i) {
+      const auto& p = block.particles[i];
+      const glm::vec3 localPos =
+        glm::vec3(p.position[0], p.position[1], p.position[2]) - center;
 
-    weightedVel[0] += mass * vel[0];
-    weightedVel[1] += mass * vel[1];
-    weightedVel[2] += mass * vel[2];
+      if (localPos.x < xmin[0] || localPos.x > xmax[0] ||
+          localPos.y < xmin[1] || localPos.y > xmax[1] ||
+          localPos.z < xmin[2] || localPos.z > xmax[2]) {
+        continue;
+      }
 
-    totalMass += mass;
-    totalWeight += weight;
+      const double mass =
+        static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
+      if (!(mass > 0.0) || !std::isfinite(mass)) {
+        continue;
+      }
+      float vel[3] = {0.0f, 0.0f, 0.0f};
+      block.getVector(i, VectorId::Vel, vel);
+      weightedVel[0] += mass * vel[0];
+      weightedVel[1] += mass * vel[1];
+      weightedVel[2] += mass * vel[2];
+      totalMass += mass;
+    }
   }
 
-  if (totalMass <= 0.0 || totalWeight <= 0.0) {
+  if (totalMass <= 0.0) {
     return result;
   }
-
-  const glm::vec3 center(
-    static_cast<float>(weightedPos[0] / totalWeight),
-    static_cast<float>(weightedPos[1] / totalWeight),
-    static_cast<float>(weightedPos[2] / totalWeight));
 
   const glm::vec3 meanVel(
     static_cast<float>(weightedVel[0] / totalMass),
@@ -127,6 +161,55 @@ ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
   result.axis = glm::normalize(glm::vec3(angularMomentum));
   result.valid = true;
   return result;
+}
+
+bool ComputeProjectionMassCenter(const SimulationBlock& block,
+                                 const glm::vec3& initialCenter,
+                                 const float xlen[3],
+                                 glm::vec3& outCenter)
+{
+  double weightedPos[3] = {0.0, 0.0, 0.0};
+  double totalMass = 0.0;
+  const float xmin[3] = {
+    -0.5f * xlen[0],
+    -0.5f * xlen[1],
+    -0.5f * xlen[2]
+  };
+  const float xmax[3] = {
+     0.5f * xlen[0],
+     0.5f * xlen[1],
+     0.5f * xlen[2]
+  };
+
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const auto& p = block.particles[i];
+    const glm::vec3 pos(p.position[0], p.position[1], p.position[2]);
+    const glm::vec3 localPos = pos - initialCenter;
+    if (localPos.x < xmin[0] || localPos.x > xmax[0] ||
+        localPos.y < xmin[1] || localPos.y > xmax[1] ||
+        localPos.z < xmin[2] || localPos.z > xmax[2]) {
+      continue;
+    }
+
+    const double mass =
+      static_cast<double>(block.getQuantityOr(i, QuantityId::Mass));
+    if (!(mass > 0.0) || !std::isfinite(mass)) {
+      continue;
+    }
+    weightedPos[0] += pos.x * mass;
+    weightedPos[1] += pos.y * mass;
+    weightedPos[2] += pos.z * mass;
+    totalMass += mass;
+  }
+
+  if (totalMass <= 0.0) {
+    return false;
+  }
+
+  outCenter = glm::vec3(static_cast<float>(weightedPos[0] / totalMass),
+                        static_cast<float>(weightedPos[1] / totalMass),
+                        static_cast<float>(weightedPos[2] / totalMass));
+  return true;
 }
 
 

@@ -14,6 +14,7 @@ struct ProjectionMapRequestState {
   ProjectionMapParams params;
   bool renderRequested = false;
   bool moveCenterToCameraRequested = false;
+  bool setCenterToMassCenterRequested = false;
   bool setAxisFromAngularMomentumRequested = false;
   bool arcballDragRequested = false;
   float dragOldX = 0.0f;

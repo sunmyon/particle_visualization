@@ -71,7 +71,8 @@ public:
     
   bool setSimulationBlock(SimulationBlock&& newBlock, SimulationBlock* oldBlock, HeaderInfo& header, NormalizationContext& ctx, QuantityState& quantity);
   void computeStellarDensity(const std::array<bool,6>& selType,
-                             bool flag_overwirte_hsml,
+                             bool flag_overwrite_density,
+                             bool flag_overwrite_hsml,
                              const NormalizationContext& ctx,
                              double time,
                              const UnitSystem& units);

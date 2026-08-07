@@ -1945,6 +1945,9 @@ static void DrawAnalysisSection(SettingsAnalysisEditState& edit,
       stellarDensityDirty = true;
     }
 
+    stellarDensityDirty |= ImGui::Checkbox("overwrite density##stellar_density",
+                                           &req.overwriteDensity);
+    ImGui::SameLine();
     stellarDensityDirty |= ImGui::Checkbox("overwrite hsml##stellar_density",
                                            &req.overwriteHsml);
 

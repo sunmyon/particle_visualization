@@ -12,7 +12,13 @@ struct ProjectionAngularMomentumFrame {
 ProjectionAngularMomentumFrame ComputeAngularMomentumFrame(
     const SimulationBlock& block,
     const glm::vec3& initialCenter,
-    const float xlen[3]);
+    const float xlen[3],
+    bool recenter = true);
+
+bool ComputeProjectionMassCenter(const SimulationBlock& block,
+                                 const glm::vec3& initialCenter,
+                                 const float xlen[3],
+                                 glm::vec3& outCenter);
 
 glm::quat UpdateTransformFromEuler(float *eulerAngles);
 glm::quat BuildRotationFromZAxisTo(const glm::vec3& axis);

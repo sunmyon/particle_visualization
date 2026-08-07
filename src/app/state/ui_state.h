@@ -8,6 +8,7 @@
 
 struct SettingsStellarDensityEdit {
   bool selectedTypes[6] = { false, false, false, true, true, true };
+  bool overwriteDensity = true;
   bool overwriteHsml = false;
   bool computeClicked = false;
 };

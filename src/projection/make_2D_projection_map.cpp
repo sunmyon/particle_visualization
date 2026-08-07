@@ -1366,25 +1366,28 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
         !std::isfinite(p.val)) {
       continue;
     }
-    float hsml2 = hsml * hsml;
+    const float splatRadius =
+      std::max(hsml,
+               0.5001f * std::sqrt(map.dx * map.dx + map.dy * map.dy));
+    float splatRadius2 = splatRadius * splatRadius;
 
     glm::vec3 diff = glm::vec3(p.pos[0], p.pos[1], p.pos[2]) - map.center;
     float cx = glm::dot(diff, map.uAxis);
     float cy = glm::dot(diff, map.vAxis);
       
     // Candidate y range as row indices.
-    int j_min = std::max(0, static_cast<int>(std::floor((cy - hsml - xmin_local[1]) / map.dy)));
-    int j_max = std::min(map.npixel_y - 1, static_cast<int>(std::ceil((cy + hsml - xmin_local[1]) / map.dy)) - 1);
+    int j_min = std::max(0, static_cast<int>(std::floor((cy - splatRadius - xmin_local[1]) / map.dy)));
+    int j_max = std::min(map.npixel_y - 1, static_cast<int>(std::ceil((cy + splatRadius - xmin_local[1]) / map.dy)) - 1);
       
     for (int j = j_min; j <= j_max; j++) {
       float cell_y = xmin_local[1] + (j + 0.5f) * map.dy;
       float dy_val = cell_y - cy;
       float dy_val2 = dy_val * dy_val;
 
-      if(hsml2 < dy_val2)
+      if(splatRadius2 < dy_val2)
 	continue;	
       
-      float horiz = std::sqrt(hsml2 - dy_val2);
+      float horiz = std::sqrt(splatRadius2 - dy_val2);
       
       float x_lower = cx - horiz;
       float x_upper = cx + horiz;
@@ -1399,10 +1402,10 @@ void ProjectionMapGenerator::createProjectionMap(ProjectionMap &map, const std::
 	
 	float dist = std::sqrt(dx_val2 + dy_val2);
 
-	if (dist <= hsml) {
-	  float u = dist / hsml;
+	if (dist <= splatRadius) {
+	  float u = dist / splatRadius;
 	  float weight = kernel(u);	  	  
-	  float w_j = p.mass / hsml / hsml2 /
+	  float w_j = p.mass / splatRadius / splatRadius2 /
                       std::max(p.density, 1.0e-30f);
 	  weight *= w_j;
 

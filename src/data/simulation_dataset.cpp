@@ -164,6 +164,7 @@ static inline double cubic_spline_W(double r, double h) {
 // For each star particle, sum all particle masses within the search radius
 // and divide by area, pi * searchRadius^2, to compute density in Msun/pc^2.
 void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
+					  bool flag_overwrite_density,
 					  bool flag_overwrite_hsml,
 					  const NormalizationContext& ctx,
 					  double time,
@@ -278,10 +279,12 @@ void SimulationDataset::computeStellarDensity(const std::array<bool,6>& selType,
     double area = M_PI * h * h;
     
     int original_index = cloud.particles[i].index;
-    if(flag_star)
-      particles[original_index].density = totalMass * surfaceDensityFactor / area;
-    else
-      particles[original_index].density = density * volumeDensityFactor;
+    if(flag_overwrite_density) {
+      if(flag_star)
+        particles[original_index].density = totalMass * surfaceDensityFactor / area;
+      else
+        particles[original_index].density = density * volumeDensityFactor;
+    }
 
     if(flag_overwrite_hsml)
       particles[original_index].supportRadius = static_cast<float>(h) * invRenderScale;

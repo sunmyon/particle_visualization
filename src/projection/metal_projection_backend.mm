@@ -111,20 +111,22 @@ kernel void projectionSplatCompute(
   float cx = dot(diff, uniforms.uAxis.xyz);
   float cy = dot(diff, uniforms.vAxis.xyz);
   float hsml = p.hsml;
-  float hsml2 = hsml * hsml;
+  float splatRadius =
+    max(hsml, 0.5001 * length(float2(uniforms.dx, uniforms.dy)));
+  float splatRadius2 = splatRadius * splatRadius;
 
-  int jMin = max(0, int(floor((cy - hsml - uniforms.xminY) / uniforms.dy)));
+  int jMin = max(0, int(floor((cy - splatRadius - uniforms.xminY) / uniforms.dy)));
   int jMax = min(int(uniforms.height) - 1,
-                 int(ceil((cy + hsml - uniforms.xminY) / uniforms.dy)) - 1);
-  int iMin = max(0, int(floor((cx - hsml - uniforms.xminX) / uniforms.dx)));
+                 int(ceil((cy + splatRadius - uniforms.xminY) / uniforms.dy)) - 1);
+  int iMin = max(0, int(floor((cx - splatRadius - uniforms.xminX) / uniforms.dx)));
   int iMax = min(int(uniforms.width) - 1,
-                 int(ceil((cx + hsml - uniforms.xminX) / uniforms.dx)) - 1);
+                 int(ceil((cx + splatRadius - uniforms.xminX) / uniforms.dx)) - 1);
   if (iMin > iMax || jMin > jMax) {
     return;
   }
 
   float density = max(p.density, 1.0e-30);
-  float weightNorm = p.mass / max(hsml * hsml2 * density, 1.0e-30);
+  float weightNorm = p.mass / max(splatRadius * splatRadius2 * density, 1.0e-30);
   if (uniforms.densityWeight != 0u) {
     weightNorm *= p.density;
   }
@@ -133,7 +135,7 @@ kernel void projectionSplatCompute(
     float cellY = uniforms.xminY + (float(j) + 0.5) * uniforms.dy;
     float dy = cellY - cy;
     float dy2 = dy * dy;
-    if (dy2 > hsml2) {
+    if (dy2 > splatRadius2) {
       continue;
     }
 
@@ -141,11 +143,11 @@ kernel void projectionSplatCompute(
       float cellX = uniforms.xminX + (float(i) + 0.5) * uniforms.dx;
       float dx = cellX - cx;
       float r2 = dx * dx + dy2;
-      if (r2 > hsml2) {
+      if (r2 > splatRadius2) {
         continue;
       }
 
-      float kernelRadius = sqrt(r2) / hsml;
+      float kernelRadius = sqrt(r2) / splatRadius;
       float weight = cubicKernel(kernelRadius) * weightNorm;
       if (!(weight > 0.0) || !isfinite(weight)) {
         continue;

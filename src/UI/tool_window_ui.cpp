@@ -2881,10 +2881,13 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
       paramsDirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Set from angular momentum##main_active_view_block")) {
-      request.setAxisFromAngularMomentumRequested = true;
+    if (ImGui::Button("Set mass center##main_active_view_block")) {
+      request.setCenterToMassCenterRequested = true;
     }
     ImGui::SameLine();
+    if (ImGui::Button("Set axis from angular momentum##main_active_view_block")) {
+      request.setAxisFromAngularMomentumRequested = true;
+    }
     if (state.selectMode) {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
     } else {
