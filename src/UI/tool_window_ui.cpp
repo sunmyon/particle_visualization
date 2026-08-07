@@ -1060,7 +1060,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         "Bottom",
         "Inset V",
         "Inset H",
-        "Custom"
+        "Custom",
+        "Off"
       };
       auto comboColumnWidthFromText = [] (float maxTextWidth) {
         const ImGuiStyle& style = ImGui::GetStyle();
@@ -2560,7 +2561,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
         "Bottom",
         "Inset V",
         "Inset H",
-        "Custom"
+        "Custom",
+        "Off"
       };
       const char* orientations[] = { "Vertical", "Horizontal" };
 

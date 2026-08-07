@@ -197,6 +197,13 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
   layout.plotW = info.plotWidth;
   layout.plotH = info.plotHeight;
   const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  if (placement == ProjectionColorBarPlacement::Off) {
+    layout.pageW = layout.plotW;
+    layout.pageH = layout.plotH;
+    layout.plotX0 = 0;
+    layout.plotY0 = 0;
+    return layout;
+  }
   layout.inset =
     placement == ProjectionColorBarPlacement::InsetVertical ||
     placement == ProjectionColorBarPlacement::InsetHorizontal ||
@@ -566,6 +573,8 @@ void AddVectorAnnotations(std::ostringstream& out,
   const double fg = params.whiteBackground ? 0.0 : 1.0;
   const double denom = std::max(static_cast<double>(info.colorMaxVal - info.colorMinVal),
                                 1.0e-30);
+  const bool drawColorBar =
+    params.colorBarPlacement != ProjectionColorBarPlacement::Off;
   const std::vector<double> ticks =
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
   const std::vector<std::string> tickLabels =
@@ -574,7 +583,7 @@ void AddVectorAnnotations(std::ostringstream& out,
                      info.colorMaxVal,
                      layout.inset);
 
-  if (layout.inset) {
+  if (drawColorBar && layout.inset) {
     const double pad = 4.0;
     double bgX0 = layout.barX0;
     double bgY0 = layout.barY0;
@@ -627,88 +636,93 @@ void AddVectorAnnotations(std::ostringstream& out,
     out << "/GS100 gs\n";
   }
 
-  const int steps = std::max(192, layout.horizontal ? layout.barW : layout.barH);
-  for (int i = 0; i < steps; ++i) {
-    const float t0 = steps > 1
-      ? static_cast<float>(i) / static_cast<float>(steps - 1)
-      : 0.0f;
-    float r = 0.0f, g = 0.0f, b = 0.0f;
-    ProjectionMapGenerator::colormapLookup(t0,
-                                           r,
-                                           g,
-                                           b,
-                                           ctx.colorMap,
-                                           ctx.colorMapSize);
-    out << r << " " << g << " " << b << " rg\n";
-    if (layout.horizontal) {
-      const double x0 = layout.barX0 +
-        static_cast<double>(i) * layout.barW / steps;
-      const double x1 = layout.barX0 +
-        static_cast<double>(i + 1) * layout.barW / steps;
-      FillRectTop(out, layout, x0, layout.barY0, x1 - x0 + 1.0, layout.barH);
-    } else {
-      const double y0 = layout.barY0 +
-        static_cast<double>(steps - 1 - i) * layout.barH / steps;
-      const double y1 = layout.barY0 +
-        static_cast<double>(steps - i) * layout.barH / steps;
-      FillRectTop(out, layout, layout.barX0, y0, layout.barW, y1 - y0 + 1.0);
+  if (drawColorBar) {
+    const int steps = std::max(192, layout.horizontal ? layout.barW : layout.barH);
+    for (int i = 0; i < steps; ++i) {
+      const float t0 = steps > 1
+        ? static_cast<float>(i) / static_cast<float>(steps - 1)
+        : 0.0f;
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+      ProjectionMapGenerator::colormapLookup(t0,
+                                             r,
+                                             g,
+                                             b,
+                                             ctx.colorMap,
+                                             ctx.colorMapSize);
+      out << r << " " << g << " " << b << " rg\n";
+      if (layout.horizontal) {
+        const double x0 = layout.barX0 +
+          static_cast<double>(i) * layout.barW / steps;
+        const double x1 = layout.barX0 +
+          static_cast<double>(i + 1) * layout.barW / steps;
+        FillRectTop(out, layout, x0, layout.barY0, x1 - x0 + 1.0, layout.barH);
+      } else {
+        const double y0 = layout.barY0 +
+          static_cast<double>(steps - 1 - i) * layout.barH / steps;
+        const double y1 = layout.barY0 +
+          static_cast<double>(steps - i) * layout.barH / steps;
+        FillRectTop(out, layout, layout.barX0, y0, layout.barW, y1 - y0 + 1.0);
+      }
     }
   }
 
   SetRgb(out, fg);
-  for (std::size_t i = 0; i < ticks.size(); ++i) {
-    if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
-    const double frac = (ticks[i] - info.colorMinVal) / denom;
-    const std::string& label = tickLabels[i];
-    const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
-    if (layout.horizontal) {
-      const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
-      if (params.colorBarPlacement == ProjectionColorBarPlacement::Top) {
-        DrawLineTop(out, layout, x, layout.barY0, x,
-                    layout.barY0 + std::min(10, layout.barH), 1.0);
-      } else {
-        DrawLineTop(out, layout, x,
-                    layout.barY0 + std::max(0, layout.barH - 10),
-                    x, layout.barY0 + layout.barH, 1.0);
-      }
-      DrawText(out,
-               layout,
-               label,
-               ClampTextCenterX(x,
-                                bbox,
-                                0.0,
-                                static_cast<double>(layout.pageW)),
-               ClampTextBaselineY(layout.tickLabelY,
+  if (drawColorBar) {
+    for (std::size_t i = 0; i < ticks.size(); ++i) {
+      if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
+      const double frac = (ticks[i] - info.colorMinVal) / denom;
+      const std::string& label = tickLabels[i];
+      const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
+      if (layout.horizontal) {
+        const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
+        if (params.colorBarPlacement == ProjectionColorBarPlacement::Top) {
+          DrawLineTop(out, layout, x, layout.barY0, x,
+                      layout.barY0 + std::min(10, layout.barH), 1.0);
+        } else {
+          DrawLineTop(out, layout, x,
+                      layout.barY0 + std::max(0, layout.barH - 10),
+                      x, layout.barY0 + layout.barH, 1.0);
+        }
+        DrawText(out,
+                 layout,
+                 label,
+                 ClampTextCenterX(x,
                                   bbox,
                                   0.0,
-                                  static_cast<double>(layout.pageH)),
-               layout.tickFontSize);
-    } else {
-      const double y = layout.barY0 + (1.0 - frac) * std::max(1, layout.barH - 1);
-      if (params.colorBarPlacement == ProjectionColorBarPlacement::Left) {
-        DrawLineTop(out, layout, layout.barX0, y,
-                    layout.barX0 + std::min(10, layout.barW), y, 1.0);
+                                  static_cast<double>(layout.pageW)),
+                 ClampTextBaselineY(layout.tickLabelY,
+                                    bbox,
+                                    0.0,
+                                    static_cast<double>(layout.pageH)),
+                 layout.tickFontSize);
       } else {
-        DrawLineTop(out, layout,
-                    layout.barX0 + std::max(0, layout.barW - 10), y,
-                    layout.barX0 + layout.barW, y, 1.0);
+        const double y =
+          layout.barY0 + (1.0 - frac) * std::max(1, layout.barH - 1);
+        if (params.colorBarPlacement == ProjectionColorBarPlacement::Left) {
+          DrawLineTop(out, layout, layout.barX0, y,
+                      layout.barX0 + std::min(10, layout.barW), y, 1.0);
+        } else {
+          DrawLineTop(out, layout,
+                      layout.barX0 + std::max(0, layout.barW - 10), y,
+                      layout.barX0 + layout.barW, y, 1.0);
+        }
+        DrawText(out,
+                 layout,
+                 label,
+                 layout.tickLabelX,
+                 ClampTextBaselineY(CenterBaselineForTextY(y, bbox),
+                                    bbox,
+                                    0.0,
+                                    static_cast<double>(layout.pageH)),
+                 layout.tickFontSize);
       }
-      DrawText(out,
-               layout,
-               label,
-               layout.tickLabelX,
-               ClampTextBaselineY(CenterBaselineForTextY(y, bbox),
-                                  bbox,
-                                  0.0,
-                                  static_cast<double>(layout.pageH)),
-               layout.tickFontSize);
     }
   }
 
-  if (layout.showLegend && layout.horizontal) {
+  if (drawColorBar && layout.showLegend && layout.horizontal) {
     DrawText(out, layout, info.colorBarLabel, layout.titleX, layout.titleY,
              layout.labelFontSize);
-  } else if (layout.showLegend) {
+  } else if (drawColorBar && layout.showLegend) {
     DrawText(out, layout, info.colorBarLabel, layout.titleX, layout.titleY,
              layout.labelFontSize, true);
   }

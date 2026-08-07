@@ -18,7 +18,8 @@ enum class ProjectionColorBarPlacement : int {
   Bottom = 3,
   InsetVertical = 4,
   InsetHorizontal = 5,
-  Custom = 6
+  Custom = 6,
+  Off = 7
 };
 enum class ProjectionOutputFormat : int { PNG = 0, PDF = 1 };
 enum class ProjectionVectorField : int { Velocity = 0, MagneticField = 1 };
@@ -489,6 +490,11 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
   params.projectionSign = ProjectionNormalizeSign(params.projectionSign);
   params.upAxis = std::clamp(params.upAxis, 0, 2);
   params.upSign = ProjectionNormalizeSign(params.upSign);
+  params.colorBarPlacement =
+    static_cast<ProjectionColorBarPlacement>(
+      std::clamp(static_cast<int>(params.colorBarPlacement),
+                 0,
+                 7));
   for (int i = 1; i < params.viewBlockCount; ++i) {
     if (std::strcmp(params.viewBlocks[i].name, "main") == 0) {
       ProjectionSetDefaultViewBlockName(params, i);
@@ -511,7 +517,7 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
       static_cast<ProjectionColorBarPlacement>(
         std::clamp(static_cast<int>(params.panels[i].colorBarPlacement),
                    0,
-                   6));
+                   7));
     params.panels[i].colorBarInsetX =
       std::clamp(params.panels[i].colorBarInsetX, 0.0f, 1.0f);
     params.panels[i].colorBarInsetY =

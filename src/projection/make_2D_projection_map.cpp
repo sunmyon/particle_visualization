@@ -174,6 +174,13 @@ void ProjectionEstimatePdfPanelLayout(ProjectionMapRenderInfo& info)
 {
   const ProjectionMapParams& params = info.params;
   const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  if (placement == ProjectionColorBarPlacement::Off) {
+    info.pageWidth = info.plotWidth;
+    info.pageHeight = info.plotHeight;
+    info.plotOffsetX = 0;
+    info.plotOffsetY = 0;
+    return;
+  }
   const bool inset =
     placement == ProjectionColorBarPlacement::InsetVertical ||
     placement == ProjectionColorBarPlacement::InsetHorizontal ||
@@ -2642,6 +2649,8 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   const unsigned char backgroundValue = params.whiteBackground ? 255 : 0;
   const unsigned char foregroundValue = params.whiteBackground ? 0 : 255;
   const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  const bool drawColorBar =
+    placement != ProjectionColorBarPlacement::Off;
   const bool customPlacement =
     placement == ProjectionColorBarPlacement::Custom;
   const bool insetVerticalPreset =
@@ -2747,7 +2756,10 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
   int insetBgY1 = 0;
   const int insetTextGap = std::max(2, padding);
 
-  if (placement == ProjectionColorBarPlacement::Left) {
+  if (!drawColorBar) {
+    outW = plotW;
+    outH = plotH;
+  } else if (placement == ProjectionColorBarPlacement::Left) {
     outW = labelWidth + ticksWidth + barThickness + plotW;
     plotX0 = labelWidth + ticksWidth + barThickness;
     barX0 = labelWidth + ticksWidth;
@@ -2861,7 +2873,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
                                backgroundValue);
   }
 
-  if (inset) {
+  if (drawColorBar && inset) {
     insetBgX0 = barX0;
     insetBgY0 = barY0;
     insetBgX1 = barX0 + barW;
@@ -2913,7 +2925,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
                      0.55f);
   }
 
-  if (horizontal) {
+  if (drawColorBar && horizontal) {
     for (int px = 0; px < barW; ++px) {
       const float t = barW > 1 ? static_cast<float>(px) / static_cast<float>(barW - 1)
                                : 0.0f;
@@ -2926,7 +2938,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
         canvas.setPixel(barX0 + px, barY0 + py, rC, gC, bC);
       }
     }
-  } else {
+  } else if (drawColorBar) {
     for (int py = 0; py < barH; py++) {
       const float t = barH > 1 ? 1.0f - static_cast<float>(py) /
                                       static_cast<float>(barH - 1)
@@ -2943,67 +2955,69 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
     }
   }
 
-  for (int i = 0; i < nTicks; i++) {
-    if (ticks[i] < minVal || ticks[i] > maxVal)
-      continue;
+  if (drawColorBar) {
+    for (int i = 0; i < nTicks; i++) {
+      if (ticks[i] < minVal || ticks[i] > maxVal)
+        continue;
 
-    const float frac = static_cast<float>((ticks[i] - minVal) / denom);
-    if (horizontal) {
-      const int tickX = barX0 + static_cast<int>(frac * (barW - 1));
-      if (placement == ProjectionColorBarPlacement::Top) {
-        canvas.drawVerticalLine(tickX,
-                                barY0,
-                                barY0 + std::min(10, barH),
-                                foregroundValue,
-                                foregroundValue,
-                                foregroundValue);
-      } else {
-        canvas.drawVerticalLine(tickX,
-                                barY0 + std::max(0, barH - 10),
-                                barY0 + barH,
-                                foregroundValue,
-                                foregroundValue,
-                                foregroundValue);
-      }
-      fontRenderer_.drawTextCenteredBaseline(
-        canvas,
-        tickX,
-        tickLabelY,
-        tickLabels[static_cast<size_t>(i)].c_str(),
-        static_cast<float>(charPixelSize),
-        foregroundValue,
-        foregroundValue,
-        foregroundValue);
-    } else {
-      const int tickY = barY0 + static_cast<int>((1.0f - frac) * (barH - 1));
-      if (placement == ProjectionColorBarPlacement::Left) {
-        canvas.drawHorizontalLine(barX0,
-                                  barX0 + std::min(10, barW),
-                                  tickY,
+      const float frac = static_cast<float>((ticks[i] - minVal) / denom);
+      if (horizontal) {
+        const int tickX = barX0 + static_cast<int>(frac * (barW - 1));
+        if (placement == ProjectionColorBarPlacement::Top) {
+          canvas.drawVerticalLine(tickX,
+                                  barY0,
+                                  barY0 + std::min(10, barH),
                                   foregroundValue,
                                   foregroundValue,
                                   foregroundValue);
-      } else {
-        canvas.drawHorizontalLine(barX0 + std::max(0, barW - 10),
-                                  barX0 + barW,
-                                  tickY,
+        } else {
+          canvas.drawVerticalLine(tickX,
+                                  barY0 + std::max(0, barH - 10),
+                                  barY0 + barH,
                                   foregroundValue,
                                   foregroundValue,
                                   foregroundValue);
+        }
+        fontRenderer_.drawTextCenteredBaseline(
+          canvas,
+          tickX,
+          tickLabelY,
+          tickLabels[static_cast<size_t>(i)].c_str(),
+          static_cast<float>(charPixelSize),
+          foregroundValue,
+          foregroundValue,
+          foregroundValue);
+      } else {
+        const int tickY = barY0 + static_cast<int>((1.0f - frac) * (barH - 1));
+        if (placement == ProjectionColorBarPlacement::Left) {
+          canvas.drawHorizontalLine(barX0,
+                                    barX0 + std::min(10, barW),
+                                    tickY,
+                                    foregroundValue,
+                                    foregroundValue,
+                                    foregroundValue);
+        } else {
+          canvas.drawHorizontalLine(barX0 + std::max(0, barW - 10),
+                                    barX0 + barW,
+                                    tickY,
+                                    foregroundValue,
+                                    foregroundValue,
+                                    foregroundValue);
+        }
+        fontRenderer_.drawTextCenteredBaseline(
+          canvas,
+          tickLabelX,
+          tickY,
+          tickLabels[static_cast<size_t>(i)].c_str(),
+          static_cast<float>(charPixelSize),
+          foregroundValue,
+          foregroundValue,
+          foregroundValue);
       }
-      fontRenderer_.drawTextCenteredBaseline(
-        canvas,
-        tickLabelX,
-        tickY,
-        tickLabels[static_cast<size_t>(i)].c_str(),
-        static_cast<float>(charPixelSize),
-        foregroundValue,
-        foregroundValue,
-        foregroundValue);
     }
   }
 
-  if (showLegend && horizontal) {
+  if (drawColorBar && showLegend && horizontal) {
     fontRenderer_.drawTextCenteredBaseline(canvas,
 					   titleX,
 					   titleY,
@@ -3012,7 +3026,7 @@ void ProjectionMapGenerator::addColorBarToMap(ImageCanvas& canvas,
 					   foregroundValue,
 					   foregroundValue,
 					   foregroundValue);
-  } else if (showLegend) {
+  } else if (drawColorBar && showLegend) {
     fontRenderer_.drawTextRotated90Centered(canvas,
 					    titleX,
 					    titleY,
