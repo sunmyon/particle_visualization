@@ -113,20 +113,23 @@ std::vector<double> ProjectionPdfGenerateTicks(double minVal,
 {
   std::vector<double> ticks;
   if (!(maxVal > minVal) || desired <= 0) return ticks;
-  const double rawStep = (maxVal - minVal) / static_cast<double>(desired - 1);
-  const double mag = std::pow(10.0, std::floor(std::log10(rawStep)));
-  const double norm = rawStep / mag;
-  double nice = 1.0;
-  if (norm <= 1.0) nice = 1.0;
-  else if (norm <= 2.0) nice = 2.0;
-  else if (norm <= 5.0) nice = 5.0;
-  else nice = 10.0;
-  const double step = nice * mag;
-  const double first = std::ceil(minVal / step) * step;
-  for (double v = first; v <= maxVal + 0.5 * step; v += step) {
-    if (v >= minVal - 1.0e-12 && v <= maxVal + 1.0e-12) {
-      ticks.push_back(v);
-    }
+  const double range = maxVal - minVal;
+  const double roughStep = range / static_cast<double>(desired);
+  const double exponent = std::floor(std::log10(roughStep));
+  const double fraction = roughStep / std::pow(10.0, exponent);
+  double niceStep = 10.0;
+  if (fraction < 1.5) {
+    niceStep = 1.0;
+  } else if (fraction < 3.0) {
+    niceStep = 2.0;
+  } else if (fraction < 7.0) {
+    niceStep = 5.0;
+  }
+  const double step = niceStep * std::pow(10.0, exponent);
+  const double first = std::floor(minVal / step) * step;
+  const double last = std::ceil(maxVal / step) * step;
+  for (double v = first; v <= last + 0.5 * step; v += step) {
+    ticks.push_back(v);
   }
   if (ticks.empty()) {
     ticks.push_back(minVal);
@@ -135,11 +138,36 @@ std::vector<double> ProjectionPdfGenerateTicks(double minVal,
   return ticks;
 }
 
-std::string ProjectionPdfFormatTick(double value, bool inset)
+std::vector<std::string> ProjectionPdfFormatTickLabels(
+  const std::vector<double>& ticks,
+  double minVal,
+  double maxVal,
+  bool inset)
 {
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), inset ? "%.3g" : "%.4g", value);
-  return buf;
+  const std::vector<const char*> formats = inset
+    ? std::vector<const char*>{"%.2g", "%.3g", "%.4g", "%.5g", "%.6g"}
+    : std::vector<const char*>{"%.1f", "%.2f", "%.3g", "%.4g", "%.5g"};
+  std::vector<std::string> labels(ticks.size());
+  for (const char* format : formats) {
+    for (std::size_t i = 0; i < ticks.size(); ++i) {
+      char buf[64];
+      std::snprintf(buf, sizeof(buf), format, ticks[i]);
+      labels[i] = buf;
+    }
+    bool uniqueVisibleLabels = true;
+    for (std::size_t i = 0; i < ticks.size() && uniqueVisibleLabels; ++i) {
+      if (ticks[i] < minVal || ticks[i] > maxVal) continue;
+      for (std::size_t j = i + 1; j < ticks.size(); ++j) {
+        if (ticks[j] < minVal || ticks[j] > maxVal) continue;
+        if (labels[i] == labels[j]) {
+          uniqueVisibleLabels = false;
+          break;
+        }
+      }
+    }
+    if (uniqueVisibleLabels) break;
+  }
+  return labels;
 }
 
 void ProjectionEstimatePdfPanelLayout(ProjectionMapRenderInfo& info)
@@ -163,12 +191,17 @@ void ProjectionEstimatePdfPanelLayout(ProjectionMapRenderInfo& info)
     ProjectionPdfGenerateTicks(info.colorMinVal,
                                info.colorMaxVal,
                                inset ? 3 : 5);
+  const std::vector<std::string> tickLabels =
+    ProjectionPdfFormatTickLabels(ticks,
+                                  info.colorMinVal,
+                                  info.colorMaxVal,
+                                  inset);
   double maxTickW = 0.0;
-  for (double tick : ticks) {
+  for (std::size_t i = 0; i < ticks.size(); ++i) {
+    if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
     maxTickW = std::max(
       maxTickW,
-      ProjectionPdfTextWidthEstimate(ProjectionPdfFormatTick(tick, inset),
-                                     tickFontSize));
+      ProjectionPdfTextWidthEstimate(tickLabels[i], tickFontSize));
   }
   const int padding = 4;
   const int ticksWidth = static_cast<int>(std::ceil(maxTickW)) + 2 * padding;

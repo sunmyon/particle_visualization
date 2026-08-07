@@ -61,11 +61,11 @@ double TextWidth(const std::string& text, double size)
     } else if (c >= 'A' && c <= 'Z') {
       units += 0.66;
     } else if (c == 'm' || c == 'w' || c == 'M' || c == 'W') {
-      units += 0.78;
+      units += (c == 'W') ? 0.94 : 0.83;
     } else if (c == 'i' || c == 'l' || c == 'I') {
       units += 0.25;
     } else {
-      units += 0.50;
+      units += 0.56;
     }
   }
   return units * size;
@@ -85,8 +85,16 @@ PdfTextBBox MeasureTextBBox(const std::string& text, double size)
   PdfTextBBox bbox;
   bbox.minX = 0.0;
   bbox.maxX = TextWidth(text, size);
-  bbox.minY = -0.75 * size;
-  bbox.maxY = 0.25 * size;
+  bool hasDescender = false;
+  for (char c : text) {
+    if (c == 'g' || c == 'j' || c == 'p' || c == 'q' || c == 'y' ||
+        c == ',' || c == ';') {
+      hasDescender = true;
+      break;
+    }
+  }
+  bbox.minY = -0.72 * size;
+  bbox.maxY = (hasDescender ? 0.22 : 0.04) * size;
   bbox.width = bbox.maxX - bbox.minX;
   bbox.height = bbox.maxY - bbox.minY;
   return bbox;
@@ -126,20 +134,23 @@ std::vector<double> GenerateTicks(double minVal, double maxVal, int desired)
 {
   std::vector<double> ticks;
   if (!(maxVal > minVal) || desired <= 0) return ticks;
-  const double rawStep = (maxVal - minVal) / static_cast<double>(desired - 1);
-  const double mag = std::pow(10.0, std::floor(std::log10(rawStep)));
-  const double norm = rawStep / mag;
-  double nice = 1.0;
-  if (norm <= 1.0) nice = 1.0;
-  else if (norm <= 2.0) nice = 2.0;
-  else if (norm <= 5.0) nice = 5.0;
-  else nice = 10.0;
-  const double step = nice * mag;
-  const double first = std::ceil(minVal / step) * step;
-  for (double v = first; v <= maxVal + 0.5 * step; v += step) {
-    if (v >= minVal - 1.0e-12 && v <= maxVal + 1.0e-12) {
-      ticks.push_back(v);
-    }
+  const double range = maxVal - minVal;
+  const double roughStep = range / static_cast<double>(desired);
+  const double exponent = std::floor(std::log10(roughStep));
+  const double fraction = roughStep / std::pow(10.0, exponent);
+  double niceStep = 10.0;
+  if (fraction < 1.5) {
+    niceStep = 1.0;
+  } else if (fraction < 3.0) {
+    niceStep = 2.0;
+  } else if (fraction < 7.0) {
+    niceStep = 5.0;
+  }
+  const double step = niceStep * std::pow(10.0, exponent);
+  const double first = std::floor(minVal / step) * step;
+  const double last = std::ceil(maxVal / step) * step;
+  for (double v = first; v <= last + 0.5 * step; v += step) {
+    ticks.push_back(v);
   }
   if (ticks.empty()) {
     ticks.push_back(minVal);
@@ -148,11 +159,35 @@ std::vector<double> GenerateTicks(double minVal, double maxVal, int desired)
   return ticks;
 }
 
-std::string FormatTick(double value, bool inset)
+std::vector<std::string> FormatTickLabels(const std::vector<double>& ticks,
+                                          double minVal,
+                                          double maxVal,
+                                          bool inset)
 {
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), inset ? "%.3g" : "%.4g", value);
-  return buf;
+  const std::vector<const char*> formats = inset
+    ? std::vector<const char*>{"%.2g", "%.3g", "%.4g", "%.5g", "%.6g"}
+    : std::vector<const char*>{"%.1f", "%.2f", "%.3g", "%.4g", "%.5g"};
+  std::vector<std::string> labels(ticks.size());
+  for (const char* format : formats) {
+    for (std::size_t i = 0; i < ticks.size(); ++i) {
+      char buf[64];
+      std::snprintf(buf, sizeof(buf), format, ticks[i]);
+      labels[i] = buf;
+    }
+    bool uniqueVisibleLabels = true;
+    for (std::size_t i = 0; i < ticks.size() && uniqueVisibleLabels; ++i) {
+      if (ticks[i] < minVal || ticks[i] > maxVal) continue;
+      for (std::size_t j = i + 1; j < ticks.size(); ++j) {
+        if (ticks[j] < minVal || ticks[j] > maxVal) continue;
+        if (labels[i] == labels[j]) {
+          uniqueVisibleLabels = false;
+          break;
+        }
+      }
+    }
+    if (uniqueVisibleLabels) break;
+  }
+  return labels;
 }
 
 PdfLayout ComputeLayout(const ProjectionMapParams& params,
@@ -183,13 +218,19 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
 
   const std::vector<double> ticks =
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
+  const std::vector<std::string> tickLabels =
+    FormatTickLabels(ticks,
+                     info.colorMinVal,
+                     info.colorMaxVal,
+                     layout.inset);
   double maxTickW = 0.0;
   double minTickTextY = 0.0;
   double maxTickTextY = 0.0;
   bool hasTickTextBBox = false;
-  for (double tick : ticks) {
+  for (std::size_t i = 0; i < ticks.size(); ++i) {
+    if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
     const PdfTextBBox bbox =
-      MeasureTextBBox(FormatTick(tick, layout.inset), layout.tickFontSize);
+      MeasureTextBBox(tickLabels[i], layout.tickFontSize);
     maxTickW = std::max(maxTickW, bbox.width);
     if (!hasTickTextBBox) {
       minTickTextY = bbox.minY;
@@ -527,6 +568,11 @@ void AddVectorAnnotations(std::ostringstream& out,
                                 1.0e-30);
   const std::vector<double> ticks =
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
+  const std::vector<std::string> tickLabels =
+    FormatTickLabels(ticks,
+                     info.colorMinVal,
+                     info.colorMaxVal,
+                     layout.inset);
 
   if (layout.inset) {
     const double pad = 4.0;
@@ -534,10 +580,10 @@ void AddVectorAnnotations(std::ostringstream& out,
     double bgY0 = layout.barY0;
     double bgX1 = layout.barX0 + layout.barW;
     double bgY1 = layout.barY0 + layout.barH;
-    for (double tick : ticks) {
-      if (tick < info.colorMinVal || tick > info.colorMaxVal) continue;
-      const double frac = (tick - info.colorMinVal) / denom;
-      const std::string label = FormatTick(tick, layout.inset);
+    for (std::size_t i = 0; i < ticks.size(); ++i) {
+      if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
+      const double frac = (ticks[i] - info.colorMinVal) / denom;
+      const std::string& label = tickLabels[i];
       const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
       if (layout.horizontal) {
         const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
@@ -610,10 +656,10 @@ void AddVectorAnnotations(std::ostringstream& out,
   }
 
   SetRgb(out, fg);
-  for (double tick : ticks) {
-    if (tick < info.colorMinVal || tick > info.colorMaxVal) continue;
-    const double frac = (tick - info.colorMinVal) / denom;
-    const std::string label = FormatTick(tick, layout.inset);
+  for (std::size_t i = 0; i < ticks.size(); ++i) {
+    if (ticks[i] < info.colorMinVal || ticks[i] > info.colorMaxVal) continue;
+    const double frac = (ticks[i] - info.colorMinVal) / denom;
+    const std::string& label = tickLabels[i];
     const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
     if (layout.horizontal) {
       const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
