@@ -51,6 +51,27 @@ double TextWidth(const std::string& text, double size)
   return static_cast<double>(text.size()) * size * 0.55;
 }
 
+struct PdfTextBBox {
+  double minX = 0.0;
+  double maxX = 0.0;
+  double minY = 0.0;
+  double maxY = 0.0;
+  double width = 0.0;
+  double height = 0.0;
+};
+
+PdfTextBBox MeasureTextBBox(const std::string& text, double size)
+{
+  PdfTextBBox bbox;
+  bbox.minX = 0.0;
+  bbox.maxX = TextWidth(text, size);
+  bbox.minY = -0.75 * size;
+  bbox.maxY = 0.25 * size;
+  bbox.width = bbox.maxX - bbox.minX;
+  bbox.height = bbox.maxY - bbox.minY;
+  return bbox;
+}
+
 std::vector<double> GenerateTicks(double minVal, double maxVal, int desired)
 {
   std::vector<double> ticks;
@@ -111,14 +132,29 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
   const std::vector<double> ticks =
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
   double maxTickW = 0.0;
+  double minTickTextY = 0.0;
+  double maxTickTextY = 0.0;
+  bool hasTickTextBBox = false;
   for (double tick : ticks) {
-    maxTickW = std::max(maxTickW,
-                        TextWidth(FormatTick(tick, layout.inset),
-                                  layout.tickFontSize));
+    const PdfTextBBox bbox =
+      MeasureTextBBox(FormatTick(tick, layout.inset), layout.tickFontSize);
+    maxTickW = std::max(maxTickW, bbox.width);
+    if (!hasTickTextBBox) {
+      minTickTextY = bbox.minY;
+      maxTickTextY = bbox.maxY;
+      hasTickTextBBox = true;
+    } else {
+      minTickTextY = std::min(minTickTextY, bbox.minY);
+      maxTickTextY = std::max(maxTickTextY, bbox.maxY);
+    }
   }
   const int padding = 4;
   const int ticksWidth = static_cast<int>(std::ceil(maxTickW)) + 2 * padding;
-  const int ticksHeight = layout.tickFontSize + 2 * padding;
+  const int ticksHeight =
+    static_cast<int>(std::ceil(hasTickTextBBox
+                                 ? maxTickTextY - minTickTextY
+                                 : static_cast<double>(layout.tickFontSize))) +
+    2 * padding;
   const int labelWidth = layout.showLegend ? layout.labelFontSize + 2 * padding : 0;
   const int labelHeight = layout.showLegend ? layout.labelFontSize + 2 * padding : 0;
   const int barThickness = std::max(4, static_cast<int>(0.07f * layout.plotW));
@@ -146,7 +182,9 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
     layout.barY0 = labelHeight + ticksHeight;
     layout.barW = layout.plotW;
     layout.barH = barThickness;
-    layout.tickLabelY = layout.barY0 - padding;
+    layout.tickLabelY = static_cast<int>(std::lround(layout.barY0 -
+                                                     padding -
+                                                     maxTickTextY));
     layout.titleX = layout.plotW / 2;
     layout.titleY = labelHeight / 2;
   } else if (placement == ProjectionColorBarPlacement::Bottom) {
@@ -155,7 +193,10 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
     layout.barY0 = layout.plotH;
     layout.barW = layout.plotW;
     layout.barH = barThickness;
-    layout.tickLabelY = layout.barY0 + layout.barH + padding + layout.tickFontSize;
+    layout.tickLabelY = static_cast<int>(std::lround(layout.barY0 +
+                                                     layout.barH +
+                                                     padding -
+                                                     minTickTextY));
     layout.titleX = layout.plotW / 2;
     layout.titleY = layout.barY0 + layout.barH + ticksHeight + labelHeight / 2;
   } else if (layout.inset) {
@@ -187,8 +228,10 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
       layout.barX0 = contentX0 + ticksWidth / 2;
       layout.barY0 = padding +
         static_cast<int>(std::lround(insetY * maxY));
-      layout.tickLabelY =
-        layout.barY0 + layout.barH + insetTextGap + layout.tickFontSize;
+      layout.tickLabelY = static_cast<int>(std::lround(layout.barY0 +
+                                                       layout.barH +
+                                                       insetTextGap -
+                                                       minTickTextY));
       layout.titleX = layout.barX0 + layout.barW / 2;
       layout.titleY = layout.barY0 + layout.barH + ticksHeight + labelHeight / 2;
     } else {
@@ -302,6 +345,20 @@ void DrawText(std::ostringstream& out,
     out << "1 0 0 1 " << x << " " << y << " Tm\n";
   }
   out << "(" << escaped << ") Tj ET\n";
+}
+
+void DrawTextAtOrigin(std::ostringstream& out,
+                      const PdfLayout& layout,
+                      const std::string& text,
+                      double originX,
+                      double baselineYTop,
+                      double size)
+{
+  const std::string escaped = PdfEscape(text);
+  out << "BT /F1 " << size << " Tf\n"
+      << "1 0 0 1 " << originX << " " << PdfY(layout, baselineYTop)
+      << " Tm\n"
+      << "(" << escaped << ") Tj ET\n";
 }
 
 void DrawPdfCircle(std::ostringstream& out,
@@ -420,22 +477,47 @@ void AddVectorAnnotations(std::ostringstream& out,
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
 
   if (layout.inset) {
+    const double pad = 4.0;
+    double bgX0 = layout.barX0;
+    double bgY0 = layout.barY0;
+    double bgX1 = layout.barX0 + layout.barW;
+    double bgY1 = layout.barY0 + layout.barH;
+    for (double tick : ticks) {
+      if (tick < info.colorMinVal || tick > info.colorMaxVal) continue;
+      const double frac = (tick - info.colorMinVal) / denom;
+      const std::string label = FormatTick(tick, layout.inset);
+      const PdfTextBBox bbox = MeasureTextBBox(label, layout.tickFontSize);
+      if (layout.horizontal) {
+        const double x = layout.barX0 + frac * std::max(1, layout.barW - 1);
+        const double originX = x - 0.5 * (bbox.minX + bbox.maxX);
+        bgX0 = std::min(bgX0, originX + bbox.minX);
+        bgX1 = std::max(bgX1, originX + bbox.maxX);
+        bgY0 = std::min(bgY0, layout.tickLabelY + bbox.minY);
+        bgY1 = std::max(bgY1, layout.tickLabelY + bbox.maxY);
+      } else {
+        const double y =
+          layout.barY0 + (1.0 - frac) * std::max(1, layout.barH - 1);
+        const double originX =
+          static_cast<double>(layout.tickLabelX) -
+          0.5 * (bbox.minX + bbox.maxX);
+        bgX0 = std::min(bgX0, originX + bbox.minX);
+        bgX1 = std::max(bgX1, originX + bbox.maxX);
+        bgY0 = std::min(bgY0, y + bbox.minY);
+        bgY1 = std::max(bgY1, y + bbox.maxY);
+      }
+    }
     out << "/GS55 gs\n";
     SetRgb(out, bg);
-    const double pad = 4.0;
-    const double tickArea = layout.horizontal
-      ? static_cast<double>(layout.tickFontSize + 10)
-      : 80.0;
     FillRectTop(out,
                 layout,
-                layout.barX0 - pad,
-                layout.barY0 - pad,
-                layout.barW + (layout.horizontal ? 2.0 * pad : tickArea),
-                layout.barH + (layout.horizontal ? tickArea : 2.0 * pad));
+                bgX0 - pad,
+                bgY0 - pad,
+                bgX1 - bgX0 + 2.0 * pad,
+                bgY1 - bgY0 + 2.0 * pad);
     out << "/GS100 gs\n";
   }
 
-  const int steps = 192;
+  const int steps = std::max(192, layout.horizontal ? layout.barW : layout.barH);
   for (int i = 0; i < steps; ++i) {
     const float t0 = steps > 1
       ? static_cast<float>(i) / static_cast<float>(steps - 1)
@@ -453,13 +535,13 @@ void AddVectorAnnotations(std::ostringstream& out,
         static_cast<double>(i) * layout.barW / steps;
       const double x1 = layout.barX0 +
         static_cast<double>(i + 1) * layout.barW / steps;
-      FillRectTop(out, layout, x0, layout.barY0, x1 - x0 + 0.2, layout.barH);
+      FillRectTop(out, layout, x0, layout.barY0, x1 - x0 + 1.0, layout.barH);
     } else {
       const double y0 = layout.barY0 +
         static_cast<double>(steps - 1 - i) * layout.barH / steps;
       const double y1 = layout.barY0 +
         static_cast<double>(steps - i) * layout.barH / steps;
-      FillRectTop(out, layout, layout.barX0, y0, layout.barW, y1 - y0 + 0.2);
+      FillRectTop(out, layout, layout.barX0, y0, layout.barW, y1 - y0 + 1.0);
     }
   }
 
@@ -511,8 +593,7 @@ void AddVectorAnnotations(std::ostringstream& out,
     std::snprintf(timeStr, sizeof(timeStr), params.timeFormatBuf, t);
     const std::string label = timeStr;
     const double size = layout.labelFontSize;
-    const double textW = TextWidth(label, size);
-    const double textH = size;
+    const PdfTextBBox bbox = MeasureTextBBox(label, size);
     const double offsetX = params.flagAdjustTimeLabelPosition
       ? params.timeLabelOffsetX
       : 0.0f;
@@ -524,11 +605,15 @@ void AddVectorAnnotations(std::ostringstream& out,
     out << "/GS50 gs\n";
     SetRgb(out, bg);
     FillRectTop(out, layout, baseX - 4.0, baseY - 4.0,
-                textW + 8.0, textH + 8.0);
+                bbox.width + 8.0, bbox.height + 8.0);
     out << "/GS100 gs\n";
     SetRgb(out, fg);
-    DrawText(out, layout, label, baseX + textW * 0.5, baseY + textH,
-             size);
+    DrawTextAtOrigin(out,
+                     layout,
+                     label,
+                     baseX - bbox.minX,
+                     baseY - bbox.minY,
+                     size);
   }
 
   if (params.flagPlaceScale) {
@@ -548,12 +633,15 @@ void AddVectorAnnotations(std::ostringstream& out,
     const double thickness = std::clamp(params.scaleBarThickness, 1, 64);
     const std::string label = params.arrowLabelStr;
     const double size = layout.labelFontSize;
-    const double textW = TextWidth(label, size);
+    const PdfTextBBox bbox = MeasureTextBBox(label, size);
+    const double textW = bbox.width;
     const double labelBaselineY = y - thickness * 0.5 - 10.0;
     const double overlayX0 = std::min(x0, centerX - textW * 0.5) - 4.0;
     const double overlayX1 = std::max(x1, centerX + textW * 0.5) + 4.0;
-    const double overlayY0 = labelBaselineY - size - 4.0;
-    const double overlayY1 = y + thickness * 0.5 + 4.0;
+    const double overlayY0 =
+      std::min(y - thickness * 0.5, labelBaselineY + bbox.minY) - 4.0;
+    const double overlayY1 =
+      std::max(y + thickness * 0.5, labelBaselineY + bbox.maxY) + 4.0;
     out << "/GS50 gs\n";
     SetRgb(out, bg);
     FillRectTop(out, layout, overlayX0, overlayY0,
@@ -663,8 +751,12 @@ bool WriteProjectionPdf(const std::string& path,
     return WriteImageOnlyPdf(path, plotImage);
   }
 
+  const ProjectionMapParams& singleParams =
+    info.panels.empty() ? info.params : params;
+  const ProjectionMapContext& singleCtx =
+    info.panels.empty() ? info.ctx : ctx;
   PdfLayout layout = info.panels.empty()
-    ? ComputeLayout(params, info)
+    ? ComputeLayout(singleParams, info)
     : PdfLayout{};
   if (!info.panels.empty()) {
     layout.pageW = info.pageWidth > 0 ? info.pageWidth : plotImage.width;
@@ -696,7 +788,7 @@ bool WriteProjectionPdf(const std::string& path,
 
   std::ostringstream content;
   content << std::fixed << std::setprecision(4);
-  const double bg = params.whiteBackground ? 1.0 : 0.0;
+  const double bg = singleParams.whiteBackground ? 1.0 : 0.0;
   SetRgb(content, bg);
   FillRectTop(content, layout, 0, 0, layout.pageW, layout.pageH);
   content << "q\n"
@@ -707,7 +799,7 @@ bool WriteProjectionPdf(const std::string& path,
                 : 0)
           << " cm\n/Im0 Do\nQ\n";
   if (info.panels.empty()) {
-    AddVectorAnnotations(content, params, ctx, info, layout);
+    AddVectorAnnotations(content, singleParams, singleCtx, info, layout);
   } else {
     const int pageW = layout.pageW;
     const int pageH = layout.pageH;
