@@ -51,6 +51,8 @@ struct ProjectionMapRenderInfo {
   int tileOffsetX = 0;
   int tileOffsetY = 0;
   double cellSize = 1.0;
+  float pdfTickFontSize = 0.0f;
+  float pdfLabelFontSize = 0.0f;
   float colorMinVal = 0.0f;
   float colorMaxVal = 1.0f;
   std::string colorBarLabel;
@@ -184,6 +186,9 @@ private:
 	                                     const UnitSystem& units,
                                        bool drawAnnotations = true,
                                        ProjectionMapRenderInfo* renderInfo = nullptr);
+  void populatePdfAnnotationFontSizes(ProjectionMapRenderInfo& info,
+                                      const ProjectionMapParams& params,
+                                      int plotHeight) const;
   RgbImage makeSingleDensityMapImage(SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,

@@ -173,11 +173,13 @@ PdfLayout ComputeLayout(const ProjectionMapParams& params,
     (placement == ProjectionColorBarPlacement::Custom &&
      params.colorBarCustomHorizontal);
   layout.showLegend = !layout.inset;
-  layout.tickFontSize =
-    std::max(1, static_cast<int>((layout.inset ? 0.055f : 0.08f) *
-                                 static_cast<float>(layout.plotH)));
-  layout.labelFontSize =
-    std::max(1, static_cast<int>(0.10f * static_cast<float>(layout.plotH)));
+  layout.tickFontSize = info.pdfTickFontSize > 0.0f
+    ? std::max(1, static_cast<int>(std::lround(info.pdfTickFontSize)))
+    : std::max(1, static_cast<int>((layout.inset ? 0.055f : 0.08f) *
+                                   static_cast<float>(layout.plotH)));
+  layout.labelFontSize = info.pdfLabelFontSize > 0.0f
+    ? std::max(1, static_cast<int>(std::lround(info.pdfLabelFontSize)))
+    : std::max(1, static_cast<int>(0.10f * static_cast<float>(layout.plotH)));
 
   const std::vector<double> ticks =
     GenerateTicks(info.colorMinVal, info.colorMaxVal, layout.inset ? 3 : 5);
@@ -673,8 +675,7 @@ void AddVectorAnnotations(std::ostringstream& out,
     }
     std::snprintf(timeStr, sizeof(timeStr), params.timeFormatBuf, t);
     const std::string label = timeStr;
-    const double size =
-      std::max(1.0, static_cast<double>(layout.labelFontSize) * 0.78);
+    const double size = layout.labelFontSize;
     const PdfTextBBox bbox = MeasureTextBBox(label, size);
     const double offsetX = params.flagAdjustTimeLabelPosition
       ? params.timeLabelOffsetX

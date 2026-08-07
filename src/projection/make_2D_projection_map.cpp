@@ -84,7 +84,27 @@ inline void HashFloat(std::size_t& seed, float value)
 
 double ProjectionPdfTextWidthEstimate(const std::string& text, double size)
 {
-  return static_cast<double>(text.size()) * size * 0.55;
+  double units = 0.0;
+  for (unsigned char c : text) {
+    if (c >= '0' && c <= '9') {
+      units += 0.56;
+    } else if (c == '.' || c == ',' || c == ':' || c == ';') {
+      units += 0.28;
+    } else if (c == '-' || c == '+') {
+      units += 0.34;
+    } else if (c == ' ' || c == '\t') {
+      units += 0.28;
+    } else if (c >= 'A' && c <= 'Z') {
+      units += 0.66;
+    } else if (c == 'm' || c == 'w' || c == 'M' || c == 'W') {
+      units += 0.78;
+    } else if (c == 'i' || c == 'l' || c == 'I') {
+      units += 0.25;
+    } else {
+      units += 0.50;
+    }
+  }
+  return units * size;
 }
 
 std::vector<double> ProjectionPdfGenerateTicks(double minVal,
@@ -131,12 +151,14 @@ void ProjectionEstimatePdfPanelLayout(ProjectionMapRenderInfo& info)
     placement == ProjectionColorBarPlacement::InsetHorizontal ||
     placement == ProjectionColorBarPlacement::Custom;
   const bool showLegend = !inset;
-  const int tickFontSize =
-    std::max(1, static_cast<int>((inset ? 0.055f : 0.08f) *
-                                 static_cast<float>(info.plotHeight)));
-  const int labelFontSize =
-    std::max(1, static_cast<int>(0.10f *
-                                 static_cast<float>(info.plotHeight)));
+  const int tickFontSize = info.pdfTickFontSize > 0.0f
+    ? std::max(1, static_cast<int>(std::lround(info.pdfTickFontSize)))
+    : std::max(1, static_cast<int>((inset ? 0.055f : 0.08f) *
+                                   static_cast<float>(info.plotHeight)));
+  const int labelFontSize = info.pdfLabelFontSize > 0.0f
+    ? std::max(1, static_cast<int>(std::lround(info.pdfLabelFontSize)))
+    : std::max(1, static_cast<int>(0.10f *
+                                   static_cast<float>(info.plotHeight)));
   const std::vector<double> ticks =
     ProjectionPdfGenerateTicks(info.colorMinVal,
                                info.colorMaxVal,
@@ -1028,6 +1050,35 @@ ProjectionMapGenerator::buildProjectionMap(const ProjectionMapParams& params,
   return map;
 }
 
+void ProjectionMapGenerator::populatePdfAnnotationFontSizes(
+  ProjectionMapRenderInfo& info,
+  const ProjectionMapParams& params,
+  int plotHeight) const
+{
+  const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  const bool inset =
+    placement == ProjectionColorBarPlacement::InsetVertical ||
+    placement == ProjectionColorBarPlacement::InsetHorizontal ||
+    placement == ProjectionColorBarPlacement::Custom;
+  const int tickPixelSize =
+    std::max(1, static_cast<int>((inset ? 0.055f : 0.08f) *
+                                 static_cast<float>(plotHeight)));
+  const int labelPixelSize =
+    std::max(1, static_cast<int>(0.10f * static_cast<float>(plotHeight)));
+
+  const auto effectiveHeight = [this](const char* sample, int pixelSize) {
+    const TextBBox bbox =
+      fontRenderer_.measureTextBBox(sample, static_cast<float>(pixelSize));
+    return bbox.height > 0 ? static_cast<float>(bbox.height)
+                           : static_cast<float>(pixelSize);
+  };
+
+  info.pdfTickFontSize =
+    effectiveHeight("-0123456789.eE+", tickPixelSize);
+  info.pdfLabelFontSize =
+    effectiveHeight("Ag0123456789.eE+-", labelPixelSize);
+}
+
 RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   ProjectionMap& map,
   const ProjectionMapParams& params,
@@ -1062,6 +1113,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
       renderInfo->plotOffsetX = 0;
       renderInfo->plotOffsetY = 0;
       renderInfo->cellSize = map.cell_size;
+      populatePdfAnnotationFontSizes(*renderInfo, params, map.npixel_y);
       renderInfo->colorMinVal = map.colorMinVal;
       renderInfo->colorMaxVal = map.colorMaxVal;
       renderInfo->colorBarLabel = QuantityLabel(params.selectedVarGas);
@@ -1182,6 +1234,7 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
     renderInfo->plotOffsetX = 0;
     renderInfo->plotOffsetY = 0;
     renderInfo->cellSize = map.cell_size;
+    populatePdfAnnotationFontSizes(*renderInfo, params, map.npixel_y);
     renderInfo->colorMinVal = rangeMin;
     renderInfo->colorMaxVal = rangeMax;
     renderInfo->colorBarLabel = params.var;
