@@ -4,6 +4,7 @@
 #include "data/simulation_block.h"
 #include "projection/make_2D_projection_map.h"
 #include "projection/projection_map_context.h"
+#include "projection/projection_pdf_writer.h"
 
 #include <cstdio>
 #include <cstring>
@@ -61,6 +62,21 @@ static bool IsSafeIndexFormat(const char* format)
   return hasIndexSpecifier;
 }
 
+static std::string WithProjectionOutputExtension(std::string path,
+                                                 ProjectionOutputFormat format)
+{
+  const char* ext = format == ProjectionOutputFormat::PDF ? ".pdf" : ".png";
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::size_t dot = path.find_last_of('.');
+  if (dot != std::string::npos &&
+      (slash == std::string::npos || dot > slash)) {
+    path.replace(dot, std::string::npos, ext);
+  } else {
+    path += ext;
+  }
+  return path;
+}
+
 std::string ResolveProjectionMapOutputPath(const ProjectionMapParams& params,
                                            int currentFileIndex,
                                            std::string* warning)
@@ -90,7 +106,7 @@ std::string ResolveProjectionMapOutputPath(const ProjectionMapParams& params,
                   params.fileFormat);
   }
 
-  return filename;
+  return WithProjectionOutputExtension(filename, params.outputFormat);
 }
 
 ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& projection,
@@ -105,11 +121,15 @@ ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& pr
                               time);
   result.outputPath = std::move(output.path);
 
+  ProjectionMapRenderInfo renderInfo;
+  const bool writePdf = params.outputFormat == ProjectionOutputFormat::PDF;
   result.image =
     projection.generator.makeDensityMapImage(projection.particles,
                                              projection.units,
                                              params,
-                                             context);
+                                             context,
+                                             !writePdf,
+                                             writePdf ? &renderInfo : nullptr);
 
   if (!result.image.valid()) {
     result.error = "Failed to generate projection map image.";
@@ -125,16 +145,36 @@ ProjectionFrameResult ExecuteProjectionFrame(ProjectionFrameExecutionContext& pr
       return result;
     }
 
-    if (!WritePngRgb(result.outputPath.c_str(),
-                     result.image.width,
-                     result.image.height,
-                     result.image.rgb)) {
+    bool writeOk = false;
+    if (writePdf) {
+      writeOk = WriteProjectionPdf(result.outputPath,
+                                   result.image,
+                                   params,
+                                   context,
+                                   renderInfo);
+    } else {
+      writeOk = WritePngRgb(result.outputPath.c_str(),
+                            result.image.width,
+                            result.image.height,
+                            result.image.rgb);
+    }
+    if (!writeOk) {
       result.error = "Failed to write projection map: " + result.outputPath;
       if (!output.keepImage) {
         result.image.clear();
       }
       return result;
     }
+  }
+
+  if (writePdf && output.keepImage) {
+    result.image =
+      projection.generator.makeDensityMapImage(projection.particles,
+                                               projection.units,
+                                               params,
+                                               context,
+                                               true,
+                                               nullptr);
   }
 
   result.ok = true;

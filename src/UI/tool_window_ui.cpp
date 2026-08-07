@@ -2122,7 +2122,8 @@ bool DrawProjectionLayoutEditor(ProjectionMapParams& params,
             "Plus",
             "Cross",
             "Diamond",
-            "Square"
+            "Square",
+            "Five-spoke star"
           };
           int symbol = static_cast<int>(starOverlay.symbol);
           ImGui::SetNextItemWidth(116.0f);
@@ -2684,6 +2685,33 @@ void DrawProjectionMapUI(ProjectionMapUIState& state,
   ImGui::SetNextWindowSize(ImVec2(640, 660), ImGuiCond_Appearing);
   ImGui::Begin("make projection map", &state.open, ImGuiWindowFlags_None);
   ImGui::SetWindowFontScale(1.0f);
+
+  int outputFormat = static_cast<int>(params.outputFormat);
+  const char* outputFormatLabels[] = {"PNG", "PDF"};
+  if (ImGui::Combo("Output Format",
+                   &outputFormat,
+                   outputFormatLabels,
+                   IM_ARRAYSIZE(outputFormatLabels))) {
+    outputFormat = std::clamp(outputFormat, 0, 1);
+    params.outputFormat =
+      static_cast<ProjectionOutputFormat>(outputFormat);
+    std::string formatText = params.fileFormat;
+    const std::size_t slash = formatText.find_last_of("/\\");
+    const std::size_t dot = formatText.find_last_of('.');
+    const char* ext =
+      params.outputFormat == ProjectionOutputFormat::PDF ? ".pdf" : ".png";
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+      formatText.replace(dot, std::string::npos, ext);
+    } else {
+      formatText += ext;
+    }
+    std::snprintf(params.fileFormat,
+                  IM_ARRAYSIZE(params.fileFormat),
+                  "%s",
+                  formatText.c_str());
+    paramsDirty = true;
+  }
 
   paramsDirty |= ImGui::InputText("File Format",
                                   params.fileFormat,

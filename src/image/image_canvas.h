@@ -75,6 +75,15 @@ public:
 		    unsigned char b,
 		    float alpha = 1.0f);
 
+  void drawFiveSpokeStar(int centerX,
+                         int centerY,
+                         int radius,
+                         int thickness,
+                         unsigned char r,
+                         unsigned char g,
+                         unsigned char b,
+                         float alpha = 1.0f);
+
   void drawFilledCircle(int centerX,
                         int centerY,
                         float radius,

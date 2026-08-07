@@ -472,6 +472,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/UI/clump_chain_window.cpp
   ${SRC_DIR}/projection/make_2D_projection_map.cpp
   ${SRC_DIR}/projection/opengl_projection_backend.cpp
+  ${SRC_DIR}/projection/projection_pdf_writer.cpp
   ${SRC_DIR}/projection/projection_frame_execution.cpp
   ${SRC_DIR}/projection/projection_geometry.cpp
   ${SRC_DIR}/projection/projection_map_context.cpp
@@ -1472,6 +1473,7 @@ if(PARTICLE_VIS_BUILD_BATCH)
     ${SRC_DIR}/platform/shell_utils.cpp
     ${SRC_DIR}/projection/make_2D_projection_map.cpp
     ${SRC_DIR}/projection/opengl_projection_backend.cpp
+    ${SRC_DIR}/projection/projection_pdf_writer.cpp
     ${SRC_DIR}/projection/projection_frame_execution.cpp
     ${SRC_DIR}/projection/projection_geometry.cpp
     ${SRC_DIR}/projection/projection_map_context.cpp

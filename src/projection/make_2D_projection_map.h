@@ -11,6 +11,8 @@
 
 #include <vector>
 
+#include "projection/projection_map_context.h"
+#include "projection/projection_map_params.h"
 #include "projection/projection_gpu_backend.h"
 #ifdef PARTICLE_VIS_ENABLE_METAL_BACKEND
 #include "projection/metal_projection_backend.h"
@@ -26,6 +28,37 @@ struct RgbImage;
 struct FluxSettings;
 struct UnitSystem;
 struct QuantityState;
+
+struct ProjectionMapRenderInfo {
+  struct StarOverlaySample {
+    float x = 0.0f;
+    float y = 0.0f;
+    float sizePx = 1.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float alpha = 1.0f;
+    ProjectionParticleSymbol symbol = ProjectionParticleSymbol::SoftCircle;
+  };
+
+  bool valid = false;
+  int plotWidth = 0;
+  int plotHeight = 0;
+  int pageWidth = 0;
+  int pageHeight = 0;
+  int plotOffsetX = 0;
+  int plotOffsetY = 0;
+  int tileOffsetX = 0;
+  int tileOffsetY = 0;
+  double cellSize = 1.0;
+  float colorMinVal = 0.0f;
+  float colorMaxVal = 1.0f;
+  std::string colorBarLabel;
+  ProjectionMapParams params;
+  ProjectionMapContext ctx;
+  std::vector<StarOverlaySample> starOverlaySamples;
+  std::vector<ProjectionMapRenderInfo> panels;
+};
 
 ProjectionMapContext BuildProjectionMapContext(const ProjectionMapParams& params,
                                                double time);
@@ -131,6 +164,12 @@ private:
 				    const ProjectionMapContext& ctx,
 				    const SimulationBlock& block,
 				    const UnitSystem& units);
+    std::vector<ProjectionMapRenderInfo::StarOverlaySample>
+    collectStarOverlaySamples(const ProjectionMap& map,
+                              const ProjectionMapParams& params,
+                              const ProjectionMapContext& ctx,
+                              const SimulationBlock& block,
+                              const UnitSystem& units);
 	  void overlayVectorField(ImageCanvas& canvas,
 	                          const ProjectionMap& map,
 	                          const ProjectionMapParams& params,
@@ -142,21 +181,29 @@ private:
 	                                     const ProjectionMapParams& params,
 	                                     const ProjectionMapContext& ctx,
 	                                     const SimulationBlock& block,
-	                                     const UnitSystem& units);
+	                                     const UnitSystem& units,
+                                       bool drawAnnotations = true,
+                                       ProjectionMapRenderInfo* renderInfo = nullptr);
   RgbImage makeSingleDensityMapImage(SimulationDataset& particles,
                                      const UnitSystem& units,
                                      ProjectionMapParams& params,
-                                     ProjectionMapContext& ctx);
+                                     ProjectionMapContext& ctx,
+                                     bool drawAnnotations = true,
+                                     ProjectionMapRenderInfo* renderInfo = nullptr);
   RgbImage makeMultiPanelDensityMapImage(SimulationDataset& particles,
                                          const UnitSystem& units,
                                          ProjectionMapParams& params,
-                                         ProjectionMapContext& ctx);
+                                         ProjectionMapContext& ctx,
+                                         bool drawAnnotations = true,
+                                         ProjectionMapRenderInfo* renderInfo = nullptr);
   
 public:
   RgbImage makeDensityMapImage(SimulationDataset& particles,
 			       const UnitSystem& units,
 			       ProjectionMapParams& params,
-			       ProjectionMapContext& ctx);
+			       ProjectionMapContext& ctx,
+             bool drawAnnotations = true,
+             ProjectionMapRenderInfo* renderInfo = nullptr);
 
   int getFontCount() const;
   const std::string& getFontPath(int index) const;

@@ -20,6 +20,7 @@ enum class ProjectionColorBarPlacement : int {
   InsetHorizontal = 5,
   Custom = 6
 };
+enum class ProjectionOutputFormat : int { PNG = 0, PDF = 1 };
 enum class ProjectionVectorField : int { Velocity = 0, MagneticField = 1 };
 enum class ProjectionVectorOverlayMode : int { Arrows = 0, Streamlines = 1 };
 enum class ProjectionVectorScaleMode : int { Linear = 0, Log = 1, Normalized = 2 };
@@ -48,7 +49,8 @@ enum class ProjectionParticleSymbol : int {
   Plus = 5,
   Cross = 6,
   Diamond = 7,
-  Square = 8
+  Square = 8,
+  FiveSpokeStar = 9
 };
 
 inline constexpr int kProjectionMaxViewBlocks = 4;
@@ -223,6 +225,7 @@ struct ProjectionMapParams {
   float timeLabelOffsetX = 0.0f;
   float timeLabelOffsetY = 0.0f;
 
+  ProjectionOutputFormat outputFormat = ProjectionOutputFormat::PNG;
   char fileFormat[255] = "image_%04d.png";
   char folderPath[255] = "./output";
 
@@ -541,7 +544,7 @@ inline void ProjectionEnsureLayoutInitialized(ProjectionMapParams& params)
     overlay.opacity = std::clamp(overlay.opacity, 0.0f, 1.0f);
     overlay.symbol =
       static_cast<ProjectionParticleSymbol>(
-        std::clamp(static_cast<int>(overlay.symbol), 0, 8));
+        std::clamp(static_cast<int>(overlay.symbol), 0, 9));
   }
   for (int i = 0; i < params.vectorOverlayCount; ++i) {
     if (params.vectorOverlays[i].name[0] == '\0') {

@@ -336,6 +336,59 @@ void ImageCanvas::drawAsterisk(int centerX,
   }
 }
 
+void ImageCanvas::drawFiveSpokeStar(int centerX,
+                                    int centerY,
+                                    int radius,
+                                    int thickness,
+                                    unsigned char r,
+                                    unsigned char g,
+                                    unsigned char b,
+                                    float alpha)
+{
+  if (radius <= 0 || thickness <= 0) return;
+
+  constexpr float pi = 3.14159265358979323846f;
+  const float cx = static_cast<float>(centerX);
+  const float cy = static_cast<float>(centerY);
+  const float fr = static_cast<float>(radius);
+  const float halfThickness =
+    std::max(0.5f, static_cast<float>(thickness) * 0.5f);
+  const int extent =
+    std::max(1, static_cast<int>(std::ceil(fr + halfThickness + 1.0f)));
+
+  std::array<std::array<float, 4>, 5> segments{};
+  for (int i = 0; i < 5; ++i) {
+    const float angle = -0.5f * pi + static_cast<float>(i) * 2.0f * pi / 5.0f;
+    segments[static_cast<size_t>(i)] = {
+      cx,
+      cy,
+      cx + std::cos(angle) * fr,
+      cy + std::sin(angle) * fr
+    };
+  }
+
+  for (int y = centerY - extent; y <= centerY + extent; ++y) {
+    for (int x = centerX - extent; x <= centerX + extent; ++x) {
+      const float px = static_cast<float>(x) + 0.5f;
+      const float py = static_cast<float>(y) + 0.5f;
+      float minDist = std::numeric_limits<float>::max();
+      for (const auto& segment : segments) {
+        minDist = std::min(minDist,
+                           DistanceToSegment(px,
+                                             py,
+                                             segment[0],
+                                             segment[1],
+                                             segment[2],
+                                             segment[3]));
+      }
+      const float coverage =
+        std::clamp(halfThickness + 0.75f - minDist, 0.0f, 1.0f);
+      if (coverage <= 0.0f) continue;
+      blendPixel(x, y, r, g, b, alpha * coverage);
+    }
+  }
+}
+
 void ImageCanvas::drawFilledCircle(int centerX,
                                    int centerY,
                                    float radius,

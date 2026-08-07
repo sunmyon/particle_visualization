@@ -82,6 +82,97 @@ inline void HashFloat(std::size_t& seed, float value)
   HashCombine(seed, static_cast<std::size_t>(bits));
 }
 
+double ProjectionPdfTextWidthEstimate(const std::string& text, double size)
+{
+  return static_cast<double>(text.size()) * size * 0.55;
+}
+
+std::vector<double> ProjectionPdfGenerateTicks(double minVal,
+                                               double maxVal,
+                                               int desired)
+{
+  std::vector<double> ticks;
+  if (!(maxVal > minVal) || desired <= 0) return ticks;
+  const double rawStep = (maxVal - minVal) / static_cast<double>(desired - 1);
+  const double mag = std::pow(10.0, std::floor(std::log10(rawStep)));
+  const double norm = rawStep / mag;
+  double nice = 1.0;
+  if (norm <= 1.0) nice = 1.0;
+  else if (norm <= 2.0) nice = 2.0;
+  else if (norm <= 5.0) nice = 5.0;
+  else nice = 10.0;
+  const double step = nice * mag;
+  const double first = std::ceil(minVal / step) * step;
+  for (double v = first; v <= maxVal + 0.5 * step; v += step) {
+    if (v >= minVal - 1.0e-12 && v <= maxVal + 1.0e-12) {
+      ticks.push_back(v);
+    }
+  }
+  if (ticks.empty()) {
+    ticks.push_back(minVal);
+    ticks.push_back(maxVal);
+  }
+  return ticks;
+}
+
+std::string ProjectionPdfFormatTick(double value, bool inset)
+{
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), inset ? "%.3g" : "%.4g", value);
+  return buf;
+}
+
+void ProjectionEstimatePdfPanelLayout(ProjectionMapRenderInfo& info)
+{
+  const ProjectionMapParams& params = info.params;
+  const ProjectionColorBarPlacement placement = params.colorBarPlacement;
+  const bool inset =
+    placement == ProjectionColorBarPlacement::InsetVertical ||
+    placement == ProjectionColorBarPlacement::InsetHorizontal ||
+    placement == ProjectionColorBarPlacement::Custom;
+  const bool showLegend = !inset;
+  const int tickFontSize =
+    std::max(1, static_cast<int>((inset ? 0.055f : 0.08f) *
+                                 static_cast<float>(info.plotHeight)));
+  const int labelFontSize =
+    std::max(1, static_cast<int>(0.10f *
+                                 static_cast<float>(info.plotHeight)));
+  const std::vector<double> ticks =
+    ProjectionPdfGenerateTicks(info.colorMinVal,
+                               info.colorMaxVal,
+                               inset ? 3 : 5);
+  double maxTickW = 0.0;
+  for (double tick : ticks) {
+    maxTickW = std::max(
+      maxTickW,
+      ProjectionPdfTextWidthEstimate(ProjectionPdfFormatTick(tick, inset),
+                                     tickFontSize));
+  }
+  const int padding = 4;
+  const int ticksWidth = static_cast<int>(std::ceil(maxTickW)) + 2 * padding;
+  const int ticksHeight = tickFontSize + 2 * padding;
+  const int labelWidth = showLegend ? labelFontSize + 2 * padding : 0;
+  const int labelHeight = showLegend ? labelFontSize + 2 * padding : 0;
+  const int barThickness =
+    std::max(4, static_cast<int>(0.07f * info.plotWidth));
+
+  info.pageWidth = info.plotWidth;
+  info.pageHeight = info.plotHeight;
+  info.plotOffsetX = 0;
+  info.plotOffsetY = 0;
+  if (placement == ProjectionColorBarPlacement::Left) {
+    info.pageWidth = labelWidth + ticksWidth + barThickness + info.plotWidth;
+    info.plotOffsetX = labelWidth + ticksWidth + barThickness;
+  } else if (placement == ProjectionColorBarPlacement::Top) {
+    info.pageHeight = labelHeight + ticksHeight + barThickness + info.plotHeight;
+    info.plotOffsetY = labelHeight + ticksHeight + barThickness;
+  } else if (placement == ProjectionColorBarPlacement::Bottom) {
+    info.pageHeight = info.plotHeight + barThickness + ticksHeight + labelHeight;
+  } else if (!inset) {
+    info.pageWidth = info.plotWidth + barThickness + ticksWidth + labelWidth;
+  }
+}
+
 double EvaluateProjectionTfComponent(
   const ProjectionTransferFunctionComponent& c,
   double value)
@@ -148,11 +239,18 @@ ProjectionParticleSample MakeProjectionParticleSample(const SimulationBlock& blo
 RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particles,
 						     const UnitSystem& units,
 						     ProjectionMapParams& params,
-						     ProjectionMapContext& ctx)
+						     ProjectionMapContext& ctx,
+                         bool drawAnnotations,
+                         ProjectionMapRenderInfo* renderInfo)
 {
   ProjectionEnsureLayoutInitialized(params);
   if (params.multiPanelEnabled && params.dataSource == DataSource::Gas) {
-    return makeMultiPanelDensityMapImage(particles, units, params, ctx);
+    return makeMultiPanelDensityMapImage(particles,
+                                         units,
+                                         params,
+                                         ctx,
+                                         drawAnnotations,
+                                         renderInfo);
   }
 
   ProjectionMapParams panelParams = params;
@@ -167,13 +265,20 @@ RgbImage ProjectionMapGenerator::makeDensityMapImage(SimulationDataset& particle
   ProjectionMapContext panelCtx =
     BuildProjectionMapContext(panelParams,
                               ctx.time);
-  return makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
+  return makeSingleDensityMapImage(particles,
+                                   units,
+                                   panelParams,
+                                   panelCtx,
+                                   drawAnnotations,
+                                   renderInfo);
 }
 
 RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& particles,
 							   const UnitSystem& units,
 							   ProjectionMapParams& params,
-							   ProjectionMapContext& ctx)
+							   ProjectionMapContext& ctx,
+                           bool drawAnnotations,
+                           ProjectionMapRenderInfo* renderInfo)
 {
   std::vector<SimulationElement>& originalParticles = particles.simulationBlock.particles;
   
@@ -737,13 +842,21 @@ RgbImage ProjectionMapGenerator::makeSingleDensityMapImage(SimulationDataset& pa
   auto end = high_resolution_clock::now();
   std::cout << "Elapsed time: " << duration_cast<duration<double>>(end - start).count() << " sec\n";
 
-  return composeProjectionMapImage(map, params, ctx, particles.simulationBlock, units);
+  return composeProjectionMapImage(map,
+                                   params,
+                                   ctx,
+                                   particles.simulationBlock,
+                                   units,
+                                   drawAnnotations,
+                                   renderInfo);
 }
 
 RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset& particles,
 							       const UnitSystem& units,
 							       ProjectionMapParams& params,
-							       ProjectionMapContext& ctx)
+							       ProjectionMapContext& ctx,
+                         bool drawAnnotations,
+                         ProjectionMapRenderInfo* renderInfo)
 {
   ProjectionEnsureLayoutInitialized(params);
   const int rows = std::clamp(params.multiPanelRows, 1, 3);
@@ -752,6 +865,8 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
 
   std::vector<RgbImage> panelImages;
   panelImages.resize(static_cast<size_t>(panelCount));
+  std::vector<ProjectionMapRenderInfo> panelInfos;
+  panelInfos.resize(static_cast<size_t>(panelCount));
 
   int panelWidth = 0;
   int panelHeight = 0;
@@ -774,15 +889,30 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
       ProjectionMapContext panelCtx =
         BuildProjectionMapContext(panelParams,
                                   ctx.time);
+      ProjectionMapRenderInfo panelInfo;
       RgbImage panel =
-        makeSingleDensityMapImage(particles, units, panelParams, panelCtx);
+        makeSingleDensityMapImage(particles,
+                                  units,
+                                  panelParams,
+                                  panelCtx,
+                                  drawAnnotations,
+                                  drawAnnotations ? nullptr : &panelInfo);
       if (!panel.valid()) {
         return {};
       }
 
-      panelWidth = std::max(panelWidth, panel.width);
-      panelHeight = std::max(panelHeight, panel.height);
+      if (!drawAnnotations && panelInfo.valid) {
+        panelInfo.params = panelParams;
+        panelInfo.ctx = panelCtx;
+        ProjectionEstimatePdfPanelLayout(panelInfo);
+        panelWidth = std::max(panelWidth, panelInfo.pageWidth);
+        panelHeight = std::max(panelHeight, panelInfo.pageHeight);
+      } else {
+        panelWidth = std::max(panelWidth, panel.width);
+        panelHeight = std::max(panelHeight, panel.height);
+      }
       panelImages[static_cast<size_t>(i)] = std::move(panel);
+      panelInfos[static_cast<size_t>(i)] = std::move(panelInfo);
     }
   }
 
@@ -797,11 +927,37 @@ RgbImage ProjectionMapGenerator::makeMultiPanelDensityMapImage(SimulationDataset
     }
     const int col = i % cols;
     const int row = i / cols;
+    int dstX = col * panelWidth;
+    int dstY = row * panelHeight;
+    if (!drawAnnotations && panelInfos[static_cast<size_t>(i)].valid) {
+      ProjectionMapRenderInfo& panelInfo = panelInfos[static_cast<size_t>(i)];
+      panelInfo.tileOffsetX = dstX;
+      panelInfo.tileOffsetY = dstY;
+      dstX += panelInfo.plotOffsetX;
+      dstY += panelInfo.plotOffsetY;
+    }
     canvas.copyRgbImage(panelImages[static_cast<size_t>(i)].rgb,
                         panelImages[static_cast<size_t>(i)].width,
                         panelImages[static_cast<size_t>(i)].height,
-                        col * panelWidth,
-                        row * panelHeight);
+                        dstX,
+                        dstY);
+  }
+
+  if (!drawAnnotations && renderInfo) {
+    renderInfo->valid = true;
+    renderInfo->plotWidth = panelWidth * cols;
+    renderInfo->plotHeight = panelHeight * rows;
+    renderInfo->pageWidth = panelWidth * cols;
+    renderInfo->pageHeight = panelHeight * rows;
+    renderInfo->params = params;
+    renderInfo->ctx = ctx;
+    renderInfo->panels.clear();
+    renderInfo->panels.reserve(static_cast<size_t>(panelCount));
+    for (int i = 0; i < panelCount; ++i) {
+      if (panelInfos[static_cast<size_t>(i)].valid) {
+        renderInfo->panels.push_back(panelInfos[static_cast<size_t>(i)]);
+      }
+    }
   }
 
   return ToRgbImage(canvas);
@@ -877,7 +1033,9 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
   const ProjectionMapParams& params,
   const ProjectionMapContext& ctx,
   const SimulationBlock& block,
-  const UnitSystem& units)
+  const UnitSystem& units,
+  bool drawAnnotations,
+  ProjectionMapRenderInfo* renderInfo)
 {
   if (params.flagVoronoi &&
       params.voronoiMode == ProjectionVoronoiMode::OpacityRendering &&
@@ -890,19 +1048,42 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
     int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
     ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-    overlayStarParticles(canvas, map, params, ctx, block, units);
+    if (drawAnnotations) {
+      overlayStarParticles(canvas, map, params, ctx, block, units);
+    }
     overlayVectorField(canvas, map, params, block);
 
-    addColorBarToMap(canvas,
-                     map.cell_size,
-                     map.colorMinVal,
-                     map.colorMaxVal,
-                     colorBarWidth,
-                     ctx.colorMap,
-                     ctx.colorMapSize,
-                     QuantityLabel(params.selectedVarGas),
-                     params,
-                     ctx);
+    if (renderInfo) {
+      renderInfo->valid = true;
+      renderInfo->plotWidth = map.npixel_x;
+      renderInfo->plotHeight = map.npixel_y;
+      renderInfo->pageWidth = map.npixel_x;
+      renderInfo->pageHeight = map.npixel_y;
+      renderInfo->plotOffsetX = 0;
+      renderInfo->plotOffsetY = 0;
+      renderInfo->cellSize = map.cell_size;
+      renderInfo->colorMinVal = map.colorMinVal;
+      renderInfo->colorMaxVal = map.colorMaxVal;
+      renderInfo->colorBarLabel = QuantityLabel(params.selectedVarGas);
+      renderInfo->params = params;
+      renderInfo->ctx = ctx;
+      renderInfo->starOverlaySamples =
+        collectStarOverlaySamples(map, params, ctx, block, units);
+      renderInfo->panels.clear();
+    }
+
+    if (drawAnnotations) {
+      addColorBarToMap(canvas,
+                       map.cell_size,
+                       map.colorMinVal,
+                       map.colorMaxVal,
+                       colorBarWidth,
+                       ctx.colorMap,
+                       ctx.colorMapSize,
+                       QuantityLabel(params.selectedVarGas),
+                       params,
+                       ctx);
+    }
 
     return ToRgbImage(canvas);
   }
@@ -987,19 +1168,42 @@ RgbImage ProjectionMapGenerator::composeProjectionMapImage(
 
   int colorBarWidth = static_cast<int>(0.07f * map.npixel_x);
   ImageCanvas canvas{map.image, map.npixel_x, map.npixel_y};
-  overlayStarParticles(canvas, map, params, ctx, block, units);
+  if (drawAnnotations) {
+    overlayStarParticles(canvas, map, params, ctx, block, units);
+  }
   overlayVectorField(canvas, map, params, block);
 
-  addColorBarToMap(canvas,
-                   map.cell_size,
-                   rangeMin,
-                   rangeMax,
-                   colorBarWidth,
-                   ctx.colorMap,
-                   ctx.colorMapSize,
-                   params.var.c_str(),
-                   params,
-                   ctx);
+  if (renderInfo) {
+    renderInfo->valid = true;
+    renderInfo->plotWidth = map.npixel_x;
+    renderInfo->plotHeight = map.npixel_y;
+    renderInfo->pageWidth = map.npixel_x;
+    renderInfo->pageHeight = map.npixel_y;
+    renderInfo->plotOffsetX = 0;
+    renderInfo->plotOffsetY = 0;
+    renderInfo->cellSize = map.cell_size;
+    renderInfo->colorMinVal = rangeMin;
+    renderInfo->colorMaxVal = rangeMax;
+    renderInfo->colorBarLabel = params.var;
+    renderInfo->params = params;
+    renderInfo->ctx = ctx;
+    renderInfo->starOverlaySamples =
+      collectStarOverlaySamples(map, params, ctx, block, units);
+    renderInfo->panels.clear();
+  }
+
+  if (drawAnnotations) {
+    addColorBarToMap(canvas,
+                     map.cell_size,
+                     rangeMin,
+                     rangeMax,
+                     colorBarWidth,
+                     ctx.colorMap,
+                     ctx.colorMapSize,
+                     params.var.c_str(),
+                     params,
+                     ctx);
+  }
 
   return ToRgbImage(canvas);
 }
@@ -1984,6 +2188,134 @@ void ProjectionAutoScalarRange(const ProjectionStarOverlaySpec& overlay,
 }
 }
 
+std::vector<ProjectionMapRenderInfo::StarOverlaySample>
+ProjectionMapGenerator::collectStarOverlaySamples(
+  const ProjectionMap& map,
+  const ProjectionMapParams& params,
+  const ProjectionMapContext& ctx,
+  const SimulationBlock& block,
+  const UnitSystem& units)
+{
+  std::vector<ProjectionMapRenderInfo::StarOverlaySample> samples;
+  const ProjectionPanelSpec& panel = params.panels[0];
+  if (panel.starOverlayIndex <= 0 ||
+      panel.starOverlayIndex > params.starOverlayCount ||
+      panel.starOverlayIndex > kProjectionMaxStarOverlays) {
+    return samples;
+  }
+  const ProjectionStarOverlaySpec& overlay =
+    params.starOverlays[static_cast<size_t>(panel.starOverlayIndex - 1)];
+
+  float sizeMin = overlay.sizeValueMin;
+  float sizeMax = overlay.sizeValueMax;
+  if (overlay.autoSizeRange &&
+      overlay.sizeScale != ProjectionParticleSizeScale::Fixed &&
+      overlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed) {
+    ProjectionAutoScalarRange(overlay,
+                              block,
+                              units,
+                              params,
+                              ctx,
+                              overlay.sizeScalar,
+                              sizeMin,
+                              sizeMax);
+  }
+
+  float colorMin = overlay.colorValueMin;
+  float colorMax = overlay.colorValueMax;
+  if (overlay.autoColorRange &&
+      overlay.colorScalar != ProjectionParticleOverlayScalar::Fixed) {
+    ProjectionAutoScalarRange(overlay,
+                              block,
+                              units,
+                              params,
+                              ctx,
+                              overlay.colorScalar,
+                              colorMin,
+                              colorMax);
+  }
+
+  const ColormapDef* colormaps = AvailableColormaps();
+  const int colormapCount = AvailableColormapCount();
+  const int colormapIndex =
+    std::clamp(overlay.colorColormapIndex, 0, colormapCount - 1);
+
+  for (size_t i = 0; i < block.particles.size(); ++i) {
+    const SimulationElement& p = block.particles[i];
+    if (!ProjectionParticleTypeEnabled(overlay, block, p, i)) continue;
+    if (params.dataSource == DataSource::Stars && p.type == ctx.selectedType) {
+      continue;
+    }
+
+    float sizeT = 1.0f;
+    if (overlay.sizeScale != ProjectionParticleSizeScale::Fixed &&
+        overlay.sizeScalar != ProjectionParticleOverlayScalar::Fixed) {
+      const float value =
+        ProjectionParticleOverlayScalarValue(overlay,
+                                             block,
+                                             units,
+                                             params,
+                                             i,
+                                             overlay.sizeScalar);
+      const bool logSize =
+        overlay.sizeScale == ProjectionParticleSizeScale::Log;
+      sizeT = ProjectionNormalizeOverlayValue(value, sizeMin, sizeMax, logSize);
+      sizeT = ProjectionApplySizeScale(sizeT, overlay.sizeScale);
+      if (overlay.sizeBins > 1) {
+        const float bins = static_cast<float>(overlay.sizeBins - 1);
+        sizeT = std::round(sizeT * bins) / bins;
+      }
+    }
+    const float pointSize =
+      overlay.minSizePx + (overlay.maxSizePx - overlay.minSizePx) * sizeT;
+
+    float r = std::clamp(overlay.color[0], 0.0f, 1.0f);
+    float g = std::clamp(overlay.color[1], 0.0f, 1.0f);
+    float b = std::clamp(overlay.color[2], 0.0f, 1.0f);
+    if (overlay.colorScalar != ProjectionParticleOverlayScalar::Fixed &&
+        colormapCount > 0) {
+      const float value =
+        ProjectionParticleOverlayScalarValue(overlay,
+                                             block,
+                                             units,
+                                             params,
+                                             i,
+                                             overlay.colorScalar);
+      const float colorT =
+        ProjectionNormalizeOverlayValue(value,
+                                        colorMin,
+                                        colorMax,
+                                        overlay.colorLogScale);
+      colormapLookup(colorT,
+                     r,
+                     g,
+                     b,
+                     colormaps[colormapIndex].data,
+                     colormaps[colormapIndex].count);
+    }
+
+    glm::vec3 rad =
+      glm::vec3(p.position[0], p.position[1], p.position[2]) - map.center;
+    const float u = glm::dot(rad, map.uAxis);
+    const float v = glm::dot(rad, map.vAxis);
+
+    ProjectionMapRenderInfo::StarOverlaySample sample;
+    sample.x =
+      (u / (map.xlen[0] * 0.5f) + 1.0f) * 0.5f * map.npixel_x;
+    sample.y =
+      (v / (map.xlen[1] * 0.5f) + 1.0f) * 0.5f * map.npixel_y;
+    sample.sizePx = pointSize;
+    sample.r = r;
+    sample.g = g;
+    sample.b = b;
+    sample.alpha = std::clamp(overlay.opacity, 0.0f, 1.0f);
+    sample.symbol = overlay.symbol;
+    samples.push_back(sample);
+  }
+
+  return samples;
+}
+
 void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
 						  const ProjectionMap& map,
 						  const ProjectionMapParams& params,
@@ -2135,6 +2467,15 @@ void ProjectionMapGenerator::overlayStarParticles(ImageCanvas& canvas,
       canvas.drawDiamond(px, py, iradius, ur, ug, ub, a);
     } else if (overlay.symbol == ProjectionParticleSymbol::Square) {
       canvas.drawSquare(px, py, iradius, ur, ug, ub, a);
+    } else if (overlay.symbol == ProjectionParticleSymbol::FiveSpokeStar) {
+      canvas.drawFiveSpokeStar(px,
+                               py,
+                               iradius,
+                               thickness,
+                               ur,
+                               ug,
+                               ub,
+                               a);
     } else {
       canvas.drawSoftCircle(px, py, radius, ur, ug, ub, a);
     }
