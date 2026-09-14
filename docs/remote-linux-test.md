@@ -69,7 +69,7 @@ hostname -f
 From the repository on the allocated node:
 
 ```bash
-./scripts/launch_particle_vis.sh remote
+PARTICLE_VIS_REMOTE_MAX_FPS=5 ./scripts/launch_particle_vis.sh remote
 ```
 
 This selects `build-headless-local/particle_vis`, defaults EGL to the surfaceless
@@ -114,6 +114,15 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
 ## 5. Start the Mac viewer
 
 ```bash
+./build/remote_frame_viewer \
+  tcp://127.0.0.1:5570 \
+  tcp://127.0.0.1:5571
+```
+
+For the raw-frame Slurm relay, start with a smaller viewer window:
+
+```bash
+PARTICLE_VIS_VIEWER_WIDTH=640 PARTICLE_VIS_VIEWER_HEIGHT=360 \
 ./build/remote_frame_viewer \
   tcp://127.0.0.1:5570 \
   tcp://127.0.0.1:5571

@@ -3,12 +3,32 @@
 #include "platform/graphics_context.h"
 #include "platform/window_context.h"
 
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 
 #ifdef PYTHON_BRIDGE
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
 #endif
+
+namespace {
+
+double RemoteMaxFramesPerSecond()
+{
+  const char* value = std::getenv("PARTICLE_VIS_REMOTE_MAX_FPS");
+  if (!value || value[0] == '\0') {
+    return 10.0;
+  }
+  try {
+    const double parsed = std::stod(value);
+    return parsed >= 0.0 ? parsed : 10.0;
+  } catch (...) {
+    return 10.0;
+  }
+}
+
+} // namespace
 
 #ifdef PYTHON_BRIDGE
 struct RemoteFramePresenter::Impl {
@@ -27,11 +47,14 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
   , endpoint_(endpoint)
   , impl_(std::make_unique<Impl>())
 {
+  maxFramesPerSecond_ = RemoteMaxFramesPerSecond();
 #ifdef PYTHON_BRIDGE
   try {
     impl_->socket.set(zmq::sockopt::sndhwm, 2);
     impl_->socket.bind(endpoint_);
     active_ = true;
+    std::cerr << "Remote frame limit: " << maxFramesPerSecond_
+              << " FPS (0 disables pacing)\n";
   } catch (const zmq::error_t& e) {
     active_ = false;
     std::cerr << "RemoteFramePresenter failed to bind " << endpoint_
@@ -59,21 +82,32 @@ bool RemoteFramePresenter::resize(const PresentationSize& size)
                                        size.displayHeight,
                                        size.framebufferScaleX,
                                        size.framebufferScaleY);
+  nextFrameTime_ = {};
   return true;
 }
 
 PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 {
+  const auto now = std::chrono::steady_clock::now();
+  const bool publishDue =
+    active_ &&
+    (maxFramesPerSecond_ == 0.0 || nextFrameTime_.time_since_epoch().count() == 0 ||
+     now >= nextFrameTime_);
   PresentOptions localOptions = options;
-  localOptions.readbackFrame = true;
+  localOptions.readbackFrame = options.readbackFrame || publishDue;
 
   PresentResult result =
     (window_ && graphics_)
       ? PresentLocalFrame(*window_, *graphics_, localOptions)
       : PresentResult{};
 
-  if (!active_ || !result.frame.valid()) {
+  if (!publishDue || !result.frame.valid()) {
     return result;
+  }
+
+  if (maxFramesPerSecond_ > 0.0) {
+    nextFrameTime_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(1.0 / maxFramesPerSecond_));
   }
 
 #ifdef PYTHON_BRIDGE

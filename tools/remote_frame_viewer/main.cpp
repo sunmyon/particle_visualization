@@ -45,6 +45,17 @@ struct PointerPosition {
   float y = 0.0f;
 };
 
+int EnvInt(const char* name, int fallback)
+{
+  const char* value = std::getenv(name);
+  if (!value || value[0] == '\0') return fallback;
+  try {
+    return std::max(1, std::stoi(value));
+  } catch (...) {
+    return fallback;
+  }
+}
+
 const char* VertexShaderSource()
 {
   return R"(
@@ -580,8 +591,13 @@ int main(int argc, char** argv)
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-  GLFWwindow* window =
-    glfwCreateWindow(1280, 720, "Particle Vis Remote Viewer", nullptr, nullptr);
+  const int initialWidth = EnvInt("PARTICLE_VIS_VIEWER_WIDTH", 1280);
+  const int initialHeight = EnvInt("PARTICLE_VIS_VIEWER_HEIGHT", 720);
+  GLFWwindow* window = glfwCreateWindow(initialWidth,
+                                        initialHeight,
+                                        "Particle Vis Remote Viewer",
+                                        nullptr,
+                                        nullptr);
   if (!window) {
     std::cerr << "Failed to create GLFW window\n";
     glfwTerminate();

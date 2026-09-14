@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -27,4 +28,6 @@ private:
   std::unique_ptr<Impl> impl_;
   bool active_ = false;
   uint64_t frameId_ = 0;
+  double maxFramesPerSecond_ = 10.0;
+  std::chrono::steady_clock::time_point nextFrameTime_{};
 };
