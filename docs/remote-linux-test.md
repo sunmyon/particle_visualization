@@ -80,42 +80,36 @@ separate server-side snapshot configuration.
 The server log should identify the EGL/OpenGL renderer and show a successfully
 loaded snapshot.
 
-## 4. Open the SSH tunnel from the Mac
+## 4. Start the loopback-only Slurm relay on the Mac
 
-In a Mac terminal, connect directly to the allocated node through the login
-host. Replace both placeholders with the cluster-specific values:
+Keep the server on its default compute-node loopback endpoints. Do not bind the
+server to `0.0.0.0`. In another Freya login shell, record the allocation's job
+ID with `squeue -u $USER`; also keep the short node name from `hostname`.
 
-```bash
-ssh -N \
-  -L 5560:127.0.0.1:5560 \
-  -L 5561:127.0.0.1:5561 \
-  -J LOGIN_ALIAS GPU_NODE
-```
-
-The final SSH destination must be the node running `particle_vis`; this keeps
-the ZeroMQ sockets bound to loopback on that node.
-
-Freya currently does not allow a direct SSH login to an allocated compute node.
-For a short interactive test, bind only to the cluster network on different
-ports when starting the server:
+Freya does not allow a direct SSH login to an allocated compute node. Run the
+relay locally on the Mac instead. It binds only Mac loopback, opens SSH to the
+login node, and uses overlapping Slurm job steps to reach the two compute-node
+loopback sockets:
 
 ```bash
-PARTICLE_VIS_REMOTE_FRAME_ENDPOINT=tcp://0.0.0.0:5570 \
-PARTICLE_VIS_REMOTE_INPUT_ENDPOINT=tcp://0.0.0.0:5571 \
-./scripts/launch_particle_vis.sh remote
+python3 scripts/slurm_loopback_relay.py relay \
+  --login freya \
+  --job-id JOB_ID \
+  --node GPU_NODE
 ```
 
-Then let the login node relay directly to the allocated hostname:
+For example:
 
 ```bash
-ssh -N \
-  -L 5570:GPU_NODE:5570 \
-  -L 5571:GPU_NODE:5571 \
-  freya
+python3 scripts/slurm_loopback_relay.py relay \
+  --login freya \
+  --job-id 1089140 \
+  --node freyag204
 ```
 
-Use this cluster-interface binding only for the lifetime of the allocation,
-and stop the server when testing is complete.
+The relay listens only on `127.0.0.1:5570` and `127.0.0.1:5571`. Each accepted
+connection is carried over SSH standard input/output and an `srun --overlap`
+step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
 
 ## 5. Start the Mac viewer
 
