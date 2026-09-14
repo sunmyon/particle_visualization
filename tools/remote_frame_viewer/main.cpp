@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -12,6 +13,9 @@
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 namespace {
 
 struct RemoteFrame {
@@ -22,6 +26,8 @@ struct RemoteFrame {
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
+  std::string encoding = "RGBA8";
+  std::size_t payloadBytes = 0;
   std::vector<uint8_t> rgba;
 };
 
@@ -155,7 +161,8 @@ bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
     return false;
   }
 
-  if (header.value("type", "") != "rgba_frame") {
+  const std::string type = header.value("type", "");
+  if (type != "rgba_frame" && type != "jpeg_frame") {
     return false;
   }
 
@@ -164,9 +171,11 @@ bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
   const size_t expected =
     static_cast<size_t>(std::max(width, 0)) *
     static_cast<size_t>(std::max(height, 0)) * 4;
-  if (width <= 0 || height <= 0 || payloadMsg.size() != expected) {
+  if (width <= 0 || height <= 0) {
     return false;
   }
+
+  if (type == "rgba_frame" && payloadMsg.size() != expected) return false;
 
   out.frameId = header.value("frameId", uint64_t{0});
   out.width = width;
@@ -175,10 +184,31 @@ bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
   out.displayHeight = header.value("displayHeight", height);
   out.framebufferScaleX = header.value("framebufferScaleX", 1.0f);
   out.framebufferScaleY = header.value("framebufferScaleY", 1.0f);
-  out.rgba.resize(payloadMsg.size());
-  std::copy(static_cast<const uint8_t*>(payloadMsg.data()),
-            static_cast<const uint8_t*>(payloadMsg.data()) + payloadMsg.size(),
-            out.rgba.begin());
+  out.encoding = header.value("format", std::string("RGBA8"));
+  out.payloadBytes = payloadMsg.size();
+  if (type == "jpeg_frame") {
+    int decodedWidth = 0;
+    int decodedHeight = 0;
+    int channels = 0;
+    stbi_uc* decoded = stbi_load_from_memory(
+      static_cast<const stbi_uc*>(payloadMsg.data()),
+      static_cast<int>(payloadMsg.size()),
+      &decodedWidth,
+      &decodedHeight,
+      &channels,
+      4);
+    if (!decoded || decodedWidth != width || decodedHeight != height) {
+      stbi_image_free(decoded);
+      return false;
+    }
+    out.rgba.assign(decoded, decoded + expected);
+    stbi_image_free(decoded);
+  } else {
+    out.rgba.resize(payloadMsg.size());
+    std::copy(static_cast<const uint8_t*>(payloadMsg.data()),
+              static_cast<const uint8_t*>(payloadMsg.data()) + payloadMsg.size(),
+              out.rgba.begin());
+  }
   return true;
 }
 
@@ -252,6 +282,11 @@ void SendInput(GLFWwindow* window, const nlohmann::json& event)
     ctx->input->send(zmq::buffer(text), zmq::send_flags::dontwait);
   } catch (const zmq::error_t&) {
   }
+}
+
+void SendFrameRequest(GLFWwindow* window)
+{
+  SendInput(window, {{"type", "frame_request"}, {"version", 1}});
 }
 
 void SendFramebufferSize(GLFWwindow* window)
@@ -618,6 +653,7 @@ int main(int argc, char** argv)
   glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
   glfwSetWindowFocusCallback(window, FocusCallback);
   SendFramebufferSize(window);
+  SendFrameRequest(window);
 
   if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
     std::cerr << "Failed to initialize GLAD\n";
@@ -681,9 +717,16 @@ int main(int argc, char** argv)
   RemoteFrame frame;
   int textureWidth = 0;
   int textureHeight = 0;
+  auto nextInitialFrameRequest = std::chrono::steady_clock::now();
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
+
+    const auto now = std::chrono::steady_clock::now();
+    if (textureWidth == 0 && now >= nextInitialFrameRequest) {
+      SendFrameRequest(window);
+      nextInitialFrameRequest = now + std::chrono::milliseconds(250);
+    }
 
     RemoteFrame incoming;
     while (ReceiveFrame(sub, incoming)) {
@@ -691,6 +734,7 @@ int main(int argc, char** argv)
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;
       }
+      SendFrameRequest(window);
       int desiredWidth = 0;
       int desiredHeight = 0;
       glfwGetFramebufferSize(window, &desiredWidth, &desiredHeight);
@@ -723,9 +767,11 @@ int main(int argc, char** argv)
         textureHeight = frame.height;
         std::cout << "Remote frame " << frame.frameId << ": "
                   << textureWidth << "x" << textureHeight << " ("
+                  << frame.payloadBytes << " " << frame.encoding
+                  << " bytes; "
                   << static_cast<std::size_t>(textureWidth) *
                        static_cast<std::size_t>(textureHeight) * 4
-                  << " RGBA bytes), display " << frame.displayWidth << "x"
+                  << " decoded RGBA bytes), display " << frame.displayWidth << "x"
                   << frame.displayHeight << ", scale "
                   << frame.framebufferScaleX << "x"
                   << frame.framebufferScaleY << std::endl;

@@ -1,4 +1,5 @@
 #include "platform/remote_input_protocol.h"
+#include "platform/remote_frame_flow_control.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -17,6 +18,23 @@ void Check(bool ok, const char* message)
 int main()
 {
   using RemoteInputProtocol::Decode;
+
+  RemoteFrameFlowControl flow;
+  Check(!flow.tryBeginFrame(), "Frame began before the viewer was ready");
+  flow.markViewerReady();
+  Check(flow.tryBeginFrame(), "Initial dirty frame was not released");
+  Check(!flow.tryBeginFrame(), "Consumed frame was released twice");
+  flow.markViewerReady();
+  Check(!flow.tryBeginFrame(), "Unchanged frame was released");
+  flow.markDirty();
+  Check(flow.tryBeginFrame(), "Dirty frame was not released to a ready viewer");
+
+  Check(RemoteInputProtocol::IsFrameRequest(
+          R"({"type":"frame_request","version":1})"),
+        "Frame request control message was not recognized");
+  Check(!RemoteInputProtocol::IsFrameRequest(
+          R"({"type":"frame_request","version":2})"),
+        "Unsupported frame request version was accepted");
   const auto move = Decode(R"({"type":"pointer_move","x":12.5,"y":24,
     "primaryDown":true,"capturedByUI":true,"modifiers":{"shift":true},
     "viewport":{"x":3,"y":4,"width":800,"height":600,

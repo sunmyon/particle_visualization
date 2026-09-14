@@ -5,6 +5,7 @@
 #include "platform/graphics_context.h"
 #include "platform/local_present.h"
 #include "platform/remote_frame_presenter.h"
+#include "platform/remote_frame_flow_control.h"
 #include "platform/remote_input_receiver.h"
 #include "platform/window_context.h"
 
@@ -33,6 +34,7 @@ private:
   WindowContext window_;
   std::unique_ptr<GraphicsContext> graphics_;
   std::unique_ptr<LocalFramePresenter> localPresenter_;
+  RemoteFrameFlowControl remoteFrameFlow_;
   std::unique_ptr<RemoteFramePresenter> remotePresenter_;
   RemoteInputReceiver remoteInput_;
   bool shutdownCalled_ = false;

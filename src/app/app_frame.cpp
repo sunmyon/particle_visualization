@@ -1279,6 +1279,8 @@ void RunFrame(AppState& app,
 
   PresentOptions presentOptions;
   presentOptions.readbackFrame = captureRenderSnapshot;
+  presentOptions.contentChanged =
+    !inputEvents.empty() || app.runtime.snapshotLoad.result.loadedThisFrame;
   const PresentResult presentResult = presenter.present(presentOptions);
   if (captureRenderSnapshot) {
     SaveRequestedRenderSnapshot(app.runtime.settings.request,

@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "platform/remote_input_protocol.h"
+#include "platform/remote_frame_flow_control.h"
 #include <zmq.hpp>
 #else
 #include <iostream>
@@ -19,7 +20,7 @@ struct RemoteInputReceiver::Impl {
   zmq::context_t context{1};
   zmq::socket_t socket{context, zmq::socket_type::pull};
 
-  void loop(InputEventQueue* queue)
+  void loop(InputEventQueue* queue, RemoteFrameFlowControl* flowControl)
   {
     while (running.load()) {
       zmq::pollitem_t items[] = {
@@ -35,10 +36,16 @@ struct RemoteInputReceiver::Impl {
         continue;
       }
 
-      const auto event = RemoteInputProtocol::Decode(
-        std::string_view(static_cast<const char*>(msg.data()), msg.size()));
+      const std::string_view message(
+        static_cast<const char*>(msg.data()), msg.size());
+      if (RemoteInputProtocol::IsFrameRequest(message)) {
+        if (flowControl) flowControl->markViewerReady();
+        continue;
+      }
+      const auto event = RemoteInputProtocol::Decode(message);
       if (event) {
         queue->push(*event);
+        if (flowControl) flowControl->markDirty();
       }
     }
   }
@@ -54,10 +61,13 @@ RemoteInputReceiver::~RemoteInputReceiver()
   stop();
 }
 
-bool RemoteInputReceiver::start(const std::string& endpoint, InputEventQueue& queue)
+bool RemoteInputReceiver::start(const std::string& endpoint,
+                                InputEventQueue& queue,
+                                RemoteFrameFlowControl* flowControl)
 {
 #ifndef PYTHON_BRIDGE
   (void)queue;
+  (void)flowControl;
   endpoint_ = endpoint;
   std::cerr << "RemoteInputReceiver disabled: build without PYTHON_BRIDGE/ZMQ. "
             << "Endpoint ignored: " << endpoint_ << '\n';
@@ -84,7 +94,7 @@ bool RemoteInputReceiver::start(const std::string& endpoint, InputEventQueue& qu
   }
 
   impl_->running = true;
-  impl_->thread = std::thread(&Impl::loop, impl_.get(), &queue);
+  impl_->thread = std::thread(&Impl::loop, impl_.get(), &queue, flowControl);
   active_ = true;
   return true;
 #endif

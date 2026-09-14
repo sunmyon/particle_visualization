@@ -5,6 +5,8 @@
 
 #include "interaction/input_event.h"
 
+class RemoteFrameFlowControl;
+
 class RemoteInputReceiver {
 public:
   RemoteInputReceiver();
@@ -13,7 +15,9 @@ public:
   RemoteInputReceiver(const RemoteInputReceiver&) = delete;
   RemoteInputReceiver& operator=(const RemoteInputReceiver&) = delete;
 
-  bool start(const std::string& endpoint, InputEventQueue& queue);
+  bool start(const std::string& endpoint,
+             InputEventQueue& queue,
+             RemoteFrameFlowControl* flowControl = nullptr);
   void stop();
 
   bool active() const { return active_; }

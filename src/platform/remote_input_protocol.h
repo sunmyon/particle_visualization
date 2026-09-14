@@ -17,4 +17,7 @@ inline constexpr std::size_t MaxFramebufferPixels = 32 * 1024 * 1024;
 // use version 1. UI capture is retained as a legacy hint, not a UI authority.
 std::optional<InputEvent> Decode(std::string_view message);
 
+// Flow-control messages are transport control, not application input.
+bool IsFrameRequest(std::string_view message);
+
 } // namespace RemoteInputProtocol

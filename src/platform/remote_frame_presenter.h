@@ -6,11 +6,14 @@
 
 #include "platform/local_present.h"
 
+class RemoteFrameFlowControl;
+
 class RemoteFramePresenter final : public IFramePresenter {
 public:
   RemoteFramePresenter(WindowContext& window,
                        GraphicsContext& graphics,
-                       const std::string& endpoint);
+                       const std::string& endpoint,
+                       RemoteFrameFlowControl* flowControl = nullptr);
   ~RemoteFramePresenter() override;
 
   PresentResult present(const PresentOptions& options = {}) override;
@@ -24,10 +27,12 @@ private:
 
   WindowContext* window_ = nullptr;
   GraphicsContext* graphics_ = nullptr;
+  RemoteFrameFlowControl* flowControl_ = nullptr;
   std::string endpoint_;
   std::unique_ptr<Impl> impl_;
   bool active_ = false;
   uint64_t frameId_ = 0;
   double maxFramesPerSecond_ = 10.0;
+  int jpegQuality_ = 80;
   std::chrono::steady_clock::time_point nextFrameTime_{};
 };

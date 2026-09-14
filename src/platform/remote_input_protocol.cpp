@@ -267,4 +267,20 @@ std::optional<InputEvent> Decode(std::string_view message)
     return std::nullopt;
   }
 }
+
+bool IsFrameRequest(std::string_view message)
+{
+  if (message.empty() || message.size() > MaxMessageBytes) return false;
+  try {
+    const Json json = Json::parse(message.begin(), message.end());
+    if (!json.is_object() ||
+        json.value("type", std::string()) != "frame_request") {
+      return false;
+    }
+    int version = 1;
+    return ReadInt(json, "version", version) && version == 1;
+  } catch (const Json::exception&) {
+    return false;
+  }
+}
 } // namespace RemoteInputProtocol

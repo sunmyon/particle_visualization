@@ -216,7 +216,8 @@ bool PlatformSession::init(AppState& app, CallbackContext& callbackCtx)
       remotePresenter_ =
         std::make_unique<RemoteFramePresenter>(window_,
                                                *graphics_,
-                                               std::string(endpoint));
+                                               std::string(endpoint),
+                                               &remoteFrameFlow_);
     }
   }
 
@@ -227,7 +228,9 @@ void PlatformSession::startRemoteInput(AppState& app)
 {
   if (const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_INPUT_ENDPOINT")) {
     if (endpoint[0] != '\0') {
-      remoteInput_.start(endpoint, app.runtime.inputEvents);
+      remoteInput_.start(endpoint,
+                         app.runtime.inputEvents,
+                         &remoteFrameFlow_);
     }
   }
 }

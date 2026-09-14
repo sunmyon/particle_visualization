@@ -1,8 +1,11 @@
 #include "platform/remote_frame_presenter.h"
 
 #include "platform/graphics_context.h"
+#include "platform/remote_frame_flow_control.h"
 #include "platform/window_context.h"
+#include "image/image_io.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -28,6 +31,17 @@ double RemoteMaxFramesPerSecond()
   }
 }
 
+int RemoteJpegQuality()
+{
+  const char* value = std::getenv("PARTICLE_VIS_REMOTE_JPEG_QUALITY");
+  if (!value || value[0] == '\0') return 80;
+  try {
+    return std::clamp(std::stoi(value), 0, 100);
+  } catch (...) {
+    return 80;
+  }
+}
+
 } // namespace
 
 #ifdef PYTHON_BRIDGE
@@ -41,20 +55,30 @@ struct RemoteFramePresenter::Impl {};
 
 RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
                                            GraphicsContext& graphics,
-                                           const std::string& endpoint)
+                                           const std::string& endpoint,
+                                           RemoteFrameFlowControl* flowControl)
   : window_(&window)
   , graphics_(&graphics)
+  , flowControl_(flowControl)
   , endpoint_(endpoint)
   , impl_(std::make_unique<Impl>())
 {
   maxFramesPerSecond_ = RemoteMaxFramesPerSecond();
+  jpegQuality_ = RemoteJpegQuality();
 #ifdef PYTHON_BRIDGE
   try {
-    impl_->socket.set(zmq::sockopt::sndhwm, 2);
+    impl_->socket.set(zmq::sockopt::sndhwm, 1);
+    impl_->socket.set(zmq::sockopt::sndtimeo, 100);
+    impl_->socket.set(zmq::sockopt::linger, 0);
     impl_->socket.bind(endpoint_);
     active_ = true;
     std::cerr << "Remote frame limit: " << maxFramesPerSecond_
               << " FPS (0 disables pacing)\n";
+    std::cerr << "Remote frame encoding: "
+              << (jpegQuality_ > 0
+                    ? "JPEG quality " + std::to_string(jpegQuality_)
+                    : "raw RGBA")
+              << '\n';
   } catch (const zmq::error_t& e) {
     active_ = false;
     std::cerr << "RemoteFramePresenter failed to bind " << endpoint_
@@ -88,11 +112,15 @@ bool RemoteFramePresenter::resize(const PresentationSize& size)
 
 PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 {
+  if (flowControl_ && options.contentChanged) {
+    flowControl_->markDirty();
+  }
   const auto now = std::chrono::steady_clock::now();
-  const bool publishDue =
-    active_ &&
-    (maxFramesPerSecond_ == 0.0 || nextFrameTime_.time_since_epoch().count() == 0 ||
-     now >= nextFrameTime_);
+  const bool pacingAllowsFrame =
+    maxFramesPerSecond_ == 0.0 || nextFrameTime_.time_since_epoch().count() == 0 ||
+    now >= nextFrameTime_;
+  const bool publishDue = active_ && pacingAllowsFrame &&
+    (!flowControl_ || flowControl_->tryBeginFrame());
   PresentOptions localOptions = options;
   localOptions.readbackFrame = options.readbackFrame || publishDue;
 
@@ -113,8 +141,18 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 #ifdef PYTHON_BRIDGE
   result.frame.frameId = ++frameId_;
 
+  std::vector<unsigned char> encoded;
+  const bool useJpeg =
+    jpegQuality_ > 0 &&
+    EncodeJpegRgba(result.frame.width,
+                   result.frame.height,
+                   result.frame.pixels,
+                   jpegQuality_,
+                   encoded);
+  const auto& payload = useJpeg ? encoded : result.frame.pixels;
+
   nlohmann::json header{
-    {"type", "rgba_frame"},
+    {"type", useJpeg ? "jpeg_frame" : "rgba_frame"},
     {"frameId", result.frame.frameId},
     {"width", result.frame.width},
     {"height", result.frame.height},
@@ -122,8 +160,9 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     {"displayHeight", window_->displayHeight()},
     {"framebufferScaleX", window_->framebufferScaleX()},
     {"framebufferScaleY", window_->framebufferScaleY()},
-    {"format", "RGBA8"},
-    {"bytes", result.frame.pixels.size()}
+    {"format", useJpeg ? "JPEG" : "RGBA8"},
+    {"bytes", payload.size()},
+    {"rawBytes", result.frame.pixels.size()}
   };
 
   const std::string headerText = header.dump();
@@ -136,8 +175,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
       return result;
     }
 
-    impl_->socket.send(zmq::buffer(result.frame.pixels),
-                       zmq::send_flags::dontwait);
+    impl_->socket.send(zmq::buffer(payload), zmq::send_flags::none);
   } catch (const zmq::error_t&) {
     // Dropping frames is acceptable for the prototype path.
   }

@@ -1579,6 +1579,7 @@ if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
   target_include_directories(remote_frame_viewer SYSTEM PRIVATE
     ${EXTERNAL_DIR}/glad/include
     ${EXTERNAL_DIR}/include
+    ${EXTERNAL_DIR}/stb
   )
 
   detect_and_link_glfw(remote_frame_viewer "glfw" "glfw")
@@ -1670,6 +1671,15 @@ if(BUILD_TESTING AND PYTHON_BRIDGE)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(remote_frame_jpeg_test
+    tests/remote_frame_jpeg_test.cpp
+    ${SRC_DIR}/image/image_io.cpp)
+  target_include_directories(remote_frame_jpeg_test PRIVATE
+    ${SRC_DIR}
+    ${EXTERNAL_DIR}/include
+    ${EXTERNAL_DIR}/stb)
+  add_test(NAME remote_frame_jpeg_test COMMAND remote_frame_jpeg_test)
+
   add_executable(remote_imgui_input_test
     tests/remote_imgui_input_test.cpp
     ${SRC_DIR}/platform/remote_imgui_input.cpp

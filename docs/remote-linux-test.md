@@ -78,7 +78,9 @@ platform, and binds the frame and input sockets to `127.0.0.1:5560` and
 separate server-side snapshot configuration.
 
 The server log should identify the EGL/OpenGL renderer and show a successfully
-loaded snapshot.
+loaded snapshot. Remote frames use JPEG quality 80 by default. Set
+`PARTICLE_VIS_REMOTE_JPEG_QUALITY` from 1 to 100 to change the quality, or use
+`PARTICLE_VIS_REMOTE_JPEG_QUALITY=0` for the legacy raw RGBA payload.
 
 ## 4. Start the loopback-only Slurm relay on the Mac
 
@@ -119,7 +121,7 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
   tcp://127.0.0.1:5571
 ```
 
-For the raw-frame Slurm relay, start with a smaller viewer window:
+To compare bandwidth at a smaller viewer size:
 
 ```bash
 PARTICLE_VIS_VIEWER_WIDTH=640 PARTICLE_VIS_VIEWER_HEIGHT=360 \
@@ -132,7 +134,9 @@ Verify particle rendering, Retina font size, rotation, pan, zoom, text input,
 resize, the embedded server-side file browser, focus loss, and the two-step
 Escape behavior from a maximized window.
 
-The viewer prints received physical resolution, logical display size, DPI
-scale, and RGBA byte count. Record these together with observed interaction
-latency. Raw 2560×1440 RGBA frames are about 14 MiB each, so this test is also a
-baseline for deciding the next compression and pacing work.
+The viewer requests a frame after consuming the previous one. The server sends
+only after valid remote input or resize changes the scene; idle sessions send
+no repeated frame data, and input bursts collapse into one pending frame. It
+prints physical resolution, logical display size, DPI scale, and decoded RGBA
+size. Record these together with observed interaction latency. Set JPEG quality
+to zero when collecting a raw-transfer baseline.

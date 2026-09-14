@@ -36,13 +36,23 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
     width = header.get("width", 0)
     height = header.get("height", 0)
     expected = width * height * 4
-    if header.get("type") != "rgba_frame" or expected <= 0:
+    frame_type = header.get("type")
+    if frame_type not in ("rgba_frame", "jpeg_frame") or expected <= 0:
         raise RuntimeError(f"invalid frame header: {header!r}")
-    if header.get("bytes") != expected or len(payload) != expected:
+    if header.get("bytes") != len(payload):
         raise RuntimeError(
             f"invalid payload size: header={header.get('bytes')}, "
-            f"received={len(payload)}, expected={expected}"
+            f"received={len(payload)}"
         )
+    if frame_type == "rgba_frame" and len(payload) != expected:
+        raise RuntimeError(
+            f"invalid RGBA payload size: received={len(payload)}, expected={expected}"
+        )
+    if frame_type == "jpeg_frame":
+        if header.get("rawBytes") != expected:
+            raise RuntimeError(f"invalid JPEG raw size: {header!r}")
+        if not payload.startswith(b"\xff\xd8") or not payload.endswith(b"\xff\xd9"):
+            raise RuntimeError("invalid JPEG payload markers")
     return header, payload
 
 
@@ -142,7 +152,15 @@ def run(args: argparse.Namespace) -> int:
     sender.connect(input_endpoint)
 
     try:
+        sender.send_json({"type": "frame_request", "version": 1})
         first, _ = receive_frame(subscriber, args.timeout)
+        sender.send_json({"type": "frame_request", "version": 1})
+        if subscriber.poll(300, zmq.POLLIN):
+            unexpected, _ = receive_frame(subscriber, args.timeout)
+            raise RuntimeError(
+                "server published an unchanged frame while idle: "
+                f"frameId={unexpected.get('frameId')}"
+            )
         active_width = args.width
         active_height = args.height
         active_display_width = round(active_width / args.display_scale)
@@ -169,6 +187,7 @@ def run(args: argparse.Namespace) -> int:
                 now = time.monotonic()
                 if now >= next_send:
                     sender.send_json(resize_event)
+                    sender.send_json({"type": "frame_request", "version": 1})
                     next_send = now + 0.1
                 resized, _ = receive_frame(
                     subscriber,
@@ -212,6 +231,7 @@ def run(args: argparse.Namespace) -> int:
         for event in events:
             event["viewport"] = viewport
             sender.send_json(event)
+        sender.send_json({"type": "frame_request", "version": 1})
 
         second, _ = receive_frame(subscriber, args.timeout)
         if second["frameId"] <= resized["frameId"]:
@@ -234,6 +254,8 @@ def run(args: argparse.Namespace) -> int:
                     "initialSize": [first["width"], first["height"]],
                     "finalSize": [second["width"], second["height"]],
                     "payloadBytes": second["bytes"],
+                    "rawBytes": second.get("rawBytes", second["bytes"]),
+                    "encoding": second.get("format", "RGBA8"),
                     "displaySize": [active_display_width, active_display_height],
                     "framebufferScale": args.display_scale,
                     "inputEventsSent": len(events) + 1 + resize_requested,

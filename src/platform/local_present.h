@@ -7,6 +7,7 @@ class GraphicsContext;
 
 struct PresentOptions {
   bool readbackFrame = false;
+  bool contentChanged = false;
 };
 
 struct PresentResult {
