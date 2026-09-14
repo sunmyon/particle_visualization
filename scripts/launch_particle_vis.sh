@@ -11,7 +11,8 @@ else
   MODE="auto"
 fi
 
-if [[ ! -f "$REPO_ROOT/example/output_0000.dat" ]]; then
+if [[ ! -f "$REPO_ROOT/example/output_0000.dat" &&
+      -z "${PARTICLE_VIS_CONFIG_PATH:-}" ]]; then
   echo "Sample data not found. Preparing default sample..."
   bash "$REPO_ROOT/example/download_data.sh"
 fi
