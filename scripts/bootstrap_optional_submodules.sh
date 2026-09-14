@@ -148,6 +148,19 @@ build_cmake_dep() {
   local dep_build="${build_root}/${dep}"
   local dep_install="${install_root}/${dep}"
 
+  local dep_prefix
+  for dep_prefix in glfw glm eigen nlohmann_json libzmq cppzmq hdf5; do
+    if [[ -d "${install_root}/${dep_prefix}/lib/pkgconfig" ]]; then
+      export PKG_CONFIG_PATH="${install_root}/${dep_prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    fi
+    if [[ -d "${install_root}/${dep_prefix}/lib64/pkgconfig" ]]; then
+      export PKG_CONFIG_PATH="${install_root}/${dep_prefix}/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    fi
+    if [[ -d "${install_root}/${dep_prefix}/share/pkgconfig" ]]; then
+      export PKG_CONFIG_PATH="${install_root}/${dep_prefix}/share/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    fi
+  done
+
   if [[ ! -f "${src_dir}/CMakeLists.txt" ]]; then
     echo "Skipping ${dep}: no CMakeLists.txt found at ${src_dir}" >&2
     return 0
