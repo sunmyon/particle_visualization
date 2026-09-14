@@ -45,8 +45,18 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
     return header, payload
 
 
+def base_config_path(repository: Path) -> Path:
+    local_config = repository / "config.txt"
+    if local_config.is_file():
+        return local_config
+    sample_config = repository / "config.txt.sample"
+    if sample_config.is_file():
+        return sample_config
+    raise RuntimeError("neither config.txt nor config.txt.sample was found")
+
+
 def write_snapshot_config(repository: Path, snapshot: Path, destination: Path) -> None:
-    lines = (repository / "config.txt").read_text(encoding="utf-8").splitlines()
+    lines = base_config_path(repository).read_text(encoding="utf-8").splitlines()
     replacements = {
         "FileFormat": snapshot.name,
         "FolderPath": f"{snapshot.parent}{os.sep}",
@@ -94,7 +104,7 @@ def run(args: argparse.Namespace) -> int:
         write_snapshot_config(repository, snapshot, temporary_config)
     else:
         temporary_config.write_text(
-            (repository / "config.txt").read_text(encoding="utf-8"),
+            base_config_path(repository).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 
