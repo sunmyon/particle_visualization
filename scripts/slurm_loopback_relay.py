@@ -92,7 +92,8 @@ class Relay:
         return [
             "ssh", "-T", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR",
             self.args.login,
-            "srun", "--jobid=" + self.args.job_id, "--overlap", "--nodes=1",
+            "srun", "--jobid=" + self.args.job_id, "--overlap", "--unbuffered",
+            "--nodes=1",
             "--ntasks=1", "--nodelist=" + self.args.node,
             "python3", self.args.remote_script, "connect", "127.0.0.1",
             str(remote_port),
@@ -130,7 +131,8 @@ class Relay:
             listener.listen(4)
             listeners.append((listener, remote_port))
             print("127.0.0.1:{} -> {} job {} node loopback:{}".format(
-                local_port, self.args.login, self.args.job_id, remote_port))
+                local_port, self.args.login, self.args.job_id, remote_port),
+                flush=True)
         try:
             while True:
                 readable, _, _ = select.select(
