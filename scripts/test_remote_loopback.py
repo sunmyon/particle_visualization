@@ -189,10 +189,12 @@ def run(args: argparse.Namespace) -> int:
                     sender.send_json(resize_event)
                     sender.send_json({"type": "frame_request", "version": 1})
                     next_send = now + 0.1
-                resized, _ = receive_frame(
-                    subscriber,
-                    min(0.25, max(0.001, deadline - time.monotonic())),
+                wait_seconds = min(
+                    0.25, max(0.001, deadline - time.monotonic())
                 )
+                if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
+                    continue
+                resized, _ = receive_frame(subscriber, args.timeout)
                 if (resized["width"], resized["height"]) == (
                     active_width,
                     active_height,
