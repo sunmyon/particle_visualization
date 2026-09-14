@@ -135,7 +135,7 @@ PARTICLE_VIS_SAMPLE_URL="https://your-host/path/output_0000.dat" bash ./example/
 Use the wrapper to launch with runtime-safe library paths and automatic data setup:
 
 ```bash
-./scripts/launch_particle_vis.sh [auto|gui|headless]
+./scripts/launch_particle_vis.sh [auto|gui|headless|remote]
 ```
 
 Behavior:
@@ -144,6 +144,8 @@ Behavior:
 2. Selects binary by mode:
    - `gui`: `./particle_vis`
    - `headless`: `./build-headless-local/particle_vis`
+   - `remote`: the headless binary with loopback-only frame/input endpoints on
+     ports 5560 and 5561
    - `auto`: GUI only when `DISPLAY` is reachable (`xdpyinfo`/`xset` probe), otherwise headless
 3. Sets `LD_LIBRARY_PATH=/usr/lib64:/lib64` to avoid Mesa/GLIBCXX mismatch on cluster module stacks.
 4. In headless mode, defaults `PARTICLE_VIS_EGL_PLATFORM=surfaceless`.
@@ -161,6 +163,17 @@ run with explicit headless mode:
 ```
 
 or start an interactive session with working X11 forwarding before using `gui` mode.
+
+For interactive remote rendering on an allocated GPU node, run:
+
+```bash
+./scripts/launch_particle_vis.sh remote
+```
+
+Then forward ports 5560 and 5561 through SSH and run
+`remote_frame_viewer` on the client. See
+[`docs/remote-linux-test.md`](docs/remote-linux-test.md) for the complete test
+sequence.
 
 ### Wayland Backend (Recommended on GPU Nodes)
 

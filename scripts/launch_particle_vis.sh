@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 MODE="${1:-auto}"
-if [[ "$MODE" == "auto" || "$MODE" == "gui" || "$MODE" == "headless" ]]; then
+if [[ "$MODE" == "auto" || "$MODE" == "gui" || "$MODE" == "headless" || "$MODE" == "remote" ]]; then
   shift || true
 else
   MODE="auto"
@@ -49,6 +49,10 @@ pick_bin() {
     echo "$HEADLESS_BIN"
     return
   fi
+  if [[ "$MODE" == "remote" ]]; then
+    echo "$HEADLESS_BIN"
+    return
+  fi
 
   if display_is_usable; then
     echo "$GUI_BIN"
@@ -75,6 +79,14 @@ export LD_LIBRARY_PATH="/usr/lib64:/lib64"
 
 if [[ "$BIN" == "$HEADLESS_BIN" ]]; then
   export PARTICLE_VIS_EGL_PLATFORM="${PARTICLE_VIS_EGL_PLATFORM:-surfaceless}"
+fi
+
+if [[ "$MODE" == "remote" ]]; then
+  export PARTICLE_VIS_HEADLESS=1
+  export PARTICLE_VIS_REMOTE_FRAME_ENDPOINT="${PARTICLE_VIS_REMOTE_FRAME_ENDPOINT:-tcp://127.0.0.1:5560}"
+  export PARTICLE_VIS_REMOTE_INPUT_ENDPOINT="${PARTICLE_VIS_REMOTE_INPUT_ENDPOINT:-tcp://127.0.0.1:5561}"
+  echo "Remote frames: $PARTICLE_VIS_REMOTE_FRAME_ENDPOINT"
+  echo "Remote input:  $PARTICLE_VIS_REMOTE_INPUT_ENDPOINT"
 fi
 
 echo "Launching: $BIN (mode=$MODE)"
