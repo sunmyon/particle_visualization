@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 try:
     import zmq
@@ -153,19 +154,26 @@ def run(args: argparse.Namespace) -> int:
                 active_width, active_height = args.resize
                 active_display_width = round(active_width / args.display_scale)
                 active_display_height = round(active_height / args.display_scale)
-            sender.send_json(
-                {
-                    "type": "framebuffer_resize",
-                    "width": active_width,
-                    "height": active_height,
-                    "displayWidth": active_display_width,
-                    "displayHeight": active_display_height,
-                    "framebufferScaleX": args.display_scale,
-                    "framebufferScaleY": args.display_scale,
-                }
-            )
-            for attempt in range(60):
-                resized, _ = receive_frame(subscriber, args.timeout)
+            resize_event = {
+                "type": "framebuffer_resize",
+                "width": active_width,
+                "height": active_height,
+                "displayWidth": active_display_width,
+                "displayHeight": active_display_height,
+                "framebufferScaleX": args.display_scale,
+                "framebufferScaleY": args.display_scale,
+            }
+            deadline = time.monotonic() + args.timeout
+            next_send = 0.0
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                if now >= next_send:
+                    sender.send_json(resize_event)
+                    next_send = now + 0.1
+                resized, _ = receive_frame(
+                    subscriber,
+                    min(0.25, max(0.001, deadline - time.monotonic())),
+                )
                 if (resized["width"], resized["height"]) == (
                     active_width,
                     active_height,
@@ -178,18 +186,6 @@ def run(args: argparse.Namespace) -> int:
                             f"incorrect display metrics in resized frame: {resized!r}"
                         )
                     break
-                if attempt == 4:
-                    sender.send_json(
-                        {
-                            "type": "framebuffer_resize",
-                            "width": active_width,
-                            "height": active_height,
-                            "displayWidth": active_display_width,
-                            "displayHeight": active_display_height,
-                            "framebufferScaleX": args.display_scale,
-                            "framebufferScaleY": args.display_scale,
-                        }
-                    )
             else:
                 raise RuntimeError(
                     "server did not publish a frame at the requested size "
