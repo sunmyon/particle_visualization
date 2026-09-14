@@ -91,7 +91,8 @@ void main()
   if (r2 > 1.0) discard;                 // round points
 
   // base alpha (soft edge)
-  float edge = smoothstep(1.0, 0.90, r2); // outer 10% fade
+  // GLSL leaves smoothstep undefined when edge0 is greater than edge1.
+  float edge = 1.0 - smoothstep(0.90, 1.0, r2); // outer 10% fade
   float alpha = edge * ((colorMode == 1) ? fixedColor.a : globalAlpha);
 
   FragColor = vec4(color, alpha);

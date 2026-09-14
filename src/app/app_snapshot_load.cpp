@@ -7,11 +7,65 @@
 #include "data/simulation_block.h"
 #include "data/simulation_block_validation.h"
 #include "data/header_info.h"
+#include "data/sample_coordinates.h"
 #include "core/physics_constants.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+
+#include <glm/gtc/quaternion.hpp>
+
+static bool AutoFitFirstSnapshotEnabled()
+{
+  const char* value = std::getenv("PARTICLE_VIS_AUTO_FIT_ON_FIRST_LOAD");
+  return value && value[0] != '\0' && std::strcmp(value, "0") != 0;
+}
+
+static void FitCameraToFirstSnapshot(CameraContext* camera,
+                                     const SimulationBlock& block)
+{
+  if (!camera || block.particles.empty()) return;
+
+  glm::vec3 boundsMin(std::numeric_limits<float>::max());
+  glm::vec3 boundsMax(-std::numeric_limits<float>::max());
+  for (const SimulationElement& particle : block.particles) {
+    const glm::vec3 position =
+      renderPosition(particle, block.worldToRenderScale);
+    boundsMin = glm::min(boundsMin, position);
+    boundsMax = glm::max(boundsMax, position);
+  }
+
+  const glm::vec3 center = 0.5f * (boundsMin + boundsMax);
+  const float radius = 0.5f * glm::length(boundsMax - boundsMin);
+  if (!std::isfinite(radius) || radius <= 0.0f) return;
+
+  glm::vec3 backward = camera->cameraPos - camera->cameraTarget;
+  if (glm::dot(backward, backward) <= 1.0e-12f) {
+    backward = glm::vec3(0.0f, 0.0f, 1.0f);
+  } else {
+    backward = glm::normalize(backward);
+  }
+
+  // A bounding sphere fits inside the 45 degree vertical field of view with
+  // a small margin at this distance.
+  const float distance = radius * 2.8f;
+  camera->cameraTarget = center;
+  camera->cameraPos = center + backward * distance;
+  camera->distance = distance;
+#ifdef ROTATE_QUATERNION
+  const glm::mat4 view =
+    glm::lookAt(camera->cameraPos, camera->cameraTarget, camera->cameraUp);
+  camera->cameraOrientation = glm::quat_cast(glm::inverse(view));
+#endif
+
+  std::fprintf(stderr,
+               "[Camera] fitted first snapshot: center=(%.6g, %.6g, %.6g) "
+               "radius=%.6g distance=%.6g\n",
+               center.x, center.y, center.z, radius, distance);
+}
 
 static void RescaleCameraForNormalizationChange(CameraContext* camera,
                                                 bool hadPreviousParticles,
@@ -301,6 +355,10 @@ void ProcessSnapshotLoadQueue(AppDataState& data,
 				     runtime.quantity);
     UpdateSnapshotCurrentState(loaded.header, runtime.quantity.units, fileNav.current);
     fileNav.current.loadedParticleCount = data.particles->simulationBlock.size();
+  }
+
+  if (camera && !hadPreviousParticles && AutoFitFirstSnapshotEnabled()) {
+    FitCameraToFirstSnapshot(camera, data.particles->simulationBlock);
   }
 
   if (data.particles) {

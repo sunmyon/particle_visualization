@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -107,7 +108,13 @@ def run(args: argparse.Namespace) -> int:
     backend = args.backend or ("metal" if platform.system() == "Darwin" else "opengl")
     temporary_directory = tempfile.TemporaryDirectory(prefix="particle-vis-loopback-")
     temporary_config = Path(temporary_directory.name) / "config.txt"
-    if args.snapshot:
+    if args.config:
+        source_config = Path(args.config).expanduser().resolve()
+        if not source_config.is_file():
+            temporary_directory.cleanup()
+            raise RuntimeError(f"config not found: {source_config}")
+        shutil.copyfile(source_config, temporary_config)
+    elif args.snapshot:
         snapshot = Path(args.snapshot).expanduser().resolve()
         if not snapshot.is_file():
             temporary_directory.cleanup()
@@ -235,9 +242,25 @@ def run(args: argparse.Namespace) -> int:
             sender.send_json(event)
         sender.send_json({"type": "frame_request", "version": 1})
 
-        second, _ = receive_frame(subscriber, args.timeout)
+        second, second_payload = receive_frame(subscriber, args.timeout)
         if second["frameId"] <= resized["frameId"]:
             raise RuntimeError("frame IDs did not advance after sending input")
+
+        if args.save_frame:
+            output = Path(args.save_frame).expanduser().resolve()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if second.get("format") == "JPEG":
+                output.write_bytes(second_payload)
+            else:
+                try:
+                    from PIL import Image
+                except ImportError as error:
+                    raise RuntimeError("Pillow is required to save raw RGBA") from error
+                Image.frombytes(
+                    "RGBA",
+                    (second["width"], second["height"]),
+                    second_payload,
+                ).save(output)
 
         sender.send_json({"type": "key", "key": "Escape", "action": "Press"})
         try:
@@ -294,8 +317,12 @@ def main() -> int:
     parser.add_argument("--display-scale", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=8.0)
     parser.add_argument("--snapshot", help="load this HDF5 snapshot via a temporary config")
+    parser.add_argument("--config", help="copy this complete application config for the run")
+    parser.add_argument("--save-frame", help="save the final received frame as JPEG or PNG")
     parser.add_argument("--show-server-output", action="store_true")
     args = parser.parse_args()
+    if (args.snapshot and args.config):
+        parser.error("--snapshot and --config cannot be used together")
     if (args.width <= 0 or args.height <= 0 or args.timeout <= 0 or
             args.display_scale <= 0 or
             (args.resize and any(value <= 0 for value in args.resize))):

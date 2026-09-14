@@ -104,7 +104,10 @@ void LoadInitialData(AppState& app)
                       SnapshotLoadOwner::UserNavigation,
                       app.runtime.settings.fileNavigation.navigation.currentStep,
                       100);
-  ProcessSnapshotLoadQueue(app.data, app.runtime, app.services);
+  ProcessSnapshotLoadQueue(app.data,
+                           app.runtime,
+                           app.services,
+                           &app.view.camera);
 }
 
 void Cleanup(AppState& app, RenderSystem& rs)
