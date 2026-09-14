@@ -158,7 +158,22 @@ build_cmake_dep() {
     -B "${dep_build}"
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_INSTALL_PREFIX="${dep_install}"
+    "-DCMAKE_PREFIX_PATH=${install_root}/glfw;${install_root}/glm;${install_root}/eigen;${install_root}/nlohmann_json;${install_root}/libzmq;${install_root}/cppzmq;${install_root}/hdf5"
   )
+
+  # Some module systems expose versioned gcc/g++ without replacing the
+  # unversioned cc/c++ wrappers. Keep every bootstrapped dependency on the
+  # compiler selected by the active environment.
+  if [[ -n "${CC:-}" ]]; then
+    cmake_args+=("-DCMAKE_C_COMPILER=${CC}")
+  elif command -v gcc >/dev/null 2>&1; then
+    cmake_args+=("-DCMAKE_C_COMPILER=$(command -v gcc)")
+  fi
+  if [[ -n "${CXX:-}" ]]; then
+    cmake_args+=("-DCMAKE_CXX_COMPILER=${CXX}")
+  elif command -v g++ >/dev/null 2>&1; then
+    cmake_args+=("-DCMAKE_CXX_COMPILER=$(command -v g++)")
+  fi
 
   case "${dep}" in
     glfw)
@@ -202,6 +217,9 @@ build_cmake_dep() {
     eigen)
       cmake_args+=(
         -DBUILD_TESTING=OFF
+        -DEIGEN_BUILD_TESTING=OFF
+        -DEIGEN_BUILD_BLAS=OFF
+        -DEIGEN_BUILD_LAPACK=OFF
         -DEIGEN_BUILD_DOC=OFF
         -DEIGEN_BUILD_PKGCONFIG=ON
       )

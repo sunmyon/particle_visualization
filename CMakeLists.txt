@@ -95,6 +95,20 @@ option(PARTICLE_VIS_ALLOW_SUBMODULE_BUILDS
   "Build supported dependency submodules from source when present"
   ON)
 
+# Make locally bootstrapped dependencies visible to the early feature checks
+# below. The full dependency registration later also adds pkg-config paths and
+# source-tree fallbacks, but PYTHON_BRIDGE/Eigen/HDF5 are resolved before then.
+if(PARTICLE_VIS_PREFER_SUBMODULE_DEPS)
+  foreach(_particle_vis_bootstrap_dep IN ITEMS
+      glfw glm eigen hdf5 libzmq cppzmq nlohmann_json)
+    set(_particle_vis_bootstrap_prefix
+      "${CMAKE_SOURCE_DIR}/external/submodules/_install/${_particle_vis_bootstrap_dep}")
+    if(EXISTS "${_particle_vis_bootstrap_prefix}")
+      list(PREPEND CMAKE_PREFIX_PATH "${_particle_vis_bootstrap_prefix}")
+    endif()
+  endforeach()
+endif()
+
 if(AUTO_HEADLESS_ON_MISSING_GLFW AND NOT PARTICLE_VIS_HEADLESS_ONLY AND UNIX AND NOT APPLE)
   set(_AUTO_HAVE_GLFW FALSE)
 
