@@ -448,6 +448,12 @@ bool MetalContext::beginFrame(int width, int height)
   return true;
 }
 
+bool MetalContext::resizeHeadless(int width, int height)
+{
+  // Headless textures are recreated lazily by beginFrame().
+  return impl_ && impl_->headless && width > 0 && height > 0;
+}
+
 bool MetalContext::initImGuiRenderer()
 {
   if (!impl_->device) {

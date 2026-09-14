@@ -93,4 +93,22 @@ NativeWindowHandle WindowContext::nativeWindowHandle() const
 void WindowContext::updateFramebufferSize(int width, int height)
 {
   viewport_.updateFramebufferSize(width, height);
+  displayWidth_ = width;
+  displayHeight_ = height;
+  framebufferScaleX_ = 1.0f;
+  framebufferScaleY_ = 1.0f;
+}
+
+void WindowContext::updateRemoteFramebufferSize(int width,
+                                                int height,
+                                                int displayWidth,
+                                                int displayHeight,
+                                                float framebufferScaleX,
+                                                float framebufferScaleY)
+{
+  viewport_.updateFramebufferSize(width, height);
+  displayWidth_ = displayWidth;
+  displayHeight_ = displayHeight;
+  framebufferScaleX_ = framebufferScaleX;
+  framebufferScaleY_ = framebufferScaleY;
 }

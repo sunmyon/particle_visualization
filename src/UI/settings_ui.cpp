@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -33,9 +34,20 @@
 
 #ifndef NONATIVEFILEDIALOG
 #include <nfd.h>
-#else
+#endif
+#ifdef PARTICLE_VIS_HAVE_IMGUI_FILE_DIALOG
 #include "ImGuiFileDialog.h" // Match the include path.
 #endif
+
+static bool UseEmbeddedFileDialog()
+{
+#ifdef NONATIVEFILEDIALOG
+  return true;
+#else
+  const char* endpoint = std::getenv("PARTICLE_VIS_REMOTE_FRAME_ENDPOINT");
+  return endpoint && endpoint[0] != '\0';
+#endif
+}
 
 static bool IsHDF5SnapshotPath(const char* path)
 {
@@ -1039,6 +1051,15 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
 #endif
 		
   if (ImGui::Button("Browse Files")) {
+    if (UseEmbeddedFileDialog()) {
+#ifdef PARTICLE_VIS_HAVE_IMGUI_FILE_DIALOG
+      IGFD::FileDialogConfig config;
+      config.path = input.folderPath;
+      config.fileName = "output";
+      ImGuiFileDialog::Instance()->OpenDialog(
+        "ChooseFileDlgKey", "Choose File", "**", config);
+#endif
+    } else {
 #ifndef NONATIVEFILEDIALOG
     nfdu8char_t* outPath = nullptr;
 
@@ -1064,19 +1085,11 @@ static void DrawFileNavigationSection(FileNavigationRuntimeState& rt,
     else {
       std::cerr << "Error: " << NFD_GetError() << std::endl;
     }
-#else
-    IGFD::FileDialogConfig config;
-    // Set the initial directory via the "path" member.
-    //config.path = src.filePath;
-    config.path = input.folderPath;
-    // Set an initial filename if needed; empty waits for user input.
-    config.fileName = "output"; 
-    // Leave other options such as selectable file count at their defaults.
-    ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", "**", config);
 #endif
+    }
   }
 		
-#ifdef NONATIVEFILEDIALOG
+#ifdef PARTICLE_VIS_HAVE_IMGUI_FILE_DIALOG
   if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey"))
     {
       if (ImGuiFileDialog::Instance()->IsOk())

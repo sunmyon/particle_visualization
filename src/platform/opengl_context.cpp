@@ -358,6 +358,7 @@ bool OpenGLContext::initHeadless(int width, int height)
   eglDisplay_ = display;
   eglSurface_ = surface;
   eglContext_ = context;
+  eglConfig_ = config;
 
   PrintOpenGLInfo();
   EnableDefaultOpenGLState();
@@ -365,6 +366,45 @@ bool OpenGLContext::initHeadless(int width, int height)
   std::cerr << "Initialized EGL headless OpenGL context "
             << major << "." << minor << " (" << width << "x" << height
             << ")" << std::endl;
+  return true;
+#endif
+}
+
+bool OpenGLContext::resizeHeadless(int width, int height)
+{
+#ifndef PARTICLE_VIS_HAVE_EGL
+  (void)width;
+  (void)height;
+  return false;
+#else
+  if (!headless_ || width <= 0 || height <= 0 || !eglDisplay_ ||
+      !eglSurface_ || !eglContext_ || !eglConfig_) {
+    return false;
+  }
+
+  EGLDisplay display = static_cast<EGLDisplay>(eglDisplay_);
+  EGLConfig config = static_cast<EGLConfig>(eglConfig_);
+  EGLContext context = static_cast<EGLContext>(eglContext_);
+  const EGLint surfaceAttribs[] = {
+    EGL_WIDTH, width,
+    EGL_HEIGHT, height,
+    EGL_NONE
+  };
+  EGLSurface replacement =
+    eglCreatePbufferSurface(display, config, surfaceAttribs);
+  if (replacement == EGL_NO_SURFACE) {
+    PrintEglError("Failed to resize EGL pbuffer surface.");
+    return false;
+  }
+  if (!eglMakeCurrent(display, replacement, replacement, context)) {
+    PrintEglError("Failed to activate resized EGL pbuffer surface.");
+    eglDestroySurface(display, replacement);
+    return false;
+  }
+
+  EGLSurface oldSurface = static_cast<EGLSurface>(eglSurface_);
+  eglSurface_ = replacement;
+  eglDestroySurface(display, oldSurface);
   return true;
 #endif
 }
@@ -383,6 +423,7 @@ void OpenGLContext::destroy()
     eglDisplay_ = nullptr;
     eglSurface_ = nullptr;
     eglContext_ = nullptr;
+    eglConfig_ = nullptr;
   }
 #endif
   headless_ = false;

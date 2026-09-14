@@ -19,6 +19,12 @@ public:
   void destroy();
 
   void updateFramebufferSize(int width, int height);
+  void updateRemoteFramebufferSize(int width,
+                                   int height,
+                                   int displayWidth,
+                                   int displayHeight,
+                                   float framebufferScaleX,
+                                   float framebufferScaleY);
   void pollEvents();
   void requestClose();
   bool shouldClose() const;
@@ -38,6 +44,10 @@ public:
   int viewportHeight() const { return viewport_.viewportHeight(); }
   int framebufferWidth() const { return viewport_.framebufferWidth(); }
   int framebufferHeight() const { return viewport_.framebufferHeight(); }
+  int displayWidth() const { return displayWidth_; }
+  int displayHeight() const { return displayHeight_; }
+  float framebufferScaleX() const { return framebufferScaleX_; }
+  float framebufferScaleY() const { return framebufferScaleY_; }
 
 private:
   bool headless_ = false;
@@ -45,4 +55,8 @@ private:
 
   std::unique_ptr<WindowBackend> windowBackend_;
   ViewportContext viewport_;
+  int displayWidth_ = 1280;
+  int displayHeight_ = 720;
+  float framebufferScaleX_ = 1.0f;
+  float framebufferScaleY_ = 1.0f;
 };

@@ -11,7 +11,7 @@ struct InputExecutionResult {
   bool cameraInteraction = false;
 };
 
-InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
+InputExecutionResult ExecuteInputEvents(const std::vector<InputEvent>& events,
                                         InteractionState& interaction,
                                         CameraContext& camera,
                                         const SettingsRuntimeState& settings);

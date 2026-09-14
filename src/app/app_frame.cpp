@@ -53,6 +53,7 @@ extern "C" void objc_autoreleasePoolPop(void* pool);
 #include "platform/local_present.h"
 
 #include "platform/imgui_context.h"
+#include "platform/remote_imgui_input.h"
 #include "platform/window_context.h"
 
 #include "UI/clump_ui.h"
@@ -898,14 +899,44 @@ static void ExecuteSettingsWindowOpenRequests(SettingsRuntimeState& settings,
   }
 }
 
-static bool BeginFrame(AppRuntimeState& runtime, WindowContext& window)
+static bool BeginFrame(AppRuntimeState& runtime,
+                       WindowContext& window,
+                       IFramePresenter& presenter,
+                       std::vector<InputEvent>& inputEvents)
 {
   float currentFrame = static_cast<float>(window.timeSeconds());
   float deltaTime = runtime.interaction.beginFrame(currentFrame);
   (void)deltaTime;
 
   window.pollEvents();
-  return BeginImGuiFrame(window.framebufferWidth(), window.framebufferHeight());
+  inputEvents = runtime.inputEvents.drain();
+  for (auto it = inputEvents.rbegin(); it != inputEvents.rend(); ++it) {
+    if (it->source == InputSource::Remote &&
+        it->type == InputEventType::FramebufferResize) {
+      presenter.resize({it->width,
+                        it->height,
+                        it->displayWidth,
+                        it->displayHeight,
+                        it->framebufferScaleX,
+                        it->framebufferScaleY});
+      break;
+    }
+  }
+  QueueRemoteInputForImGui(inputEvents);
+  const ImGuiFrameSize frameSize{
+    window.framebufferWidth(),
+    window.framebufferHeight(),
+    static_cast<float>(window.displayWidth()),
+    static_cast<float>(window.displayHeight()),
+    window.framebufferScaleX(),
+    window.framebufferScaleY()
+  };
+  if (!BeginImGuiFrame(frameSize)) {
+    runtime.inputEvents.prepend(std::move(inputEvents));
+    return false;
+  }
+  ApplyRemoteInputCapture(inputEvents, CurrentImGuiInputCapture());
+  return true;
 }
 
 static void UpdateRenderInteractionActivity(AppRuntimeState& runtime,
@@ -1068,8 +1099,9 @@ void RunFrame(AppState& app,
               IFramePresenter& presenter)
 {
   FrameAutoreleasePool frameAutoreleasePool;
+  std::vector<InputEvent> inputEvents;
 
-  if (!BeginFrame(app.runtime, window)) {
+  if (!BeginFrame(app.runtime, window, presenter, inputEvents)) {
     return;
   }
   StartVolumeRenderMovieIfRequested(app.runtime);
@@ -1082,7 +1114,7 @@ void RunFrame(AppState& app,
     app.ui.toolWindows.projectionMap.selectMode;
 
   const InputExecutionResult inputResult =
-    ExecuteInputEvents(app.runtime.inputEvents,
+    ExecuteInputEvents(inputEvents,
                        app.runtime.interaction,
                        app.view.camera,
                        app.runtime.settings);

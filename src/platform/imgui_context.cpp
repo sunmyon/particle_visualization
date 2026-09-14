@@ -83,17 +83,19 @@ public:
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    setDisplaySize(width_, height_);
+    setDisplaySize({width_, height_,
+                    static_cast<float>(width_), static_cast<float>(height_),
+                    1.0f, 1.0f});
 
     ImGui_ImplOpenGL3_Init("#version 330");
     initialized_ = true;
     return true;
   }
 
-  bool newFrame(int width, int height) override
+  bool newFrame(const ImGuiFrameSize& size) override
   {
     ImGui_ImplOpenGL3_NewFrame();
-    setDisplaySize(width, height);
+    setDisplaySize(size);
     ImGui::NewFrame();
     return true;
   }
@@ -116,12 +118,12 @@ public:
   }
 
 private:
-  void setDisplaySize(int width, int height)
+  void setDisplaySize(const ImGuiFrameSize& size)
   {
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(width),
-                            static_cast<float>(height));
-    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    io.DisplaySize = ImVec2(size.displayWidth, size.displayHeight);
+    io.DisplayFramebufferScale =
+      ImVec2(size.framebufferScaleX, size.framebufferScaleY);
   }
 
   int width_ = 1280;
@@ -152,7 +154,9 @@ public:
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    setDisplaySize(width_, height_);
+    setDisplaySize({width_, height_,
+                    static_cast<float>(width_), static_cast<float>(height_),
+                    1.0f, 1.0f});
 
     ImGui_ImplVulkan_InitInfo initInfo{};
     initInfo.Instance = context_->instance();
@@ -174,10 +178,10 @@ public:
     return true;
   }
 
-  bool newFrame(int width, int height) override
+  bool newFrame(const ImGuiFrameSize& size) override
   {
     ImGui_ImplVulkan_NewFrame();
-    setDisplaySize(width, height);
+    setDisplaySize(size);
     ImGui::NewFrame();
     return true;
   }
@@ -203,14 +207,14 @@ public:
   }
 
 private:
-  void setDisplaySize(int width, int height)
+  void setDisplaySize(const ImGuiFrameSize& size)
   {
-    width_ = width;
-    height_ = height;
+    width_ = size.framebufferWidth;
+    height_ = size.framebufferHeight;
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(width),
-                            static_cast<float>(height));
-    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    io.DisplaySize = ImVec2(size.displayWidth, size.displayHeight);
+    io.DisplayFramebufferScale =
+      ImVec2(size.framebufferScaleX, size.framebufferScaleY);
   }
 
   VulkanContext* context_ = nullptr;
@@ -248,7 +252,7 @@ public:
     return true;
   }
 
-  bool newFrame(int /*width*/, int /*height*/) override
+  bool newFrame(const ImGuiFrameSize& /*size*/) override
   {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -324,7 +328,7 @@ public:
     return true;
   }
 
-  bool newFrame(int /*width*/, int /*height*/) override
+  bool newFrame(const ImGuiFrameSize& /*size*/) override
   {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -396,9 +400,10 @@ public:
     return true;
   }
 
-  bool newFrame(int width, int height) override
+  bool newFrame(const ImGuiFrameSize& size) override
   {
-    if (!context_->beginFrame(width, height)) {
+    if (!context_->beginFrame(size.framebufferWidth,
+                              size.framebufferHeight)) {
       frameReady_ = false;
       return false;
     }
@@ -476,19 +481,21 @@ public:
     return true;
   }
 
-  bool newFrame(int width, int height) override
+  bool newFrame(const ImGuiFrameSize& size) override
   {
-    width_ = width;
-    height_ = height;
-    if (!context_->beginFrame(width, height)) {
+    width_ = size.framebufferWidth;
+    height_ = size.framebufferHeight;
+    if (!context_->beginFrame(size.framebufferWidth,
+                              size.framebufferHeight)) {
       frameReady_ = false;
       return false;
     }
     frameReady_ = true;
     context_->newImGuiFrame();
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(width),
-                            static_cast<float>(height));
+    io.DisplaySize = ImVec2(size.displayWidth, size.displayHeight);
+    io.DisplayFramebufferScale =
+      ImVec2(size.framebufferScaleX, size.framebufferScaleY);
     ImGui::NewFrame();
     return true;
   }
@@ -628,12 +635,22 @@ void InitImGuiContext(std::unique_ptr<ImGuiBackend> backend)
   g_backend = std::move(backend);
 }
 
-bool BeginImGuiFrame(int width, int height)
+bool BeginImGuiFrame(const ImGuiFrameSize& size)
 {
   if (g_backend) {
-    return g_backend->newFrame(width, height);
+    return g_backend->newFrame(size);
   }
   return false;
+}
+
+bool BeginImGuiFrame(int width, int height)
+{
+  return BeginImGuiFrame({width,
+                          height,
+                          static_cast<float>(width),
+                          static_cast<float>(height),
+                          1.0f,
+                          1.0f});
 }
 
 void EndImGuiFrame()

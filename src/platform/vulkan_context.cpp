@@ -231,6 +231,20 @@ bool VulkanContext::initHeadless(int width, int height)
   return true;
 }
 
+bool VulkanContext::resizeHeadless(int width, int height)
+{
+  if (!headless_ || device_ == VK_NULL_HANDLE || width <= 0 || height <= 0) {
+    return false;
+  }
+  if (width == headlessWidth_ && height == headlessHeight_) {
+    return true;
+  }
+  vkDeviceWaitIdle(device_);
+  cleanupHeadlessResources();
+  frameRecorded_ = false;
+  return createHeadlessTarget(width, height);
+}
+
 void VulkanContext::destroy()
 {
   if (device_ != VK_NULL_HANDLE) {

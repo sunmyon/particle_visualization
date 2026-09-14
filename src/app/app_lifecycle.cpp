@@ -9,6 +9,7 @@
 
 #include "render/render_system.h"
 
+#include <cstdlib>
 #include <memory>
 
 #include "FileIO/snapshot_io_service.h"
@@ -30,6 +31,16 @@
 #ifdef STREAM_LINE
 #include "analysis/streamline/streamline.h"
 #endif
+
+namespace {
+
+const char* ConfigFilePath()
+{
+  const char* overridePath = std::getenv("PARTICLE_VIS_CONFIG_PATH");
+  return (overridePath && overridePath[0] != '\0') ? overridePath : "config.txt";
+}
+
+} // namespace
 
 #ifdef PYTHON_BRIDGE
 #include "PythonBridge/PythonBridge.h"
@@ -68,7 +79,7 @@ void InitApplication(AppState& app, RenderSystem& render)
 void LoadInitialData(AppState& app)
 {
   ConfigData config;
-  if (LoadConfigFile("config.txt", config)) {
+  if (LoadConfigFile(ConfigFilePath(), config)) {
     ConfigValidationIssues issues;
     SanitizeConfigData(config, &issues);
     PrintConfigValidationIssues(issues);
@@ -114,7 +125,7 @@ void Cleanup(AppState& app, RenderSystem& rs)
 		      app.runtime.settings.normalization.desiredMax,
                       app.runtime.particleVisual,
                       app.runtime.settings.inputFilter.mask);
-  SaveConfigFile("config.txt", config);
+  SaveConfigFile(ConfigFilePath(), config);
 
   delete app.data.particles;
   app.data.particles = nullptr;

@@ -108,16 +108,20 @@ void ApplyPointerMove(const InputEvent& event,
 
 } // namespace
 
-InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
+InputExecutionResult ExecuteInputEvents(const std::vector<InputEvent>& events,
                                         InteractionState& interaction,
                                         CameraContext& camera,
                                         const SettingsRuntimeState& settings)
 {
   InputExecutionResult result;
-  const std::vector<InputEvent> events = input.drain();
-
   for (const InputEvent& event : events) {
     if (event.type == InputEventType::Key) {
+      if (event.source == InputSource::Remote &&
+          event.key == InputKey::Escape &&
+          event.action == InputAction::Press) {
+        result.closeRequested = true;
+        continue;
+      }
       if (event.capturedByUI) {
         continue;
       }
@@ -154,6 +158,9 @@ InputExecutionResult ExecuteInputEvents(InputEventQueue& input,
                       settings.maxZoom);
       break;
 
+    // Reserved for the platform/UI input adapter; no camera action.
+    case InputEventType::PointerButton:
+    case InputEventType::Text:
     case InputEventType::Key:
     case InputEventType::FramebufferResize:
       break;

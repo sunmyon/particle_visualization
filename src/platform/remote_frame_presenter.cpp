@@ -1,5 +1,8 @@
 #include "platform/remote_frame_presenter.h"
 
+#include "platform/graphics_context.h"
+#include "platform/window_context.h"
+
 #include <iostream>
 
 #ifdef PYTHON_BRIDGE
@@ -43,6 +46,22 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
 
 RemoteFramePresenter::~RemoteFramePresenter() = default;
 
+bool RemoteFramePresenter::resize(const PresentationSize& size)
+{
+  if (!window_ || !graphics_ || !window_->isHeadless() ||
+      !graphics_->resizeHeadless(size.framebufferWidth,
+                                 size.framebufferHeight)) {
+    return false;
+  }
+  window_->updateRemoteFramebufferSize(size.framebufferWidth,
+                                       size.framebufferHeight,
+                                       size.displayWidth,
+                                       size.displayHeight,
+                                       size.framebufferScaleX,
+                                       size.framebufferScaleY);
+  return true;
+}
+
 PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 {
   PresentOptions localOptions = options;
@@ -65,6 +84,10 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     {"frameId", result.frame.frameId},
     {"width", result.frame.width},
     {"height", result.frame.height},
+    {"displayWidth", window_->displayWidth()},
+    {"displayHeight", window_->displayHeight()},
+    {"framebufferScaleX", window_->framebufferScaleX()},
+    {"framebufferScaleY", window_->framebufferScaleY()},
     {"format", "RGBA8"},
     {"bytes", result.frame.pixels.size()}
   };

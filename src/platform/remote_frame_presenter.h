@@ -13,6 +13,7 @@ public:
   ~RemoteFramePresenter() override;
 
   PresentResult present(const PresentOptions& options = {}) override;
+  bool resize(const PresentationSize& size) override;
 
   const std::string& endpoint() const { return endpoint_; }
   bool active() const { return active_; }

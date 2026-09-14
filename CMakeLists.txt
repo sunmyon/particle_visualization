@@ -395,6 +395,7 @@ set(SOURCES_CPP
   ${SRC_DIR}/render/scale_guide_label_overlay.cpp
   ${SRC_DIR}/platform/shell_utils.cpp
   ${SRC_DIR}/platform/imgui_context.cpp
+  ${SRC_DIR}/platform/remote_imgui_input.cpp
   ${SRC_DIR}/platform/window_context.cpp
   ${SRC_DIR}/platform/glfw_window.cpp
   ${SRC_DIR}/platform/viewport_context.cpp
@@ -522,6 +523,9 @@ endif()
 
 list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_frame_presenter.cpp)
 list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_receiver.cpp)
+if(PYTHON_BRIDGE)
+  list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_protocol.cpp)
+endif()
 
 if(PARTICLE_VIS_HEADLESS_ONLY)
   list(REMOVE_ITEM SOURCES_CPP ${SRC_DIR}/app/app_callbacks.cpp)
@@ -962,14 +966,17 @@ function(detect_and_link_glfw target lib_name pkg_name)
 endfunction()
 
 
+target_sources(${PROJECT_NAME} PRIVATE
+  ${EXTERNAL_DIR}/ImGuiFileDialog/ImGuiFileDialog.cpp
+)
+target_include_directories(${PROJECT_NAME} PRIVATE
+  ${EXTERNAL_DIR}/ImGuiFileDialog
+)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  PARTICLE_VIS_HAVE_IMGUI_FILE_DIALOG)
+
 if(NONATIVEFILEDIALOG)
   # Use ImGuiFileDialog instead of the native NFD backend.
-  target_sources(${PROJECT_NAME} PRIVATE
-    ${EXTERNAL_DIR}/ImGuiFileDialog/ImGuiFileDialog.cpp
-  )
-  target_include_directories(${PROJECT_NAME} PRIVATE
-    ${EXTERNAL_DIR}/ImGuiFileDialog
-  )
   target_compile_definitions(${PROJECT_NAME} PRIVATE NONATIVEFILEDIALOG)
 else()
   find_path(NFD_INCLUDE_DIR
@@ -985,12 +992,6 @@ else()
   if(NOT NFD_INCLUDE_DIR OR NOT NFD_LIBRARY)
     message(WARNING
       "nativefiledialog-extended not found; falling back to ImGuiFileDialog backend.")
-    target_sources(${PROJECT_NAME} PRIVATE
-      ${EXTERNAL_DIR}/ImGuiFileDialog/ImGuiFileDialog.cpp
-    )
-    target_include_directories(${PROJECT_NAME} PRIVATE
-      ${EXTERNAL_DIR}/ImGuiFileDialog
-    )
     target_compile_definitions(${PROJECT_NAME} PRIVATE NONATIVEFILEDIALOG)
   else()
     target_include_directories(${PROJECT_NAME} PRIVATE ${NFD_INCLUDE_DIR})
@@ -1643,4 +1644,43 @@ if(BUILD_TESTING)
     target_include_directories(null_backend_smoke PRIVATE ${GLM_PC_INCLUDE_DIRS})
   endif()
   add_test(NAME null_backend_smoke COMMAND null_backend_smoke)
+endif()
+
+if(BUILD_TESTING AND PYTHON_BRIDGE)
+  add_executable(remote_input_protocol_test
+    tests/remote_input_protocol_test.cpp
+    ${SRC_DIR}/platform/remote_input_protocol.cpp)
+  target_include_directories(remote_input_protocol_test PRIVATE ${SRC_DIR})
+  link_nlohmann_json_to(remote_input_protocol_test)
+  add_test(NAME remote_input_protocol_test COMMAND remote_input_protocol_test)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(remote_imgui_input_test
+    tests/remote_imgui_input_test.cpp
+    ${SRC_DIR}/platform/remote_imgui_input.cpp
+    ${EXTERNAL_DIR}/imgui/imgui.cpp
+    ${EXTERNAL_DIR}/imgui/imgui_draw.cpp
+    ${EXTERNAL_DIR}/imgui/imgui_widgets.cpp
+    ${EXTERNAL_DIR}/imgui/imgui_tables.cpp)
+  target_include_directories(remote_imgui_input_test PRIVATE
+    ${SRC_DIR}
+    ${EXTERNAL_DIR}/imgui)
+  add_test(NAME remote_imgui_input_test COMMAND remote_imgui_input_test)
+endif()
+
+if(BUILD_TESTING AND PYTHON_BRIDGE AND UNIX)
+  add_executable(remote_input_receiver_test
+    tests/remote_input_receiver_test.cpp
+    ${SRC_DIR}/platform/remote_input_receiver.cpp
+    ${SRC_DIR}/platform/remote_input_protocol.cpp)
+  target_compile_definitions(remote_input_receiver_test PRIVATE PYTHON_BRIDGE)
+  target_include_directories(remote_input_receiver_test PRIVATE ${SRC_DIR})
+  link_nlohmann_json_to(remote_input_receiver_test)
+  detect_and_link(remote_input_receiver_test "ZeroMQ" "libzmq" CMAKE_TARGET libzmq)
+  detect_and_link(remote_input_receiver_test "cppzmq" "cppzmq" HEADER_ONLY)
+  find_package(Threads REQUIRED)
+  target_link_libraries(remote_input_receiver_test PRIVATE Threads::Threads)
+  add_test(NAME remote_input_receiver_test COMMAND remote_input_receiver_test)
+  set_tests_properties(remote_input_receiver_test PROPERTIES TIMEOUT 15)
 endif()

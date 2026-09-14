@@ -6,73 +6,10 @@
 #include <iostream>
 #include <thread>
 
-#include <nlohmann/json.hpp>
+#include "platform/remote_input_protocol.h"
 #include <zmq.hpp>
 #else
 #include <iostream>
-#endif
-
-#ifdef PYTHON_BRIDGE
-namespace {
-
-InputEventType ParseType(const std::string& value)
-{
-  if (value == "pointer_scroll") return InputEventType::PointerScroll;
-  if (value == "key") return InputEventType::Key;
-  if (value == "framebuffer_resize") return InputEventType::FramebufferResize;
-  return InputEventType::PointerMove;
-}
-
-InputKey ParseKey(const std::string& value)
-{
-  if (value == "Escape") return InputKey::Escape;
-  return InputKey::Unknown;
-}
-
-InputAction ParseAction(const std::string& value)
-{
-  if (value == "Release") return InputAction::Release;
-  if (value == "Repeat") return InputAction::Repeat;
-  return InputAction::Press;
-}
-
-InputEvent ParseEvent(const nlohmann::json& json)
-{
-  InputEvent event;
-  event.type = ParseType(json.value("type", "pointer_move"));
-  event.x = json.value("x", 0.0f);
-  event.y = json.value("y", 0.0f);
-  event.wheelX = json.value("wheelX", 0.0f);
-  event.wheelY = json.value("wheelY", 0.0f);
-  event.width = json.value("width", 0);
-  event.height = json.value("height", 0);
-  event.key = ParseKey(json.value("key", ""));
-  event.action = ParseAction(json.value("action", "Press"));
-  event.primaryDown = json.value("primaryDown", false);
-  event.capturedByUI = json.value("capturedByUI", false);
-
-  if (json.contains("modifiers")) {
-    const auto& m = json["modifiers"];
-    event.modifiers.shift = m.value("shift", false);
-    event.modifiers.ctrl = m.value("ctrl", false);
-    event.modifiers.alt = m.value("alt", false);
-    event.modifiers.super = m.value("super", false);
-  }
-
-  if (json.contains("viewport")) {
-    const auto& v = json["viewport"];
-    event.viewport.x = v.value("x", 0);
-    event.viewport.y = v.value("y", 0);
-    event.viewport.width = v.value("width", 1);
-    event.viewport.height = v.value("height", 1);
-    event.viewport.framebufferScaleX = v.value("framebufferScaleX", 1.0f);
-    event.viewport.framebufferScaleY = v.value("framebufferScaleY", 1.0f);
-  }
-
-  return event;
-}
-
-} // namespace
 #endif
 
 #ifdef PYTHON_BRIDGE
@@ -98,13 +35,11 @@ struct RemoteInputReceiver::Impl {
         continue;
       }
 
-      nlohmann::json json =
-        nlohmann::json::parse(msg.to_string(), nullptr, false);
-      if (json.is_discarded()) {
-        continue;
+      const auto event = RemoteInputProtocol::Decode(
+        std::string_view(static_cast<const char*>(msg.data()), msg.size()));
+      if (event) {
+        queue->push(*event);
       }
-
-      queue->push(ParseEvent(json));
     }
   }
 };

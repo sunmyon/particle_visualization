@@ -1,13 +1,17 @@
 #pragma once
 
+#include <iterator>
 #include <mutex>
+#include <string>
 #include <vector>
 
 enum class InputEventType {
   PointerMove,
   PointerScroll,
   Key,
-  FramebufferResize
+  FramebufferResize,
+  PointerButton,
+  Text
 };
 
 enum class PointerButton {
@@ -19,7 +23,123 @@ enum class PointerButton {
 
 enum class InputKey {
   Unknown,
-  Escape
+  Escape,
+  Tab,
+  Enter,
+  Backspace,
+  Insert,
+  Delete,
+  Space,
+  Left,
+  Right,
+  Up,
+  Down,
+  PageUp,
+  PageDown,
+  Home,
+  End,
+  CapsLock,
+  ScrollLock,
+  NumLock,
+  PrintScreen,
+  Pause,
+  LeftShift,
+  RightShift,
+  LeftCtrl,
+  RightCtrl,
+  LeftAlt,
+  RightAlt,
+  LeftSuper,
+  RightSuper,
+  Menu,
+  A,
+  B,
+  C,
+  D,
+  E,
+  F,
+  G,
+  H,
+  I,
+  J,
+  K,
+  L,
+  M,
+  N,
+  O,
+  P,
+  Q,
+  R,
+  S,
+  T,
+  U,
+  V,
+  W,
+  X,
+  Y,
+  Z,
+  Digit0,
+  Digit1,
+  Digit2,
+  Digit3,
+  Digit4,
+  Digit5,
+  Digit6,
+  Digit7,
+  Digit8,
+  Digit9,
+  F1,
+  F2,
+  F3,
+  F4,
+  F5,
+  F6,
+  F7,
+  F8,
+  F9,
+  F10,
+  F11,
+  F12,
+  F13,
+  F14,
+  F15,
+  F16,
+  F17,
+  F18,
+  F19,
+  F20,
+  F21,
+  F22,
+  F23,
+  F24,
+  Apostrophe,
+  Comma,
+  Minus,
+  Period,
+  Slash,
+  Semicolon,
+  Equal,
+  LeftBracket,
+  Backslash,
+  RightBracket,
+  GraveAccent,
+  Keypad0,
+  Keypad1,
+  Keypad2,
+  Keypad3,
+  Keypad4,
+  Keypad5,
+  Keypad6,
+  Keypad7,
+  Keypad8,
+  Keypad9,
+  KeypadDecimal,
+  KeypadDivide,
+  KeypadMultiply,
+  KeypadSubtract,
+  KeypadAdd,
+  KeypadEnter,
+  KeypadEqual
 };
 
 enum class InputAction {
@@ -44,6 +164,8 @@ struct InputViewport {
   float framebufferScaleY = 1.0f;
 };
 
+enum class InputSource { Local, Remote };
+
 struct InputEvent {
   InputEventType type = InputEventType::PointerMove;
 
@@ -54,6 +176,10 @@ struct InputEvent {
 
   int width = 0;
   int height = 0;
+  int displayWidth = 0;
+  int displayHeight = 0;
+  float framebufferScaleX = 1.0f;
+  float framebufferScaleY = 1.0f;
   InputKey key = InputKey::Unknown;
   InputAction action = InputAction::Press;
 
@@ -63,6 +189,10 @@ struct InputEvent {
 
   InputModifiers modifiers;
   InputViewport viewport;
+
+  // Committed UTF-8 text is separate from physical key transitions.
+  std::string text;
+  InputSource source = InputSource::Local;
 };
 
 struct InputEventQueue {
@@ -76,6 +206,16 @@ struct InputEventQueue {
     std::vector<InputEvent> out;
     out.swap(events);
     return out;
+  }
+
+  void prepend(std::vector<InputEvent> pending) {
+    if (pending.empty()) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    events.insert(events.begin(),
+                  std::make_move_iterator(pending.begin()),
+                  std::make_move_iterator(pending.end()));
   }
 
   void clear() {

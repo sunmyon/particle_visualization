@@ -35,3 +35,19 @@ PresentResult LocalFramePresenter::present(const PresentOptions& options)
   }
   return PresentLocalFrame(*window_, *graphics_, options);
 }
+
+bool LocalFramePresenter::resize(const PresentationSize& size)
+{
+  if (!window_ || !graphics_ || !window_->isHeadless() ||
+      !graphics_->resizeHeadless(size.framebufferWidth,
+                                 size.framebufferHeight)) {
+    return false;
+  }
+  window_->updateRemoteFramebufferSize(size.framebufferWidth,
+                                       size.framebufferHeight,
+                                       size.displayWidth,
+                                       size.displayHeight,
+                                       size.framebufferScaleX,
+                                       size.framebufferScaleY);
+  return true;
+}
