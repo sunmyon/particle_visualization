@@ -38,8 +38,9 @@ struct RemoteInputReceiver::Impl {
 
       const std::string_view message(
         static_cast<const char*>(msg.data()), msg.size());
+      const auto receivedAt = std::chrono::steady_clock::now();
       if (RemoteInputProtocol::IsFrameRequest(message)) {
-        if (flowControl) flowControl->markViewerReady();
+        if (flowControl) flowControl->markViewerReady(0, receivedAt);
         continue;
       }
       const auto event = RemoteInputProtocol::Decode(message);
@@ -50,7 +51,7 @@ struct RemoteInputReceiver::Impl {
           // Interactive input is also permission to replace an in-flight or
           // queued frame. Waiting for the viewer's previous frame receipt here
           // creates a full stop-and-wait round trip for every interaction.
-          flowControl->markViewerReady();
+          flowControl->markViewerReady(event->remoteSequence, receivedAt);
         }
       }
     }

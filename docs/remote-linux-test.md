@@ -171,3 +171,10 @@ encode time, plus client decode and texture upload time. Record these values
 together with observed interaction latency. The EGL/OpenGL server uses a
 double-buffered PBO readback, and encoding runs on a worker thread. Use
 `PARTICLE_VIS_REMOTE_CODEC=jpeg` for a direct comparison with the old transport.
+
+For per-frame end-to-end latency diagnostics, add
+`PARTICLE_VIS_VIEWER_LOG_EVERY_N_FRAMES=1` to the viewer command. The
+`input to receive` interval is measured entirely with the Mac monotonic clock.
+`transport/unmeasured` subtracts the measured server stages and therefore
+contains both network directions, relay overhead, and any uninstrumented
+server work; it is not a pure network measurement.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -193,6 +194,7 @@ struct InputEvent {
 
   // Committed UTF-8 text is separate from physical key transitions.
   std::string text;
+  std::uint64_t remoteSequence = 0;
   InputSource source = InputSource::Local;
 };
 

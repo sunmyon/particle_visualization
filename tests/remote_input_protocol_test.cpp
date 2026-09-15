@@ -1,6 +1,7 @@
 #include "platform/remote_input_protocol.h"
 #include "platform/remote_frame_flow_control.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -27,7 +28,13 @@ int main()
   flow.markViewerReady();
   Check(!flow.tryBeginFrame(), "Unchanged frame was released");
   flow.markDirty();
-  Check(flow.tryBeginFrame(), "Dirty frame was not released to a ready viewer");
+  const auto triggerTime = std::chrono::steady_clock::now();
+  flow.markViewerReady(42, triggerTime);
+  RemoteFrameTrigger trigger;
+  Check(flow.tryBeginFrame(&trigger),
+        "Dirty frame was not released to a ready viewer");
+  Check(trigger.sequence == 42 && trigger.receivedAt == triggerTime,
+        "Frame trigger identity or receive time was lost");
 
   Check(RemoteInputProtocol::IsFrameRequest(
           R"({"type":"frame_request","version":1})"),
@@ -36,7 +43,7 @@ int main()
           R"({"type":"frame_request","version":2})"),
         "Unsupported frame request version was accepted");
   const auto move = Decode(R"({"type":"pointer_move","x":12.5,"y":24,
-    "primaryDown":true,"capturedByUI":true,"modifiers":{"shift":true},
+    "clientSequence":17,"primaryDown":true,"capturedByUI":true,"modifiers":{"shift":true},
     "viewport":{"x":3,"y":4,"width":800,"height":600,
     "framebufferScaleX":2,"framebufferScaleY":2}})");
   Check(move && move->type == InputEventType::PointerMove &&
@@ -44,6 +51,7 @@ int main()
     move->capturedByUI && move->modifiers.shift &&
     move->viewport.x == 3 && move->viewport.height == 600 &&
     move->viewport.framebufferScaleX == 2 &&
+    move->remoteSequence == 17 &&
     move->source == InputSource::Remote, "Legacy movement changed");
   Check(InputEvent{}.source == InputSource::Local, "Local default changed");
   const auto wheel = Decode(R"({"type":"pointer_scroll","wheelX":-0.5,"wheelY":2})");
@@ -97,6 +105,8 @@ int main()
     R"({"type":"pointer_move","primaryDown":1})", R"({"type":"key","modifiers":[]})",
     R"({"type":"key","modifiers":{"ctrl":"true"}})",
     R"({"type":"key","viewport":null})", R"({"type":"key","viewport":{"width":0}})",
+    R"({"type":"key","clientSequence":-1})",
+    R"({"type":"key","clientSequence":1.5})",
     R"({"type":"key","viewport":{"framebufferScaleX":-1}})",
     R"({"type":"framebuffer_resize","width":1.5,"height":1})",
     R"({"type":"framebuffer_resize","width":4294967297,"height":1})",

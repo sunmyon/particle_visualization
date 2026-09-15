@@ -162,6 +162,21 @@ bool ReadFloat(const Json& json, const char* name, float& value)
   value = static_cast<float>(number);
   return true;
 }
+
+bool ReadUint64(const Json& json, const char* name, std::uint64_t& value)
+{
+  const auto it = json.find(name);
+  if (it == json.end()) return true;
+  if (it->is_number_unsigned()) {
+    value = it->get<std::uint64_t>();
+    return true;
+  }
+  if (!it->is_number_integer()) return false;
+  const auto signedValue = it->get<std::int64_t>();
+  if (signedValue < 0) return false;
+  value = static_cast<std::uint64_t>(signedValue);
+  return true;
+}
 } // namespace
 
 std::optional<InputEvent> Decode(std::string_view message)
@@ -192,7 +207,8 @@ std::optional<InputEvent> Decode(std::string_view message)
         !ReadInt(json, "displayWidth", event.displayWidth) ||
         !ReadInt(json, "displayHeight", event.displayHeight) ||
         !ReadFloat(json, "framebufferScaleX", event.framebufferScaleX) ||
-        !ReadFloat(json, "framebufferScaleY", event.framebufferScaleY))
+        !ReadFloat(json, "framebufferScaleY", event.framebufferScaleY) ||
+        !ReadUint64(json, "clientSequence", event.remoteSequence))
       return std::nullopt;
 
     const auto action = json.value("action", std::string("Press"));

@@ -3,7 +3,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -23,6 +25,7 @@ namespace {
 
 struct RemoteFrame {
   uint64_t frameId = 0;
+  uint64_t triggerSequence = 0;
   int width = 0;
   int height = 0;
   int displayWidth = 0;
@@ -33,9 +36,12 @@ struct RemoteFrame {
   std::size_t payloadBytes = 0;
   double serverReadbackMs = 0.0;
   double serverReadbackLatencyMs = 0.0;
+  double serverTriggerToReadbackMs = 0.0;
   double serverEncoderQueueMs = 0.0;
   double serverEncodeMs = 0.0;
   double clientDecodeMs = 0.0;
+  double clientInputToReceiveMs = -1.0;
+  std::chrono::steady_clock::time_point receivedAt{};
   std::vector<uint8_t> rgba;
 };
 
@@ -57,6 +63,9 @@ struct ViewerInputContext {
   std::chrono::steady_clock::time_point lastInteraction =
     std::chrono::steady_clock::now();
   bool initialResizeSent = false;
+  uint64_t nextInputSequence = 0;
+  std::deque<std::pair<uint64_t, std::chrono::steady_clock::time_point>>
+    sentInputs;
   std::unordered_set<int> pressedKeys;
   std::unordered_set<int> locallyHandledKeys;
 };
@@ -263,6 +272,7 @@ bool ReceiveFrame(zmq::socket_t& sub,
   if (type == "rgba_frame" && payloadMsg.size() != expected) return false;
 
   out.frameId = header.value("frameId", uint64_t{0});
+  out.triggerSequence = header.value("triggerSequence", uint64_t{0});
   out.width = width;
   out.height = height;
   out.displayWidth = header.value("displayWidth", width);
@@ -274,8 +284,11 @@ bool ReceiveFrame(zmq::socket_t& sub,
   out.serverReadbackMs = header.value("serverReadbackMs", 0.0);
   out.serverReadbackLatencyMs =
     header.value("serverReadbackLatencyMs", out.serverReadbackMs);
+  out.serverTriggerToReadbackMs =
+    header.value("serverTriggerToReadbackMs", 0.0);
   out.serverEncoderQueueMs = header.value("serverEncoderQueueMs", 0.0);
   out.serverEncodeMs = header.value("serverEncodeMs", 0.0);
+  out.receivedAt = std::chrono::steady_clock::now();
   const auto decodeStart = std::chrono::steady_clock::now();
   if (type == "h264_frame") {
     if (!videoDecoder.decode(
@@ -365,7 +378,7 @@ PointerPosition MapPointerToRemote(GLFWwindow* window, double x, double y)
   };
 }
 
-void SendInput(GLFWwindow* window, const nlohmann::json& event)
+void SendInput(GLFWwindow* window, nlohmann::json event)
 {
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
@@ -373,6 +386,14 @@ void SendInput(GLFWwindow* window, const nlohmann::json& event)
     return;
   }
 
+  if (event.value("type", std::string()) != "frame_request") {
+    const uint64_t sequence = ++ctx->nextInputSequence;
+    event["clientSequence"] = sequence;
+    ctx->sentInputs.emplace_back(sequence, std::chrono::steady_clock::now());
+    while (ctx->sentInputs.size() > 4096) {
+      ctx->sentInputs.pop_front();
+    }
+  }
   const std::string text = event.dump();
   try {
     ctx->input->send(zmq::buffer(text), zmq::send_flags::dontwait);
@@ -383,6 +404,24 @@ void SendInput(GLFWwindow* window, const nlohmann::json& event)
 void SendFrameRequest(GLFWwindow* window)
 {
   SendInput(window, {{"type", "frame_request"}, {"version", 1}});
+}
+
+void RecordInputToReceive(ViewerInputContext& ctx, RemoteFrame& frame)
+{
+  if (frame.triggerSequence == 0 ||
+      frame.receivedAt.time_since_epoch().count() == 0) {
+    return;
+  }
+  const auto found = std::find_if(
+    ctx.sentInputs.begin(), ctx.sentInputs.end(), [&](const auto& sent) {
+      return sent.first == frame.triggerSequence;
+    });
+  if (found == ctx.sentInputs.end()) {
+    return;
+  }
+  frame.clientInputToReceiveMs = std::chrono::duration<double, std::milli>(
+    frame.receivedAt - found->second).count();
+  ctx.sentInputs.erase(ctx.sentInputs.begin(), std::next(found));
 }
 
 void SendFramebufferSize(GLFWwindow* window)
@@ -824,6 +863,8 @@ int main(int argc, char** argv)
     EnvFloat("PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE", 2.0f);
   inputContext.idleRestoreDelayMs =
     EnvInt("PARTICLE_VIS_VIEWER_IDLE_DELAY_MS", 1500);
+  const int logEveryNFrames =
+    EnvInt("PARTICLE_VIS_VIEWER_LOG_EVERY_N_FRAMES", 60);
   glfwSetWindowUserPointer(window, &inputContext);
   glfwSetCursorPosCallback(window, CursorCallback);
   glfwSetMouseButtonCallback(window, MouseButtonCallback);
@@ -928,6 +969,7 @@ int main(int argc, char** argv)
           incoming.height != requested.framebufferHeight) {
         continue;
       }
+      RecordInputToReceive(inputContext, incoming);
       frame = std::move(incoming);
       inputContext.remoteWidth = frame.width;
       inputContext.remoteHeight = frame.height;
@@ -969,7 +1011,8 @@ int main(int argc, char** argv)
       const double uploadMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - uploadStart).count();
       ++displayedFrameCount;
-      if (textureSizeChanged || displayedFrameCount % 60 == 0) {
+      if (textureSizeChanged ||
+          displayedFrameCount % static_cast<uint64_t>(logEveryNFrames) == 0) {
         std::cout << "Remote frame " << frame.frameId << ": "
                   << textureWidth << "x" << textureHeight << " ("
                   << frame.payloadBytes << " " << frame.encoding
@@ -980,13 +1023,29 @@ int main(int argc, char** argv)
                   << frame.displayHeight << ", scale "
                   << frame.framebufferScaleX << "x"
                   << frame.framebufferScaleY
-                  << "; timing ms: readback latency "
+                  << "; timing ms: trigger to readback "
+                  << frame.serverTriggerToReadbackMs
+                  << ", readback latency "
                   << frame.serverReadbackLatencyMs << ", readback copy "
                   << frame.serverReadbackMs << ", encode queue "
                   << frame.serverEncoderQueueMs << ", encode "
                   << frame.serverEncodeMs << ", decode "
                   << frame.clientDecodeMs << ", upload "
-                  << uploadMs << ')' << std::endl;
+                  << uploadMs;
+        if (frame.clientInputToReceiveMs >= 0.0) {
+          const double measuredServerMs =
+            frame.serverTriggerToReadbackMs +
+            frame.serverReadbackLatencyMs +
+            frame.serverEncoderQueueMs + frame.serverEncodeMs;
+          const double transportResidualMs =
+            std::max(0.0, frame.clientInputToReceiveMs - measuredServerMs);
+          std::cout << ", input to receive " << frame.clientInputToReceiveMs
+                    << ", transport/unmeasured " << transportResidualMs
+                    << ", input to display "
+                    << frame.clientInputToReceiveMs +
+                         frame.clientDecodeMs + uploadMs;
+        }
+        std::cout << ')' << std::endl;
       }
       frame.rgba.clear();
     }

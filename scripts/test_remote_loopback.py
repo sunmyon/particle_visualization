@@ -305,7 +305,8 @@ def run(args: argparse.Namespace) -> int:
             {"type": "pointer_scroll", "x": pointer_x - 20, "y": pointer_y - 20, "wheelX": 0, "wheelY": 1},
             {"type": "text", "text": "remote"},
         ]
-        for event in events:
+        for sequence, event in enumerate(events, start=1):
+            event["clientSequence"] = sequence
             event["viewport"] = viewport
             sender.send_json(event)
         sender.send_json({"type": "frame_request", "version": 1})
@@ -313,7 +314,10 @@ def run(args: argparse.Namespace) -> int:
         second, second_payload = receive_frame(subscriber, args.timeout)
         if second["frameId"] <= resized["frameId"]:
             raise RuntimeError("frame IDs did not advance after sending input")
+        if second.get("triggerSequence", 0) <= 0:
+            raise RuntimeError(f"input trigger sequence was not returned: {second!r}")
         timing_keys = (
+            "serverTriggerToReadbackMs",
             "serverReadbackMs",
             "serverReadbackLatencyMs",
             "serverEncoderQueueMs",
@@ -373,6 +377,7 @@ def run(args: argparse.Namespace) -> int:
                     "inputEventsSent": len(events) + 1 + resize_requested,
                     "serverTimingMs": {
                         "readbackLatency": second["serverReadbackLatencyMs"],
+                        "triggerToReadback": second["serverTriggerToReadbackMs"],
                         "readbackCopy": second["serverReadbackMs"],
                         "encoderQueue": second["serverEncoderQueueMs"],
                         "encode": second["serverEncodeMs"],

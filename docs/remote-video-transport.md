@@ -96,7 +96,9 @@ H.264 headers use:
 ```
 
 The header also carries server readback, readback-latency, encoder-queue, and
-encode timings. The viewer adds decode and texture-upload timings to its log.
+encode timings. Remote input frames carry the client input sequence that
+triggered them and the server time from receiving that input to submitting the
+readback. The viewer adds decode and texture-upload timings to its log.
 JPEG (`jpeg_frame`) and raw RGBA (`rgba_frame`) use the same display and timing
 metadata. `presentationMode` is `interactive` for the persistent video stream
 and `idle` for the final high-resolution still frame.
@@ -121,6 +123,28 @@ This keeps the window large while reducing interactive encode and transfer
 cost. The full-resolution idle frame is intentionally expensive but is sent
 only after interaction stops. Returning to interaction resumes the existing
 H.264 stream without forcing a new IDR solely because an idle frame was shown.
+
+## Latency diagnostics
+
+Set `PARTICLE_VIS_VIEWER_LOG_EVERY_N_FRAMES=1` on the viewer to log every
+displayed frame. The additional fields are:
+
+| Field | Interval |
+|---|---|
+| `trigger to readback` | server input receipt to framebuffer-readback submission |
+| `readback latency` | readback submission to CPU-side result collection |
+| `encode queue` | CPU frame waiting for its encoder worker |
+| `encode` | server compression |
+| `input to receive` | Mac input send to completion of the corresponding frame receive |
+| `decode` | Mac decompression and color conversion |
+| `upload` | decoded RGBA upload call into the local OpenGL texture |
+| `input to display` | input send through completion of the texture upload call |
+
+`input to receive` uses the Mac monotonic clock for both endpoints, so it does
+not depend on clock synchronization with the server. `transport/unmeasured` is
+the input-to-receive interval minus the measured server stages. It includes
+both network directions, SSH/Slurm relay work, and any server work not covered
+by the named stages; it must not be interpreted as pure network time.
 
 ## Validation baseline
 

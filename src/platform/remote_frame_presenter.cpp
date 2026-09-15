@@ -75,6 +75,7 @@ namespace {
 
 struct FrameToEncode {
   RenderedFrame frame;
+  uint64_t triggerSequence = 0;
   int displayWidth = 0;
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
@@ -82,21 +83,25 @@ struct FrameToEncode {
   bool idlePresentation = false;
   double readbackMs = 0.0;
   double readbackLatencyMs = 0.0;
+  double triggerToReadbackMs = 0.0;
   std::chrono::steady_clock::time_point queuedAt;
 };
 
 struct ReadbackMetadata {
   uint64_t frameId = 0;
+  uint64_t triggerSequence = 0;
   int displayWidth = 0;
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
   bool idlePresentation = false;
+  double triggerToReadbackMs = 0.0;
   std::chrono::steady_clock::time_point submittedAt;
 };
 
 struct EncodedRemoteFrame {
   uint64_t frameId = 0;
+  uint64_t triggerSequence = 0;
   int width = 0;
   int height = 0;
   int displayWidth = 0;
@@ -111,6 +116,7 @@ struct EncodedRemoteFrame {
   std::vector<unsigned char> payload;
   double readbackMs = 0.0;
   double readbackLatencyMs = 0.0;
+  double triggerToReadbackMs = 0.0;
   double encoderQueueMs = 0.0;
   double encodeMs = 0.0;
 };
@@ -159,6 +165,7 @@ struct RemoteFramePresenter::Impl {
   {
     EncodedRemoteFrame output;
     output.frameId = input.frame.frameId;
+    output.triggerSequence = input.triggerSequence;
     output.width = input.frame.width;
     output.height = input.frame.height;
     output.displayWidth = input.displayWidth;
@@ -169,6 +176,7 @@ struct RemoteFramePresenter::Impl {
     output.rawBytes = input.frame.pixels.size();
     output.readbackMs = input.readbackMs;
     output.readbackLatencyMs = input.readbackLatencyMs;
+    output.triggerToReadbackMs = input.triggerToReadbackMs;
     output.encoderQueueMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - input.queuedAt).count();
 
@@ -321,6 +329,7 @@ struct RemoteFramePresenter::Impl {
     nlohmann::json header{
       {"type", encoded->type},
       {"frameId", encoded->frameId},
+      {"triggerSequence", encoded->triggerSequence},
       {"width", encoded->width},
       {"height", encoded->height},
       {"displayWidth", encoded->displayWidth},
@@ -334,6 +343,7 @@ struct RemoteFramePresenter::Impl {
       {"rawBytes", encoded->rawBytes},
       {"serverReadbackMs", encoded->readbackMs},
       {"serverReadbackLatencyMs", encoded->readbackLatencyMs},
+      {"serverTriggerToReadbackMs", encoded->triggerToReadbackMs},
       {"serverEncoderQueueMs", encoded->encoderQueueMs},
       {"serverEncodeMs", encoded->encodeMs}
     };
@@ -434,8 +444,9 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   const bool pacingAllowsFrame =
     maxFramesPerSecond_ == 0.0 || nextFrameTime_.time_since_epoch().count() == 0 ||
     now >= nextFrameTime_;
+  RemoteFrameTrigger trigger;
   const bool publishDue = active_ && pacingAllowsFrame &&
-    (!flowControl_ || flowControl_->tryBeginFrame());
+    (!flowControl_ || flowControl_->tryBeginFrame(&trigger));
   PresentOptions localOptions = options;
   localOptions.readbackFrame = options.readbackFrame || publishDue;
 #ifdef PYTHON_BRIDGE
@@ -459,6 +470,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 
       FrameToEncode frame;
       frame.frame = std::move(result.frame);
+      frame.triggerSequence = metadata.triggerSequence;
       frame.displayWidth = metadata.displayWidth;
       frame.displayHeight = metadata.displayHeight;
       frame.framebufferScaleX = metadata.framebufferScaleX;
@@ -468,6 +480,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
       frame.readbackLatencyMs =
         std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - metadata.submittedAt).count();
+      frame.triggerToReadbackMs = metadata.triggerToReadbackMs;
       frame.queuedAt = std::chrono::steady_clock::now();
       impl_->enqueue(std::move(frame));
     }
@@ -476,11 +489,17 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
       if (result.readbackSubmitted) {
         ReadbackMetadata metadata;
         metadata.frameId = ++frameId_;
+        metadata.triggerSequence = trigger.sequence;
         metadata.displayWidth = window_->displayWidth();
         metadata.displayHeight = window_->displayHeight();
         metadata.framebufferScaleX = window_->framebufferScaleX();
         metadata.framebufferScaleY = window_->framebufferScaleY();
         metadata.idlePresentation = idlePresentation_;
+        if (trigger.receivedAt.time_since_epoch().count() != 0) {
+          metadata.triggerToReadbackMs =
+            std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - trigger.receivedAt).count();
+        }
         metadata.submittedAt = std::chrono::steady_clock::now();
         impl_->noteLatestFrame(metadata.frameId, metadata.idlePresentation);
         impl_->readbacks.push_back(std::move(metadata));
@@ -523,12 +542,17 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     frame.frame = std::move(result.frame);
   }
   frame.displayWidth = window_->displayWidth();
+  frame.triggerSequence = trigger.sequence;
   frame.displayHeight = window_->displayHeight();
   frame.framebufferScaleX = window_->framebufferScaleX();
   frame.framebufferScaleY = window_->framebufferScaleY();
   frame.idlePresentation = idlePresentation_;
   frame.readbackMs = result.readbackMs;
   frame.readbackLatencyMs = result.readbackMs;
+  if (trigger.receivedAt.time_since_epoch().count() != 0) {
+    frame.triggerToReadbackMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - trigger.receivedAt).count();
+  }
   frame.queuedAt = std::chrono::steady_clock::now();
   impl_->enqueue(std::move(frame));
   impl_->publishCompleted();
