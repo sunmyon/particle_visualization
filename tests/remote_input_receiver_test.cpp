@@ -1,4 +1,5 @@
 #include "platform/remote_input_receiver.h"
+#include "platform/remote_frame_flow_control.h"
 
 #include <chrono>
 #include <filesystem>
@@ -20,8 +21,9 @@ int main()
   bool ok = false;
   try {
     InputEventQueue queue;
+    RemoteFrameFlowControl flowControl;
     RemoteInputReceiver receiver;
-    if (!receiver.start(endpoint, queue) || !receiver.active())
+    if (!receiver.start(endpoint, queue, &flowControl) || !receiver.active())
       throw std::runtime_error("Receiver failed to start");
     if (receiver.start(endpoint, queue))
       throw std::runtime_error("Double start accepted");
@@ -54,12 +56,14 @@ int main()
           events[1].action != InputAction::Release ||
           events[2].text != "日本語" || events[2].source != InputSource::Remote)
         throw std::runtime_error("Valid input lost or invalid input enqueued");
+      if (!flowControl.tryBeginFrame())
+        throw std::runtime_error("Valid input did not release a remote frame");
     }
     receiver.stop();
     receiver.stop();
     if (receiver.active() || !receiver.endpoint().empty())
       throw std::runtime_error("Receiver did not stop");
-    if (!receiver.start(endpoint, queue))
+    if (!receiver.start(endpoint, queue, &flowControl))
       throw std::runtime_error("Receiver failed to restart");
     receiver.stop();
     ok = true;

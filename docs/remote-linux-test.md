@@ -121,10 +121,11 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
   tcp://127.0.0.1:5571
 ```
 
-During interaction, the viewer requests one server-rendered pixel per logical
+During interaction, the viewer requests 0.75 server-rendered pixels per logical
 window pixel by default. This avoids rendering at the full Retina framebuffer
-resolution while keeping the native window large. After 500 ms without input,
-it requests one full-resolution Retina frame. Adjust the interactive resolution
+resolution while keeping the native window large. After 1500 ms without input,
+it requests one full-resolution Retina frame. A held mouse button or key keeps
+the viewer in interactive mode. Adjust the interactive resolution
 without changing the window size with:
 
 ```bash
@@ -134,8 +135,8 @@ PARTICLE_VIS_VIEWER_RENDER_SCALE=0.75 \
   tcp://127.0.0.1:5571
 ```
 
-Use `1` for the default logical interaction resolution or values below `1` for
-lower latency. `PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE` controls the final idle
+Use `1` for full logical interaction resolution or values below `1` for lower
+latency. `PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE` controls the final idle
 frame and defaults to `2`; `PARTICLE_VIS_VIEWER_IDLE_DELAY_MS` controls its
 delay. Set the idle scale to `1` to disable the Retina-quality final frame.
 
@@ -157,7 +158,9 @@ Escape behavior from a maximized window.
 
 The viewer requests a frame after consuming the previous one. The server sends
 only after valid remote input or resize changes the scene; idle sessions send
-no repeated frame data, and input bursts collapse into one pending frame. It
+no repeated frame data, and input bursts collapse into one pending frame. Valid
+input can replace an in-flight frame directly, so interaction does not wait for
+the previous frame's receive acknowledgement to return to the server. It
 prints physical resolution, logical display size, DPI scale, and decoded RGBA
 size. It also reports server readback latency and copy time, JPEG queue and
 encode time, plus client decode and texture upload time. Record these values

@@ -48,9 +48,9 @@ struct ViewerInputContext {
   int remoteDisplayHeight = 720;
   float remoteFramebufferScaleX = 1.0f;
   float remoteFramebufferScaleY = 1.0f;
-  float interactiveRenderScale = 1.0f;
+  float interactiveRenderScale = 0.75f;
   float idleRenderScale = 2.0f;
-  int idleRestoreDelayMs = 500;
+  int idleRestoreDelayMs = 1500;
   bool interactiveRendering = true;
   std::chrono::steady_clock::time_point lastInteraction =
     std::chrono::steady_clock::now();
@@ -419,6 +419,8 @@ void RestoreIdleRenderingIfDue(GLFWwindow* window,
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
   if (!ctx || !ctx->interactiveRendering ||
+      ctx->leftDown || ctx->rightDown || ctx->middleDown ||
+      !ctx->pressedKeys.empty() ||
       now - ctx->lastInteraction <
         std::chrono::milliseconds(ctx->idleRestoreDelayMs)) {
     return;
@@ -803,11 +805,11 @@ int main(int argc, char** argv)
   ViewerInputContext inputContext;
   inputContext.input = inputEnabled ? &inputPush : nullptr;
   inputContext.interactiveRenderScale =
-    EnvFloat("PARTICLE_VIS_VIEWER_RENDER_SCALE", 1.0f);
+    EnvFloat("PARTICLE_VIS_VIEWER_RENDER_SCALE", 0.75f);
   inputContext.idleRenderScale =
     EnvFloat("PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE", 2.0f);
   inputContext.idleRestoreDelayMs =
-    EnvInt("PARTICLE_VIS_VIEWER_IDLE_DELAY_MS", 500);
+    EnvInt("PARTICLE_VIS_VIEWER_IDLE_DELAY_MS", 1500);
   glfwSetWindowUserPointer(window, &inputContext);
   glfwSetCursorPosCallback(window, CursorCallback);
   glfwSetMouseButtonCallback(window, MouseButtonCallback);

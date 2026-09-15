@@ -45,7 +45,13 @@ struct RemoteInputReceiver::Impl {
       const auto event = RemoteInputProtocol::Decode(message);
       if (event) {
         queue->push(*event);
-        if (flowControl) flowControl->markDirty();
+        if (flowControl) {
+          flowControl->markDirty();
+          // Interactive input is also permission to replace an in-flight or
+          // queued frame. Waiting for the viewer's previous frame receipt here
+          // creates a full stop-and-wait round trip for every interaction.
+          flowControl->markViewerReady();
+        }
       }
     }
   }
