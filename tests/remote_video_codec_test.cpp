@@ -25,7 +25,8 @@ int main()
   if (!encoder.available() || !decoder.available()) return EXIT_FAILURE;
 
   RemoteVideoPacket packet;
-  if (!encoder.encodeRgba(width, height, rgba, 2'000'000, 15.0f, packet) ||
+  if (encoder.encodeRgba(width, height, rgba, 2'000'000, 15.0f, packet) !=
+        RemoteVideoEncodeResult::Encoded ||
       !packet.keyFrame || packet.bytes.empty()) {
     std::cerr << "H.264 encoding failed\n";
     return EXIT_FAILURE;
@@ -59,7 +60,8 @@ int main()
   }
   RemoteVideoPacket deltaPacket;
   std::vector<unsigned char> deltaDecoded;
-  if (!encoder.encodeRgba(width, height, rgba, 2'000'000, 15.0f, deltaPacket) ||
+  if (encoder.encodeRgba(width, height, rgba, 2'000'000, 15.0f, deltaPacket) !=
+        RemoteVideoEncodeResult::Encoded ||
       deltaPacket.keyFrame ||
       !decoder.decode(deltaPacket.bytes.data(), deltaPacket.bytes.size(),
                       width, height, deltaDecoded)) {

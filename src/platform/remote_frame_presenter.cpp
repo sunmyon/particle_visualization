@@ -142,6 +142,7 @@ struct RemoteFramePresenter::Impl {
   int videoBitrate = 5'000'000;
   float videoFramesPerSecond = 10.0f;
   RemoteVideoEncoder videoEncoder;
+  RemoteFrameFlowControl* flowControl = nullptr;
   uint64_t latestEnqueuedFrameId = 0;
   std::deque<ReadbackMetadata> readbacks;
 
@@ -161,7 +162,8 @@ struct RemoteFramePresenter::Impl {
     }
   }
 
-  EncodedRemoteFrame encode(FrameToEncode input, bool allowVideo)
+  std::optional<EncodedRemoteFrame> encode(FrameToEncode input,
+                                           bool allowVideo)
   {
     EncodedRemoteFrame output;
     output.frameId = input.frame.frameId;
@@ -182,17 +184,23 @@ struct RemoteFramePresenter::Impl {
 
     const auto encodeStart = std::chrono::steady_clock::now();
     RemoteVideoPacket videoPacket;
-    if (allowVideo && preferVideo &&
-        videoEncoder.encodeRgba(input.frame.width,
+    const RemoteVideoEncodeResult videoResult = allowVideo && preferVideo
+      ? videoEncoder.encodeRgba(input.frame.width,
                                 input.frame.height,
                                 input.frame.pixels,
                                 videoBitrate,
                                 videoFramesPerSecond,
-                                videoPacket)) {
+                                videoPacket)
+      : RemoteVideoEncodeResult::Failed;
+    if (videoResult == RemoteVideoEncodeResult::Encoded) {
       output.type = "h264_frame";
       output.format = "H264_ANNEX_B";
       output.keyFrame = videoPacket.keyFrame;
       output.payload = std::move(videoPacket.bytes);
+    } else if (videoResult == RemoteVideoEncodeResult::Skipped) {
+      // OpenH264 deliberately skips frames to honor its bitrate target. Sending
+      // a JPEG here would defeat that control and build a network backlog.
+      return std::nullopt;
     } else if (jpegQuality > 0 &&
                EncodeJpegRgba(input.frame.width,
                               input.frame.height,
@@ -237,10 +245,20 @@ struct RemoteFramePresenter::Impl {
           pendingInteractiveFrame.reset();
         }
 
-        EncodedRemoteFrame output = encode(std::move(input), true);
+        const uint64_t triggerSequence = input.triggerSequence;
+        auto output = encode(std::move(input), true);
+        if (!output) {
+          // A skipped frame produces no viewer acknowledgement. Re-arm the
+          // latest-frame handshake here so the video stream cannot stall.
+          if (flowControl) {
+            flowControl->markDirty();
+            flowControl->markViewerReady(triggerSequence);
+          }
+          continue;
+        }
         {
           std::lock_guard<std::mutex> lock(encoderMutex);
-          completedInteractiveFrame = std::move(output);
+          completedInteractiveFrame = std::move(*output);
         }
       }
     });
@@ -259,11 +277,14 @@ struct RemoteFramePresenter::Impl {
           pendingIdleFrame.reset();
         }
 
-        EncodedRemoteFrame output = encode(std::move(input), false);
+        auto output = encode(std::move(input), false);
+        if (!output) {
+          continue;
+        }
         {
           std::lock_guard<std::mutex> lock(encoderMutex);
-          if (output.frameId >= latestEnqueuedFrameId) {
-            completedIdleFrame = std::move(output);
+          if (output->frameId >= latestEnqueuedFrameId) {
+            completedIdleFrame = std::move(*output);
           }
         }
       }
@@ -381,6 +402,7 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
   videoBitrate_ = RemoteVideoBitrate();
 #ifdef PYTHON_BRIDGE
   try {
+    impl_->flowControl = flowControl_;
     impl_->socket.set(zmq::sockopt::sndhwm, 1);
     impl_->socket.set(zmq::sockopt::sndtimeo, 100);
     impl_->socket.set(zmq::sockopt::linger, 0);

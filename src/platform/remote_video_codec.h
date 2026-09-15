@@ -11,6 +11,12 @@ struct RemoteVideoPacket {
   std::vector<unsigned char> bytes;
 };
 
+enum class RemoteVideoEncodeResult {
+  Encoded,
+  Skipped,
+  Failed
+};
+
 // Stateful H.264 codec used by the remote transport. The implementation is
 // optional: available() is false when particle_vis was built without OpenH264.
 class RemoteVideoEncoder {
@@ -22,12 +28,13 @@ public:
   RemoteVideoEncoder& operator=(const RemoteVideoEncoder&) = delete;
 
   bool available() const;
-  bool encodeRgba(int width,
-                  int height,
-                  const std::vector<unsigned char>& rgba,
-                  int bitrate,
-                  float framesPerSecond,
-                  RemoteVideoPacket& output);
+  RemoteVideoEncodeResult encodeRgba(
+    int width,
+    int height,
+    const std::vector<unsigned char>& rgba,
+    int bitrate,
+    float framesPerSecond,
+    RemoteVideoPacket& output);
   void requestKeyFrame();
 
 private:

@@ -163,18 +163,20 @@ bool RemoteVideoEncoder::available() const
 #endif
 }
 
-bool RemoteVideoEncoder::encodeRgba(int width,
-                                    int height,
-                                    const std::vector<unsigned char>& rgba,
-                                    int bitrate,
-                                    float framesPerSecond,
-                                    RemoteVideoPacket& output)
+RemoteVideoEncodeResult RemoteVideoEncoder::encodeRgba(
+  int width,
+  int height,
+  const std::vector<unsigned char>& rgba,
+  int bitrate,
+  float framesPerSecond,
+  RemoteVideoPacket& output)
 {
 #ifdef PARTICLE_VIS_HAVE_OPENH264
+  output = {};
   if (width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
       rgba.size() != static_cast<std::size_t>(width) * height * 4 ||
       !impl_->initialize(width, height, bitrate, framesPerSecond)) {
-    return false;
+    return RemoteVideoEncodeResult::Failed;
   }
   RgbaToI420(width, height, rgba, impl_->i420);
   // A periodic recovery point limits the effect of a packet dropped by the
@@ -200,11 +202,12 @@ bool RemoteVideoEncoder::encodeRgba(int width,
     impl_->frameNumber++ * 1000.0 / std::max(impl_->framesPerSecond, 1.0f));
 
   SFrameBSInfo info{};
-  if (impl_->encoder->EncodeFrame(&picture, &info) != cmResultSuccess ||
-      info.eFrameType == videoFrameTypeSkip) {
-    return false;
+  if (impl_->encoder->EncodeFrame(&picture, &info) != cmResultSuccess) {
+    return RemoteVideoEncodeResult::Failed;
   }
-  output = {};
+  if (info.eFrameType == videoFrameTypeSkip) {
+    return RemoteVideoEncodeResult::Skipped;
+  }
   output.width = width;
   output.height = height;
   output.keyFrame = info.eFrameType == videoFrameTypeIDR ||
@@ -219,11 +222,13 @@ bool RemoteVideoEncoder::encodeRgba(int width,
                         layerInfo.pBsBuf,
                         layerInfo.pBsBuf + layerBytes);
   }
-  return !output.bytes.empty();
+  return output.bytes.empty()
+           ? RemoteVideoEncodeResult::Failed
+           : RemoteVideoEncodeResult::Encoded;
 #else
   (void)width; (void)height; (void)rgba; (void)bitrate;
   (void)framesPerSecond; (void)output;
-  return false;
+  return RemoteVideoEncodeResult::Failed;
 #endif
 }
 

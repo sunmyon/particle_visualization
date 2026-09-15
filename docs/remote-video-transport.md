@@ -58,7 +58,7 @@ Runtime selection:
 
 | Setting | Meaning | Default |
 |---|---|---:|
-| `PARTICLE_VIS_REMOTE_CODEC=h264` | Prefer persistent H.264; fall back per frame if encoding is unavailable | selected when OpenH264 is built |
+| `PARTICLE_VIS_REMOTE_CODEC=h264` | Prefer persistent H.264; fall back to JPEG if encoding fails | selected when OpenH264 is built |
 | `PARTICLE_VIS_REMOTE_CODEC=jpeg` | Use independent JPEG frames | off |
 | `PARTICLE_VIS_REMOTE_VIDEO_BITRATE` | OpenH264 target bitrate in bit/s | `5000000` |
 | `PARTICLE_VIS_REMOTE_MAX_FPS` | Maximum server frame rate; zero disables pacing | `10` |
@@ -67,6 +67,11 @@ Runtime selection:
 The video bitrate is a rate-control target, not a maximum packet size. An IDR
 frame can be much larger than one frame's share of the target bitrate. Idle
 JPEG size is controlled by `PARTICLE_VIS_REMOTE_JPEG_QUALITY` instead.
+OpenH264 may intentionally skip an interactive frame to keep its bitrate
+target. The presenter sends nothing for that frame and continues with the next
+video frame. Treating a rate-control skip as an encoding failure and sending a
+JPEG would bypass the bitrate limit and can create seconds of queued latency at
+large window sizes.
 
 ## Frame protocol
 
