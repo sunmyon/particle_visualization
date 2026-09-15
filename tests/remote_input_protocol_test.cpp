@@ -45,10 +45,6 @@ int main()
     move->viewport.x == 3 && move->viewport.height == 600 &&
     move->viewport.framebufferScaleX == 2 &&
     move->source == InputSource::Remote, "Legacy movement changed");
-  const auto deferredMove = Decode(
-    R"({"type":"pointer_move","x":1,"y":2,"deferFrame":true})");
-  Check(deferredMove && deferredMove->deferFrame,
-    "Deferred gesture frame hint was lost");
   Check(InputEvent{}.source == InputSource::Local, "Local default changed");
   const auto wheel = Decode(R"({"type":"pointer_scroll","wheelX":-0.5,"wheelY":2})");
   Check(wheel && wheel->type == InputEventType::PointerScroll &&

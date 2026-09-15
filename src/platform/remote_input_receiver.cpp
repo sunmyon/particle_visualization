@@ -47,14 +47,10 @@ struct RemoteInputReceiver::Impl {
         queue->push(*event);
         if (flowControl) {
           flowControl->markDirty();
-          // Interactive input normally permits replacing an in-flight frame.
-          // Camera gestures can defer that work until release/settle while the
-          // input queue continues to track the latest camera state.
-          if (!event->deferFrame) {
-            flowControl->markViewerReady();
-          } else {
-            flowControl->deferViewerFrame();
-          }
+          // Interactive input is also permission to replace an in-flight or
+          // queued frame. Waiting for the viewer's previous frame receipt here
+          // creates a full stop-and-wait round trip for every interaction.
+          flowControl->markViewerReady();
         }
       }
     }

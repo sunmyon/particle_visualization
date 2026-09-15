@@ -51,9 +51,6 @@ struct ViewerInputContext {
   float interactiveRenderScale = 0.75f;
   float idleRenderScale = 2.0f;
   int idleRestoreDelayMs = 1500;
-  int gestureSettleDelayMs = 120;
-  bool deferGestureFrames = true;
-  bool gestureFramePending = false;
   bool interactiveRendering = true;
   std::chrono::steady_clock::time_point lastInteraction =
     std::chrono::steady_clock::now();
@@ -75,13 +72,6 @@ struct RequestedPresentation {
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
 };
-
-bool GestureDefersFrames(const ViewerInputContext& context)
-{
-  return context.deferGestureFrames &&
-    (context.leftDown || context.rightDown || context.middleDown ||
-     context.gestureFramePending);
-}
 
 int EnvInt(const char* name, int fallback)
 {
@@ -105,18 +95,6 @@ float EnvFloat(const char* name, float fallback)
   } catch (...) {
     return fallback;
   }
-}
-
-bool EnvBool(const char* name, bool fallback)
-{
-  const char* value = std::getenv(name);
-  if (!value || value[0] == '\0') return fallback;
-  const std::string parsed(value);
-  if (parsed == "1" || parsed == "true" || parsed == "TRUE" ||
-      parsed == "on" || parsed == "ON") return true;
-  if (parsed == "0" || parsed == "false" || parsed == "FALSE" ||
-      parsed == "off" || parsed == "OFF") return false;
-  return fallback;
 }
 
 RequestedPresentation GetRequestedPresentation(GLFWwindow* window)
@@ -396,7 +374,7 @@ void SendFrameRequest(GLFWwindow* window)
   SendInput(window, {{"type", "frame_request"}, {"version", 1}});
 }
 
-void SendFramebufferSize(GLFWwindow* window, bool deferFrame = false)
+void SendFramebufferSize(GLFWwindow* window)
 {
   const RequestedPresentation requested = GetRequestedPresentation(window);
   auto* ctx =
@@ -416,14 +394,11 @@ void SendFramebufferSize(GLFWwindow* window, bool deferFrame = false)
     {"displayWidth", requested.displayWidth},
     {"displayHeight", requested.displayHeight},
     {"framebufferScaleX", requested.framebufferScaleX},
-    {"framebufferScaleY", requested.framebufferScaleY},
-    {"deferFrame", deferFrame}
+    {"framebufferScaleY", requested.framebufferScaleY}
   });
 }
 
-void MarkInteractiveRendering(GLFWwindow* window,
-                              bool sizeChanged = false,
-                              bool deferFrame = false)
+void MarkInteractiveRendering(GLFWwindow* window, bool sizeChanged = false)
 {
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
@@ -433,27 +408,9 @@ void MarkInteractiveRendering(GLFWwindow* window,
   const bool enteringInteractive = !ctx->interactiveRendering;
   ctx->interactiveRendering = true;
   if (enteringInteractive || sizeChanged) {
-    SendFramebufferSize(window, deferFrame);
-    if (!deferFrame) {
-      SendFrameRequest(window);
-    }
+    SendFramebufferSize(window);
+    SendFrameRequest(window);
   }
-}
-
-void RequestSettledGestureFrameIfDue(
-  GLFWwindow* window,
-  std::chrono::steady_clock::time_point now)
-{
-  auto* ctx =
-    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
-  if (!ctx || !ctx->gestureFramePending || ctx->leftDown ||
-      ctx->rightDown || ctx->middleDown ||
-      now - ctx->lastInteraction <
-        std::chrono::milliseconds(ctx->gestureSettleDelayMs)) {
-    return;
-  }
-  ctx->gestureFramePending = false;
-  SendFrameRequest(window);
 }
 
 void RestoreIdleRenderingIfDue(GLFWwindow* window,
@@ -570,21 +527,16 @@ std::string ActionName(int action)
 
 void CursorCallback(GLFWwindow* window, double xpos, double ypos)
 {
+  MarkInteractiveRendering(window);
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
   const bool leftDown = ctx ? ctx->leftDown : false;
-  const bool gestureActive =
-    ctx && (ctx->leftDown || ctx->rightDown || ctx->middleDown);
-  const bool deferFrame =
-    ctx && ctx->deferGestureFrames && gestureActive;
-  MarkInteractiveRendering(window, false, deferFrame);
   const PointerPosition position = MapPointerToRemote(window, xpos, ypos);
   SendInput(window, {
     {"type", "pointer_move"},
     {"x", position.x},
     {"y", position.y},
     {"primaryDown", leftDown},
-    {"deferFrame", deferFrame},
     {"modifiers", BuildModifiers(window)},
     {"viewport", BuildViewport(window)}
   });
@@ -592,6 +544,7 @@ void CursorCallback(GLFWwindow* window, double xpos, double ypos)
 
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
 {
+  MarkInteractiveRendering(window);
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
   if (!ctx || (action != GLFW_PRESS && action != GLFW_RELEASE)) {
@@ -614,13 +567,6 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
     return;
   }
   *buttonDown = action == GLFW_PRESS;
-  const bool gestureActive =
-    ctx->leftDown || ctx->rightDown || ctx->middleDown;
-  const bool deferFrame = ctx->deferGestureFrames && gestureActive;
-  MarkInteractiveRendering(window, false, deferFrame);
-  if (!gestureActive) {
-    ctx->gestureFramePending = false;
-  }
 
   double xpos = 0.0;
   double ypos = 0.0;
@@ -633,7 +579,6 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
     {"x", position.x},
     {"y", position.y},
     {"primaryDown", ctx->leftDown},
-    {"deferFrame", deferFrame},
     {"modifiers", BuildModifiers(window)},
     {"viewport", BuildViewport(window)}
   });
@@ -641,13 +586,7 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
 
 void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 {
-  auto* ctx =
-    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
-  const bool deferFrame = ctx && ctx->deferGestureFrames;
-  MarkInteractiveRendering(window, false, deferFrame);
-  if (deferFrame) {
-    ctx->gestureFramePending = true;
-  }
+  MarkInteractiveRendering(window);
   double xpos = 0.0;
   double ypos = 0.0;
   glfwGetCursorPos(window, &xpos, &ypos);
@@ -658,7 +597,6 @@ void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     {"y", position.y},
     {"wheelX", static_cast<float>(xoffset)},
     {"wheelY", static_cast<float>(yoffset)},
-    {"deferFrame", deferFrame},
     {"modifiers", BuildModifiers(window)},
     {"viewport", BuildViewport(window)}
   });
@@ -872,10 +810,6 @@ int main(int argc, char** argv)
     EnvFloat("PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE", 2.0f);
   inputContext.idleRestoreDelayMs =
     EnvInt("PARTICLE_VIS_VIEWER_IDLE_DELAY_MS", 1500);
-  inputContext.gestureSettleDelayMs =
-    EnvInt("PARTICLE_VIS_VIEWER_GESTURE_SETTLE_MS", 120);
-  inputContext.deferGestureFrames =
-    EnvBool("PARTICLE_VIS_VIEWER_DEFER_GESTURE_FRAMES", true);
   glfwSetWindowUserPointer(window, &inputContext);
   glfwSetCursorPosCallback(window, CursorCallback);
   glfwSetMouseButtonCallback(window, MouseButtonCallback);
@@ -956,7 +890,6 @@ int main(int argc, char** argv)
     glfwPollEvents();
 
     const auto now = std::chrono::steady_clock::now();
-    RequestSettledGestureFrameIfDue(window, now);
     RestoreIdleRenderingIfDue(window, now);
     if (textureWidth == 0 && now >= nextInitialFrameRequest) {
       SendFrameRequest(window);
@@ -974,9 +907,7 @@ int main(int argc, char** argv)
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;
       }
-      if (!GestureDefersFrames(inputContext)) {
-        SendFrameRequest(window);
-      }
+      SendFrameRequest(window);
       if (incoming.width != requested.framebufferWidth ||
           incoming.height != requested.framebufferHeight) {
         continue;
