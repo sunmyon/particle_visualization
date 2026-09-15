@@ -180,6 +180,7 @@ struct InputEvent {
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
+  bool idlePresentation = false;
   InputKey key = InputKey::Unknown;
   InputAction action = InputAction::Press;
 

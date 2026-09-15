@@ -245,6 +245,13 @@ std::optional<InputEvent> Decode(std::string_view message)
         (event.text.empty() || event.text.find('\0') != std::string::npos))
       return std::nullopt;
     if (event.type == InputEventType::FramebufferResize) {
+      const std::string presentationMode =
+        json.value("presentationMode", std::string("interactive"));
+      if (presentationMode == "idle") {
+        event.idlePresentation = true;
+      } else if (presentationMode != "interactive") {
+        return std::nullopt;
+      }
       if (event.displayWidth == 0 && event.displayHeight == 0) {
         event.displayWidth = event.width;
         event.displayHeight = event.height;

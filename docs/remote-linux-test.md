@@ -126,8 +126,9 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
 During interaction, the viewer requests 0.75 server-rendered pixels per logical
 window pixel by default. This avoids rendering at the full Retina framebuffer
 resolution while keeping the native window large. After 1500 ms without input,
-it requests one full-resolution Retina frame. A held mouse button or key keeps
-the viewer in interactive mode. Adjust the interactive resolution
+it requests one full-resolution Retina JPEG. This independent still frame does
+not reset the interactive H.264 stream. A held mouse button or key keeps the
+viewer in interactive mode. Adjust the interactive resolution
 without changing the window size with:
 
 ```bash

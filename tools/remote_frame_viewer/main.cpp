@@ -405,7 +405,10 @@ void SendFramebufferSize(GLFWwindow* window)
     {"displayWidth", requested.displayWidth},
     {"displayHeight", requested.displayHeight},
     {"framebufferScaleX", requested.framebufferScaleX},
-    {"framebufferScaleY", requested.framebufferScaleY}
+    {"framebufferScaleY", requested.framebufferScaleY},
+    {"presentationMode", ctx && !ctx->interactiveRendering
+                           ? "idle"
+                           : "interactive"}
   });
 }
 

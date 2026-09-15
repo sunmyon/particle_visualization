@@ -918,7 +918,8 @@ static bool BeginFrame(AppRuntimeState& runtime,
                         it->displayWidth,
                         it->displayHeight,
                         it->framebufferScaleX,
-                        it->framebufferScaleY});
+                        it->framebufferScaleY,
+                        it->idlePresentation});
       break;
     }
   }

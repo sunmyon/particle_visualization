@@ -25,6 +25,7 @@ struct PresentationSize {
   int displayHeight = 1;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
+  bool idlePresentation = false;
 };
 
 class IFramePresenter {

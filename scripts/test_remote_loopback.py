@@ -193,6 +193,7 @@ def run(args: argparse.Namespace) -> int:
                 "displayHeight": active_display_height,
                 "framebufferScaleX": args.display_scale,
                 "framebufferScaleY": args.display_scale,
+                "presentationMode": "interactive",
             }
             deadline = time.monotonic() + args.timeout
             next_send = 0.0
@@ -225,6 +226,67 @@ def run(args: argparse.Namespace) -> int:
                     "server did not publish a frame at the requested size "
                     f"{active_width}x{active_height}"
                 )
+
+        presentation_event = {
+            "type": "framebuffer_resize",
+            "width": active_width,
+            "height": active_height,
+            "displayWidth": active_display_width,
+            "displayHeight": active_display_height,
+            "framebufferScaleX": args.display_scale,
+            "framebufferScaleY": args.display_scale,
+            "presentationMode": "idle",
+        }
+        idle = None
+        deadline = time.monotonic() + args.timeout
+        next_send = 0.0
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            if now >= next_send:
+                sender.send_json(presentation_event)
+                sender.send_json({"type": "frame_request", "version": 1})
+                next_send = now + 0.1
+            wait_seconds = min(0.25, max(0.001, deadline - time.monotonic()))
+            if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
+                continue
+            candidate, _ = receive_frame(subscriber, args.timeout)
+            if candidate.get("presentationMode") == "idle":
+                idle = candidate
+                break
+        if idle is None:
+            raise RuntimeError("server did not publish an idle presentation frame")
+        if idle.get("format") != "JPEG":
+            raise RuntimeError(f"idle presentation did not use JPEG: {idle!r}")
+
+        presentation_event["presentationMode"] = "interactive"
+        resumed = None
+        deadline = time.monotonic() + args.timeout
+        next_send = 0.0
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            if now >= next_send:
+                sender.send_json(presentation_event)
+                sender.send_json({"type": "frame_request", "version": 1})
+                next_send = now + 0.1
+            wait_seconds = min(0.25, max(0.001, deadline - time.monotonic()))
+            if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
+                continue
+            candidate, _ = receive_frame(subscriber, args.timeout)
+            if candidate.get("presentationMode") == "interactive":
+                resumed = candidate
+                break
+        if resumed is None:
+            raise RuntimeError("server did not resume interactive presentation")
+        if resized.get("format") == "H264_ANNEX_B":
+            if resumed.get("format") != "H264_ANNEX_B":
+                raise RuntimeError(
+                    f"interactive presentation did not resume H.264: {resumed!r}"
+                )
+            if resumed.get("keyFrame"):
+                raise RuntimeError(
+                    "idle JPEG reset the persistent H.264 stream unexpectedly"
+                )
+        resized = resumed
         viewport = {
             "x": 0,
             "y": 0,
@@ -302,6 +364,8 @@ def run(args: argparse.Namespace) -> int:
                     "payloadBytes": second["bytes"],
                     "rawBytes": second.get("rawBytes", second["bytes"]),
                     "encoding": second.get("format", "RGBA8"),
+                    "idleEncoding": idle.get("format"),
+                    "resumedWithKeyFrame": resumed.get("keyFrame"),
                     "displaySize": [active_display_width, active_display_height],
                     "framebufferScale": args.display_scale,
                     "inputEventsSent": len(events) + 1 + resize_requested,

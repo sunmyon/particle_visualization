@@ -73,11 +73,13 @@ int main()
   Check(text && text->type == InputEventType::Text && text->text == "日本語 🌌",
     "UTF-8 text lost");
   const auto resize = Decode(R"({"type":"framebuffer_resize","width":2560,"height":1440,
-    "displayWidth":1280,"displayHeight":720,"framebufferScaleX":2,"framebufferScaleY":2})");
+    "displayWidth":1280,"displayHeight":720,"framebufferScaleX":2,"framebufferScaleY":2,
+    "presentationMode":"idle"})");
   Check(resize && resize->type == InputEventType::FramebufferResize &&
     resize->width == 2560 && resize->height == 1440 &&
     resize->displayWidth == 1280 && resize->displayHeight == 720 &&
-    resize->framebufferScaleX == 2 && resize->framebufferScaleY == 2,
+    resize->framebufferScaleX == 2 && resize->framebufferScaleY == 2 &&
+    resize->idlePresentation,
     "Resize/DPI metrics lost");
   const auto legacyResize = Decode(
     R"({"type":"framebuffer_resize","width":1280,"height":720})");
@@ -103,6 +105,7 @@ int main()
     R"({"type":"framebuffer_resize","width":8192,"height":8192})",
     R"({"type":"framebuffer_resize","width":10,"height":10,"displayWidth":10})",
     R"({"type":"framebuffer_resize","width":10,"height":10,"displayWidth":10,"displayHeight":10,"framebufferScaleX":0})",
+    R"({"type":"framebuffer_resize","width":10,"height":10,"presentationMode":"preview"})",
     R"({"type":"framebuffer_resize","width":-1,"height":1})",
     R"({"type":"framebuffer_resize"})", R"({"type":"pointer_button"})",
     R"({"type":"pointer_button","button":"Left"})",

@@ -79,6 +79,7 @@ struct FrameToEncode {
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
+  bool idlePresentation = false;
   double readbackMs = 0.0;
   double readbackLatencyMs = 0.0;
   std::chrono::steady_clock::time_point queuedAt;
@@ -90,6 +91,7 @@ struct ReadbackMetadata {
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
+  bool idlePresentation = false;
   std::chrono::steady_clock::time_point submittedAt;
 };
 
@@ -104,6 +106,7 @@ struct EncodedRemoteFrame {
   std::string type = "rgba_frame";
   std::string format = "RGBA8";
   bool keyFrame = true;
+  bool idlePresentation = false;
   std::size_t rawBytes = 0;
   std::vector<unsigned char> payload;
   double readbackMs = 0.0;
@@ -176,6 +179,7 @@ struct RemoteFramePresenter::Impl {
         output.displayHeight = input.displayHeight;
         output.framebufferScaleX = input.framebufferScaleX;
         output.framebufferScaleY = input.framebufferScaleY;
+        output.idlePresentation = input.idlePresentation;
         output.rawBytes = input.frame.pixels.size();
         output.readbackMs = input.readbackMs;
         output.readbackLatencyMs = input.readbackLatencyMs;
@@ -184,7 +188,7 @@ struct RemoteFramePresenter::Impl {
 
         const auto encodeStart = std::chrono::steady_clock::now();
         RemoteVideoPacket videoPacket;
-        if (preferVideo &&
+        if (preferVideo && !input.idlePresentation &&
             videoEncoder.encodeRgba(input.frame.width,
                                     input.frame.height,
                                     input.frame.pixels,
@@ -204,7 +208,9 @@ struct RemoteFramePresenter::Impl {
           output.type = "jpeg_frame";
           output.format = "JPEG";
           output.keyFrame = true;
-          if (preferVideo) videoEncoder.requestKeyFrame();
+          if (preferVideo && !input.idlePresentation) {
+            videoEncoder.requestKeyFrame();
+          }
         } else {
           output.payload = std::move(input.frame.pixels);
         }
@@ -269,6 +275,7 @@ struct RemoteFramePresenter::Impl {
       {"framebufferScaleY", encoded->framebufferScaleY},
       {"format", encoded->format},
       {"keyFrame", encoded->keyFrame},
+      {"presentationMode", encoded->idlePresentation ? "idle" : "interactive"},
       {"bytes", encoded->payload.size()},
       {"rawBytes", encoded->rawBytes},
       {"serverReadbackMs", encoded->readbackMs},
@@ -359,6 +366,7 @@ bool RemoteFramePresenter::resize(const PresentationSize& size)
                                        size.displayHeight,
                                        size.framebufferScaleX,
                                        size.framebufferScaleY);
+  idlePresentation_ = size.idlePresentation;
   nextFrameTime_ = {};
   return true;
 }
@@ -401,6 +409,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
       frame.displayHeight = metadata.displayHeight;
       frame.framebufferScaleX = metadata.framebufferScaleX;
       frame.framebufferScaleY = metadata.framebufferScaleY;
+      frame.idlePresentation = metadata.idlePresentation;
       frame.readbackMs = result.readbackMs;
       frame.readbackLatencyMs =
         std::chrono::duration<double, std::milli>(
@@ -417,6 +426,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
         metadata.displayHeight = window_->displayHeight();
         metadata.framebufferScaleX = window_->framebufferScaleX();
         metadata.framebufferScaleY = window_->framebufferScaleY();
+        metadata.idlePresentation = idlePresentation_;
         metadata.submittedAt = std::chrono::steady_clock::now();
         impl_->noteLatestFrame(metadata.frameId);
         impl_->readbacks.push_back(std::move(metadata));
@@ -462,6 +472,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   frame.displayHeight = window_->displayHeight();
   frame.framebufferScaleX = window_->framebufferScaleX();
   frame.framebufferScaleY = window_->framebufferScaleY();
+  frame.idlePresentation = idlePresentation_;
   frame.readbackMs = result.readbackMs;
   frame.readbackLatencyMs = result.readbackMs;
   frame.queuedAt = std::chrono::steady_clock::now();

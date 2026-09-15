@@ -2,10 +2,12 @@
 
 ## Status
 
-The remote viewer uses a persistent H.264 stream when OpenH264 is available.
-JPEG and raw RGBA remain available as diagnostic and compatibility paths. This
-transport covers the rendered application framebuffer, including ImGui. Local
-ImGui rendering and live simulation-data transport are separate future work.
+The remote viewer uses a persistent H.264 stream for interactive frames when
+OpenH264 is available. The final high-resolution idle frame is an independent
+JPEG, so it does not recreate the interactive codec state. Raw RGBA remains a
+diagnostic and compatibility path. This transport covers the rendered
+application framebuffer, including ImGui. Local ImGui rendering and live
+simulation-data transport are separate future work.
 
 ## Pipeline
 
@@ -14,7 +16,8 @@ particle_vis on the GPU node
   render scene + ImGui
     -> asynchronous framebuffer readback
     -> one-slot latest-frame queue
-    -> worker: RGBA to I420, then OpenH264 encode
+    -> worker: interactive RGBA to I420 and OpenH264 encode
+               idle RGBA to independent JPEG
     -> ZeroMQ multipart message over the loopback-only Slurm relay
     -> Mac viewer: OpenH264 decode, I420 to RGBA, OpenGL texture upload
     -> local window
@@ -56,8 +59,8 @@ Runtime selection:
 | `PARTICLE_VIS_REMOTE_JPEG_QUALITY` | JPEG fallback quality; zero selects raw RGBA | `80` |
 
 The video bitrate is a rate-control target, not a maximum packet size. An IDR
-frame, especially after switching to the full Retina resolution, can be much
-larger than one frame's share of the target bitrate.
+frame can be much larger than one frame's share of the target bitrate. Idle
+JPEG size is controlled by `PARTICLE_VIS_REMOTE_JPEG_QUALITY` instead.
 
 ## Frame protocol
 
@@ -79,6 +82,7 @@ H.264 headers use:
   "displayHeight": 720,
   "framebufferScaleX": 0.75,
   "framebufferScaleY": 0.75,
+  "presentationMode": "interactive",
   "keyFrame": false,
   "bytes": 24000,
   "rawBytes": 2073600
@@ -88,32 +92,37 @@ H.264 headers use:
 The header also carries server readback, readback-latency, encoder-queue, and
 encode timings. The viewer adds decode and texture-upload timings to its log.
 JPEG (`jpeg_frame`) and raw RGBA (`rgba_frame`) use the same display and timing
-metadata.
+metadata. `presentationMode` is `interactive` for the persistent video stream
+and `idle` for the final high-resolution still frame.
 
 OpenH264 receives even-sized I420 frames, so the viewer rounds each requested
-framebuffer dimension down by at most one pixel. A resolution change recreates
-the encoder and produces an IDR frame. The encoder also produces a recovery IDR
-every 30 encoded frames to limit damage from a lost inter-frame packet.
+interactive framebuffer dimension down by at most one pixel. An interactive
+resolution change recreates the encoder and produces an IDR frame. Switching to
+an idle JPEG at another resolution leaves that encoder untouched. The encoder
+also produces a recovery IDR every 30 encoded frames to limit damage from a
+lost inter-frame packet.
 
 ## Resolution policy
 
 The Mac window size and server render size are independent:
 
 - During input, `PARTICLE_VIS_VIEWER_RENDER_SCALE` defaults to `0.75`.
-- After 1500 ms without input, the viewer requests one frame using
+- After 1500 ms without input, the viewer requests one independent JPEG using
   `PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE`, which defaults to `2.0` for Retina.
 - `PARTICLE_VIS_VIEWER_IDLE_DELAY_MS` changes the idle delay.
 
 This keeps the window large while reducing interactive encode and transfer
 cost. The full-resolution idle frame is intentionally expensive but is sent
-only after interaction stops.
+only after interaction stops. Returning to interaction resumes the existing
+H.264 stream without forcing a new IDR solely because an idle frame was shown.
 
 ## Validation baseline
 
 The implementation is covered by `remote_video_codec_test`, which encodes and
 decodes an IDR frame followed by a P-frame. Existing input, JPEG, and local
 backend tests also run unchanged. The automated loopback test exercises the
-real renderer, resize, remote input, H.264 transport, and remote Escape exit.
+real renderer, resize, remote input, the idle JPEG transition, H.264
+continuation without a new IDR, and remote Escape exit.
 
 One Freya A100 to Mac session on 2026-09-15 produced the following diagnostic
 samples. They are reference observations rather than a throughput benchmark:
@@ -136,8 +145,8 @@ render scale.
   OpenH264's x86 assembly path.
 - The transport uses ZeroMQ PUB/SUB. A periodic IDR provides recovery, but the
   protocol does not yet request a keyframe immediately after decoder loss.
-- Changing between interactive and Retina resolutions recreates codec state and
-  sends a large IDR frame.
+- Changing the interactive render resolution still recreates codec state and
+  sends an IDR frame. The idle Retina JPEG does not.
 - ImGui is part of the encoded framebuffer. Sending ImGui draw data for local
   composition is not part of this milestone.
 

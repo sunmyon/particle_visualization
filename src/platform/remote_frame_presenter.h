@@ -36,5 +36,6 @@ private:
   int jpegQuality_ = 80;
   int videoBitrate_ = 5'000'000;
   bool preferVideo_ = false;
+  bool idlePresentation_ = false;
   std::chrono::steady_clock::time_point nextFrameTime_{};
 };
