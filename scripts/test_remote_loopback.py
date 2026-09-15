@@ -38,7 +38,7 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
     height = header.get("height", 0)
     expected = width * height * 4
     frame_type = header.get("type")
-    if frame_type not in ("rgba_frame", "jpeg_frame") or expected <= 0:
+    if frame_type not in ("rgba_frame", "jpeg_frame", "h264_frame") or expected <= 0:
         raise RuntimeError(f"invalid frame header: {header!r}")
     if header.get("bytes") != len(payload):
         raise RuntimeError(
@@ -54,6 +54,12 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
             raise RuntimeError(f"invalid JPEG raw size: {header!r}")
         if not payload.startswith(b"\xff\xd8") or not payload.endswith(b"\xff\xd9"):
             raise RuntimeError("invalid JPEG payload markers")
+    if frame_type == "h264_frame":
+        if header.get("rawBytes") != expected:
+            raise RuntimeError(f"invalid H.264 raw size: {header!r}")
+        if not (payload.startswith(b"\x00\x00\x00\x01") or
+                payload.startswith(b"\x00\x00\x01")):
+            raise RuntimeError("invalid H.264 Annex B payload marker")
     return header, payload
 
 
@@ -261,6 +267,11 @@ def run(args: argparse.Namespace) -> int:
             output.parent.mkdir(parents=True, exist_ok=True)
             if second.get("format") == "JPEG":
                 output.write_bytes(second_payload)
+            elif second.get("format") == "H264_ANNEX_B":
+                raise RuntimeError(
+                    "--save-frame is not available for H.264; "
+                    "set PARTICLE_VIS_REMOTE_CODEC=jpeg for this diagnostic"
+                )
             else:
                 try:
                     from PIL import Image

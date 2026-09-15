@@ -7,3 +7,6 @@
 [submodule "external/ImGuiFileDialog"]
 	path = external/ImGuiFileDialog
 	url = https://github.com/aiekick/ImGuiFileDialog.git
+[submodule "external/submodules/openh264"]
+	path = external/submodules/openh264
+	url = https://github.com/cisco/openh264.git

@@ -94,13 +94,16 @@ option(PARTICLE_VIS_PREFER_SUBMODULE_DEPS
 option(PARTICLE_VIS_ALLOW_SUBMODULE_BUILDS
   "Build supported dependency submodules from source when present"
   ON)
+option(PARTICLE_VIS_ENABLE_OPENH264
+  "Enable H.264 remote frames when OpenH264 is available"
+  ON)
 
 # Make locally bootstrapped dependencies visible to the early feature checks
 # below. The full dependency registration later also adds pkg-config paths and
 # source-tree fallbacks, but PYTHON_BRIDGE/Eigen/HDF5 are resolved before then.
 if(PARTICLE_VIS_PREFER_SUBMODULE_DEPS)
   foreach(_particle_vis_bootstrap_dep IN ITEMS
-      glfw glm eigen hdf5 libzmq cppzmq nlohmann_json)
+      glfw glm eigen hdf5 libzmq cppzmq nlohmann_json openh264)
     set(_particle_vis_bootstrap_prefix
       "${CMAKE_SOURCE_DIR}/external/submodules/_install/${_particle_vis_bootstrap_dep}")
     if(EXISTS "${_particle_vis_bootstrap_prefix}")
@@ -536,9 +539,26 @@ if(PYTHON_BRIDGE)
 endif()
 
 list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_frame_presenter.cpp)
+list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_video_codec.cpp)
 list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_receiver.cpp)
 if(PYTHON_BRIDGE)
   list(APPEND SOURCES_CPP ${SRC_DIR}/platform/remote_input_protocol.cpp)
+endif()
+
+set(PARTICLE_VIS_HAVE_OPENH264 FALSE)
+if(PARTICLE_VIS_ENABLE_OPENH264)
+  find_path(OPENH264_INCLUDE_DIR
+    NAMES wels/codec_api.h
+    HINTS "${CMAKE_SOURCE_DIR}/external/submodules/_install/openh264/include")
+  find_library(OPENH264_LIBRARY
+    NAMES openh264
+    HINTS "${CMAKE_SOURCE_DIR}/external/submodules/_install/openh264/lib")
+  if(OPENH264_INCLUDE_DIR AND OPENH264_LIBRARY)
+    set(PARTICLE_VIS_HAVE_OPENH264 TRUE)
+    message(STATUS "Remote H.264: ON (${OPENH264_LIBRARY})")
+  else()
+    message(STATUS "Remote H.264: OFF (OpenH264 not found; JPEG remains available)")
+  endif()
 endif()
 
 if(PARTICLE_VIS_HEADLESS_ONLY)
@@ -622,6 +642,14 @@ add_executable(${PROJECT_NAME}
   ${IMPLOT_SRC}
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_ENABLE_OPENGL_BACKEND)
+if(PARTICLE_VIS_HAVE_OPENH264)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${OPENH264_INCLUDE_DIR})
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${OPENH264_LIBRARY})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE pthread m)
+  endif()
+  target_compile_definitions(${PROJECT_NAME} PRIVATE PARTICLE_VIS_HAVE_OPENH264)
+endif()
 
 if(POWER_SPECTRUM)
   target_compile_definitions(${PROJECT_NAME} PRIVATE POWER_SPECTRUM)
@@ -1569,6 +1597,7 @@ endif()
 if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
   add_executable(remote_frame_viewer
     ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer/main.cpp
+    ${SRC_DIR}/platform/remote_video_codec.cpp
     ${GLAD_SRC}
   )
 
@@ -1587,6 +1616,15 @@ if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
   detect_and_link(remote_frame_viewer "cppzmq" "cppzmq" HEADER_ONLY)
   detect_and_link(remote_frame_viewer "nlohmann_json" "nlohmann-json"
     CMAKE_TARGET nlohmann_json::nlohmann_json HEADER_ONLY)
+
+  if(PARTICLE_VIS_HAVE_OPENH264)
+    target_include_directories(remote_frame_viewer PRIVATE ${OPENH264_INCLUDE_DIR})
+    target_link_libraries(remote_frame_viewer PRIVATE ${OPENH264_LIBRARY})
+    if(UNIX AND NOT APPLE)
+      target_link_libraries(remote_frame_viewer PRIVATE pthread m)
+    endif()
+    target_compile_definitions(remote_frame_viewer PRIVATE PARTICLE_VIS_HAVE_OPENH264)
+  endif()
 
   if(WIN32)
     target_link_libraries(remote_frame_viewer PRIVATE opengl32)
@@ -1679,6 +1717,21 @@ if(BUILD_TESTING)
     ${EXTERNAL_DIR}/include
     ${EXTERNAL_DIR}/stb)
   add_test(NAME remote_frame_jpeg_test COMMAND remote_frame_jpeg_test)
+
+  if(PARTICLE_VIS_HAVE_OPENH264)
+    add_executable(remote_video_codec_test
+      tests/remote_video_codec_test.cpp
+      ${SRC_DIR}/platform/remote_video_codec.cpp)
+    target_include_directories(remote_video_codec_test PRIVATE
+      ${SRC_DIR}
+      ${OPENH264_INCLUDE_DIR})
+    target_link_libraries(remote_video_codec_test PRIVATE ${OPENH264_LIBRARY})
+    if(UNIX AND NOT APPLE)
+      target_link_libraries(remote_video_codec_test PRIVATE pthread m)
+    endif()
+    target_compile_definitions(remote_video_codec_test PRIVATE PARTICLE_VIS_HAVE_OPENH264)
+    add_test(NAME remote_video_codec_test COMMAND remote_video_codec_test)
+  endif()
 
   add_executable(remote_imgui_input_test
     tests/remote_imgui_input_test.cpp

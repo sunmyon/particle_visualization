@@ -1,6 +1,6 @@
 # Linux GPU remote validation
 
-This procedure validates the demand-driven JPEG remote path and interactive
+This procedure validates the demand-driven H.264 remote path and interactive
 input transport. Live simulation transport is outside this test.
 
 ## 1. Build on Linux
@@ -12,7 +12,7 @@ that are not provided as modules:
 module purge
 module load gcc/14 cmake/4.0 hdf5-serial/1.14.1 fftw-serial/3.3.10
 ./scripts/bootstrap_optional_submodules.sh \
-  glm eigen nlohmann_json libzmq cppzmq
+  glm eigen nlohmann_json libzmq cppzmq openh264
 ```
 
 The bootstrap installs only inside `external/submodules/_install`. Then build
@@ -30,8 +30,8 @@ The configure output should report `EGL headless context support: ON` and keep
 `PYTHON_BRIDGE` enabled. If the bridge is automatically disabled, install or
 load ZeroMQ, cppzmq, and nlohmann-json before continuing.
 
-The CPU-only protocol tests do not require a GPU allocation. The expected
-result is five passing tests.
+The CPU-only protocol and codec tests do not require a GPU allocation. The
+expected result is six passing tests when OpenH264 is enabled.
 
 For a complete automated GPU loopback on Freya, load the current Python stack
 and run:
@@ -78,9 +78,11 @@ platform, and binds the frame and input sockets to `127.0.0.1:5560` and
 separate server-side snapshot configuration.
 
 The server log should identify the EGL/OpenGL renderer and show a successfully
-loaded snapshot. Remote frames use JPEG quality 80 by default. Set
-`PARTICLE_VIS_REMOTE_JPEG_QUALITY` from 1 to 100 to change the quality, or use
-`PARTICLE_VIS_REMOTE_JPEG_QUALITY=0` for the legacy raw RGBA payload.
+loaded snapshot. When OpenH264 was bootstrapped, remote frames use a persistent
+H.264 stream at 5 Mbit/s by default. Change the target with
+`PARTICLE_VIS_REMOTE_VIDEO_BITRATE`. Set `PARTICLE_VIS_REMOTE_CODEC=jpeg` to
+use the previous JPEG path; `PARTICLE_VIS_REMOTE_JPEG_QUALITY` then selects a
+quality from 1 to 100, and zero selects raw RGBA.
 
 ## 4. Start the loopback-only Slurm relay on the Mac
 
@@ -162,8 +164,8 @@ no repeated frame data, and input bursts collapse into one pending frame. Valid
 input can replace an in-flight frame directly, so interaction does not wait for
 the previous frame's receive acknowledgement to return to the server. It
 prints physical resolution, logical display size, DPI scale, and decoded RGBA
-size. It also reports server readback latency and copy time, JPEG queue and
+size. It also reports server readback latency and copy time, encoder queue and
 encode time, plus client decode and texture upload time. Record these values
 together with observed interaction latency. The EGL/OpenGL server uses a
-double-buffered PBO readback, and JPEG encoding runs on a worker thread. Set
-JPEG quality to zero when collecting a raw-transfer baseline.
+double-buffered PBO readback, and encoding runs on a worker thread. Use
+`PARTICLE_VIS_REMOTE_CODEC=jpeg` for a direct comparison with the old transport.

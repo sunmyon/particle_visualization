@@ -34,5 +34,7 @@ private:
   uint64_t frameId_ = 0;
   double maxFramesPerSecond_ = 10.0;
   int jpegQuality_ = 80;
+  int videoBitrate_ = 5'000'000;
+  bool preferVideo_ = false;
   std::chrono::steady_clock::time_point nextFrameTime_{};
 };

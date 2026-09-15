@@ -2,6 +2,7 @@
 
 #include "platform/graphics_context.h"
 #include "platform/remote_frame_flow_control.h"
+#include "platform/remote_video_codec.h"
 #include "platform/window_context.h"
 #include "image/image_io.h"
 
@@ -49,6 +50,24 @@ int RemoteJpegQuality()
   }
 }
 
+bool PreferRemoteVideo()
+{
+  const char* value = std::getenv("PARTICLE_VIS_REMOTE_CODEC");
+  if (!value || value[0] == '\0') return true;
+  return std::string(value) == "h264" || std::string(value) == "H264";
+}
+
+int RemoteVideoBitrate()
+{
+  const char* value = std::getenv("PARTICLE_VIS_REMOTE_VIDEO_BITRATE");
+  if (!value || value[0] == '\0') return 5'000'000;
+  try {
+    return std::clamp(std::stoi(value), 250'000, 100'000'000);
+  } catch (...) {
+    return 5'000'000;
+  }
+}
+
 } // namespace
 
 #ifdef PYTHON_BRIDGE
@@ -82,7 +101,9 @@ struct EncodedRemoteFrame {
   int displayHeight = 0;
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
-  bool jpeg = false;
+  std::string type = "rgba_frame";
+  std::string format = "RGBA8";
+  bool keyFrame = true;
   std::size_t rawBytes = 0;
   std::vector<unsigned char> payload;
   double readbackMs = 0.0;
@@ -104,6 +125,10 @@ struct RemoteFramePresenter::Impl {
   std::thread encoderThread;
   bool stopEncoder = false;
   int jpegQuality = 80;
+  bool preferVideo = false;
+  int videoBitrate = 5'000'000;
+  float videoFramesPerSecond = 10.0f;
+  RemoteVideoEncoder videoEncoder;
   uint64_t latestEnqueuedFrameId = 0;
   std::deque<ReadbackMetadata> readbacks;
 
@@ -119,9 +144,15 @@ struct RemoteFramePresenter::Impl {
     }
   }
 
-  void startEncoder(int quality)
+  void startEncoder(int quality,
+                    bool useVideo,
+                    int targetBitrate,
+                    float framesPerSecond)
   {
     jpegQuality = quality;
+    preferVideo = useVideo && videoEncoder.available();
+    videoBitrate = targetBitrate;
+    videoFramesPerSecond = framesPerSecond;
     encoderThread = std::thread([this]() {
       for (;;) {
         FrameToEncode input;
@@ -152,14 +183,29 @@ struct RemoteFramePresenter::Impl {
           std::chrono::steady_clock::now() - input.queuedAt).count();
 
         const auto encodeStart = std::chrono::steady_clock::now();
-        output.jpeg =
-          jpegQuality > 0 &&
-          EncodeJpegRgba(input.frame.width,
-                         input.frame.height,
-                         input.frame.pixels,
-                         jpegQuality,
-                         output.payload);
-        if (!output.jpeg) {
+        RemoteVideoPacket videoPacket;
+        if (preferVideo &&
+            videoEncoder.encodeRgba(input.frame.width,
+                                    input.frame.height,
+                                    input.frame.pixels,
+                                    videoBitrate,
+                                    videoFramesPerSecond,
+                                    videoPacket)) {
+          output.type = "h264_frame";
+          output.format = "H264_ANNEX_B";
+          output.keyFrame = videoPacket.keyFrame;
+          output.payload = std::move(videoPacket.bytes);
+        } else if (jpegQuality > 0 &&
+                   EncodeJpegRgba(input.frame.width,
+                                  input.frame.height,
+                                  input.frame.pixels,
+                                  jpegQuality,
+                                  output.payload)) {
+          output.type = "jpeg_frame";
+          output.format = "JPEG";
+          output.keyFrame = true;
+          if (preferVideo) videoEncoder.requestKeyFrame();
+        } else {
           output.payload = std::move(input.frame.pixels);
         }
         output.encodeMs = std::chrono::duration<double, std::milli>(
@@ -196,7 +242,8 @@ struct RemoteFramePresenter::Impl {
     if (!completedFrame) {
       return std::nullopt;
     }
-    if (completedFrame->frameId < latestEnqueuedFrameId) {
+    if (completedFrame->type != "h264_frame" &&
+        completedFrame->frameId < latestEnqueuedFrameId) {
       completedFrame.reset();
       return std::nullopt;
     }
@@ -212,7 +259,7 @@ struct RemoteFramePresenter::Impl {
       return;
     }
     nlohmann::json header{
-      {"type", encoded->jpeg ? "jpeg_frame" : "rgba_frame"},
+      {"type", encoded->type},
       {"frameId", encoded->frameId},
       {"width", encoded->width},
       {"height", encoded->height},
@@ -220,7 +267,8 @@ struct RemoteFramePresenter::Impl {
       {"displayHeight", encoded->displayHeight},
       {"framebufferScaleX", encoded->framebufferScaleX},
       {"framebufferScaleY", encoded->framebufferScaleY},
-      {"format", encoded->jpeg ? "JPEG" : "RGBA8"},
+      {"format", encoded->format},
+      {"keyFrame", encoded->keyFrame},
       {"bytes", encoded->payload.size()},
       {"rawBytes", encoded->rawBytes},
       {"serverReadbackMs", encoded->readbackMs},
@@ -258,21 +306,32 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
 {
   maxFramesPerSecond_ = RemoteMaxFramesPerSecond();
   jpegQuality_ = RemoteJpegQuality();
+  preferVideo_ = PreferRemoteVideo();
+  videoBitrate_ = RemoteVideoBitrate();
 #ifdef PYTHON_BRIDGE
   try {
     impl_->socket.set(zmq::sockopt::sndhwm, 1);
     impl_->socket.set(zmq::sockopt::sndtimeo, 100);
     impl_->socket.set(zmq::sockopt::linger, 0);
     impl_->socket.bind(endpoint_);
-    impl_->startEncoder(jpegQuality_);
+    impl_->startEncoder(jpegQuality_,
+                        preferVideo_,
+                        videoBitrate_,
+                        static_cast<float>(maxFramesPerSecond_ > 0.0
+                                             ? maxFramesPerSecond_
+                                             : 30.0));
     active_ = true;
     std::cerr << "Remote frame limit: " << maxFramesPerSecond_
               << " FPS (0 disables pacing)\n";
-    std::cerr << "Remote frame encoding: "
-              << (jpegQuality_ > 0
-                    ? "JPEG quality " + std::to_string(jpegQuality_)
-                    : "raw RGBA")
-              << '\n';
+    if (preferVideo_ && impl_->videoEncoder.available()) {
+      std::cerr << "Remote frame encoding: H.264 at "
+                << videoBitrate_ << " bit/s\n";
+    } else {
+      std::cerr << "Remote frame encoding: "
+                << (jpegQuality_ > 0
+                      ? "JPEG quality " + std::to_string(jpegQuality_)
+                      : "raw RGBA") << '\n';
+    }
   } catch (const zmq::error_t& e) {
     active_ = false;
     std::cerr << "RemoteFramePresenter failed to bind " << endpoint_

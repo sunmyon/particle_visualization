@@ -14,6 +14,8 @@
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
 
+#include "platform/remote_video_codec.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -128,6 +130,10 @@ RequestedPresentation GetRequestedPresentation(GLFWwindow* window)
     static_cast<int>(std::lround(requested.displayHeight * renderScale)),
     1,
     localFramebufferHeight);
+  // I420/H.264 requires even dimensions. Losing at most one pixel also keeps
+  // the JPEG fallback compatible with the same resize request.
+  if (requested.framebufferWidth > 1) requested.framebufferWidth &= ~1;
+  if (requested.framebufferHeight > 1) requested.framebufferHeight &= ~1;
   requested.framebufferScaleX =
     static_cast<float>(requested.framebufferWidth) /
     static_cast<float>(requested.displayWidth);
@@ -219,7 +225,8 @@ GLuint CreateProgram()
 bool ReceiveFrame(zmq::socket_t& sub,
                   RemoteFrame& out,
                   int desiredWidth,
-                  int desiredHeight)
+                  int desiredHeight,
+                  RemoteVideoDecoder& videoDecoder)
 {
   zmq::message_t headerMsg;
   auto headerResult = sub.recv(headerMsg, zmq::recv_flags::dontwait);
@@ -240,7 +247,7 @@ bool ReceiveFrame(zmq::socket_t& sub,
   }
 
   const std::string type = header.value("type", "");
-  if (type != "rgba_frame" && type != "jpeg_frame") {
+  if (type != "rgba_frame" && type != "jpeg_frame" && type != "h264_frame") {
     return false;
   }
 
@@ -269,14 +276,14 @@ bool ReceiveFrame(zmq::socket_t& sub,
     header.value("serverReadbackLatencyMs", out.serverReadbackMs);
   out.serverEncoderQueueMs = header.value("serverEncoderQueueMs", 0.0);
   out.serverEncodeMs = header.value("serverEncodeMs", 0.0);
-  if (desiredWidth > 0 && desiredHeight > 0 &&
-      (width != desiredWidth || height != desiredHeight)) {
-    out.rgba.clear();
-    out.clientDecodeMs = 0.0;
-    return true;
-  }
   const auto decodeStart = std::chrono::steady_clock::now();
-  if (type == "jpeg_frame") {
+  if (type == "h264_frame") {
+    if (!videoDecoder.decode(
+          static_cast<const unsigned char*>(payloadMsg.data()),
+          payloadMsg.size(), width, height, out.rgba)) {
+      return false;
+    }
+  } else if (type == "jpeg_frame") {
     int decodedWidth = 0;
     int decodedHeight = 0;
     int channels = 0;
@@ -301,6 +308,10 @@ bool ReceiveFrame(zmq::socket_t& sub,
   }
   out.clientDecodeMs = std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - decodeStart).count();
+  if (desiredWidth > 0 && desiredHeight > 0 &&
+      (width != desiredWidth || height != desiredHeight)) {
+    out.rgba.clear();
+  }
   return true;
 }
 
@@ -881,6 +892,7 @@ int main(int argc, char** argv)
   }
 
   RemoteFrame frame;
+  RemoteVideoDecoder videoDecoder;
   int textureWidth = 0;
   int textureHeight = 0;
   uint64_t displayedFrameCount = 0;
@@ -902,7 +914,8 @@ int main(int argc, char** argv)
     while (ReceiveFrame(sub,
                         incoming,
                         requested.framebufferWidth,
-                        requested.framebufferHeight)) {
+                        requested.framebufferHeight,
+                        videoDecoder)) {
       if (!inputContext.initialResizeSent) {
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;

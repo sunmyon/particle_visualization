@@ -22,6 +22,7 @@ Examples:
   ./scripts/bootstrap_optional_submodules.sh
   ./scripts/bootstrap_optional_submodules.sh --with-wayland glfw
   ./scripts/bootstrap_optional_submodules.sh glfw eigen glm
+  ./scripts/bootstrap_optional_submodules.sh openh264
 EOF
 }
 
@@ -41,18 +42,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-declare -A repos=(
-  [glfw]="https://github.com/glfw/glfw.git"
-  [glm]="https://github.com/g-truc/glm.git"
-  [eigen]="https://gitlab.com/libeigen/eigen.git"
-  [nlohmann_json]="https://github.com/nlohmann/json.git"
-  [cppzmq]="https://github.com/zeromq/cppzmq.git"
-  [libzmq]="https://github.com/zeromq/libzmq.git"
-  [hdf5]="https://github.com/HDFGroup/hdf5.git"
-  [wayland]="https://gitlab.freedesktop.org/wayland/wayland.git"
-  [wayland-protocols]="https://gitlab.freedesktop.org/wayland/wayland-protocols.git"
-  [xkbcommon]="https://github.com/xkbcommon/libxkbcommon.git"
-)
+dependency_repo() {
+  case "$1" in
+    glfw) echo "https://github.com/glfw/glfw.git" ;;
+    glm) echo "https://github.com/g-truc/glm.git" ;;
+    eigen) echo "https://gitlab.com/libeigen/eigen.git" ;;
+    nlohmann_json) echo "https://github.com/nlohmann/json.git" ;;
+    cppzmq) echo "https://github.com/zeromq/cppzmq.git" ;;
+    libzmq) echo "https://github.com/zeromq/libzmq.git" ;;
+    hdf5) echo "https://github.com/HDFGroup/hdf5.git" ;;
+    openh264) echo "https://github.com/cisco/openh264.git" ;;
+    wayland) echo "https://gitlab.freedesktop.org/wayland/wayland.git" ;;
+    wayland-protocols) echo "https://gitlab.freedesktop.org/wayland/wayland-protocols.git" ;;
+    xkbcommon) echo "https://github.com/xkbcommon/libxkbcommon.git" ;;
+    *) return 1 ;;
+  esac
+}
 
 declare -a default_deps=(glfw glm eigen nlohmann_json cppzmq libzmq)
 declare -a wayland_deps=(wayland wayland-protocols xkbcommon)
@@ -149,7 +154,7 @@ build_cmake_dep() {
   local dep_install="${install_root}/${dep}"
 
   local dep_prefix
-  for dep_prefix in glfw glm eigen nlohmann_json libzmq cppzmq hdf5; do
+  for dep_prefix in glfw glm eigen nlohmann_json libzmq cppzmq hdf5 openh264; do
     if [[ -d "${install_root}/${dep_prefix}/lib/pkgconfig" ]]; then
       export PKG_CONFIG_PATH="${install_root}/${dep_prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
     fi
@@ -171,7 +176,7 @@ build_cmake_dep() {
     -B "${dep_build}"
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_INSTALL_PREFIX="${dep_install}"
-    "-DCMAKE_PREFIX_PATH=${install_root}/glfw;${install_root}/glm;${install_root}/eigen;${install_root}/nlohmann_json;${install_root}/libzmq;${install_root}/cppzmq;${install_root}/hdf5"
+    "-DCMAKE_PREFIX_PATH=${install_root}/glfw;${install_root}/glm;${install_root}/eigen;${install_root}/nlohmann_json;${install_root}/libzmq;${install_root}/cppzmq;${install_root}/hdf5;${install_root}/openh264"
   )
 
   # Some module systems expose versioned gcc/g++ without replacing the
@@ -330,18 +335,34 @@ build_meson_dep() {
   meson install -C "${dep_build}"
 }
 
+build_openh264() {
+  local src_dir="${submodule_root}/openh264"
+  local dep_install="${install_root}/openh264"
+  local jobs=2
+  if command -v nproc >/dev/null 2>&1; then
+    jobs=$(nproc)
+  elif command -v sysctl >/dev/null 2>&1; then
+    jobs=$(sysctl -n hw.logicalcpu 2>/dev/null || echo 2)
+  fi
+  make -C "${src_dir}" -j "${jobs}" PREFIX="${dep_install}" install-static
+}
+
 for dep in "${deps[@]}"; do
-  if [[ -z "${repos[${dep}]:-}" ]]; then
+  repo_url=$(dependency_repo "${dep}" || true)
+  if [[ -z "${repo_url}" ]]; then
     echo "Unknown dependency: ${dep}" >&2
     exit 1
   fi
-  add_or_update_submodule "${dep}" "${repos[${dep}]}"
+  add_or_update_submodule "${dep}" "${repo_url}"
 done
 
 for dep in "${deps[@]}"; do
   case "${dep}" in
     wayland|wayland-protocols|xkbcommon)
       build_meson_dep "${dep}"
+      ;;
+    openh264)
+      build_openh264
       ;;
     *)
       build_cmake_dep "${dep}"
