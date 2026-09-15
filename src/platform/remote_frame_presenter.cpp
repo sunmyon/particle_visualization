@@ -122,10 +122,14 @@ struct RemoteFramePresenter::Impl {
   zmq::socket_t socket{context, zmq::socket_type::pub};
 
   std::mutex encoderMutex;
-  std::condition_variable encoderWake;
-  std::optional<FrameToEncode> pendingFrame;
-  std::optional<EncodedRemoteFrame> completedFrame;
-  std::thread encoderThread;
+  std::condition_variable interactiveEncoderWake;
+  std::condition_variable idleEncoderWake;
+  std::optional<FrameToEncode> pendingInteractiveFrame;
+  std::optional<FrameToEncode> pendingIdleFrame;
+  std::optional<EncodedRemoteFrame> completedInteractiveFrame;
+  std::optional<EncodedRemoteFrame> completedIdleFrame;
+  std::thread interactiveEncoderThread;
+  std::thread idleEncoderThread;
   bool stopEncoder = false;
   int jpegQuality = 80;
   bool preferVideo = false;
@@ -141,10 +145,64 @@ struct RemoteFramePresenter::Impl {
       std::lock_guard<std::mutex> lock(encoderMutex);
       stopEncoder = true;
     }
-    encoderWake.notify_one();
-    if (encoderThread.joinable()) {
-      encoderThread.join();
+    interactiveEncoderWake.notify_one();
+    idleEncoderWake.notify_one();
+    if (interactiveEncoderThread.joinable()) {
+      interactiveEncoderThread.join();
     }
+    if (idleEncoderThread.joinable()) {
+      idleEncoderThread.join();
+    }
+  }
+
+  EncodedRemoteFrame encode(FrameToEncode input, bool allowVideo)
+  {
+    EncodedRemoteFrame output;
+    output.frameId = input.frame.frameId;
+    output.width = input.frame.width;
+    output.height = input.frame.height;
+    output.displayWidth = input.displayWidth;
+    output.displayHeight = input.displayHeight;
+    output.framebufferScaleX = input.framebufferScaleX;
+    output.framebufferScaleY = input.framebufferScaleY;
+    output.idlePresentation = input.idlePresentation;
+    output.rawBytes = input.frame.pixels.size();
+    output.readbackMs = input.readbackMs;
+    output.readbackLatencyMs = input.readbackLatencyMs;
+    output.encoderQueueMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - input.queuedAt).count();
+
+    const auto encodeStart = std::chrono::steady_clock::now();
+    RemoteVideoPacket videoPacket;
+    if (allowVideo && preferVideo &&
+        videoEncoder.encodeRgba(input.frame.width,
+                                input.frame.height,
+                                input.frame.pixels,
+                                videoBitrate,
+                                videoFramesPerSecond,
+                                videoPacket)) {
+      output.type = "h264_frame";
+      output.format = "H264_ANNEX_B";
+      output.keyFrame = videoPacket.keyFrame;
+      output.payload = std::move(videoPacket.bytes);
+    } else if (jpegQuality > 0 &&
+               EncodeJpegRgba(input.frame.width,
+                              input.frame.height,
+                              input.frame.pixels,
+                              jpegQuality,
+                              output.payload)) {
+      output.type = "jpeg_frame";
+      output.format = "JPEG";
+      output.keyFrame = true;
+      if (allowVideo && preferVideo) {
+        videoEncoder.requestKeyFrame();
+      }
+    } else {
+      output.payload = std::move(input.frame.pixels);
+    }
+    output.encodeMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - encodeStart).count();
+    return output;
   }
 
   void startEncoder(int quality,
@@ -156,70 +214,49 @@ struct RemoteFramePresenter::Impl {
     preferVideo = useVideo && videoEncoder.available();
     videoBitrate = targetBitrate;
     videoFramesPerSecond = framesPerSecond;
-    encoderThread = std::thread([this]() {
+    interactiveEncoderThread = std::thread([this]() {
       for (;;) {
         FrameToEncode input;
         {
           std::unique_lock<std::mutex> lock(encoderMutex);
-          encoderWake.wait(lock, [this]() {
-            return stopEncoder || pendingFrame.has_value();
+          interactiveEncoderWake.wait(lock, [this]() {
+            return stopEncoder || pendingInteractiveFrame.has_value();
           });
-          if (stopEncoder && !pendingFrame) {
+          if (stopEncoder) {
             return;
           }
-          input = std::move(*pendingFrame);
-          pendingFrame.reset();
+          input = std::move(*pendingInteractiveFrame);
+          pendingInteractiveFrame.reset();
         }
 
-        EncodedRemoteFrame output;
-        output.frameId = input.frame.frameId;
-        output.width = input.frame.width;
-        output.height = input.frame.height;
-        output.displayWidth = input.displayWidth;
-        output.displayHeight = input.displayHeight;
-        output.framebufferScaleX = input.framebufferScaleX;
-        output.framebufferScaleY = input.framebufferScaleY;
-        output.idlePresentation = input.idlePresentation;
-        output.rawBytes = input.frame.pixels.size();
-        output.readbackMs = input.readbackMs;
-        output.readbackLatencyMs = input.readbackLatencyMs;
-        output.encoderQueueMs = std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - input.queuedAt).count();
-
-        const auto encodeStart = std::chrono::steady_clock::now();
-        RemoteVideoPacket videoPacket;
-        if (preferVideo && !input.idlePresentation &&
-            videoEncoder.encodeRgba(input.frame.width,
-                                    input.frame.height,
-                                    input.frame.pixels,
-                                    videoBitrate,
-                                    videoFramesPerSecond,
-                                    videoPacket)) {
-          output.type = "h264_frame";
-          output.format = "H264_ANNEX_B";
-          output.keyFrame = videoPacket.keyFrame;
-          output.payload = std::move(videoPacket.bytes);
-        } else if (jpegQuality > 0 &&
-                   EncodeJpegRgba(input.frame.width,
-                                  input.frame.height,
-                                  input.frame.pixels,
-                                  jpegQuality,
-                                  output.payload)) {
-          output.type = "jpeg_frame";
-          output.format = "JPEG";
-          output.keyFrame = true;
-          if (preferVideo && !input.idlePresentation) {
-            videoEncoder.requestKeyFrame();
-          }
-        } else {
-          output.payload = std::move(input.frame.pixels);
-        }
-        output.encodeMs = std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - encodeStart).count();
-
+        EncodedRemoteFrame output = encode(std::move(input), true);
         {
           std::lock_guard<std::mutex> lock(encoderMutex);
-          completedFrame = std::move(output);
+          completedInteractiveFrame = std::move(output);
+        }
+      }
+    });
+    idleEncoderThread = std::thread([this]() {
+      for (;;) {
+        FrameToEncode input;
+        {
+          std::unique_lock<std::mutex> lock(encoderMutex);
+          idleEncoderWake.wait(lock, [this]() {
+            return stopEncoder || pendingIdleFrame.has_value();
+          });
+          if (stopEncoder) {
+            return;
+          }
+          input = std::move(*pendingIdleFrame);
+          pendingIdleFrame.reset();
+        }
+
+        EncodedRemoteFrame output = encode(std::move(input), false);
+        {
+          std::lock_guard<std::mutex> lock(encoderMutex);
+          if (output.frameId >= latestEnqueuedFrameId) {
+            completedIdleFrame = std::move(output);
+          }
         }
       }
     });
@@ -227,34 +264,51 @@ struct RemoteFramePresenter::Impl {
 
   void enqueue(FrameToEncode frame)
   {
+    const bool idlePresentation = frame.idlePresentation;
     {
       std::lock_guard<std::mutex> lock(encoderMutex);
       latestEnqueuedFrameId =
         std::max(latestEnqueuedFrameId, frame.frame.frameId);
-      pendingFrame = std::move(frame);
+      if (frame.idlePresentation) {
+        pendingIdleFrame = std::move(frame);
+      } else {
+        pendingIdleFrame.reset();
+        pendingInteractiveFrame = std::move(frame);
+      }
     }
-    encoderWake.notify_one();
+    if (idlePresentation) {
+      idleEncoderWake.notify_one();
+    } else {
+      interactiveEncoderWake.notify_one();
+    }
   }
 
-  void noteLatestFrame(uint64_t frameId)
+  void noteLatestFrame(uint64_t frameId, bool idlePresentation)
   {
     std::lock_guard<std::mutex> lock(encoderMutex);
     latestEnqueuedFrameId = std::max(latestEnqueuedFrameId, frameId);
+    if (!idlePresentation) {
+      pendingIdleFrame.reset();
+    }
   }
 
   std::optional<EncodedRemoteFrame> takeCompleted()
   {
     std::lock_guard<std::mutex> lock(encoderMutex);
-    if (!completedFrame) {
+    if (completedInteractiveFrame) {
+      auto result = std::move(completedInteractiveFrame);
+      completedInteractiveFrame.reset();
+      return result;
+    }
+    if (!completedIdleFrame) {
       return std::nullopt;
     }
-    if (completedFrame->type != "h264_frame" &&
-        completedFrame->frameId < latestEnqueuedFrameId) {
-      completedFrame.reset();
+    if (completedIdleFrame->frameId < latestEnqueuedFrameId) {
+      completedIdleFrame.reset();
       return std::nullopt;
     }
-    auto result = std::move(completedFrame);
-    completedFrame.reset();
+    auto result = std::move(completedIdleFrame);
+    completedIdleFrame.reset();
     return result;
   }
 
@@ -428,7 +482,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
         metadata.framebufferScaleY = window_->framebufferScaleY();
         metadata.idlePresentation = idlePresentation_;
         metadata.submittedAt = std::chrono::steady_clock::now();
-        impl_->noteLatestFrame(metadata.frameId);
+        impl_->noteLatestFrame(metadata.frameId, metadata.idlePresentation);
         impl_->readbacks.push_back(std::move(metadata));
         if (maxFramesPerSecond_ > 0.0) {
           nextFrameTime_ = now +

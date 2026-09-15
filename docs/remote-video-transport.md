@@ -16,8 +16,8 @@ particle_vis on the GPU node
   render scene + ImGui
     -> asynchronous framebuffer readback
     -> one-slot latest-frame queue
-    -> worker: interactive RGBA to I420 and OpenH264 encode
-               idle RGBA to independent JPEG
+    -> interactive worker: RGBA to I420 and OpenH264 encode
+    -> idle worker: independent JPEG encode
     -> ZeroMQ multipart message over the loopback-only Slurm relay
     -> Mac viewer: OpenH264 decode, I420 to RGBA, OpenGL texture upload
     -> local window
@@ -33,6 +33,12 @@ change, or viewer frame request marks the scene dirty. Repeated changes can
 replace a raw frame that has not entered the encoder, avoiding an unbounded
 encode queue. H.264 frames that have already been encoded are kept in order
 because later P-frames can refer to them.
+
+Interactive and idle encoding use separate workers. New interactive work drops
+an idle frame that has not started encoding, prioritizes completed interactive
+output, and rejects an idle JPEG that finishes after a newer frame was queued.
+An idle JPEG already inside the JPEG library may finish in the background, but
+it does not hold the H.264 queue.
 
 ## Codec selection
 
