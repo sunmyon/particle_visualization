@@ -124,14 +124,15 @@ backend tests also run unchanged. The automated loopback test exercises the
 real renderer, resize, remote input, the idle JPEG transition, H.264
 continuation without a new IDR, and remote Escape exit.
 
-One Freya A100 to Mac session on 2026-09-15 produced the following diagnostic
-samples. They are reference observations rather than a throughput benchmark:
+One Freya A100 to Mac session on 2026-09-15, before the independent idle-JPEG
+path was added, produced the following diagnostic samples. They are reference
+observations rather than a throughput benchmark:
 
 | State | Render size | Payload | Server encode | Mac decode |
 |---|---:|---:|---:|---:|
 | Interactive | 960 x 540 | 23-28 KB | 28-32 ms | about 5 ms |
 | Maximized interactive | 1134 x 712 | about 53 KB | about 57 ms | about 7 ms |
-| Full Retina idle IDR | 3024 x 1898 | about 1.28 MB | about 333 ms | about 81 ms |
+| Full Retina idle IDR (previous path) | 3024 x 1898 | about 1.28 MB | about 333 ms | about 81 ms |
 
 Normal encoder-queue samples were approximately 0.05-0.08 ms, with no sustained
 queue growth observed in that session. Measure payload rate and interaction
