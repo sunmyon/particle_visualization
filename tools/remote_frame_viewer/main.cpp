@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -42,6 +43,7 @@ struct ViewerInputContext {
   int remoteDisplayHeight = 720;
   float remoteFramebufferScaleX = 1.0f;
   float remoteFramebufferScaleY = 1.0f;
+  float renderScale = 1.0f;
   bool initialResizeSent = false;
   std::unordered_set<int> pressedKeys;
 };
@@ -49,6 +51,15 @@ struct ViewerInputContext {
 struct PointerPosition {
   float x = 0.0f;
   float y = 0.0f;
+};
+
+struct RequestedPresentation {
+  int framebufferWidth = 1;
+  int framebufferHeight = 1;
+  int displayWidth = 1;
+  int displayHeight = 1;
+  float framebufferScaleX = 1.0f;
+  float framebufferScaleY = 1.0f;
 };
 
 int EnvInt(const char* name, int fallback)
@@ -60,6 +71,55 @@ int EnvInt(const char* name, int fallback)
   } catch (...) {
     return fallback;
   }
+}
+
+float EnvFloat(const char* name, float fallback)
+{
+  const char* value = std::getenv(name);
+  if (!value || value[0] == '\0') return fallback;
+  try {
+    const float parsed = std::stof(value);
+    return std::isfinite(parsed) ? std::clamp(parsed, 0.25f, 2.0f)
+                                 : fallback;
+  } catch (...) {
+    return fallback;
+  }
+}
+
+RequestedPresentation GetRequestedPresentation(GLFWwindow* window)
+{
+  RequestedPresentation requested;
+  int localFramebufferWidth = 1;
+  int localFramebufferHeight = 1;
+  glfwGetWindowSize(window,
+                    &requested.displayWidth,
+                    &requested.displayHeight);
+  glfwGetFramebufferSize(window,
+                         &localFramebufferWidth,
+                         &localFramebufferHeight);
+  requested.displayWidth = std::max(requested.displayWidth, 1);
+  requested.displayHeight = std::max(requested.displayHeight, 1);
+  localFramebufferWidth = std::max(localFramebufferWidth, 1);
+  localFramebufferHeight = std::max(localFramebufferHeight, 1);
+
+  const auto* ctx =
+    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
+  const float renderScale = ctx ? ctx->renderScale : 1.0f;
+  requested.framebufferWidth = std::clamp(
+    static_cast<int>(std::lround(requested.displayWidth * renderScale)),
+    1,
+    localFramebufferWidth);
+  requested.framebufferHeight = std::clamp(
+    static_cast<int>(std::lround(requested.displayHeight * renderScale)),
+    1,
+    localFramebufferHeight);
+  requested.framebufferScaleX =
+    static_cast<float>(requested.framebufferWidth) /
+    static_cast<float>(requested.displayWidth);
+  requested.framebufferScaleY =
+    static_cast<float>(requested.framebufferHeight) /
+    static_cast<float>(requested.displayHeight);
+  return requested;
 }
 
 const char* VertexShaderSource()
@@ -228,21 +288,14 @@ nlohmann::json BuildModifiers(GLFWwindow* window)
 
 nlohmann::json BuildViewport(GLFWwindow* window)
 {
-  int width = 1;
-  int height = 1;
-  int framebufferWidth = 1;
-  int framebufferHeight = 1;
-  glfwGetWindowSize(window, &width, &height);
-  glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+  const RequestedPresentation requested = GetRequestedPresentation(window);
   return {
     {"x", 0},
     {"y", 0},
-    {"width", std::max(width, 1)},
-    {"height", std::max(height, 1)},
-    {"framebufferScaleX", static_cast<float>(framebufferWidth) /
-                            static_cast<float>(std::max(width, 1))},
-    {"framebufferScaleY", static_cast<float>(framebufferHeight) /
-                            static_cast<float>(std::max(height, 1))}
+    {"width", requested.displayWidth},
+    {"height", requested.displayHeight},
+    {"framebufferScaleX", requested.framebufferScaleX},
+    {"framebufferScaleY", requested.framebufferScaleY}
   };
 }
 
@@ -291,26 +344,25 @@ void SendFrameRequest(GLFWwindow* window)
 
 void SendFramebufferSize(GLFWwindow* window)
 {
-  int framebufferWidth = 0;
-  int framebufferHeight = 0;
-  int displayWidth = 0;
-  int displayHeight = 0;
-  glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
-  glfwGetWindowSize(window, &displayWidth, &displayHeight);
-  if (framebufferWidth <= 0 || framebufferHeight <= 0 ||
-      displayWidth <= 0 || displayHeight <= 0) {
-    return;
+  const RequestedPresentation requested = GetRequestedPresentation(window);
+  auto* ctx =
+    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
+  if (ctx) {
+    ctx->remoteWidth = requested.framebufferWidth;
+    ctx->remoteHeight = requested.framebufferHeight;
+    ctx->remoteDisplayWidth = requested.displayWidth;
+    ctx->remoteDisplayHeight = requested.displayHeight;
+    ctx->remoteFramebufferScaleX = requested.framebufferScaleX;
+    ctx->remoteFramebufferScaleY = requested.framebufferScaleY;
   }
   SendInput(window, {
     {"type", "framebuffer_resize"},
-    {"width", framebufferWidth},
-    {"height", framebufferHeight},
-    {"displayWidth", displayWidth},
-    {"displayHeight", displayHeight},
-    {"framebufferScaleX", static_cast<float>(framebufferWidth) /
-                            static_cast<float>(displayWidth)},
-    {"framebufferScaleY", static_cast<float>(framebufferHeight) /
-                            static_cast<float>(displayHeight)}
+    {"width", requested.framebufferWidth},
+    {"height", requested.framebufferHeight},
+    {"displayWidth", requested.displayWidth},
+    {"displayHeight", requested.displayHeight},
+    {"framebufferScaleX", requested.framebufferScaleX},
+    {"framebufferScaleY", requested.framebufferScaleY}
   });
 }
 
@@ -644,6 +696,8 @@ int main(int argc, char** argv)
 
   ViewerInputContext inputContext;
   inputContext.input = inputEnabled ? &inputPush : nullptr;
+  inputContext.renderScale =
+    EnvFloat("PARTICLE_VIS_VIEWER_RENDER_SCALE", 1.0f);
   glfwSetWindowUserPointer(window, &inputContext);
   glfwSetCursorPosCallback(window, CursorCallback);
   glfwSetMouseButtonCallback(window, MouseButtonCallback);
@@ -735,10 +789,10 @@ int main(int argc, char** argv)
         inputContext.initialResizeSent = true;
       }
       SendFrameRequest(window);
-      int desiredWidth = 0;
-      int desiredHeight = 0;
-      glfwGetFramebufferSize(window, &desiredWidth, &desiredHeight);
-      if (incoming.width != desiredWidth || incoming.height != desiredHeight) {
+      const RequestedPresentation requested =
+        GetRequestedPresentation(window);
+      if (incoming.width != requested.framebufferWidth ||
+          incoming.height != requested.framebufferHeight) {
         continue;
       }
       frame = std::move(incoming);

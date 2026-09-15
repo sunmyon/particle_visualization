@@ -121,6 +121,22 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
   tcp://127.0.0.1:5571
 ```
 
+The viewer requests one server-rendered pixel per logical window pixel by
+default. This avoids rendering at the full Retina framebuffer resolution while
+keeping the native window large. Adjust the server render resolution without
+changing the window size with:
+
+```bash
+PARTICLE_VIS_VIEWER_RENDER_SCALE=0.75 \
+./build/remote_frame_viewer \
+  tcp://127.0.0.1:5570 \
+  tcp://127.0.0.1:5571
+```
+
+Use `1` for the default logical resolution, values below `1` for lower-latency
+interaction, or `2` to request Retina resolution when the local framebuffer is
+large enough.
+
 To compare bandwidth at a smaller viewer size:
 
 ```bash
