@@ -58,6 +58,21 @@ int main()
         throw std::runtime_error("Valid input lost or invalid input enqueued");
       if (!flowControl.tryBeginFrame())
         throw std::runtime_error("Valid input did not release a remote frame");
+      const std::string deferred =
+        R"({"type":"pointer_scroll","wheelY":1,"deferFrame":true})";
+      flowControl.markViewerReady();
+      if (!sender.send(zmq::buffer(deferred), zmq::send_flags::none))
+        throw std::runtime_error("Deferred input send timed out");
+      const auto deferredDeadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (queue.empty() &&
+             std::chrono::steady_clock::now() < deferredDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+      if (queue.empty() || flowControl.tryBeginFrame())
+        throw std::runtime_error(
+          "Deferred gesture did not revoke an outstanding frame request");
+      queue.clear();
     }
     receiver.stop();
     receiver.stop();

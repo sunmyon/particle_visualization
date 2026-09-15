@@ -18,6 +18,12 @@ public:
     viewerReady_ = true;
   }
 
+  void deferViewerFrame()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    viewerReady_ = false;
+  }
+
   bool tryBeginFrame()
   {
     std::lock_guard<std::mutex> lock(mutex_);

@@ -143,6 +143,14 @@ delay. Set the idle scale to `1` to disable the Retina-quality final frame.
 The viewer also forwards local clipboard text to the remote UI when pressing
 Command+V on macOS or Ctrl+V on other platforms.
 
+Camera gestures are coalesced by default: the viewer keeps the last received
+image visible while a mouse button is held, sends all camera input to the
+server, and requests one updated frame on release. Wheel zoom requests one
+frame after 120 ms without another wheel event. Set
+`PARTICLE_VIS_VIEWER_DEFER_GESTURE_FRAMES=0` to restore live frames during
+dragging, or adjust the wheel delay with
+`PARTICLE_VIS_VIEWER_GESTURE_SETTLE_MS`.
+
 To compare bandwidth at a smaller viewer size:
 
 ```bash

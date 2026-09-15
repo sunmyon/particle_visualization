@@ -186,6 +186,7 @@ struct InputEvent {
   PointerButton button = PointerButton::None;
   bool primaryDown = false;
   bool capturedByUI = false;
+  bool deferFrame = false;
 
   InputModifiers modifiers;
   InputViewport viewport;

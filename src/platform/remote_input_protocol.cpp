@@ -213,6 +213,7 @@ std::optional<InputEvent> Decode(std::string_view message)
 
     event.primaryDown = json.value("primaryDown", false);
     event.capturedByUI = json.value("capturedByUI", false);
+    event.deferFrame = json.value("deferFrame", false);
     event.text = json.value("text", std::string());
 
     if (json.contains("modifiers")) {
