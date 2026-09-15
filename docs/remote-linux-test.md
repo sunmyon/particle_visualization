@@ -121,10 +121,11 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
   tcp://127.0.0.1:5571
 ```
 
-The viewer requests one server-rendered pixel per logical window pixel by
-default. This avoids rendering at the full Retina framebuffer resolution while
-keeping the native window large. Adjust the server render resolution without
-changing the window size with:
+During interaction, the viewer requests one server-rendered pixel per logical
+window pixel by default. This avoids rendering at the full Retina framebuffer
+resolution while keeping the native window large. After 500 ms without input,
+it requests one full-resolution Retina frame. Adjust the interactive resolution
+without changing the window size with:
 
 ```bash
 PARTICLE_VIS_VIEWER_RENDER_SCALE=0.75 \
@@ -133,9 +134,13 @@ PARTICLE_VIS_VIEWER_RENDER_SCALE=0.75 \
   tcp://127.0.0.1:5571
 ```
 
-Use `1` for the default logical resolution, values below `1` for lower-latency
-interaction, or `2` to request Retina resolution when the local framebuffer is
-large enough.
+Use `1` for the default logical interaction resolution or values below `1` for
+lower latency. `PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE` controls the final idle
+frame and defaults to `2`; `PARTICLE_VIS_VIEWER_IDLE_DELAY_MS` controls its
+delay. Set the idle scale to `1` to disable the Retina-quality final frame.
+
+The viewer also forwards local clipboard text to the remote UI when pressing
+Command+V on macOS or Ctrl+V on other platforms.
 
 To compare bandwidth at a smaller viewer size:
 

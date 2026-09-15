@@ -43,9 +43,15 @@ struct ViewerInputContext {
   int remoteDisplayHeight = 720;
   float remoteFramebufferScaleX = 1.0f;
   float remoteFramebufferScaleY = 1.0f;
-  float renderScale = 1.0f;
+  float interactiveRenderScale = 1.0f;
+  float idleRenderScale = 2.0f;
+  int idleRestoreDelayMs = 500;
+  bool interactiveRendering = true;
+  std::chrono::steady_clock::time_point lastInteraction =
+    std::chrono::steady_clock::now();
   bool initialResizeSent = false;
   std::unordered_set<int> pressedKeys;
+  std::unordered_set<int> locallyHandledKeys;
 };
 
 struct PointerPosition {
@@ -104,7 +110,11 @@ RequestedPresentation GetRequestedPresentation(GLFWwindow* window)
 
   const auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
-  const float renderScale = ctx ? ctx->renderScale : 1.0f;
+  const float renderScale = ctx
+    ? (ctx->interactiveRendering
+         ? ctx->interactiveRenderScale
+         : ctx->idleRenderScale)
+    : 1.0f;
   requested.framebufferWidth = std::clamp(
     static_cast<int>(std::lround(requested.displayWidth * renderScale)),
     1,
@@ -366,6 +376,58 @@ void SendFramebufferSize(GLFWwindow* window)
   });
 }
 
+void MarkInteractiveRendering(GLFWwindow* window, bool sizeChanged = false)
+{
+  auto* ctx =
+    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
+  if (!ctx) return;
+
+  ctx->lastInteraction = std::chrono::steady_clock::now();
+  const bool enteringInteractive = !ctx->interactiveRendering;
+  ctx->interactiveRendering = true;
+  if (enteringInteractive || sizeChanged) {
+    SendFramebufferSize(window);
+    SendFrameRequest(window);
+  }
+}
+
+void RestoreIdleRenderingIfDue(GLFWwindow* window,
+                               std::chrono::steady_clock::time_point now)
+{
+  auto* ctx =
+    static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
+  if (!ctx || !ctx->interactiveRendering ||
+      now - ctx->lastInteraction <
+        std::chrono::milliseconds(ctx->idleRestoreDelayMs)) {
+    return;
+  }
+
+  ctx->interactiveRendering = false;
+  SendFramebufferSize(window);
+  SendFrameRequest(window);
+}
+
+void SendTextInput(GLFWwindow* window, const std::string& text)
+{
+  constexpr std::size_t MaxChunkBytes = 16 * 1024;
+  std::size_t offset = 0;
+  while (offset < text.size()) {
+    std::size_t end = std::min(offset + MaxChunkBytes, text.size());
+    while (end < text.size() && end > offset &&
+           (static_cast<unsigned char>(text[end]) & 0xc0u) == 0x80u) {
+      --end;
+    }
+    if (end == offset) {
+      end = std::min(offset + MaxChunkBytes, text.size());
+    }
+    SendInput(window, {
+      {"type", "text"},
+      {"text", text.substr(offset, end - offset)}
+    });
+    offset = end;
+  }
+}
+
 std::string KeyName(int key)
 {
   if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) {
@@ -441,6 +503,7 @@ std::string ActionName(int action)
 
 void CursorCallback(GLFWwindow* window, double xpos, double ypos)
 {
+  MarkInteractiveRendering(window);
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
   const bool leftDown = ctx ? ctx->leftDown : false;
@@ -457,6 +520,7 @@ void CursorCallback(GLFWwindow* window, double xpos, double ypos)
 
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
 {
+  MarkInteractiveRendering(window);
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
   if (!ctx || (action != GLFW_PRESS && action != GLFW_RELEASE)) {
@@ -498,6 +562,7 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int)
 
 void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 {
+  MarkInteractiveRendering(window);
   double xpos = 0.0;
   double ypos = 0.0;
   glfwGetCursorPos(window, &xpos, &ypos);
@@ -513,7 +578,7 @@ void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
   });
 }
 
-void KeyCallback(GLFWwindow* window, int key, int, int action, int)
+void KeyCallback(GLFWwindow* window, int key, int, int action, int mods)
 {
   const std::string keyName = KeyName(key);
   if (keyName.empty()) {
@@ -526,6 +591,23 @@ void KeyCallback(GLFWwindow* window, int key, int, int action, int)
   }
   auto* ctx =
     static_cast<ViewerInputContext*>(glfwGetWindowUserPointer(window));
+  if (ctx && action == GLFW_RELEASE &&
+      ctx->locallyHandledKeys.erase(key) != 0) {
+    return;
+  }
+  const bool pasteShortcut =
+    key == GLFW_KEY_V && action == GLFW_PRESS &&
+    (mods & (GLFW_MOD_SUPER | GLFW_MOD_CONTROL)) != 0;
+  if (pasteShortcut) {
+    const char* clipboard = glfwGetClipboardString(window);
+    if (clipboard && clipboard[0] != '\0') {
+      MarkInteractiveRendering(window);
+      SendTextInput(window, clipboard);
+    }
+    if (ctx) ctx->locallyHandledKeys.insert(key);
+    return;
+  }
+  MarkInteractiveRendering(window);
   if (ctx) {
     if (action == GLFW_PRESS) {
       ctx->pressedKeys.insert(key);
@@ -572,14 +654,15 @@ void CharCallback(GLFWwindow* window, unsigned int codepoint)
 {
   const std::string text = EncodeUtf8(codepoint);
   if (!text.empty()) {
-    SendInput(window, {{"type", "text"}, {"text", text}});
+    MarkInteractiveRendering(window);
+    SendTextInput(window, text);
   }
 }
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
   if (width > 0 && height > 0) {
-    SendFramebufferSize(window);
+    MarkInteractiveRendering(window, true);
   }
 }
 
@@ -605,6 +688,7 @@ void FocusCallback(GLFWwindow* window, int focused)
     }
   }
   ctx->pressedKeys.clear();
+  ctx->locallyHandledKeys.clear();
   double xpos = 0.0;
   double ypos = 0.0;
   glfwGetCursorPos(window, &xpos, &ypos);
@@ -696,8 +780,12 @@ int main(int argc, char** argv)
 
   ViewerInputContext inputContext;
   inputContext.input = inputEnabled ? &inputPush : nullptr;
-  inputContext.renderScale =
+  inputContext.interactiveRenderScale =
     EnvFloat("PARTICLE_VIS_VIEWER_RENDER_SCALE", 1.0f);
+  inputContext.idleRenderScale =
+    EnvFloat("PARTICLE_VIS_VIEWER_IDLE_RENDER_SCALE", 2.0f);
+  inputContext.idleRestoreDelayMs =
+    EnvInt("PARTICLE_VIS_VIEWER_IDLE_DELAY_MS", 500);
   glfwSetWindowUserPointer(window, &inputContext);
   glfwSetCursorPosCallback(window, CursorCallback);
   glfwSetMouseButtonCallback(window, MouseButtonCallback);
@@ -777,6 +865,7 @@ int main(int argc, char** argv)
     glfwPollEvents();
 
     const auto now = std::chrono::steady_clock::now();
+    RestoreIdleRenderingIfDue(window, now);
     if (textureWidth == 0 && now >= nextInitialFrameRequest) {
       SendFrameRequest(window);
       nextInitialFrameRequest = now + std::chrono::milliseconds(250);
