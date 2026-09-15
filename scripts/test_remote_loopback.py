@@ -245,6 +245,16 @@ def run(args: argparse.Namespace) -> int:
         second, second_payload = receive_frame(subscriber, args.timeout)
         if second["frameId"] <= resized["frameId"]:
             raise RuntimeError("frame IDs did not advance after sending input")
+        timing_keys = (
+            "serverReadbackMs",
+            "serverReadbackLatencyMs",
+            "serverEncoderQueueMs",
+            "serverEncodeMs",
+        )
+        for key in timing_keys:
+            value = second.get(key)
+            if not isinstance(value, (int, float)) or value < 0:
+                raise RuntimeError(f"invalid or missing {key}: {second!r}")
 
         if args.save_frame:
             output = Path(args.save_frame).expanduser().resolve()
@@ -284,6 +294,12 @@ def run(args: argparse.Namespace) -> int:
                     "displaySize": [active_display_width, active_display_height],
                     "framebufferScale": args.display_scale,
                     "inputEventsSent": len(events) + 1 + resize_requested,
+                    "serverTimingMs": {
+                        "readbackLatency": second["serverReadbackLatencyMs"],
+                        "readbackCopy": second["serverReadbackMs"],
+                        "encoderQueue": second["serverEncoderQueueMs"],
+                        "encode": second["serverEncodeMs"],
+                    },
                     "serverExitCode": exit_code,
                 },
                 indent=2,

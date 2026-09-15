@@ -7,8 +7,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #ifdef PYTHON_BRIDGE
 #include <nlohmann/json.hpp>
@@ -45,9 +52,195 @@ int RemoteJpegQuality()
 } // namespace
 
 #ifdef PYTHON_BRIDGE
+namespace {
+
+struct FrameToEncode {
+  RenderedFrame frame;
+  int displayWidth = 0;
+  int displayHeight = 0;
+  float framebufferScaleX = 1.0f;
+  float framebufferScaleY = 1.0f;
+  double readbackMs = 0.0;
+  double readbackLatencyMs = 0.0;
+  std::chrono::steady_clock::time_point queuedAt;
+};
+
+struct ReadbackMetadata {
+  uint64_t frameId = 0;
+  int displayWidth = 0;
+  int displayHeight = 0;
+  float framebufferScaleX = 1.0f;
+  float framebufferScaleY = 1.0f;
+  std::chrono::steady_clock::time_point submittedAt;
+};
+
+struct EncodedRemoteFrame {
+  uint64_t frameId = 0;
+  int width = 0;
+  int height = 0;
+  int displayWidth = 0;
+  int displayHeight = 0;
+  float framebufferScaleX = 1.0f;
+  float framebufferScaleY = 1.0f;
+  bool jpeg = false;
+  std::size_t rawBytes = 0;
+  std::vector<unsigned char> payload;
+  double readbackMs = 0.0;
+  double readbackLatencyMs = 0.0;
+  double encoderQueueMs = 0.0;
+  double encodeMs = 0.0;
+};
+
+} // namespace
+
 struct RemoteFramePresenter::Impl {
   zmq::context_t context{1};
   zmq::socket_t socket{context, zmq::socket_type::pub};
+
+  std::mutex encoderMutex;
+  std::condition_variable encoderWake;
+  std::optional<FrameToEncode> pendingFrame;
+  std::optional<EncodedRemoteFrame> completedFrame;
+  std::thread encoderThread;
+  bool stopEncoder = false;
+  int jpegQuality = 80;
+  uint64_t latestEnqueuedFrameId = 0;
+  std::deque<ReadbackMetadata> readbacks;
+
+  ~Impl()
+  {
+    {
+      std::lock_guard<std::mutex> lock(encoderMutex);
+      stopEncoder = true;
+    }
+    encoderWake.notify_one();
+    if (encoderThread.joinable()) {
+      encoderThread.join();
+    }
+  }
+
+  void startEncoder(int quality)
+  {
+    jpegQuality = quality;
+    encoderThread = std::thread([this]() {
+      for (;;) {
+        FrameToEncode input;
+        {
+          std::unique_lock<std::mutex> lock(encoderMutex);
+          encoderWake.wait(lock, [this]() {
+            return stopEncoder || pendingFrame.has_value();
+          });
+          if (stopEncoder && !pendingFrame) {
+            return;
+          }
+          input = std::move(*pendingFrame);
+          pendingFrame.reset();
+        }
+
+        EncodedRemoteFrame output;
+        output.frameId = input.frame.frameId;
+        output.width = input.frame.width;
+        output.height = input.frame.height;
+        output.displayWidth = input.displayWidth;
+        output.displayHeight = input.displayHeight;
+        output.framebufferScaleX = input.framebufferScaleX;
+        output.framebufferScaleY = input.framebufferScaleY;
+        output.rawBytes = input.frame.pixels.size();
+        output.readbackMs = input.readbackMs;
+        output.readbackLatencyMs = input.readbackLatencyMs;
+        output.encoderQueueMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - input.queuedAt).count();
+
+        const auto encodeStart = std::chrono::steady_clock::now();
+        output.jpeg =
+          jpegQuality > 0 &&
+          EncodeJpegRgba(input.frame.width,
+                         input.frame.height,
+                         input.frame.pixels,
+                         jpegQuality,
+                         output.payload);
+        if (!output.jpeg) {
+          output.payload = std::move(input.frame.pixels);
+        }
+        output.encodeMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - encodeStart).count();
+
+        {
+          std::lock_guard<std::mutex> lock(encoderMutex);
+          completedFrame = std::move(output);
+        }
+      }
+    });
+  }
+
+  void enqueue(FrameToEncode frame)
+  {
+    {
+      std::lock_guard<std::mutex> lock(encoderMutex);
+      latestEnqueuedFrameId =
+        std::max(latestEnqueuedFrameId, frame.frame.frameId);
+      pendingFrame = std::move(frame);
+    }
+    encoderWake.notify_one();
+  }
+
+  void noteLatestFrame(uint64_t frameId)
+  {
+    std::lock_guard<std::mutex> lock(encoderMutex);
+    latestEnqueuedFrameId = std::max(latestEnqueuedFrameId, frameId);
+  }
+
+  std::optional<EncodedRemoteFrame> takeCompleted()
+  {
+    std::lock_guard<std::mutex> lock(encoderMutex);
+    if (!completedFrame) {
+      return std::nullopt;
+    }
+    if (completedFrame->frameId < latestEnqueuedFrameId) {
+      completedFrame.reset();
+      return std::nullopt;
+    }
+    auto result = std::move(completedFrame);
+    completedFrame.reset();
+    return result;
+  }
+
+  void publishCompleted()
+  {
+    auto encoded = takeCompleted();
+    if (!encoded) {
+      return;
+    }
+    nlohmann::json header{
+      {"type", encoded->jpeg ? "jpeg_frame" : "rgba_frame"},
+      {"frameId", encoded->frameId},
+      {"width", encoded->width},
+      {"height", encoded->height},
+      {"displayWidth", encoded->displayWidth},
+      {"displayHeight", encoded->displayHeight},
+      {"framebufferScaleX", encoded->framebufferScaleX},
+      {"framebufferScaleY", encoded->framebufferScaleY},
+      {"format", encoded->jpeg ? "JPEG" : "RGBA8"},
+      {"bytes", encoded->payload.size()},
+      {"rawBytes", encoded->rawBytes},
+      {"serverReadbackMs", encoded->readbackMs},
+      {"serverReadbackLatencyMs", encoded->readbackLatencyMs},
+      {"serverEncoderQueueMs", encoded->encoderQueueMs},
+      {"serverEncodeMs", encoded->encodeMs}
+    };
+    const std::string headerText = header.dump();
+    try {
+      const auto headerOk = socket.send(
+        zmq::buffer(headerText),
+        zmq::send_flags::sndmore | zmq::send_flags::dontwait);
+      if (headerOk) {
+        socket.send(zmq::buffer(encoded->payload),
+                    zmq::send_flags::none);
+      }
+    } catch (const zmq::error_t&) {
+      // The viewer requests another frame after every successful receive.
+    }
+  }
 };
 #else
 struct RemoteFramePresenter::Impl {};
@@ -71,6 +264,7 @@ RemoteFramePresenter::RemoteFramePresenter(WindowContext& window,
     impl_->socket.set(zmq::sockopt::sndtimeo, 100);
     impl_->socket.set(zmq::sockopt::linger, 0);
     impl_->socket.bind(endpoint_);
+    impl_->startEncoder(jpegQuality_);
     active_ = true;
     std::cerr << "Remote frame limit: " << maxFramesPerSecond_
               << " FPS (0 disables pacing)\n";
@@ -123,13 +317,72 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     (!flowControl_ || flowControl_->tryBeginFrame());
   PresentOptions localOptions = options;
   localOptions.readbackFrame = options.readbackFrame || publishDue;
+#ifdef PYTHON_BRIDGE
+  const bool asyncRemoteReadback =
+    active_ && !options.readbackFrame && graphics_ &&
+    graphics_->supportsAsyncReadback();
+  localOptions.asyncReadback = asyncRemoteReadback;
+#endif
 
   PresentResult result =
     (window_ && graphics_)
       ? PresentLocalFrame(*window_, *graphics_, localOptions)
       : PresentResult{};
 
+#ifdef PYTHON_BRIDGE
+  if (asyncRemoteReadback) {
+    if (result.frame.valid() && !impl_->readbacks.empty()) {
+      ReadbackMetadata metadata = std::move(impl_->readbacks.front());
+      impl_->readbacks.pop_front();
+      result.frame.frameId = metadata.frameId;
+
+      FrameToEncode frame;
+      frame.frame = std::move(result.frame);
+      frame.displayWidth = metadata.displayWidth;
+      frame.displayHeight = metadata.displayHeight;
+      frame.framebufferScaleX = metadata.framebufferScaleX;
+      frame.framebufferScaleY = metadata.framebufferScaleY;
+      frame.readbackMs = result.readbackMs;
+      frame.readbackLatencyMs =
+        std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - metadata.submittedAt).count();
+      frame.queuedAt = std::chrono::steady_clock::now();
+      impl_->enqueue(std::move(frame));
+    }
+
+    if (publishDue) {
+      if (result.readbackSubmitted) {
+        ReadbackMetadata metadata;
+        metadata.frameId = ++frameId_;
+        metadata.displayWidth = window_->displayWidth();
+        metadata.displayHeight = window_->displayHeight();
+        metadata.framebufferScaleX = window_->framebufferScaleX();
+        metadata.framebufferScaleY = window_->framebufferScaleY();
+        metadata.submittedAt = std::chrono::steady_clock::now();
+        impl_->noteLatestFrame(metadata.frameId);
+        impl_->readbacks.push_back(std::move(metadata));
+        if (maxFramesPerSecond_ > 0.0) {
+          nextFrameTime_ = now +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+              std::chrono::duration<double>(1.0 / maxFramesPerSecond_));
+        }
+      } else if (flowControl_) {
+        flowControl_->markDirty();
+        flowControl_->markViewerReady();
+      }
+    }
+
+    impl_->publishCompleted();
+    return result;
+  }
+#endif
+
   if (!publishDue || !result.frame.valid()) {
+#ifdef PYTHON_BRIDGE
+    if (active_) {
+      impl_->publishCompleted();
+    }
+#endif
     return result;
   }
 
@@ -140,45 +393,21 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
 
 #ifdef PYTHON_BRIDGE
   result.frame.frameId = ++frameId_;
-
-  std::vector<unsigned char> encoded;
-  const bool useJpeg =
-    jpegQuality_ > 0 &&
-    EncodeJpegRgba(result.frame.width,
-                   result.frame.height,
-                   result.frame.pixels,
-                   jpegQuality_,
-                   encoded);
-  const auto& payload = useJpeg ? encoded : result.frame.pixels;
-
-  nlohmann::json header{
-    {"type", useJpeg ? "jpeg_frame" : "rgba_frame"},
-    {"frameId", result.frame.frameId},
-    {"width", result.frame.width},
-    {"height", result.frame.height},
-    {"displayWidth", window_->displayWidth()},
-    {"displayHeight", window_->displayHeight()},
-    {"framebufferScaleX", window_->framebufferScaleX()},
-    {"framebufferScaleY", window_->framebufferScaleY()},
-    {"format", useJpeg ? "JPEG" : "RGBA8"},
-    {"bytes", payload.size()},
-    {"rawBytes", result.frame.pixels.size()}
-  };
-
-  const std::string headerText = header.dump();
-
-  try {
-    const auto headerOk =
-      impl_->socket.send(zmq::buffer(headerText),
-                         zmq::send_flags::sndmore | zmq::send_flags::dontwait);
-    if (!headerOk) {
-      return result;
-    }
-
-    impl_->socket.send(zmq::buffer(payload), zmq::send_flags::none);
-  } catch (const zmq::error_t&) {
-    // Dropping frames is acceptable for the prototype path.
+  FrameToEncode frame;
+  if (options.readbackFrame) {
+    frame.frame = result.frame;
+  } else {
+    frame.frame = std::move(result.frame);
   }
+  frame.displayWidth = window_->displayWidth();
+  frame.displayHeight = window_->displayHeight();
+  frame.framebufferScaleX = window_->framebufferScaleX();
+  frame.framebufferScaleY = window_->framebufferScaleY();
+  frame.readbackMs = result.readbackMs;
+  frame.readbackLatencyMs = result.readbackMs;
+  frame.queuedAt = std::chrono::steady_clock::now();
+  impl_->enqueue(std::move(frame));
+  impl_->publishCompleted();
 #endif
 
   return result;

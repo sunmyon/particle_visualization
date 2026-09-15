@@ -29,6 +29,11 @@ struct RemoteFrame {
   float framebufferScaleY = 1.0f;
   std::string encoding = "RGBA8";
   std::size_t payloadBytes = 0;
+  double serverReadbackMs = 0.0;
+  double serverReadbackLatencyMs = 0.0;
+  double serverEncoderQueueMs = 0.0;
+  double serverEncodeMs = 0.0;
+  double clientDecodeMs = 0.0;
   std::vector<uint8_t> rgba;
 };
 
@@ -211,7 +216,10 @@ GLuint CreateProgram()
   return program;
 }
 
-bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
+bool ReceiveFrame(zmq::socket_t& sub,
+                  RemoteFrame& out,
+                  int desiredWidth,
+                  int desiredHeight)
 {
   zmq::message_t headerMsg;
   auto headerResult = sub.recv(headerMsg, zmq::recv_flags::dontwait);
@@ -256,6 +264,18 @@ bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
   out.framebufferScaleY = header.value("framebufferScaleY", 1.0f);
   out.encoding = header.value("format", std::string("RGBA8"));
   out.payloadBytes = payloadMsg.size();
+  out.serverReadbackMs = header.value("serverReadbackMs", 0.0);
+  out.serverReadbackLatencyMs =
+    header.value("serverReadbackLatencyMs", out.serverReadbackMs);
+  out.serverEncoderQueueMs = header.value("serverEncoderQueueMs", 0.0);
+  out.serverEncodeMs = header.value("serverEncodeMs", 0.0);
+  if (desiredWidth > 0 && desiredHeight > 0 &&
+      (width != desiredWidth || height != desiredHeight)) {
+    out.rgba.clear();
+    out.clientDecodeMs = 0.0;
+    return true;
+  }
+  const auto decodeStart = std::chrono::steady_clock::now();
   if (type == "jpeg_frame") {
     int decodedWidth = 0;
     int decodedHeight = 0;
@@ -279,6 +299,8 @@ bool ReceiveFrame(zmq::socket_t& sub, RemoteFrame& out)
               static_cast<const uint8_t*>(payloadMsg.data()) + payloadMsg.size(),
               out.rgba.begin());
   }
+  out.clientDecodeMs = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - decodeStart).count();
   return true;
 }
 
@@ -859,6 +881,7 @@ int main(int argc, char** argv)
   RemoteFrame frame;
   int textureWidth = 0;
   int textureHeight = 0;
+  uint64_t displayedFrameCount = 0;
   auto nextInitialFrameRequest = std::chrono::steady_clock::now();
 
   while (!glfwWindowShouldClose(window)) {
@@ -872,14 +895,17 @@ int main(int argc, char** argv)
     }
 
     RemoteFrame incoming;
-    while (ReceiveFrame(sub, incoming)) {
+    const RequestedPresentation requested =
+      GetRequestedPresentation(window);
+    while (ReceiveFrame(sub,
+                        incoming,
+                        requested.framebufferWidth,
+                        requested.framebufferHeight)) {
       if (!inputContext.initialResizeSent) {
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;
       }
       SendFrameRequest(window);
-      const RequestedPresentation requested =
-        GetRequestedPresentation(window);
       if (incoming.width != requested.framebufferWidth ||
           incoming.height != requested.framebufferHeight) {
         continue;
@@ -894,9 +920,12 @@ int main(int argc, char** argv)
     }
 
     if (!frame.rgba.empty()) {
+      const auto uploadStart = std::chrono::steady_clock::now();
+      const bool textureSizeChanged =
+        frame.width != textureWidth || frame.height != textureHeight;
       glBindTexture(GL_TEXTURE_2D, texture);
       glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-      if (frame.width != textureWidth || frame.height != textureHeight) {
+      if (textureSizeChanged) {
         glTexImage2D(GL_TEXTURE_2D,
                      0,
                      GL_RGBA8,
@@ -908,16 +937,6 @@ int main(int argc, char** argv)
                      frame.rgba.data());
         textureWidth = frame.width;
         textureHeight = frame.height;
-        std::cout << "Remote frame " << frame.frameId << ": "
-                  << textureWidth << "x" << textureHeight << " ("
-                  << frame.payloadBytes << " " << frame.encoding
-                  << " bytes; "
-                  << static_cast<std::size_t>(textureWidth) *
-                       static_cast<std::size_t>(textureHeight) * 4
-                  << " decoded RGBA bytes), display " << frame.displayWidth << "x"
-                  << frame.displayHeight << ", scale "
-                  << frame.framebufferScaleX << "x"
-                  << frame.framebufferScaleY << std::endl;
       } else {
         glTexSubImage2D(GL_TEXTURE_2D,
                         0,
@@ -928,6 +947,28 @@ int main(int argc, char** argv)
                         GL_RGBA,
                         GL_UNSIGNED_BYTE,
                         frame.rgba.data());
+      }
+      const double uploadMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - uploadStart).count();
+      ++displayedFrameCount;
+      if (textureSizeChanged || displayedFrameCount % 60 == 0) {
+        std::cout << "Remote frame " << frame.frameId << ": "
+                  << textureWidth << "x" << textureHeight << " ("
+                  << frame.payloadBytes << " " << frame.encoding
+                  << " bytes; "
+                  << static_cast<std::size_t>(textureWidth) *
+                       static_cast<std::size_t>(textureHeight) * 4
+                  << " decoded RGBA bytes), display " << frame.displayWidth << "x"
+                  << frame.displayHeight << ", scale "
+                  << frame.framebufferScaleX << "x"
+                  << frame.framebufferScaleY
+                  << "; timing ms: readback latency "
+                  << frame.serverReadbackLatencyMs << ", readback copy "
+                  << frame.serverReadbackMs << ", encode queue "
+                  << frame.serverEncoderQueueMs << ", encode "
+                  << frame.serverEncodeMs << ", decode "
+                  << frame.clientDecodeMs << ", upload "
+                  << uploadMs << ')' << std::endl;
       }
       frame.rgba.clear();
     }

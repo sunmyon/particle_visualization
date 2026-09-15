@@ -4,6 +4,8 @@
 #include "platform/imgui_context.h"
 #include "platform/window_context.h"
 
+#include <chrono>
+
 PresentResult PresentLocalFrame(WindowContext& window,
                                 GraphicsContext& graphics,
                                 const PresentOptions& options)
@@ -11,9 +13,22 @@ PresentResult PresentLocalFrame(WindowContext& window,
   EndImGuiFrame();
 
   PresentResult result;
-  if (options.readbackFrame) {
+  if (options.asyncReadback) {
+    const auto readbackStart = std::chrono::steady_clock::now();
+    result.frame = graphics.pollDefaultFramebufferReadback();
+    result.readbackMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - readbackStart).count();
+    if (options.readbackFrame) {
+      result.readbackSubmitted = graphics.beginDefaultFramebufferReadback(
+        window.framebufferWidth(), window.framebufferHeight());
+    }
+  } else if (options.readbackFrame) {
+    const auto readbackStart = std::chrono::steady_clock::now();
     result.frame = graphics.readDefaultFramebuffer(window.framebufferWidth(),
                                                    window.framebufferHeight());
+    result.readbackMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - readbackStart).count();
+    result.readbackSubmitted = result.frame.valid();
   }
 
   graphics.present(window.nativeWindowHandle());

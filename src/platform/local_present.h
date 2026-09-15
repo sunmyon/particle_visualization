@@ -7,12 +7,15 @@ class GraphicsContext;
 
 struct PresentOptions {
   bool readbackFrame = false;
+  bool asyncReadback = false;
   bool contentChanged = false;
 };
 
 struct PresentResult {
   bool presented = false;
   RenderedFrame frame;
+  double readbackMs = 0.0;
+  bool readbackSubmitted = false;
 };
 
 struct PresentationSize {

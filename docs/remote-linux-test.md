@@ -1,7 +1,7 @@
 # Linux GPU remote validation
 
-This procedure validates the raw remote path before compression or live
-simulation transport is introduced.
+This procedure validates the demand-driven JPEG remote path and interactive
+input transport. Live simulation transport is outside this test.
 
 ## 1. Build on Linux
 
@@ -31,7 +31,7 @@ The configure output should report `EGL headless context support: ON` and keep
 load ZeroMQ, cppzmq, and nlohmann-json before continuing.
 
 The CPU-only protocol tests do not require a GPU allocation. The expected
-result is four passing tests.
+result is five passing tests.
 
 For a complete automated GPU loopback on Freya, load the current Python stack
 and run:
@@ -159,5 +159,8 @@ The viewer requests a frame after consuming the previous one. The server sends
 only after valid remote input or resize changes the scene; idle sessions send
 no repeated frame data, and input bursts collapse into one pending frame. It
 prints physical resolution, logical display size, DPI scale, and decoded RGBA
-size. Record these together with observed interaction latency. Set JPEG quality
-to zero when collecting a raw-transfer baseline.
+size. It also reports server readback latency and copy time, JPEG queue and
+encode time, plus client decode and texture upload time. Record these values
+together with observed interaction latency. The EGL/OpenGL server uses a
+double-buffered PBO readback, and JPEG encoding runs on a worker thread. Set
+JPEG quality to zero when collecting a raw-transfer baseline.

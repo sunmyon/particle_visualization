@@ -17,6 +17,9 @@ public:
   virtual void destroy() = 0;
   virtual void present(NativeWindowHandle window) = 0;
   virtual RenderedFrame readDefaultFramebuffer(int width, int height) = 0;
+  virtual bool supportsAsyncReadback() const { return false; }
+  virtual bool beginDefaultFramebufferReadback(int, int) { return false; }
+  virtual RenderedFrame pollDefaultFramebufferReadback() { return {}; }
   virtual bool isHeadless() const = 0;
 };
 

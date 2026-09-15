@@ -411,6 +411,7 @@ bool OpenGLContext::resizeHeadless(int width, int height)
 
 void OpenGLContext::destroy()
 {
+  releaseAsyncReadbacks();
 #ifdef PARTICLE_VIS_HAVE_EGL
   if (eglDisplay_) {
     EGLDisplay display = static_cast<EGLDisplay>(eglDisplay_);
@@ -486,6 +487,138 @@ RenderedFrame OpenGLContext::readDefaultFramebuffer(int width, int height)
   }
 
   return frame;
+}
+
+bool OpenGLContext::beginDefaultFramebufferReadback(int width, int height)
+{
+  if (!headless_ || width <= 0 || height <= 0) {
+    return false;
+  }
+
+  AsyncReadbackSlot* slot = nullptr;
+  for (auto& candidate : asyncReadbacks_) {
+    if (!candidate.pending) {
+      slot = &candidate;
+      break;
+    }
+  }
+  if (!slot) {
+    return false;
+  }
+
+  if (slot->buffer == 0) {
+    glGenBuffers(1, &slot->buffer);
+  }
+  if (slot->buffer == 0) {
+    return false;
+  }
+
+  const size_t byteCount = static_cast<size_t>(width) *
+                           static_cast<size_t>(height) * 4;
+  GLint previousPackBuffer = 0;
+  GLint previousPackAlignment = 4;
+  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPackBuffer);
+  glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->buffer);
+  glBufferData(GL_PIXEL_PACK_BUFFER,
+               static_cast<GLsizeiptr>(byteCount),
+               nullptr,
+               GL_STREAM_READ);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(GL_FRONT);
+  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  slot->fence = reinterpret_cast<void*>(
+    glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+  glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER,
+               static_cast<GLuint>(previousPackBuffer));
+
+  slot->width = width;
+  slot->height = height;
+  slot->sequence = ++asyncReadbackSequence_;
+  slot->pending = true;
+  return true;
+}
+
+RenderedFrame OpenGLContext::pollDefaultFramebufferReadback()
+{
+  AsyncReadbackSlot* slot = nullptr;
+  for (auto& candidate : asyncReadbacks_) {
+    if (candidate.pending &&
+        (!slot || candidate.sequence < slot->sequence)) {
+      slot = &candidate;
+    }
+  }
+  if (!slot) {
+    return {};
+  }
+
+  GLsync fence = reinterpret_cast<GLsync>(slot->fence);
+  if (fence) {
+    const GLenum wait = glClientWaitSync(fence, 0, 0);
+    if (wait == GL_TIMEOUT_EXPIRED) {
+      return {};
+    }
+    if (wait == GL_WAIT_FAILED) {
+      glDeleteSync(fence);
+      slot->fence = nullptr;
+      slot->pending = false;
+      return {};
+    }
+  }
+
+  RenderedFrame frame;
+  frame.width = slot->width;
+  frame.height = slot->height;
+  frame.format = RenderedFrameFormat::RGBA8;
+  const size_t stride = static_cast<size_t>(frame.width) * 4;
+  const size_t byteCount = stride * static_cast<size_t>(frame.height);
+  frame.pixels.resize(byteCount);
+
+  GLint previousPackBuffer = 0;
+  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPackBuffer);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->buffer);
+  const auto* source = static_cast<const uint8_t*>(
+    glMapBufferRange(GL_PIXEL_PACK_BUFFER,
+                     0,
+                     static_cast<GLsizeiptr>(byteCount),
+                     GL_MAP_READ_BIT));
+  if (source) {
+    for (int y = 0; y < frame.height; ++y) {
+      const uint8_t* sourceRow = source +
+        static_cast<size_t>(frame.height - 1 - y) * stride;
+      std::copy(sourceRow,
+                sourceRow + stride,
+                frame.pixels.data() + static_cast<size_t>(y) * stride);
+    }
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+  } else {
+    frame.pixels.clear();
+  }
+  glBindBuffer(GL_PIXEL_PACK_BUFFER,
+               static_cast<GLuint>(previousPackBuffer));
+
+  if (fence) {
+    glDeleteSync(fence);
+  }
+  slot->fence = nullptr;
+  slot->pending = false;
+  return frame;
+}
+
+void OpenGLContext::releaseAsyncReadbacks()
+{
+  for (auto& slot : asyncReadbacks_) {
+    if (slot.fence) {
+      glDeleteSync(reinterpret_cast<GLsync>(slot.fence));
+      slot.fence = nullptr;
+    }
+    if (slot.buffer != 0) {
+      glDeleteBuffers(1, &slot.buffer);
+      slot.buffer = 0;
+    }
+    slot.pending = false;
+  }
 }
 
 std::unique_ptr<GraphicsContext> CreateDefaultGraphicsContext()
