@@ -173,7 +173,8 @@ For interactive remote rendering on an allocated GPU node, run:
 Then forward ports 5560 and 5561 through SSH and run
 `remote_frame_viewer` on the client. See
 [`docs/remote-linux-test.md`](docs/remote-linux-test.md) for the complete test
-sequence.
+sequence and [`docs/remote-video-transport.md`](docs/remote-video-transport.md)
+for the H.264 architecture, protocol, tuning controls, and validation baseline.
 
 ### Wayland Backend (Recommended on GPU Nodes)
 

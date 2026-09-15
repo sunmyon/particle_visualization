@@ -123,7 +123,13 @@ Frame presenters decide where the rendered frame goes.
 Current presenters:
 
 - `LocalFramePresenter`: presents to the local window
-- `RemoteFramePresenter`: reads back the frame and publishes it over ZeroMQ
+- `RemoteFramePresenter`: reads back the frame and publishes H.264, JPEG, or
+  raw RGBA frames over ZeroMQ
+
+The H.264 implementation lives behind `RemoteVideoEncoder` and
+`RemoteVideoDecoder`. It is optional at build time; the frame presenter keeps
+the JPEG path when OpenH264 is unavailable. The wire format and runtime tuning
+controls are documented in `docs/remote-video-transport.md`.
 
 Presenters use `GraphicsContext`; they should not directly call OpenGL
 readback functions.
