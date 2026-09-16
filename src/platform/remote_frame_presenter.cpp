@@ -318,7 +318,11 @@ struct RemoteFramePresenter::Impl {
           pendingInteractiveFrame.reset();
         }
 
-        if (flowControl &&
+        // A continuous drag can deliver another input during readback. Do not
+        // discard the only available video feedback just because that input
+        // has not reached a render yet; enqueue() already replaces raw frames
+        // when a newer render is actually available.
+        if (flowControl && input.idlePresentation &&
             flowControl->latestInputSequence() > input.cameraGeneration) {
           flowControl->release(input.ticket);
           continue;
@@ -620,10 +624,9 @@ RemoteFramePresenter::~RemoteFramePresenter() = default;
 
 bool RemoteFramePresenter::shouldRender(std::uint64_t appliedGeneration) const
 {
+  (void)appliedGeneration;
   return !flowControl_ || !flowControl_->boundedTransport() ||
-    (flowControl_->latestInputSequence() <=
-       std::max(appliedGeneration_, appliedGeneration) &&
-     flowControl_->hasCapacity(idlePresentation_));
+    flowControl_->hasCapacity(idlePresentation_);
 }
 
 bool RemoteFramePresenter::resize(const PresentationSize& size)
@@ -658,14 +661,24 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
     now >= nextFrameTime_;
   RemoteFrameTrigger trigger;
   const bool frameIsCurrent = !flowControl_ || !flowControl_->boundedTransport() ||
+    !idlePresentation_ ||
     flowControl_->latestInputSequence() <= appliedGeneration_;
   const bool publishDue = active_ && pacingAllowsFrame &&
     frameIsCurrent &&
     (!flowControl_ || flowControl_->tryBeginFrame(&trigger, idlePresentation_));
   const bool supersededDuringFrame = publishDue && flowControl_ &&
-    flowControl_->boundedTransport() &&
+    flowControl_->boundedTransport() && idlePresentation_ &&
     trigger.sequence > appliedGeneration_;
   if (supersededDuringFrame) flowControl_->requeue(trigger);
+  if (publishDue && !idlePresentation_ && flowControl_ &&
+      flowControl_->boundedTransport() && trigger.sequence > appliedGeneration_) {
+    // The input arrived after this frame began. Send the current feedback,
+    // then render the newer input; do not attribute this frame to that input.
+    flowControl_->markDirty();
+    flowControl_->markViewerReady(trigger.sequence, trigger.receivedAt);
+    trigger.sequence = 0;
+    trigger.receivedAt = {};
+  }
   PresentOptions localOptions = options;
   localOptions.readbackFrame = options.readbackFrame ||
     (publishDue && !supersededDuringFrame);

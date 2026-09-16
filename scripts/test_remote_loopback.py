@@ -379,6 +379,33 @@ def run(args: argparse.Namespace) -> int:
                 sender.send_json({"type": "frame_request", "version": 1,
                                   "receivedFrameId": header["frameId"]})
 
+        # A continuous drag must keep producing feedback. A newer input can
+        # arrive during readback or encoding, but that must not starve every
+        # frame that was already rendered.
+        received_during_drag: set[int] = set()
+        drag_deadline = time.monotonic() + 2.0
+        next_drag_input = time.monotonic()
+        drag_sequence = 200
+        while time.monotonic() < drag_deadline:
+            now = time.monotonic()
+            if now >= next_drag_input:
+                sender.send_json({"type": "pointer_move",
+                                  "x": 50 + drag_sequence % 100,
+                                  "y": 70, "primaryDown": True,
+                                  "clientSequence": drag_sequence,
+                                  "viewport": viewport})
+                drag_sequence += 1
+                next_drag_input = now + 0.05
+            if subscriber.poll(10, zmq.POLLIN):
+                candidate, _ = receive_frame(subscriber, args.timeout,
+                                             sender if bounded else None)
+                received_during_drag.add(candidate["frameId"])
+        if len(received_during_drag) < 3:
+            raise RuntimeError(
+                "continuous drag produced too few frames: "
+                f"{len(received_during_drag)} in 2 seconds"
+            )
+
         if args.save_frame:
             output = Path(args.save_frame).expanduser().resolve()
             output.parent.mkdir(parents=True, exist_ok=True)
