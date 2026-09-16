@@ -1278,12 +1278,15 @@ void RunFrame(AppState& app,
   PrepareRenderFrame(app.renderFrameInput, render);
 
   const auto renderStartedAt = std::chrono::steady_clock::now();
-  if (captureRenderSnapshot || presenter.shouldRender(appliedGeneration))
+  const bool renderedScene =
+    captureRenderSnapshot || presenter.shouldRender(appliedGeneration);
+  if (renderedScene)
     RenderScene(render);
   const auto renderFinishedAt = std::chrono::steady_clock::now();
 
   PresentOptions presentOptions;
   presentOptions.appliedGeneration = appliedGeneration;
+  presentOptions.renderedScene = renderedScene;
   presentOptions.frameStartedAt = frameStartedAt;
   presentOptions.cameraUpdatedAt = cameraUpdatedAt;
   presentOptions.renderStartedAt = renderStartedAt;

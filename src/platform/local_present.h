@@ -12,6 +12,7 @@ struct PresentOptions {
   bool readbackFrame = false;
   bool asyncReadback = false;
   bool contentChanged = false;
+  bool renderedScene = true;
   std::uint64_t appliedGeneration = 0;
   std::chrono::steady_clock::time_point frameStartedAt{};
   std::chrono::steady_clock::time_point cameraUpdatedAt{};

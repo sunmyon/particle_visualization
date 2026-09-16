@@ -624,9 +624,13 @@ RemoteFramePresenter::~RemoteFramePresenter() = default;
 
 bool RemoteFramePresenter::shouldRender(std::uint64_t appliedGeneration) const
 {
-  (void)appliedGeneration;
-  return !flowControl_ || !flowControl_->boundedTransport() ||
-    flowControl_->hasCapacity(idlePresentation_);
+  if (!flowControl_ || !flowControl_->boundedTransport()) return true;
+  if (maxFramesPerSecond_ > 0.0 &&
+      nextFrameTime_.time_since_epoch().count() != 0 &&
+      std::chrono::steady_clock::now() < nextFrameTime_) return false;
+  if (idlePresentation_ &&
+      flowControl_->latestInputSequence() > appliedGeneration) return false;
+  return flowControl_->readyForFrame(idlePresentation_);
 }
 
 bool RemoteFramePresenter::resize(const PresentationSize& size)
@@ -663,7 +667,7 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   const bool frameIsCurrent = !flowControl_ || !flowControl_->boundedTransport() ||
     !idlePresentation_ ||
     flowControl_->latestInputSequence() <= appliedGeneration_;
-  const bool publishDue = active_ && pacingAllowsFrame &&
+  const bool publishDue = active_ && options.renderedScene && pacingAllowsFrame &&
     frameIsCurrent &&
     (!flowControl_ || flowControl_->tryBeginFrame(&trigger, idlePresentation_));
   const bool supersededDuringFrame = publishDue && flowControl_ &&

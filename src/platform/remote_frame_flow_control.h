@@ -87,6 +87,17 @@ public:
     return count < (idlePresentation ? 1u : 2u);
   }
 
+  bool readyForFrame(bool idlePresentation) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!dirty_ || !viewerReady_) return false;
+    if (!boundedTransport_) return true;
+    std::size_t count = 0;
+    for (const auto& entry : reservations_) count += entry.second == idlePresentation;
+    for (const auto& entry : outstanding_) count += entry.second == idlePresentation;
+    return count < (idlePresentation ? 1u : 2u);
+  }
+
   void markDirty()
   {
     std::lock_guard<std::mutex> lock(mutex_);

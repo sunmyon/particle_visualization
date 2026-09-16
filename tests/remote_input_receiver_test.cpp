@@ -69,18 +69,28 @@ int main()
       RemoteFrameFlowControl bounded;
       bounded.setBoundedTransport(true);
       RemoteFrameTrigger first, second, blocked;
+      if (bounded.readyForFrame(false))
+        throw std::runtime_error("Rendered before viewer request");
       bounded.markDirty(); bounded.markViewerReady(11);
+      if (!bounded.readyForFrame(false))
+        throw std::runtime_error("Viewer request did not enable rendering");
       if (!bounded.tryBeginFrame(&first) || !first.ticket)
         throw std::runtime_error("First bounded frame was not reserved");
+      if (bounded.readyForFrame(false))
+        throw std::runtime_error("Rendered after consuming frame request");
       bounded.committed(first.ticket, 101);
       bounded.markDirty(); bounded.markViewerReady(12);
       if (!bounded.tryBeginFrame(&second) || !second.ticket)
         throw std::runtime_error("Second bounded frame was not reserved");
       bounded.committed(second.ticket, 102);
       bounded.markDirty(); bounded.markViewerReady(13);
+      if (bounded.readyForFrame(false))
+        throw std::runtime_error("Rendered with full video transport");
       if (bounded.tryBeginFrame(&blocked))
         throw std::runtime_error("More than two video frames entered transport");
       bounded.acknowledge(101);
+      if (!bounded.readyForFrame(false))
+        throw std::runtime_error("Acknowledgement did not enable rendering");
       if (!bounded.tryBeginFrame(&blocked) || !blocked.ticket)
         throw std::runtime_error("Acknowledgement did not free a video slot");
       bounded.release(blocked.ticket);
