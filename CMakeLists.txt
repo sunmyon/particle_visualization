@@ -1597,9 +1597,13 @@ endif()
 if(PYTHON_BRIDGE AND NOT PARTICLE_VIS_HEADLESS_ONLY)
   add_executable(remote_frame_viewer
     ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer/main.cpp
+    ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer/frame_receiver.cpp
     ${SRC_DIR}/platform/remote_video_codec.cpp
     ${GLAD_SRC}
   )
+
+  find_package(Threads REQUIRED)
+  target_link_libraries(remote_frame_viewer PRIVATE Threads::Threads)
 
   target_include_directories(remote_frame_viewer PRIVATE
     ${SRC_DIR}
@@ -1747,6 +1751,27 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING AND PYTHON_BRIDGE AND UNIX)
+  add_executable(remote_frame_receiver_test
+    tests/remote_frame_receiver_test.cpp
+    tools/remote_frame_viewer/frame_receiver.cpp
+    ${SRC_DIR}/platform/remote_video_codec.cpp)
+  target_include_directories(remote_frame_receiver_test PRIVATE
+    ${SRC_DIR} ${CMAKE_SOURCE_DIR}/tools/remote_frame_viewer)
+  target_include_directories(remote_frame_receiver_test SYSTEM PRIVATE
+    ${EXTERNAL_DIR}/include ${EXTERNAL_DIR}/stb)
+  link_nlohmann_json_to(remote_frame_receiver_test)
+  detect_and_link(remote_frame_receiver_test "ZeroMQ" "libzmq" CMAKE_TARGET libzmq)
+  detect_and_link(remote_frame_receiver_test "cppzmq" "cppzmq" HEADER_ONLY)
+  find_package(Threads REQUIRED)
+  target_link_libraries(remote_frame_receiver_test PRIVATE Threads::Threads)
+  if(PARTICLE_VIS_HAVE_OPENH264)
+    target_include_directories(remote_frame_receiver_test PRIVATE ${OPENH264_INCLUDE_DIR})
+    target_link_libraries(remote_frame_receiver_test PRIVATE ${OPENH264_LIBRARY})
+    target_compile_definitions(remote_frame_receiver_test PRIVATE PARTICLE_VIS_HAVE_OPENH264)
+  endif()
+  add_test(NAME remote_frame_receiver_test COMMAND remote_frame_receiver_test)
+  set_tests_properties(remote_frame_receiver_test PROPERTIES TIMEOUT 15)
+
   add_executable(remote_input_receiver_test
     tests/remote_input_receiver_test.cpp
     ${SRC_DIR}/platform/remote_input_receiver.cpp

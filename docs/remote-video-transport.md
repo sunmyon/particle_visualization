@@ -19,7 +19,9 @@ particle_vis on the GPU node
     -> interactive worker: RGBA to I420 and OpenH264 encode
     -> idle worker: independent JPEG encode
     -> ZeroMQ multipart message over the loopback-only Slurm relay
-    -> Mac viewer: OpenH264 decode, I420 to RGBA, OpenGL texture upload
+    -> viewer receive worker: OpenH264 decode, I420 to RGBA
+    -> latest completed video/still slots
+    -> viewer main thread: OpenGL texture upload
     -> local window
 
 Mac input
@@ -39,6 +41,18 @@ an idle frame that has not started encoding, prioritizes completed interactive
 output, and rejects an idle JPEG that finishes after a newer frame was queued.
 An idle JPEG already inside the JPEG library may finish in the background, but
 it does not hold the H.264 queue.
+
+The viewer owns its receive sockets and decoders on a separate worker thread.
+Network waits and decoding no longer block GLFW input handling. Every received
+H.264 packet is decoded in order, even when the UI skips presenting intermediate
+images. Only the latest completed video and latest completed still are retained.
+The main thread checks dimensions/generation, sends cumulative receipts for both
+channels (including images discarded for display), and uploads selected images.
+GLFW, OpenGL and the input socket remain exclusively on the main thread. The
+receive worker uses a bounded poll wait and joins on exit. Launch commands and
+the wire protocol are unchanged; this improvement needs only a viewer rebuild.
+The `viewer wait` timing covers decoded-image readiness to texture upload start;
+`input to display` includes that interval rather than just summing decode/upload.
 
 ## Codec selection
 
@@ -81,7 +95,7 @@ keeps at most two video frames reserved or awaiting a receive confirmation,
 and uses a separate PUSH/PULL endpoint for idle JPEG stills (one outstanding
 still). The still endpoint defaults to `tcp://127.0.0.1:5562` on the server
 and `tcp://127.0.0.1:5572` on the viewer through the loopback relay. The
-viewer sends a frame receipt after the complete multipart message arrives;
+viewer sends a frame receipt when its main thread takes a decoded image;
 receipts are cumulative within each channel. Input continues to update while
 the frame window is full, and adjacent pointer moves collapse in the server's
 input queue. A frame superseded before readback or encoding is skipped.

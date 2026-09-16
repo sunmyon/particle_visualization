@@ -17,54 +17,9 @@
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
 
-#include "platform/remote_video_codec.h"
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include "frame_receiver.h"
 
 namespace {
-
-struct RemoteFrame {
-  uint64_t frameId = 0;
-  uint64_t triggerSequence = 0;
-  uint64_t cameraGeneration = 0;
-  uint64_t latestCameraGeneration = 0;
-  std::size_t outstandingFrames = 0;
-  std::size_t applicationQueueDepth = 0;
-  uint64_t sendBackpressureCount = 0;
-  int64_t serverInputReceivedAtNs = 0;
-  int64_t serverCameraUpdatedAtNs = 0;
-  int64_t serverRenderStartedAtNs = 0;
-  int64_t serverRenderFinishedAtNs = 0;
-  int64_t serverEncodeStartedAtNs = 0;
-  int64_t serverEncodeFinishedAtNs = 0;
-  int64_t serverSendAttemptAtNs = 0;
-  int width = 0;
-  int height = 0;
-  int displayWidth = 0;
-  int displayHeight = 0;
-  float framebufferScaleX = 1.0f;
-  float framebufferScaleY = 1.0f;
-  std::string encoding = "RGBA8";
-  bool idlePresentation = false;
-  std::size_t payloadBytes = 0;
-  double serverReadbackMs = 0.0;
-  double serverReadbackLatencyMs = 0.0;
-  double serverTriggerToReadbackMs = 0.0;
-  double serverInputToFrameStartMs = 0.0;
-  double serverFrameToRenderMs = 0.0;
-  double serverRenderMs = 0.0;
-  double serverEncoderQueueMs = 0.0;
-  double serverEncodeMs = 0.0;
-  double serverEncodeToSendMs = 0.0;
-  double serverPreviousSendMs = 0.0;
-  double clientPayloadReceiveMs = 0.0;
-  double clientDecodeMs = 0.0;
-  double clientInputToReceiveMs = -1.0;
-  std::chrono::steady_clock::time_point receivedAt{};
-  std::chrono::steady_clock::time_point inputSentAt{};
-  std::vector<uint8_t> rgba;
-};
 
 struct ViewerInputContext {
   zmq::socket_t* input = nullptr;
@@ -250,136 +205,6 @@ GLuint CreateProgram()
   }
 
   return program;
-}
-
-bool ReceiveFrame(zmq::socket_t& sub,
-                  RemoteFrame& out,
-                  int desiredWidth,
-                  int desiredHeight,
-                  RemoteVideoDecoder& videoDecoder)
-{
-  zmq::message_t headerMsg;
-  auto headerResult = sub.recv(headerMsg, zmq::recv_flags::dontwait);
-  if (!headerResult) {
-    return false;
-  }
-  const auto headerReceivedAt = std::chrono::steady_clock::now();
-
-  zmq::message_t payloadMsg;
-  auto payloadResult = sub.recv(payloadMsg, zmq::recv_flags::none);
-  if (!payloadResult) {
-    return false;
-  }
-  const auto payloadReceivedAt = std::chrono::steady_clock::now();
-
-  nlohmann::json header =
-    nlohmann::json::parse(headerMsg.to_string(), nullptr, false);
-  if (header.is_discarded()) {
-    return false;
-  }
-
-  const std::string type = header.value("type", "");
-  if (type != "rgba_frame" && type != "jpeg_frame" && type != "h264_frame") {
-    return false;
-  }
-
-  const int width = header.value("width", 0);
-  const int height = header.value("height", 0);
-  const size_t expected =
-    static_cast<size_t>(std::max(width, 0)) *
-    static_cast<size_t>(std::max(height, 0)) * 4;
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-
-  if (type == "rgba_frame" && payloadMsg.size() != expected) return false;
-
-  out.frameId = header.value("frameId", uint64_t{0});
-  out.triggerSequence = header.value("triggerSequence", uint64_t{0});
-  out.cameraGeneration = header.value("cameraGeneration", out.triggerSequence);
-  out.latestCameraGeneration =
-    header.value("latestCameraGeneration", out.cameraGeneration);
-  out.outstandingFrames = header.value("outstandingFrames", std::size_t{0});
-  out.applicationQueueDepth =
-    header.value("applicationQueueDepth", std::size_t{0});
-  out.sendBackpressureCount =
-    header.value("sendBackpressureCount", uint64_t{0});
-  out.serverInputReceivedAtNs =
-    header.value("serverInputReceivedAtNs", int64_t{0});
-  out.serverCameraUpdatedAtNs =
-    header.value("serverCameraUpdatedAtNs", int64_t{0});
-  out.serverRenderStartedAtNs =
-    header.value("serverRenderStartedAtNs", int64_t{0});
-  out.serverRenderFinishedAtNs =
-    header.value("serverRenderFinishedAtNs", int64_t{0});
-  out.serverEncodeStartedAtNs =
-    header.value("serverEncodeStartedAtNs", int64_t{0});
-  out.serverEncodeFinishedAtNs =
-    header.value("serverEncodeFinishedAtNs", int64_t{0});
-  out.serverSendAttemptAtNs =
-    header.value("serverSendAttemptAtNs", int64_t{0});
-  out.width = width;
-  out.height = height;
-  out.displayWidth = header.value("displayWidth", width);
-  out.displayHeight = header.value("displayHeight", height);
-  out.framebufferScaleX = header.value("framebufferScaleX", 1.0f);
-  out.framebufferScaleY = header.value("framebufferScaleY", 1.0f);
-  out.encoding = header.value("format", std::string("RGBA8"));
-  out.idlePresentation = header.value("presentationMode", std::string()) == "idle";
-  out.payloadBytes = payloadMsg.size();
-  out.serverReadbackMs = header.value("serverReadbackMs", 0.0);
-  out.serverReadbackLatencyMs =
-    header.value("serverReadbackLatencyMs", out.serverReadbackMs);
-  out.serverTriggerToReadbackMs =
-    header.value("serverTriggerToReadbackMs", 0.0);
-  out.serverInputToFrameStartMs =
-    header.value("serverInputToFrameStartMs", 0.0);
-  out.serverFrameToRenderMs = header.value("serverFrameToRenderMs", 0.0);
-  out.serverRenderMs = header.value("serverRenderMs", 0.0);
-  out.serverEncoderQueueMs = header.value("serverEncoderQueueMs", 0.0);
-  out.serverEncodeMs = header.value("serverEncodeMs", 0.0);
-  out.serverEncodeToSendMs = header.value("serverEncodeToSendMs", 0.0);
-  out.serverPreviousSendMs = header.value("serverPreviousSendMs", 0.0);
-  out.clientPayloadReceiveMs = std::chrono::duration<double, std::milli>(
-    payloadReceivedAt - headerReceivedAt).count();
-  out.receivedAt = payloadReceivedAt;
-  const auto decodeStart = std::chrono::steady_clock::now();
-  if (type == "h264_frame") {
-    if (!videoDecoder.decode(
-          static_cast<const unsigned char*>(payloadMsg.data()),
-          payloadMsg.size(), width, height, out.rgba)) {
-      return false;
-    }
-  } else if (type == "jpeg_frame") {
-    int decodedWidth = 0;
-    int decodedHeight = 0;
-    int channels = 0;
-    stbi_uc* decoded = stbi_load_from_memory(
-      static_cast<const stbi_uc*>(payloadMsg.data()),
-      static_cast<int>(payloadMsg.size()),
-      &decodedWidth,
-      &decodedHeight,
-      &channels,
-      4);
-    if (!decoded || decodedWidth != width || decodedHeight != height) {
-      stbi_image_free(decoded);
-      return false;
-    }
-    out.rgba.assign(decoded, decoded + expected);
-    stbi_image_free(decoded);
-  } else {
-    out.rgba.resize(payloadMsg.size());
-    std::copy(static_cast<const uint8_t*>(payloadMsg.data()),
-              static_cast<const uint8_t*>(payloadMsg.data()) + payloadMsg.size(),
-              out.rgba.begin());
-  }
-  out.clientDecodeMs = std::chrono::duration<double, std::milli>(
-    std::chrono::steady_clock::now() - decodeStart).count();
-  if (desiredWidth > 0 && desiredHeight > 0 &&
-      (width != desiredWidth || height != desiredHeight)) {
-    out.rgba.clear();
-  }
-  return true;
 }
 
 nlohmann::json BuildModifiers(GLFWwindow* window)
@@ -877,18 +702,6 @@ int main(int argc, char** argv)
   }
 
   zmq::context_t zmqContext{1};
-  zmq::socket_t sub{zmqContext, boundedTransport
-    ? zmq::socket_type::pull : zmq::socket_type::sub};
-  if (!boundedTransport) sub.set(zmq::sockopt::subscribe, "");
-  sub.set(zmq::sockopt::rcvhwm, 2);
-  sub.connect(endpoint);
-  std::unique_ptr<zmq::socket_t> stillSub;
-  if (boundedTransport) {
-    stillSub = std::make_unique<zmq::socket_t>(zmqContext, zmq::socket_type::pull);
-    stillSub->set(zmq::sockopt::rcvhwm, 1);
-    stillSub->connect(stillEndpoint);
-  }
-
   zmq::socket_t inputPush{zmqContext, zmq::socket_type::push};
   bool inputEnabled = false;
   if (!inputEndpoint.empty()) {
@@ -1008,7 +821,8 @@ int main(int argc, char** argv)
   }
 
   RemoteFrame frame;
-  RemoteVideoDecoder videoDecoder;
+  RemoteFrameReceiver receiver(zmqContext, endpoint, stillEndpoint, boundedTransport);
+  bool receiverFailed = false;
   int textureWidth = 0;
   int textureHeight = 0;
   uint64_t displayedFrameCount = 0;
@@ -1035,15 +849,16 @@ int main(int argc, char** argv)
       nextReceiptRepeat = now + std::chrono::milliseconds(500);
     }
 
-    RemoteFrame incoming;
-    const RequestedPresentation requested =
-      GetRequestedPresentation(window);
-    while (ReceiveFrame(sub, incoming, requested.framebufferWidth,
-                        requested.framebufferHeight, videoDecoder) ||
-           (stillSub && ReceiveFrame(*stillSub, incoming,
-                                     requested.framebufferWidth,
-                                     requested.framebufferHeight,
-                                     videoDecoder))) {
+    auto received = receiver.take();
+    if (!received.error.empty()) {
+      std::cerr << "Remote frame receiver failed: " << received.error << '\n';
+      receiverFailed = true;
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
+    const RequestedPresentation requested = GetRequestedPresentation(window);
+    for (auto* slot : {&received.video, &received.still}) {
+      if (!*slot) continue;
+      RemoteFrame incoming = std::move(**slot);
       if (!inputContext.initialResizeSent) {
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;
@@ -1103,8 +918,11 @@ int main(int argc, char** argv)
                         GL_UNSIGNED_BYTE,
                         frame.rgba.data());
       }
+      const auto uploadFinishedAt = std::chrono::steady_clock::now();
       const double uploadMs = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - uploadStart).count();
+        uploadFinishedAt - uploadStart).count();
+      const double viewerWaitMs = std::chrono::duration<double, std::milli>(
+        uploadStart - frame.decodedAt).count();
       ++displayedFrameCount;
       if (textureSizeChanged ||
           displayedFrameCount % static_cast<uint64_t>(logEveryNFrames) == 0) {
@@ -1144,7 +962,8 @@ int main(int argc, char** argv)
                   << frame.serverEncodeToSendMs << ", receive payload "
                   << frame.clientPayloadReceiveMs << ", previous send "
                   << frame.serverPreviousSendMs << ", decode "
-                  << frame.clientDecodeMs << ", upload "
+                  << frame.clientDecodeMs << ", viewer wait "
+                  << viewerWaitMs << ", upload "
                   << uploadMs;
         if (frame.clientInputToReceiveMs >= 0.0) {
           const double measuredServerMs =
@@ -1156,8 +975,8 @@ int main(int argc, char** argv)
           std::cout << ", input to receive " << frame.clientInputToReceiveMs
                     << ", transport/unmeasured " << transportResidualMs
                     << ", input to display "
-                    << frame.clientInputToReceiveMs +
-                         frame.clientDecodeMs + uploadMs;
+                    << std::chrono::duration<double, std::milli>(
+                         uploadFinishedAt - frame.inputSentAt).count();
         }
         if (logEveryNFrames == 1) {
           const auto clientReceiveNs =
@@ -1186,7 +1005,7 @@ int main(int argc, char** argv)
       const auto origin = frame.inputSentAt.time_since_epoch().count()
         ? frame.inputSentAt : frame.receivedAt;
       const auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - origin).count();
+        std::chrono::steady_clock::now() - origin).count();
       const uint64_t lag = inputContext.nextInputSequence > frame.cameraGeneration
         ? inputContext.nextInputSequence - frame.cameraGeneration : 0;
       const std::string title = "Particle Vis Remote - generation lag " +
@@ -1223,5 +1042,5 @@ int main(int argc, char** argv)
 
   glfwDestroyWindow(window);
   glfwTerminate();
-  return EXIT_SUCCESS;
+  return receiverFailed ? EXIT_FAILURE : EXIT_SUCCESS;
 }
