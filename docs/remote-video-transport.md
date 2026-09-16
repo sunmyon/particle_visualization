@@ -105,6 +105,38 @@ library under `external/submodules/_install/openh264`. A build without that
 dependency continues to compile and uses JPEG. On x86 systems without `nasm`,
 the bootstrap builds a portable OpenH264 library without assembly.
 
+On x86, a portable OpenH264 build can substantially increase encoding time.
+libyuv only accelerates color conversion; it does not enable SIMD inside
+OpenH264. To rebuild the existing OpenH264 checkout with assembly on Freya:
+
+```bash
+module purge
+module load gcc/14 cmake/4.0 hdf5-serial/1.14.1 fftw-serial/3.3.10
+./scripts/bootstrap_remote_openh264_simd.sh
+cmake --preset linux-headless-gcc
+cmake --build --preset linux-headless-gcc -j4
+ctest --test-dir build-headless-local --output-on-failure
+```
+
+The helper installs checksum-pinned NASM 2.16.03 under the repository's ignored
+dependency directory if needed, cleans stale OpenH264 objects, rebuilds the
+static library, and verifies SSE/AVX symbol definitions. No root access or GPU
+job is required. The normal dependency bootstrap also finds this local NASM.
+Restart the server after relinking to use the new library; an already-running
+server continues using the code linked into its executable.
+
+A Freya login-node comparison using the same 60-frame synthetic input and one
+encoder thread measured a median/p95 of 8.98/26.97 ms without assembly and
+5.48/10.76 ms with assembly. Mean payload size (10,407 bytes), grayscale PSNR
+(38.174 dB), and encoded frame count (60/60) matched. This isolates the library
+change; it is not a promise of the same improvement in end-to-end remote latency.
+
+Direct SSH forwarding can remove Slurm's stdio path only where compute-node
+authentication is available. On the tested Freya allocation, host keys verified
+through the authenticated Slurm path, but both ProxyJump and login-node SSH were
+rejected by compute-node authentication. The relay therefore remains unchanged;
+host-key checks must not be disabled to work around an authentication failure.
+
 Runtime selection:
 
 | Setting | Meaning | Default |

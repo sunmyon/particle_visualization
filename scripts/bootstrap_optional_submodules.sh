@@ -338,21 +338,20 @@ build_meson_dep() {
 build_openh264() {
   local src_dir="${submodule_root}/openh264"
   local dep_install="${install_root}/openh264"
-  local jobs=2
+  local jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-${SLURM_CPUS_PER_TASK:-4}}"
   local -a make_args=(PREFIX="${dep_install}")
-  if command -v nproc >/dev/null 2>&1; then
-    jobs=$(nproc)
-  elif command -v sysctl >/dev/null 2>&1; then
-    jobs=$(sysctl -n hw.logicalcpu 2>/dev/null || echo 2)
-  fi
+  export PATH="${install_root}/nasm/bin:${PATH}"
   case "$(uname -m)" in
     x86_64|i386|i686)
       if ! command -v nasm >/dev/null 2>&1; then
         echo "nasm not found; building OpenH264 without x86 assembly." >&2
+        echo "For faster remote encoding, run scripts/bootstrap_remote_openh264_simd.sh." >&2
         make_args+=(USE_ASM=No)
       fi
       ;;
   esac
+  # Switching USE_ASM does not invalidate existing objects in OpenH264's make.
+  make -C "${src_dir}" clean
   make -C "${src_dir}" -j "${jobs}" "${make_args[@]}" install-static
 }
 
