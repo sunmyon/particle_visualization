@@ -56,6 +56,38 @@ The `viewer wait` timing covers decoded-image readiness to texture upload start;
 
 ## Codec selection
 
+### Optional SIMD color conversion
+
+`libyuv` accelerates RGBA/I420 conversion on both the server and viewer without
+changing the H.264 stream. The portable conversion remains available when the
+library is absent or `PARTICLE_VIS_ENABLE_LIBYUV=OFF`. This is a CPU optimization;
+GPU encoding and shader-based YUV display are not implemented by this change.
+
+On macOS/Linux, install the pinned version with:
+
+```bash
+./scripts/bootstrap_remote_libyuv.sh
+cmake -S . -B build
+cmake --build build -j4 --target remote_frame_viewer
+```
+
+On Freya, run the same bootstrap, then configure/build the existing server build:
+
+```bash
+cmake -S . -B build-headless-local
+cmake --build build-headless-local -j4 --target particle_vis
+```
+
+Reuse the existing configured build directory to preserve its headless settings.
+CMake reports `Remote SIMD color conversion: ON` when selected. The bootstrap
+installs only under `external/submodules/_install/libyuv`; no system installation
+or GPU job is needed. Other platforms can provide libyuv through CMake's
+`LIBYUV_INCLUDE_DIR` and `LIBYUV_LIBRARY`. Runtime launch options are unchanged.
+SIMD rounding can differ slightly from the portable path; conversion tests check
+channel order, padded decoder strides, non-aligned widths and bounded color error.
+
+### OpenH264
+
 Build OpenH264 on both the server and viewer machines:
 
 ```bash

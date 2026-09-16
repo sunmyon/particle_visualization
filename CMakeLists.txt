@@ -1786,3 +1786,31 @@ if(BUILD_TESTING AND PYTHON_BRIDGE AND UNIX)
   add_test(NAME remote_input_receiver_test COMMAND remote_input_receiver_test)
   set_tests_properties(remote_input_receiver_test PROPERTIES TIMEOUT 15)
 endif()
+
+# Optional SIMD color conversion, shared by server, viewer and codec tests.
+option(PARTICLE_VIS_ENABLE_LIBYUV "Use libyuv for remote color conversion" ON)
+if(PARTICLE_VIS_ENABLE_LIBYUV AND PARTICLE_VIS_HAVE_OPENH264)
+  find_path(LIBYUV_INCLUDE_DIR NAMES libyuv.h
+    HINTS "${CMAKE_SOURCE_DIR}/external/submodules/_install/libyuv/include")
+  find_library(LIBYUV_LIBRARY NAMES yuv
+    HINTS "${CMAKE_SOURCE_DIR}/external/submodules/_install/libyuv/lib")
+endif()
+if(BUILD_TESTING)
+  add_executable(remote_color_conversion_test tests/remote_color_conversion_test.cpp)
+  target_include_directories(remote_color_conversion_test PRIVATE ${SRC_DIR})
+  add_test(NAME remote_color_conversion_test COMMAND remote_color_conversion_test)
+endif()
+if(PARTICLE_VIS_ENABLE_LIBYUV AND PARTICLE_VIS_HAVE_OPENH264 AND LIBYUV_INCLUDE_DIR AND LIBYUV_LIBRARY)
+  message(STATUS "Remote SIMD color conversion: ON (${LIBYUV_LIBRARY})")
+  set_property(SOURCE ${SRC_DIR}/platform/remote_video_codec.cpp tests/remote_color_conversion_test.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS PARTICLE_VIS_HAVE_LIBYUV)
+  set_property(SOURCE ${SRC_DIR}/platform/remote_video_codec.cpp tests/remote_color_conversion_test.cpp
+    APPEND PROPERTY INCLUDE_DIRECTORIES ${LIBYUV_INCLUDE_DIR})
+  foreach(target ${PROJECT_NAME} remote_frame_viewer remote_video_codec_test remote_frame_receiver_test remote_color_conversion_test)
+    if(TARGET ${target})
+      target_link_libraries(${target} PRIVATE ${LIBYUV_LIBRARY})
+    endif()
+  endforeach()
+else()
+  message(STATUS "Remote SIMD color conversion: OFF (portable fallback)")
+endif()
