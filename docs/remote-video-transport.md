@@ -356,3 +356,28 @@ faster color conversion, enabling the OpenH264 assembly path on Freya, and
 explicit decoder-loss recovery. Local ImGui composition should be evaluated
 for text clarity and independent UI resolution after the video path has a
 sustained-bandwidth baseline.
+
+### Relay TCP delayed-ACK check
+
+The Python loopback relay enables `TCP_NODELAY` on both accepted client sockets
+and compute-node upstream sockets. SSH/Slurm pipe reads can fragment messages;
+Nagle buffering combined with delayed ACKs can otherwise hold a small fragment.
+This does not remove SSH/Slurm buffering or bound all network queues.
+
+Run the byte-integrity and EOF checks without a GPU or running renderer:
+
+```sh
+python3 scripts/test_slurm_loopback_relay.py --benchmark
+```
+
+The benchmark uses the production pipe-to-socket function, fragmented writes,
+and a request/response exchange on loopback. On the Freya login node, the
+September 16 check measured roughly 44 ms without `TCP_NODELAY` versus 1–2 ms
+with it. Mac loopback did not show a meaningful difference. These are synthetic
+transport results, not measured reductions in interactive input-to-display time;
+unidirectional traffic may not exhibit the same delay.
+
+To apply the socket setting, update the relay script on both machines and
+restart the Mac relay and viewer connections. Existing connections retain their
+old socket settings. This change alone requires no renderer rebuild or GPU job
+restart. Keep local/remote ports and the current allocation's job ID/node unchanged.

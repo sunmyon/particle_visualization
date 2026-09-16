@@ -14,6 +14,12 @@ import threading
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:/@~+-]+$")
 
 
+def configure_interactive_socket(connection):
+    # SSH/Slurm can split one message into small writes. Avoid waiting for a
+    # delayed ACK before forwarding the remainder (about 40 ms on Linux).
+    connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+
 def copy_socket_to_pipe(source, destination):
     try:
         while True:
@@ -49,6 +55,7 @@ def copy_pipe_to_socket(source, destination):
 
 def connect_mode(host, port):
     upstream = socket.create_connection((host, port), timeout=15)
+    configure_interactive_socket(upstream)
     upstream.settimeout(None)
     stdin_fd = sys.stdin.buffer.fileno()
     stdout_fd = sys.stdout.buffer.fileno()
@@ -142,6 +149,7 @@ class Relay:
                 for listener, remote_port in listeners:
                     if listener in readable:
                         client, _ = listener.accept()
+                        configure_interactive_socket(client)
                         thread = threading.Thread(
                             target=self.serve_connection,
                             args=(client, remote_port))
