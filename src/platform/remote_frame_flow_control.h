@@ -30,6 +30,13 @@ public:
       trigger_.sequence = sequence;
       trigger_.receivedAt = receivedAt;
     }
+    if (sequence > latestInputSequence_) latestInputSequence_ = sequence;
+  }
+
+  std::uint64_t latestInputSequence() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return latestInputSequence_;
   }
 
   bool tryBeginFrame(RemoteFrameTrigger* trigger = nullptr)
@@ -46,7 +53,8 @@ public:
   }
 
 private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
+  std::uint64_t latestInputSequence_ = 0;
   bool dirty_ = true;
   bool viewerReady_ = false;
   RemoteFrameTrigger trigger_;

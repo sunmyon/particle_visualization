@@ -137,9 +137,15 @@ displayed frame. The additional fields are:
 | Field | Interval |
 |---|---|
 | `trigger to readback` | server input receipt to framebuffer-readback submission |
+| `input to frame start` | server input receipt to start of the application frame; included in `trigger to readback` |
+| `frame to render` | application frame start to scene rendering start |
+| `render` | scene rendering call |
 | `readback latency` | readback submission to CPU-side result collection |
 | `encode queue` | CPU frame waiting for its encoder worker |
 | `encode` | server compression |
+| `encode to send` | compressed frame waiting until the server starts sending it |
+| `previous send` | time spent in the server's previous ZeroMQ multipart send call |
+| `receive payload` | Mac receive of the frame payload after its header arrives |
 | `input to receive` | Mac input send to completion of the corresponding frame receive |
 | `decode` | Mac decompression and color conversion |
 | `upload` | decoded RGBA upload call into the local OpenGL texture |
@@ -150,6 +156,10 @@ not depend on clock synchronization with the server. `transport/unmeasured` is
 the input-to-receive interval minus the measured server stages. It includes
 both network directions, SSH/Slurm relay work, and any server work not covered
 by the named stages; it must not be interpreted as pure network time.
+The server drops obsolete unencoded work and stale idle JPEGs when newer input
+arrives. Already encoded H.264 frames are retained because later P-frames may
+depend on them. This avoids breaking decoder state while limiting work on old
+input.
 
 ## Validation baseline
 

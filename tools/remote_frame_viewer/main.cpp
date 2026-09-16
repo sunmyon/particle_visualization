@@ -37,8 +37,14 @@ struct RemoteFrame {
   double serverReadbackMs = 0.0;
   double serverReadbackLatencyMs = 0.0;
   double serverTriggerToReadbackMs = 0.0;
+  double serverInputToFrameStartMs = 0.0;
+  double serverFrameToRenderMs = 0.0;
+  double serverRenderMs = 0.0;
   double serverEncoderQueueMs = 0.0;
   double serverEncodeMs = 0.0;
+  double serverEncodeToSendMs = 0.0;
+  double serverPreviousSendMs = 0.0;
+  double clientPayloadReceiveMs = 0.0;
   double clientDecodeMs = 0.0;
   double clientInputToReceiveMs = -1.0;
   std::chrono::steady_clock::time_point receivedAt{};
@@ -242,12 +248,14 @@ bool ReceiveFrame(zmq::socket_t& sub,
   if (!headerResult) {
     return false;
   }
+  const auto headerReceivedAt = std::chrono::steady_clock::now();
 
   zmq::message_t payloadMsg;
   auto payloadResult = sub.recv(payloadMsg, zmq::recv_flags::none);
   if (!payloadResult) {
     return false;
   }
+  const auto payloadReceivedAt = std::chrono::steady_clock::now();
 
   nlohmann::json header =
     nlohmann::json::parse(headerMsg.to_string(), nullptr, false);
@@ -286,9 +294,17 @@ bool ReceiveFrame(zmq::socket_t& sub,
     header.value("serverReadbackLatencyMs", out.serverReadbackMs);
   out.serverTriggerToReadbackMs =
     header.value("serverTriggerToReadbackMs", 0.0);
+  out.serverInputToFrameStartMs =
+    header.value("serverInputToFrameStartMs", 0.0);
+  out.serverFrameToRenderMs = header.value("serverFrameToRenderMs", 0.0);
+  out.serverRenderMs = header.value("serverRenderMs", 0.0);
   out.serverEncoderQueueMs = header.value("serverEncoderQueueMs", 0.0);
   out.serverEncodeMs = header.value("serverEncodeMs", 0.0);
-  out.receivedAt = std::chrono::steady_clock::now();
+  out.serverEncodeToSendMs = header.value("serverEncodeToSendMs", 0.0);
+  out.serverPreviousSendMs = header.value("serverPreviousSendMs", 0.0);
+  out.clientPayloadReceiveMs = std::chrono::duration<double, std::milli>(
+    payloadReceivedAt - headerReceivedAt).count();
+  out.receivedAt = payloadReceivedAt;
   const auto decodeStart = std::chrono::steady_clock::now();
   if (type == "h264_frame") {
     if (!videoDecoder.decode(
@@ -1025,11 +1041,18 @@ int main(int argc, char** argv)
                   << frame.framebufferScaleY
                   << "; timing ms: trigger to readback "
                   << frame.serverTriggerToReadbackMs
+                  << ", input to frame start "
+                  << frame.serverInputToFrameStartMs
+                  << ", frame to render " << frame.serverFrameToRenderMs
+                  << ", render " << frame.serverRenderMs
                   << ", readback latency "
                   << frame.serverReadbackLatencyMs << ", readback copy "
                   << frame.serverReadbackMs << ", encode queue "
                   << frame.serverEncoderQueueMs << ", encode "
-                  << frame.serverEncodeMs << ", decode "
+                  << frame.serverEncodeMs << ", encode to send "
+                  << frame.serverEncodeToSendMs << ", receive payload "
+                  << frame.clientPayloadReceiveMs << ", previous send "
+                  << frame.serverPreviousSendMs << ", decode "
                   << frame.clientDecodeMs << ", upload "
                   << uploadMs;
         if (frame.clientInputToReceiveMs >= 0.0) {

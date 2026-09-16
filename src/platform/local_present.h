@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 class WindowContext;
 class GraphicsContext;
 
@@ -9,6 +11,9 @@ struct PresentOptions {
   bool readbackFrame = false;
   bool asyncReadback = false;
   bool contentChanged = false;
+  std::chrono::steady_clock::time_point frameStartedAt{};
+  std::chrono::steady_clock::time_point renderStartedAt{};
+  std::chrono::steady_clock::time_point renderFinishedAt{};
 };
 
 struct PresentResult {

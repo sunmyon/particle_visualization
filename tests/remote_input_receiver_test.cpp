@@ -58,6 +58,10 @@ int main()
         throw std::runtime_error("Valid input lost or invalid input enqueued");
       if (!flowControl.tryBeginFrame())
         throw std::runtime_error("Valid input did not release a remote frame");
+      flowControl.markViewerReady(7);
+      flowControl.markViewerReady(0);
+      if (flowControl.latestInputSequence() != 7)
+        throw std::runtime_error("Frame request replaced latest input sequence");
     }
     receiver.stop();
     receiver.stop();

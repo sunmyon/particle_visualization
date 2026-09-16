@@ -84,6 +84,9 @@ struct FrameToEncode {
   double readbackMs = 0.0;
   double readbackLatencyMs = 0.0;
   double triggerToReadbackMs = 0.0;
+  double inputToFrameStartMs = 0.0;
+  double frameToRenderMs = 0.0;
+  double renderMs = 0.0;
   std::chrono::steady_clock::time_point queuedAt;
 };
 
@@ -96,6 +99,9 @@ struct ReadbackMetadata {
   float framebufferScaleY = 1.0f;
   bool idlePresentation = false;
   double triggerToReadbackMs = 0.0;
+  double inputToFrameStartMs = 0.0;
+  double frameToRenderMs = 0.0;
+  double renderMs = 0.0;
   std::chrono::steady_clock::time_point submittedAt;
 };
 
@@ -117,8 +123,12 @@ struct EncodedRemoteFrame {
   double readbackMs = 0.0;
   double readbackLatencyMs = 0.0;
   double triggerToReadbackMs = 0.0;
+  double inputToFrameStartMs = 0.0;
+  double frameToRenderMs = 0.0;
+  double renderMs = 0.0;
   double encoderQueueMs = 0.0;
   double encodeMs = 0.0;
+  std::chrono::steady_clock::time_point encodedAt{};
 };
 
 } // namespace
@@ -144,6 +154,7 @@ struct RemoteFramePresenter::Impl {
   RemoteVideoEncoder videoEncoder;
   RemoteFrameFlowControl* flowControl = nullptr;
   uint64_t latestEnqueuedFrameId = 0;
+  double previousSendMs = 0.0;
   std::deque<ReadbackMetadata> readbacks;
 
   ~Impl()
@@ -179,6 +190,9 @@ struct RemoteFramePresenter::Impl {
     output.readbackMs = input.readbackMs;
     output.readbackLatencyMs = input.readbackLatencyMs;
     output.triggerToReadbackMs = input.triggerToReadbackMs;
+    output.inputToFrameStartMs = input.inputToFrameStartMs;
+    output.frameToRenderMs = input.frameToRenderMs;
+    output.renderMs = input.renderMs;
     output.encoderQueueMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - input.queuedAt).count();
 
@@ -218,6 +232,7 @@ struct RemoteFramePresenter::Impl {
     }
     output.encodeMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - encodeStart).count();
+    output.encodedAt = std::chrono::steady_clock::now();
     return output;
   }
 
@@ -245,6 +260,10 @@ struct RemoteFramePresenter::Impl {
           pendingInteractiveFrame.reset();
         }
 
+        if (flowControl && input.triggerSequence != 0 &&
+            flowControl->latestInputSequence() > input.triggerSequence) {
+          continue;
+        }
         const uint64_t triggerSequence = input.triggerSequence;
         auto output = encode(std::move(input), true);
         if (!output) {
@@ -277,6 +296,10 @@ struct RemoteFramePresenter::Impl {
           pendingIdleFrame.reset();
         }
 
+        if (flowControl && input.triggerSequence != 0 &&
+            flowControl->latestInputSequence() > input.triggerSequence) {
+          continue;
+        }
         auto output = encode(std::move(input), false);
         if (!output) {
           continue;
@@ -347,6 +370,13 @@ struct RemoteFramePresenter::Impl {
     if (!encoded) {
       return;
     }
+    if (encoded->idlePresentation && flowControl &&
+        encoded->triggerSequence != 0 &&
+        flowControl->latestInputSequence() > encoded->triggerSequence) {
+      return;
+    }
+    const double encodeToSendMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - encoded->encodedAt).count();
     nlohmann::json header{
       {"type", encoded->type},
       {"frameId", encoded->frameId},
@@ -365,10 +395,16 @@ struct RemoteFramePresenter::Impl {
       {"serverReadbackMs", encoded->readbackMs},
       {"serverReadbackLatencyMs", encoded->readbackLatencyMs},
       {"serverTriggerToReadbackMs", encoded->triggerToReadbackMs},
+      {"serverInputToFrameStartMs", encoded->inputToFrameStartMs},
+      {"serverFrameToRenderMs", encoded->frameToRenderMs},
+      {"serverRenderMs", encoded->renderMs},
       {"serverEncoderQueueMs", encoded->encoderQueueMs},
-      {"serverEncodeMs", encoded->encodeMs}
+      {"serverEncodeMs", encoded->encodeMs},
+      {"serverEncodeToSendMs", encodeToSendMs},
+      {"serverPreviousSendMs", previousSendMs}
     };
     const std::string headerText = header.dump();
+    const auto sendStart = std::chrono::steady_clock::now();
     try {
       const auto headerOk = socket.send(
         zmq::buffer(headerText),
@@ -380,6 +416,8 @@ struct RemoteFramePresenter::Impl {
     } catch (const zmq::error_t&) {
       // The viewer requests another frame after every successful receive.
     }
+    previousSendMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - sendStart).count();
   }
 };
 #else
@@ -503,6 +541,9 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
         std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - metadata.submittedAt).count();
       frame.triggerToReadbackMs = metadata.triggerToReadbackMs;
+      frame.inputToFrameStartMs = metadata.inputToFrameStartMs;
+      frame.frameToRenderMs = metadata.frameToRenderMs;
+      frame.renderMs = metadata.renderMs;
       frame.queuedAt = std::chrono::steady_clock::now();
       impl_->enqueue(std::move(frame));
     }
@@ -517,6 +558,16 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
         metadata.framebufferScaleX = window_->framebufferScaleX();
         metadata.framebufferScaleY = window_->framebufferScaleY();
         metadata.idlePresentation = idlePresentation_;
+        metadata.frameToRenderMs = std::chrono::duration<double, std::milli>(
+          options.renderStartedAt - options.frameStartedAt).count();
+        metadata.renderMs = std::chrono::duration<double, std::milli>(
+          options.renderFinishedAt - options.renderStartedAt).count();
+        if (trigger.receivedAt.time_since_epoch().count() != 0 &&
+            options.frameStartedAt >= trigger.receivedAt) {
+          metadata.inputToFrameStartMs =
+            std::chrono::duration<double, std::milli>(
+              options.frameStartedAt - trigger.receivedAt).count();
+        }
         if (trigger.receivedAt.time_since_epoch().count() != 0) {
           metadata.triggerToReadbackMs =
             std::chrono::duration<double, std::milli>(
@@ -571,6 +622,15 @@ PresentResult RemoteFramePresenter::present(const PresentOptions& options)
   frame.idlePresentation = idlePresentation_;
   frame.readbackMs = result.readbackMs;
   frame.readbackLatencyMs = result.readbackMs;
+  frame.frameToRenderMs = std::chrono::duration<double, std::milli>(
+    options.renderStartedAt - options.frameStartedAt).count();
+  frame.renderMs = std::chrono::duration<double, std::milli>(
+    options.renderFinishedAt - options.renderStartedAt).count();
+  if (trigger.receivedAt.time_since_epoch().count() != 0 &&
+      options.frameStartedAt >= trigger.receivedAt) {
+    frame.inputToFrameStartMs = std::chrono::duration<double, std::milli>(
+      options.frameStartedAt - trigger.receivedAt).count();
+  }
   if (trigger.receivedAt.time_since_epoch().count() != 0) {
     frame.triggerToReadbackMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - trigger.receivedAt).count();

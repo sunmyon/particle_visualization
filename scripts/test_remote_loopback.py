@@ -45,6 +45,11 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
             f"invalid payload size: header={header.get('bytes')}, "
             f"received={len(payload)}"
         )
+    for timing in ("serverInputToFrameStartMs", "serverFrameToRenderMs",
+                   "serverRenderMs", "serverEncodeToSendMs",
+                   "serverPreviousSendMs"):
+        if not isinstance(header.get(timing), (int, float)) or header[timing] < 0:
+            raise RuntimeError(f"missing or invalid {timing}: {header!r}")
     if frame_type == "rgba_frame" and len(payload) != expected:
         raise RuntimeError(
             f"invalid RGBA payload size: received={len(payload)}, expected={expected}"

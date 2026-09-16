@@ -1099,6 +1099,7 @@ void RunFrame(AppState& app,
               WindowContext& window,
               IFramePresenter& presenter)
 {
+  const auto frameStartedAt = std::chrono::steady_clock::now();
   FrameAutoreleasePool frameAutoreleasePool;
   std::vector<InputEvent> inputEvents;
 
@@ -1276,9 +1277,14 @@ void RunFrame(AppState& app,
                          frameOverlay);
   PrepareRenderFrame(app.renderFrameInput, render);
 
+  const auto renderStartedAt = std::chrono::steady_clock::now();
   RenderScene(render);
+  const auto renderFinishedAt = std::chrono::steady_clock::now();
 
   PresentOptions presentOptions;
+  presentOptions.frameStartedAt = frameStartedAt;
+  presentOptions.renderStartedAt = renderStartedAt;
+  presentOptions.renderFinishedAt = renderFinishedAt;
   presentOptions.readbackFrame = captureRenderSnapshot;
   presentOptions.contentChanged =
     !inputEvents.empty() || app.runtime.snapshotLoad.result.loadedThisFrame;
