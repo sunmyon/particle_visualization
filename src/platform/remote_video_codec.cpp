@@ -4,9 +4,34 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <cstdlib>
+#include <iostream>
+#include <thread>
 
 #ifdef PARTICLE_VIS_HAVE_OPENH264
 #include <wels/codec_api.h>
+
+namespace {
+int PositiveEnvironmentInteger(const char* name, int fallback)
+{
+  const char* value = std::getenv(name);
+  if (!value || !*value) return fallback;
+  char* end = nullptr;
+  const long parsed = std::strtol(value, &end, 10);
+  if (*end || parsed < 1 || parsed > 1024) return fallback;
+  return static_cast<int>(parsed);
+}
+
+int EncoderThreads()
+{
+  // Keep the proven single-thread mode until the deployment has been compared.
+  int threads = std::min(8, PositiveEnvironmentInteger(
+    "PARTICLE_VIS_REMOTE_ENCODER_THREADS", 1));
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  if (hardware) threads = std::min(threads, static_cast<int>(hardware));
+  return std::min(threads, PositiveEnvironmentInteger("SLURM_CPUS_PER_TASK", threads));
+}
+} // namespace
 #endif
 
 struct RemoteVideoEncoder::Impl {
@@ -19,6 +44,7 @@ struct RemoteVideoEncoder::Impl {
   std::atomic<bool> forceKeyFrame{true};
   std::uint64_t frameNumber = 0;
   std::vector<unsigned char> i420;
+  const int requestedThreads = EncoderThreads();
 
   ~Impl()
   {
@@ -53,10 +79,47 @@ struct RemoteVideoEncoder::Impl {
     params.iTargetBitrate = requestedBitrate;
     params.iRCMode = RC_BITRATE_MODE;
     params.fMaxFrameRate = requestedFramesPerSecond;
-    if (encoder->Initialize(&params) != cmResultSuccess) {
+    int initialized = cmInitParaError;
+    if (requestedThreads == 1) {
+      initialized = encoder->Initialize(&params);
+    } else {
+      SEncParamExt extended{};
+      if (encoder->GetDefaultParams(&extended) == cmResultSuccess) {
+        extended.iUsageType = params.iUsageType;
+        extended.iPicWidth = params.iPicWidth;
+        extended.iPicHeight = params.iPicHeight;
+        extended.iTargetBitrate = params.iTargetBitrate;
+        extended.iRCMode = params.iRCMode;
+        extended.fMaxFrameRate = params.fMaxFrameRate;
+        extended.iMultipleThreadIdc = requestedThreads;
+        // Multiple threads require multiple slices in the same frame. There
+        // is no frame reordering or extra frame queue in this mode.
+        auto& layer = extended.sSpatialLayers[0];
+        layer.iVideoWidth = requestedWidth;
+        layer.iVideoHeight = requestedHeight;
+        layer.fFrameRate = requestedFramesPerSecond;
+        layer.iSpatialBitrate = requestedBitrate;
+        layer.sSliceArgument.uiSliceMode = SM_FIXEDSLCNUM_SLICE;
+        layer.sSliceArgument.uiSliceNum = requestedThreads;
+        initialized = encoder->InitializeExt(&extended);
+      }
+      if (initialized != cmResultSuccess) {
+        // Keep H.264 if this resolution/build rejects the parallel settings.
+        encoder->Uninitialize();
+        initialized = encoder->Initialize(&params);
+        std::cerr << "Remote H.264: parallel initialization failed; using single-thread mode\n";
+      }
+    }
+    if (initialized != cmResultSuccess) {
       WelsDestroySVCEncoder(encoder);
       encoder = nullptr;
       return false;
+    }
+    SEncParamExt actual{};
+    if (encoder->GetOption(ENCODER_OPTION_SVC_ENCODE_PARAM_EXT, &actual) == cmResultSuccess) {
+      std::cerr << "Remote H.264 encoder: " << actual.iMultipleThreadIdc
+                << " thread(s), " << actual.sSpatialLayers[0].sSliceArgument.uiSliceNum
+                << " slice(s)\n";
     }
     int format = videoFormatI420;
     encoder->SetOption(ENCODER_OPTION_DATAFORMAT, &format);

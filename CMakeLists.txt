@@ -1735,6 +1735,16 @@ if(BUILD_TESTING)
     endif()
     target_compile_definitions(remote_video_codec_test PRIVATE PARTICLE_VIS_HAVE_OPENH264)
     add_test(NAME remote_video_codec_test COMMAND remote_video_codec_test)
+    foreach(threads 2 4)
+      add_test(NAME remote_video_codec_threads_${threads}_test COMMAND remote_video_codec_test)
+      set_tests_properties(remote_video_codec_threads_${threads}_test PROPERTIES
+        ENVIRONMENT "PARTICLE_VIS_REMOTE_ENCODER_THREADS=${threads}")
+    endforeach()
+    add_test(NAME remote_video_codec_cpu_limit_test COMMAND remote_video_codec_test)
+    set_tests_properties(remote_video_codec_cpu_limit_test PROPERTIES
+      ENVIRONMENT "PARTICLE_VIS_REMOTE_ENCODER_THREADS=8;SLURM_CPUS_PER_TASK=1"
+      PASS_REGULAR_EXPRESSION "encoder: 1 thread"
+      FAIL_REGULAR_EXPRESSION "encoder: [2-9]")
   endif()
 
   add_executable(remote_imgui_input_test

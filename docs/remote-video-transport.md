@@ -107,6 +107,7 @@ Runtime selection:
 | `PARTICLE_VIS_REMOTE_CODEC=h264` | Prefer persistent H.264; fall back to JPEG if encoding fails | selected when OpenH264 is built |
 | `PARTICLE_VIS_REMOTE_CODEC=jpeg` | Use independent JPEG frames | off |
 | `PARTICLE_VIS_REMOTE_VIDEO_BITRATE` | OpenH264 target bitrate in bit/s | `5000000` |
+| `PARTICLE_VIS_REMOTE_ENCODER_THREADS` | Encoder threads, 1–8; capped by hardware and `SLURM_CPUS_PER_TASK` | `1` |
 | `PARTICLE_VIS_REMOTE_MAX_FPS` | Maximum server frame rate; zero disables pacing | `10` |
 | `PARTICLE_VIS_REMOTE_JPEG_QUALITY` | JPEG fallback quality; zero selects raw RGBA | `80` |
 
@@ -118,6 +119,43 @@ target. The presenter sends nothing for that frame and continues with the next
 video frame. Treating a rate-control skip as an encoding failure and sending a
 JPEG would bypass the bitrate limit and can create seconds of queued latency at
 large window sizes.
+
+Parallel encoding is opt-in for comparison. For a job with at least two allocated
+CPUs, set `PARTICLE_VIS_REMOTE_ENCODER_THREADS=2` on the **server**, keeping all
+other launch settings unchanged. A value of `1` retains the original basic
+initialization. Larger values use OpenH264 extended parameters with a matching
+number of fixed slices within each frame, without adding a frame queue. OpenH264
+may reduce the slice/thread count at small resolutions; the server logs the
+effective count. If parallel initialization fails, it retries single-thread H.264.
+Invalid/nonpositive values select one thread. The default stays at one until
+real-data comparisons on the target machine establish a benefit.
+
+The existing library already defaults to low complexity and bitrate-controlled
+frame skipping; this change does not disable those or change the 30-frame IDR
+policy. More slices can increase packet sizes, so compare latency and bytes as
+well as encoding time. A deterministic moving-particle CPU benchmark is available:
+
+```bash
+PARTICLE_VIS_REMOTE_ENCODER_THREADS=1 ./build/remote_video_codec_test --benchmark
+PARTICLE_VIS_REMOTE_ENCODER_THREADS=2 ./build/remote_video_codec_test --benchmark
+PARTICLE_VIS_REMOTE_ENCODER_THREADS=4 ./build/remote_video_codec_test --benchmark
+```
+
+It reports encode median/p95, bytes, grayscale PSNR and skipped frames. These
+are synthetic codec results, not end-to-end GPU/network measurements.
+
+Initial 60-frame comparison (1134x712, 5 Mbit/s target, 10 fps timestamps):
+
+| CPU environment | 1 thread median | 2 threads median | 4 threads median |
+|---|---:|---:|---:|
+| Local Mac, libyuv enabled | 2.08 ms | 1.55 ms | 1.16 ms |
+| Freya login node, portable color conversion | 9.89 ms | 15.53 ms | 11.34 ms |
+
+Compare thread counts within each row; hardware, node load and color conversion
+differ between rows. All runs encoded 60/60 frames and had approximately 38.2 dB
+grayscale PSNR. Two/four slices increased mean payload size by approximately
+2–4%/7–8%. The login-node result does not establish GPU-node performance and is
+why parallel encoding is not enabled by default. No GPU job was used.
 
 ## Bounded transport comparison
 
