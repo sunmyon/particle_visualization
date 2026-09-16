@@ -23,6 +23,9 @@ struct ParticleSelectionOption;
 struct SimulationBlock {
   // ---- AoS core ----
   std::vector<SimulationElement> particles;
+  // Populated by rebuild(), alongside the quantity ranges. Particle types do
+  // not change during camera interaction, so UI code can reuse these counts.
+  std::array<std::size_t, kNumTypes> particleTypeCounts{};
 
   // ---- AoS extension (optional) ----
   AoSExtensionBuffer aosExt;
@@ -41,6 +44,7 @@ struct SimulationBlock {
   
   void resize(size_t n) {
     particles.resize(n);
+    particleTypeCounts = {};
 
     if (aosExt.stride > 0)
       aosExt.resize(n);
@@ -57,6 +61,7 @@ struct SimulationBlock {
 
   void clear() {
     particles.clear();
+    particleTypeCounts = {};
     aosExt.bytes.clear();
     soa.clear();
     loadedFieldNames.clear();

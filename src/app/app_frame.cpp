@@ -806,15 +806,9 @@ static void DrawToolWindows(AppRuntimeState& runtime,
                haloesCtx);
 #endif
   
-  std::array<std::size_t, 6> histogramTypeCounts{};
-  if (data.particles) {
-    for (const SimulationElement& particle :
-         data.particles->simulationBlock.particles) {
-      if (particle.type < histogramTypeCounts.size()) {
-        ++histogramTypeCounts[particle.type];
-      }
-    }
-  }
+  const std::array<std::size_t, 6> histogramTypeCounts = data.particles
+    ? data.particles->simulationBlock.particleTypeCounts
+    : std::array<std::size_t, 6>{};
   Histogram2DViewContext histogram2DCtx{
     runtime.quantity,
     histogramTypeCounts,

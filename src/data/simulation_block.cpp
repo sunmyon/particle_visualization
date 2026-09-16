@@ -28,6 +28,7 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
   const auto totalStart = RebuildProfileClock::now();
   BuildResult result;
   worldToRenderScale = 1.0f;
+  particleTypeCounts = {};
   
   if (!particles.empty()) {
     result.originalMax = 0.;
@@ -38,13 +39,13 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
       }
     }
 
-    int npart_type[kNumTypes] = {0,0,0,0,0,0};
+    std::size_t npart_type[kNumTypes] = {0,0,0,0,0,0};
 
 #pragma omp parallel
     {
       float localMax = 0.0f;
       float localMin[kMaxQ][kNumTypes], localMaxV[kMaxQ][kNumTypes];
-      int   local_npart_type[kNumTypes] = {0};
+      std::size_t local_npart_type[kNumTypes] = {0};
 
       // thread-local init
       for (int q = 0; q < catalog.nUIQ; ++q) {
@@ -102,6 +103,9 @@ SimulationBlock::BuildResult SimulationBlock::rebuild(float desiredMax, const Qu
           }
       }
     } // omp parallel
+
+    for (int t = 0; t < kNumTypes; ++t)
+      particleTypeCounts[t] = npart_type[t];
 
     // scaling (after maxVal is determined)
     if (result.originalMax > 0.0f) {

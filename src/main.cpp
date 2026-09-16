@@ -1,6 +1,8 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
+#include <chrono>
 
 #include "render/render_backend.h"
 #include "render/render_system.h"
@@ -42,6 +44,11 @@ int main(int argc, char** argv)
 
   while (!platform.window().shouldClose()) {
     RunFrame(app, render, platform.window(), platform.presenter());
+    // An idle headless remote loop has no window-system wait. Yield the CPU to
+    // the encoder and input receiver instead of spinning thousands of times
+    // per second after the per-frame UI work becomes cheap.
+    if (platform.remoteActive())
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 
 #ifdef PARTICLE_VIS_ENABLE_VULKAN_BACKEND

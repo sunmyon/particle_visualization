@@ -27,6 +27,10 @@ public:
   const WindowContext& window() const { return window_; }
 
   IFramePresenter& presenter();
+  bool remoteActive() const
+  {
+    return remotePresenter_ && remotePresenter_->active();
+  }
   std::unique_ptr<RenderBackend> createRenderBackend();
   VulkanContext* vulkanContext();
 
