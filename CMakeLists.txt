@@ -7,6 +7,20 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("
+  #include <filesystem>
+  int main() { return std::filesystem::exists(std::filesystem::path(\".\")) ? 0 : 1; }
+" PARTICLE_VIS_HAS_STD_FILESYSTEM)
+if(NOT PARTICLE_VIS_HAS_STD_FILESYSTEM)
+  message(FATAL_ERROR
+    "The selected compiler/standard library cannot compile and link C++17 <filesystem>: "
+    "${CMAKE_CXX_COMPILER} (${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}). "
+    "Load a supported toolchain before configuring (on Freya: module load gcc/14 cmake/4.0). "
+    "Then reconfigure with cmake --fresh --preset linux-headless-gcc on Freya; "
+    "changing modules alone does not replace the compiler cached in an existing build directory.")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()

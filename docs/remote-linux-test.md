@@ -26,12 +26,28 @@ cmake --build --preset linux-headless-gcc
 ctest --test-dir build-headless-local --output-on-failure
 ```
 
+Load these modules in every new shell used to configure/build. The preset chooses
+`gcc`/`g++` from that shell; it does not load a compiler module. If configuration
+reports GNU 7.5.0 or compilation fails with `fatal error: filesystem`, run:
+
+```bash
+module purge
+module load gcc/14 cmake/4.0 hdf5-serial/1.14.1 fftw-serial/3.3.10
+cmake --fresh --preset linux-headless-gcc
+cmake --build --preset linux-headless-gcc -j4
+ctest --test-dir build-headless-local --output-on-failure
+```
+
+`--fresh` clears cached compiler selection without deleting source/config files.
+After any failed build, complete the build before running CTest: missing test
+executables are a consequence of the interrupted build, not necessarily test failures.
+
 The configure output should report `EGL headless context support: ON` and keep
 `PYTHON_BRIDGE` enabled. If the bridge is automatically disabled, install or
 load ZeroMQ, cppzmq, and nlohmann-json before continuing.
 
 The CPU-only protocol and codec tests do not require a GPU allocation. The
-expected result is six passing tests when OpenH264 is enabled.
+expected result is all registered tests passing; the count depends on optional features.
 
 For a complete automated GPU loopback on Freya, load the current Python stack
 and run:

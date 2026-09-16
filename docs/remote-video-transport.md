@@ -71,14 +71,19 @@ cmake -S . -B build
 cmake --build build -j4 --target remote_frame_viewer
 ```
 
-On Freya, run the same bootstrap, then configure/build the existing server build:
+On Freya, load the build modules before running the bootstrap and server build:
 
 ```bash
-cmake -S . -B build-headless-local
+module purge
+module load gcc/14 cmake/4.0 hdf5-serial/1.14.1 fftw-serial/3.3.10
+./scripts/bootstrap_remote_libyuv.sh
+cmake --preset linux-headless-gcc
 cmake --build build-headless-local -j4 --target particle_vis
 ```
 
 Reuse the existing configured build directory to preserve its headless settings.
+If it cached an older compiler, use `cmake --fresh --preset linux-headless-gcc`
+after loading the modules. The preset alone does not select the GCC module.
 CMake reports `Remote SIMD color conversion: ON` when selected. The bootstrap
 installs only under `external/submodules/_install/libyuv`; no system installation
 or GPU job is needed. Other platforms can provide libyuv through CMake's
