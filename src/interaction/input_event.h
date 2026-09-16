@@ -199,6 +199,18 @@ struct InputEvent {
 };
 
 struct InputEventQueue {
+  void pushCoalescingPointerMove(const InputEvent& event) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (event.type == InputEventType::PointerMove &&
+        event.source == InputSource::Remote && !events.empty() &&
+        events.back().type == InputEventType::PointerMove &&
+        events.back().source == InputSource::Remote) {
+      events.back() = event;
+    } else {
+      events.push_back(event);
+    }
+  }
+
   void push(const InputEvent& event) {
     std::lock_guard<std::mutex> lock(mutex_);
     events.push_back(event);

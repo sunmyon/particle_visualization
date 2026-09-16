@@ -6,6 +6,7 @@
 #include <deque>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -26,6 +27,18 @@ namespace {
 struct RemoteFrame {
   uint64_t frameId = 0;
   uint64_t triggerSequence = 0;
+  uint64_t cameraGeneration = 0;
+  uint64_t latestCameraGeneration = 0;
+  std::size_t outstandingFrames = 0;
+  std::size_t applicationQueueDepth = 0;
+  uint64_t sendBackpressureCount = 0;
+  int64_t serverInputReceivedAtNs = 0;
+  int64_t serverCameraUpdatedAtNs = 0;
+  int64_t serverRenderStartedAtNs = 0;
+  int64_t serverRenderFinishedAtNs = 0;
+  int64_t serverEncodeStartedAtNs = 0;
+  int64_t serverEncodeFinishedAtNs = 0;
+  int64_t serverSendAttemptAtNs = 0;
   int width = 0;
   int height = 0;
   int displayWidth = 0;
@@ -33,6 +46,7 @@ struct RemoteFrame {
   float framebufferScaleX = 1.0f;
   float framebufferScaleY = 1.0f;
   std::string encoding = "RGBA8";
+  bool idlePresentation = false;
   std::size_t payloadBytes = 0;
   double serverReadbackMs = 0.0;
   double serverReadbackLatencyMs = 0.0;
@@ -48,6 +62,7 @@ struct RemoteFrame {
   double clientDecodeMs = 0.0;
   double clientInputToReceiveMs = -1.0;
   std::chrono::steady_clock::time_point receivedAt{};
+  std::chrono::steady_clock::time_point inputSentAt{};
   std::vector<uint8_t> rgba;
 };
 
@@ -281,6 +296,28 @@ bool ReceiveFrame(zmq::socket_t& sub,
 
   out.frameId = header.value("frameId", uint64_t{0});
   out.triggerSequence = header.value("triggerSequence", uint64_t{0});
+  out.cameraGeneration = header.value("cameraGeneration", out.triggerSequence);
+  out.latestCameraGeneration =
+    header.value("latestCameraGeneration", out.cameraGeneration);
+  out.outstandingFrames = header.value("outstandingFrames", std::size_t{0});
+  out.applicationQueueDepth =
+    header.value("applicationQueueDepth", std::size_t{0});
+  out.sendBackpressureCount =
+    header.value("sendBackpressureCount", uint64_t{0});
+  out.serverInputReceivedAtNs =
+    header.value("serverInputReceivedAtNs", int64_t{0});
+  out.serverCameraUpdatedAtNs =
+    header.value("serverCameraUpdatedAtNs", int64_t{0});
+  out.serverRenderStartedAtNs =
+    header.value("serverRenderStartedAtNs", int64_t{0});
+  out.serverRenderFinishedAtNs =
+    header.value("serverRenderFinishedAtNs", int64_t{0});
+  out.serverEncodeStartedAtNs =
+    header.value("serverEncodeStartedAtNs", int64_t{0});
+  out.serverEncodeFinishedAtNs =
+    header.value("serverEncodeFinishedAtNs", int64_t{0});
+  out.serverSendAttemptAtNs =
+    header.value("serverSendAttemptAtNs", int64_t{0});
   out.width = width;
   out.height = height;
   out.displayWidth = header.value("displayWidth", width);
@@ -288,6 +325,7 @@ bool ReceiveFrame(zmq::socket_t& sub,
   out.framebufferScaleX = header.value("framebufferScaleX", 1.0f);
   out.framebufferScaleY = header.value("framebufferScaleY", 1.0f);
   out.encoding = header.value("format", std::string("RGBA8"));
+  out.idlePresentation = header.value("presentationMode", std::string()) == "idle";
   out.payloadBytes = payloadMsg.size();
   out.serverReadbackMs = header.value("serverReadbackMs", 0.0);
   out.serverReadbackLatencyMs =
@@ -417,9 +455,11 @@ void SendInput(GLFWwindow* window, nlohmann::json event)
   }
 }
 
-void SendFrameRequest(GLFWwindow* window)
+void SendFrameRequest(GLFWwindow* window, uint64_t receivedFrameId = 0)
 {
-  SendInput(window, {{"type", "frame_request"}, {"version", 1}});
+  nlohmann::json request{{"type", "frame_request"}, {"version", 1}};
+  if (receivedFrameId) request["receivedFrameId"] = receivedFrameId;
+  SendInput(window, std::move(request));
 }
 
 void RecordInputToReceive(ViewerInputContext& ctx, RemoteFrame& frame)
@@ -437,6 +477,7 @@ void RecordInputToReceive(ViewerInputContext& ctx, RemoteFrame& frame)
   }
   frame.clientInputToReceiveMs = std::chrono::duration<double, std::milli>(
     frame.receivedAt - found->second).count();
+  frame.inputSentAt = found->second;
   ctx.sentInputs.erase(ctx.sentInputs.begin(), std::next(found));
 }
 
@@ -807,7 +848,7 @@ void FocusCallback(GLFWwindow* window, int focused)
 void PrintUsage(const char* argv0)
 {
   std::cerr << "Usage: " << argv0
-            << " [frame_endpoint] [input_endpoint]\n"
+            << " [frame_endpoint] [input_endpoint] [still_endpoint]\n"
             << "Example: " << argv0
             << " tcp://127.0.0.1:5560 tcp://127.0.0.1:5561\n";
 }
@@ -818,22 +859,35 @@ int main(int argc, char** argv)
 {
   std::string endpoint = "tcp://127.0.0.1:5560";
   std::string inputEndpoint;
+  std::string stillEndpoint = "tcp://127.0.0.1:5572";
+  const bool boundedTransport = []() {
+    const char* value = std::getenv("PARTICLE_VIS_REMOTE_TRANSPORT");
+    return value && std::string(value) == "bounded";
+  }();
   if (argc >= 2) {
     endpoint = argv[1];
   }
   if (argc >= 3) {
     inputEndpoint = argv[2];
   }
-  if (argc > 3) {
+  if (argc >= 4) stillEndpoint = argv[3];
+  if (argc > 4) {
     PrintUsage(argv[0]);
     return EXIT_FAILURE;
   }
 
   zmq::context_t zmqContext{1};
-  zmq::socket_t sub{zmqContext, zmq::socket_type::sub};
-  sub.set(zmq::sockopt::subscribe, "");
+  zmq::socket_t sub{zmqContext, boundedTransport
+    ? zmq::socket_type::pull : zmq::socket_type::sub};
+  if (!boundedTransport) sub.set(zmq::sockopt::subscribe, "");
   sub.set(zmq::sockopt::rcvhwm, 2);
   sub.connect(endpoint);
+  std::unique_ptr<zmq::socket_t> stillSub;
+  if (boundedTransport) {
+    stillSub = std::make_unique<zmq::socket_t>(zmqContext, zmq::socket_type::pull);
+    stillSub->set(zmq::sockopt::rcvhwm, 1);
+    stillSub->connect(stillEndpoint);
+  }
 
   zmq::socket_t inputPush{zmqContext, zmq::socket_type::push};
   bool inputEnabled = false;
@@ -947,6 +1001,8 @@ int main(int argc, char** argv)
   glBindTexture(GL_TEXTURE_2D, 0);
 
   std::cout << "Remote viewer connected to " << endpoint << '\n';
+  if (boundedTransport)
+    std::cout << "Remote still viewer connected to " << stillEndpoint << '\n';
   if (inputEnabled) {
     std::cout << "Remote input connected to " << inputEndpoint << '\n';
   }
@@ -956,7 +1012,11 @@ int main(int argc, char** argv)
   int textureWidth = 0;
   int textureHeight = 0;
   uint64_t displayedFrameCount = 0;
+  uint64_t lastReceivedVideoFrameId = 0;
+  uint64_t lastReceivedStillFrameId = 0;
   auto nextInitialFrameRequest = std::chrono::steady_clock::now();
+  auto nextReceiptRepeat = std::chrono::steady_clock::now();
+  auto nextTitleUpdate = std::chrono::steady_clock::now();
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -967,22 +1027,41 @@ int main(int argc, char** argv)
       SendFrameRequest(window);
       nextInitialFrameRequest = now + std::chrono::milliseconds(250);
     }
+    if (boundedTransport && now >= nextReceiptRepeat) {
+      if (lastReceivedVideoFrameId)
+        SendFrameRequest(window, lastReceivedVideoFrameId);
+      if (lastReceivedStillFrameId)
+        SendFrameRequest(window, lastReceivedStillFrameId);
+      nextReceiptRepeat = now + std::chrono::milliseconds(500);
+    }
 
     RemoteFrame incoming;
     const RequestedPresentation requested =
       GetRequestedPresentation(window);
-    while (ReceiveFrame(sub,
-                        incoming,
-                        requested.framebufferWidth,
-                        requested.framebufferHeight,
-                        videoDecoder)) {
+    while (ReceiveFrame(sub, incoming, requested.framebufferWidth,
+                        requested.framebufferHeight, videoDecoder) ||
+           (stillSub && ReceiveFrame(*stillSub, incoming,
+                                     requested.framebufferWidth,
+                                     requested.framebufferHeight,
+                                     videoDecoder))) {
       if (!inputContext.initialResizeSent) {
         SendFramebufferSize(window);
         inputContext.initialResizeSent = true;
       }
-      SendFrameRequest(window);
+      SendFrameRequest(window, incoming.frameId);
+      if (incoming.idlePresentation)
+        lastReceivedStillFrameId = incoming.frameId;
+      else
+        lastReceivedVideoFrameId = incoming.frameId;
       if (incoming.width != requested.framebufferWidth ||
           incoming.height != requested.framebufferHeight) {
+        continue;
+      }
+      if (incoming.cameraGeneration < frame.cameraGeneration ||
+          (incoming.cameraGeneration == frame.cameraGeneration &&
+           incoming.frameId < frame.frameId) ||
+          (boundedTransport && incoming.idlePresentation &&
+           inputContext.interactiveRendering)) {
         continue;
       }
       RecordInputToReceive(inputContext, incoming);
@@ -1039,6 +1118,18 @@ int main(int argc, char** argv)
                   << frame.displayHeight << ", scale "
                   << frame.framebufferScaleX << "x"
                   << frame.framebufferScaleY
+                  << ", generation " << frame.cameraGeneration
+                  << ", generation lag "
+                  << (inputContext.nextInputSequence > frame.cameraGeneration
+                        ? inputContext.nextInputSequence - frame.cameraGeneration : 0)
+                  << ", outstanding " << frame.outstandingFrames
+                  << ", app queue " << frame.applicationQueueDepth
+                  << ", send backpressure " << frame.sendBackpressureCount
+                  << ", displayed age ms "
+                  << std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() -
+                       (frame.inputSentAt.time_since_epoch().count()
+                          ? frame.inputSentAt : frame.receivedAt)).count()
                   << "; timing ms: trigger to readback "
                   << frame.serverTriggerToReadbackMs
                   << ", input to frame start "
@@ -1068,9 +1159,40 @@ int main(int argc, char** argv)
                     << frame.clientInputToReceiveMs +
                          frame.clientDecodeMs + uploadMs;
         }
+        if (logEveryNFrames == 1) {
+          const auto clientReceiveNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+              frame.receivedAt.time_since_epoch()).count();
+          const auto clientDisplayNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count();
+          std::cout << ", timeline ns server input/camera/render/encode/send "
+                    << frame.serverInputReceivedAtNs << '/'
+                    << frame.serverCameraUpdatedAtNs << '/'
+                    << frame.serverRenderStartedAtNs << '/'
+                    << frame.serverRenderFinishedAtNs << '/'
+                    << frame.serverEncodeStartedAtNs << '/'
+                    << frame.serverEncodeFinishedAtNs << '/'
+                    << frame.serverSendAttemptAtNs
+                    << ", client receive/display "
+                    << clientReceiveNs << '/' << clientDisplayNs;
+        }
         std::cout << ')' << std::endl;
       }
       frame.rgba.clear();
+    }
+
+    if (boundedTransport && now >= nextTitleUpdate && textureWidth > 0) {
+      const auto origin = frame.inputSentAt.time_since_epoch().count()
+        ? frame.inputSentAt : frame.receivedAt;
+      const auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - origin).count();
+      const uint64_t lag = inputContext.nextInputSequence > frame.cameraGeneration
+        ? inputContext.nextInputSequence - frame.cameraGeneration : 0;
+      const std::string title = "Particle Vis Remote - generation lag " +
+        std::to_string(lag) + ", frame age " + std::to_string(ageMs) + " ms";
+      glfwSetWindowTitle(window, title.c_str());
+      nextTitleUpdate = now + std::chrono::milliseconds(250);
     }
 
     int fbW = 0;

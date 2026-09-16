@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -19,5 +20,6 @@ std::optional<InputEvent> Decode(std::string_view message);
 
 // Flow-control messages are transport control, not application input.
 bool IsFrameRequest(std::string_view message);
+std::optional<std::uint64_t> AcknowledgedFrameId(std::string_view message);
 
 } // namespace RemoteInputProtocol

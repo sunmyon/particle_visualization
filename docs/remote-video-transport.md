@@ -73,6 +73,34 @@ video frame. Treating a rate-control skip as an encoding failure and sending a
 JPEG would bypass the bitrate limit and can create seconds of queued latency at
 large window sizes.
 
+## Bounded transport comparison
+
+Set `PARTICLE_VIS_REMOTE_TRANSPORT=bounded` on both processes to select the
+newest-state transport. It uses PUSH/PULL on the existing frame endpoint,
+keeps at most two video frames reserved or awaiting a receive confirmation,
+and uses a separate PUSH/PULL endpoint for idle JPEG stills (one outstanding
+still). The still endpoint defaults to `tcp://127.0.0.1:5562` on the server
+and `tcp://127.0.0.1:5572` on the viewer through the loopback relay. The
+viewer sends a frame receipt after the complete multipart message arrives;
+receipts are cumulative within each channel. Input continues to update while
+the frame window is full, and adjacent pointer moves collapse in the server's
+input queue. A frame superseded before readback or encoding is skipped.
+`cameraGeneration` uses the monotonically increasing remote input sequence.
+It advances for camera controls and other state-changing inputs, so the
+generation gap is a conservative measure of how far the displayed image is
+behind the user's latest request. The viewer window also reports the age of
+the displayed image from its triggering input, or from receipt when there is
+no matching input timestamp.
+
+The legacy PUB/SUB transport remains the default for comparison. Both modes
+retain H.264 reference frames once encoded. The bounded mode limits committed
+frames to two video packets and one still packet, even though ZeroMQ, SSH and
+the kernel may buffer the bytes of those packets. It cannot cancel a still
+image after its send was accepted, and both SSH connections still share the
+physical network. If a connection is lost before its receipt arrives, the
+bounded mode may stop sending until reconnected; restart the viewer and server
+for this diagnostic build.
+
 ## Frame protocol
 
 Each frame is one ZeroMQ multipart message:
@@ -104,6 +132,12 @@ The header also carries server readback, readback-latency, encoder-queue, and
 encode timings. Remote input frames carry the client input sequence that
 triggered them and the server time from receiving that input to submitting the
 readback. The viewer adds decode and texture-upload timings to its log.
+The extended header records monotonic server timestamps for input receipt,
+camera update, render start/end, encode start/end and send attempt. The viewer
+logs its own receive-complete and display timestamps. Server and viewer
+monotonic timestamps have different clock origins; compare intervals within
+one process, not their raw values across machines. Queue depth, outstanding
+frame slots and failed nonblocking send attempts are also reported.
 JPEG (`jpeg_frame`) and raw RGBA (`rgba_frame`) use the same display and timing
 metadata. `presentationMode` is `interactive` for the persistent video stream
 and `idle` for the final high-resolution still frame.

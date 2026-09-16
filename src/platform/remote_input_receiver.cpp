@@ -40,12 +40,19 @@ struct RemoteInputReceiver::Impl {
         static_cast<const char*>(msg.data()), msg.size());
       const auto receivedAt = std::chrono::steady_clock::now();
       if (RemoteInputProtocol::IsFrameRequest(message)) {
-        if (flowControl) flowControl->markViewerReady(0, receivedAt);
+        if (flowControl) {
+          if (const auto frameId = RemoteInputProtocol::AcknowledgedFrameId(message))
+            flowControl->acknowledge(*frameId);
+          flowControl->markViewerReady(0, receivedAt);
+        }
         continue;
       }
       const auto event = RemoteInputProtocol::Decode(message);
       if (event) {
-        queue->push(*event);
+        if (flowControl && flowControl->boundedTransport())
+          queue->pushCoalescingPointerMove(*event);
+        else
+          queue->push(*event);
         if (flowControl) {
           flowControl->markDirty();
           // Interactive input is also permission to replace an in-flight or

@@ -123,6 +123,8 @@ class Relay:
     def run(self):
         mappings = ((self.args.frame_local_port, self.args.frame_remote_port),
                     (self.args.input_local_port, self.args.input_remote_port))
+        if self.args.still_local_port:
+            mappings += ((self.args.still_local_port, self.args.still_remote_port),)
         listeners = []
         for local_port, remote_port in mappings:
             listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -174,6 +176,8 @@ def main():
     relay.add_argument("--input-local-port", type=int, default=5571)
     relay.add_argument("--frame-remote-port", type=int, default=5560)
     relay.add_argument("--input-remote-port", type=int, default=5561)
+    relay.add_argument("--still-local-port", type=int, default=0)
+    relay.add_argument("--still-remote-port", type=int, default=5562)
 
     args = parser.parse_args()
     if args.mode == "connect":

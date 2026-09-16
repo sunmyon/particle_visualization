@@ -27,13 +27,17 @@ def available_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
+def receive_frame(subscriber: zmq.Socket, timeout: float,
+                  sender: zmq.Socket | None = None) -> tuple[dict, bytes]:
     if not subscriber.poll(round(timeout * 1000), zmq.POLLIN):
         raise RuntimeError("timed out waiting for a remote frame")
     header = json.loads(subscriber.recv().decode("utf-8"))
     if not subscriber.getsockopt(zmq.RCVMORE):
         raise RuntimeError("frame header arrived without an RGBA payload")
     payload = subscriber.recv()
+    if sender is not None:
+        sender.send_json({"type": "frame_request", "version": 1,
+                          "receivedFrameId": header["frameId"]})
     width = header.get("width", 0)
     height = header.get("height", 0)
     expected = width * height * 4
@@ -50,6 +54,14 @@ def receive_frame(subscriber: zmq.Socket, timeout: float) -> tuple[dict, bytes]:
                    "serverPreviousSendMs"):
         if not isinstance(header.get(timing), (int, float)) or header[timing] < 0:
             raise RuntimeError(f"missing or invalid {timing}: {header!r}")
+    if header.get("outstandingFrames", 0) > 3:
+        raise RuntimeError(f"transport exceeded bounded frame slots: {header!r}")
+    for timestamp in ("serverInputReceivedAtNs", "serverCameraUpdatedAtNs",
+                      "serverRenderStartedAtNs", "serverRenderFinishedAtNs",
+                      "serverEncodeStartedAtNs", "serverEncodeFinishedAtNs",
+                      "serverSendAttemptAtNs"):
+        if not isinstance(header.get(timestamp), int) or header[timestamp] < 0:
+            raise RuntimeError(f"missing or invalid {timestamp}: {header!r}")
     if frame_type == "rgba_frame" and len(payload) != expected:
         raise RuntimeError(
             f"invalid RGBA payload size: received={len(payload)}, expected={expected}"
@@ -115,6 +127,8 @@ def run(args: argparse.Namespace) -> int:
         input_port = available_port()
     frame_endpoint = f"tcp://127.0.0.1:{frame_port}"
     input_endpoint = f"tcp://127.0.0.1:{input_port}"
+    bounded = os.environ.get("PARTICLE_VIS_REMOTE_TRANSPORT") == "bounded"
+    still_endpoint = f"tcp://127.0.0.1:{available_port()}"
 
     backend = args.backend or ("metal" if platform.system() == "Darwin" else "opengl")
     temporary_directory = tempfile.TemporaryDirectory(prefix="particle-vis-loopback-")
@@ -146,6 +160,7 @@ def run(args: argparse.Namespace) -> int:
             "PARTICLE_VIS_WINDOW_HEIGHT": str(args.height),
             "PARTICLE_VIS_REMOTE_FRAME_ENDPOINT": frame_endpoint,
             "PARTICLE_VIS_REMOTE_INPUT_ENDPOINT": input_endpoint,
+            "PARTICLE_VIS_REMOTE_STILL_ENDPOINT": still_endpoint,
             "PARTICLE_VIS_CONFIG_PATH": str(temporary_config),
         }
     )
@@ -159,11 +174,16 @@ def run(args: argparse.Namespace) -> int:
         text=True,
     )
     context = zmq.Context()
-    subscriber = context.socket(zmq.SUB)
-    subscriber.setsockopt(zmq.SUBSCRIBE, b"")
+    subscriber = context.socket(zmq.PULL if bounded else zmq.SUB)
+    if not bounded:
+        subscriber.setsockopt(zmq.SUBSCRIBE, b"")
     subscriber.setsockopt(zmq.LINGER, 0)
     subscriber.setsockopt(zmq.RCVHWM, 2)
     subscriber.connect(frame_endpoint)
+    still_subscriber = context.socket(zmq.PULL) if bounded else None
+    if still_subscriber is not None:
+        still_subscriber.setsockopt(zmq.LINGER, 0)
+        still_subscriber.connect(still_endpoint)
     sender = context.socket(zmq.PUSH)
     sender.setsockopt(zmq.LINGER, 0)
     sender.setsockopt(zmq.SNDTIMEO, round(args.timeout * 1000))
@@ -171,10 +191,11 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         sender.send_json({"type": "frame_request", "version": 1})
-        first, _ = receive_frame(subscriber, args.timeout)
+        first, _ = receive_frame(subscriber, args.timeout, sender if bounded else None)
         sender.send_json({"type": "frame_request", "version": 1})
         if subscriber.poll(300, zmq.POLLIN):
-            unexpected, _ = receive_frame(subscriber, args.timeout)
+            unexpected, _ = receive_frame(subscriber, args.timeout,
+                                          sender if bounded else None)
             raise RuntimeError(
                 "server published an unchanged frame while idle: "
                 f"frameId={unexpected.get('frameId')}"
@@ -213,7 +234,8 @@ def run(args: argparse.Namespace) -> int:
                 )
                 if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
                     continue
-                resized, _ = receive_frame(subscriber, args.timeout)
+                resized, _ = receive_frame(subscriber, args.timeout,
+                                           sender if bounded else None)
                 if (resized["width"], resized["height"]) == (
                     active_width,
                     active_height,
@@ -252,9 +274,11 @@ def run(args: argparse.Namespace) -> int:
                 sender.send_json({"type": "frame_request", "version": 1})
                 next_send = now + 0.1
             wait_seconds = min(0.25, max(0.001, deadline - time.monotonic()))
-            if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
+            idle_subscriber = still_subscriber or subscriber
+            if not idle_subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
                 continue
-            candidate, _ = receive_frame(subscriber, args.timeout)
+            candidate, _ = receive_frame(idle_subscriber, args.timeout,
+                                         sender if bounded else None)
             if candidate.get("presentationMode") == "idle":
                 idle = candidate
                 break
@@ -276,7 +300,8 @@ def run(args: argparse.Namespace) -> int:
             wait_seconds = min(0.25, max(0.001, deadline - time.monotonic()))
             if not subscriber.poll(round(wait_seconds * 1000), zmq.POLLIN):
                 continue
-            candidate, _ = receive_frame(subscriber, args.timeout)
+            candidate, _ = receive_frame(subscriber, args.timeout,
+                                         sender if bounded else None)
             if candidate.get("presentationMode") == "interactive":
                 resumed = candidate
                 break
@@ -316,7 +341,8 @@ def run(args: argparse.Namespace) -> int:
             sender.send_json(event)
         sender.send_json({"type": "frame_request", "version": 1})
 
-        second, second_payload = receive_frame(subscriber, args.timeout)
+        second, second_payload = receive_frame(subscriber, args.timeout,
+                                               sender if bounded else None)
         if second["frameId"] <= resized["frameId"]:
             raise RuntimeError("frame IDs did not advance after sending input")
         if second.get("triggerSequence", 0) <= 0:
@@ -332,6 +358,26 @@ def run(args: argparse.Namespace) -> int:
             value = second.get(key)
             if not isinstance(value, (int, float)) or value < 0:
                 raise RuntimeError(f"invalid or missing {key}: {second!r}")
+
+        if bounded:
+            # Keep receiving camera updates but deliberately withhold frame
+            # receipts. The server may commit two video frames, never a third.
+            for sequence in range(100, 130):
+                sender.send_json({"type": "pointer_move", "x": 10 + sequence,
+                                  "y": 20, "primaryDown": False,
+                                  "clientSequence": sequence,
+                                  "viewport": viewport})
+                time.sleep(0.015)
+            held = []
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if subscriber.poll(50, zmq.POLLIN):
+                    held.append(receive_frame(subscriber, args.timeout))
+                    if len(held) > 2:
+                        raise RuntimeError("bounded server sent more than two unacknowledged frames")
+            for header, _ in held:
+                sender.send_json({"type": "frame_request", "version": 1,
+                                  "receivedFrameId": header["frameId"]})
 
         if args.save_frame:
             output = Path(args.save_frame).expanduser().resolve()
@@ -394,6 +440,8 @@ def run(args: argparse.Namespace) -> int:
         )
         return 0
     finally:
+        if still_subscriber is not None:
+            still_subscriber.close()
         subscriber.close()
         sender.close()
         context.term()

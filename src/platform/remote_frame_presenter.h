@@ -16,6 +16,7 @@ public:
                        RemoteFrameFlowControl* flowControl = nullptr);
   ~RemoteFramePresenter() override;
 
+  bool shouldRender(std::uint64_t appliedGeneration) const override;
   PresentResult present(const PresentOptions& options = {}) override;
   bool resize(const PresentationSize& size) override;
 
@@ -32,6 +33,8 @@ private:
   std::unique_ptr<Impl> impl_;
   bool active_ = false;
   uint64_t frameId_ = 0;
+  uint64_t appliedGeneration_ = 0;
+  std::chrono::steady_clock::time_point cameraUpdatedAt_{};
   double maxFramesPerSecond_ = 10.0;
   int jpegQuality_ = 80;
   int videoBitrate_ = 5'000'000;

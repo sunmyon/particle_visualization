@@ -72,6 +72,10 @@ From the repository on the allocated node:
 PARTICLE_VIS_REMOTE_MAX_FPS=5 ./scripts/launch_particle_vis.sh remote
 ```
 
+For the latest-frame bounded transport comparison, start the same server with
+`PARTICLE_VIS_REMOTE_TRANSPORT=bounded`. This uses a second loopback socket on
+port 5562 for high-quality still images. The original path remains the default.
+
 This selects `build-headless-local/particle_vis`, defaults EGL to the surfaceless
 platform, and binds the frame and input sockets to `127.0.0.1:5560` and
 `127.0.0.1:5561`. Set `PARTICLE_VIS_CONFIG_PATH` before the command when using a
@@ -102,6 +106,8 @@ python3 scripts/slurm_loopback_relay.py relay \
   --node GPU_NODE
 ```
 
+In bounded mode, add `--still-local-port 5572` to relay the still-image socket.
+
 For example:
 
 ```bash
@@ -122,6 +128,14 @@ step to `127.0.0.1:5560` or `127.0.0.1:5561` on the allocated node.
   tcp://127.0.0.1:5570 \
   tcp://127.0.0.1:5571
 ```
+
+In bounded mode, set `PARTICLE_VIS_REMOTE_TRANSPORT=bounded` on the viewer as
+well. Its third endpoint defaults to `tcp://127.0.0.1:5572`. Set the variable
+on both server and viewer, and add the still relay port, for one A/B run; then
+unset it on both sides and omit the still relay port for the legacy run. The
+window title shows the latest input generation minus the displayed generation
+and the displayed frame's age. Compare those while making the same continuous
+drag at the same viewer size.
 
 During interaction, the viewer requests 0.75 server-rendered pixels per logical
 window pixel by default. This avoids rendering at the full Retina framebuffer

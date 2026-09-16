@@ -130,6 +130,13 @@ int main()
   Check(!Decode(std::string("{\"type\":\"text\",\"text\":\"") + char(0xff) + "\"}"),
     "Invalid UTF-8 accepted");
 
+  const auto receipt = RemoteInputProtocol::AcknowledgedFrameId(
+    R"({"type":"frame_request","version":1,"receivedFrameId":42})");
+  Check(receipt && *receipt == 42, "Frame receipt was not decoded");
+  Check(!RemoteInputProtocol::AcknowledgedFrameId(
+    R"({"type":"frame_request","receivedFrameId":-1})"),
+    "Negative frame receipt was accepted");
+
   InputEventQueue queue;
   queue.push(*move);
   queue.push(*text);

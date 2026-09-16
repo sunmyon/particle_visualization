@@ -1106,6 +1106,9 @@ void RunFrame(AppState& app,
   if (!BeginFrame(app.runtime, window, presenter, inputEvents)) {
     return;
   }
+  std::uint64_t appliedGeneration = 0;
+  for (const auto& event : inputEvents)
+    appliedGeneration = std::max(appliedGeneration, event.remoteSequence);
   StartVolumeRenderMovieIfRequested(app.runtime);
   UpdateVolumeRenderMovieBeforeCapture(app.runtime);
   const bool captureRenderSnapshot =
@@ -1120,6 +1123,9 @@ void RunFrame(AppState& app,
                        app.runtime.interaction,
                        app.view.camera,
                        app.runtime.settings);
+  const auto cameraUpdatedAt = inputResult.cameraInteraction
+    ? std::chrono::steady_clock::now()
+    : std::chrono::steady_clock::time_point{};
   if (inputResult.closeRequested) {
     window.requestClose();
   }
@@ -1278,11 +1284,14 @@ void RunFrame(AppState& app,
   PrepareRenderFrame(app.renderFrameInput, render);
 
   const auto renderStartedAt = std::chrono::steady_clock::now();
-  RenderScene(render);
+  if (captureRenderSnapshot || presenter.shouldRender(appliedGeneration))
+    RenderScene(render);
   const auto renderFinishedAt = std::chrono::steady_clock::now();
 
   PresentOptions presentOptions;
+  presentOptions.appliedGeneration = appliedGeneration;
   presentOptions.frameStartedAt = frameStartedAt;
+  presentOptions.cameraUpdatedAt = cameraUpdatedAt;
   presentOptions.renderStartedAt = renderStartedAt;
   presentOptions.renderFinishedAt = renderFinishedAt;
   presentOptions.readbackFrame = captureRenderSnapshot;

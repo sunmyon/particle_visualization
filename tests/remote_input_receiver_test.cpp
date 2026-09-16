@@ -65,6 +65,35 @@ int main()
     }
     receiver.stop();
     receiver.stop();
+    {
+      RemoteFrameFlowControl bounded;
+      bounded.setBoundedTransport(true);
+      RemoteFrameTrigger first, second, blocked;
+      bounded.markDirty(); bounded.markViewerReady(11);
+      if (!bounded.tryBeginFrame(&first) || !first.ticket)
+        throw std::runtime_error("First bounded frame was not reserved");
+      bounded.committed(first.ticket, 101);
+      bounded.markDirty(); bounded.markViewerReady(12);
+      if (!bounded.tryBeginFrame(&second) || !second.ticket)
+        throw std::runtime_error("Second bounded frame was not reserved");
+      bounded.committed(second.ticket, 102);
+      bounded.markDirty(); bounded.markViewerReady(13);
+      if (bounded.tryBeginFrame(&blocked))
+        throw std::runtime_error("More than two video frames entered transport");
+      bounded.acknowledge(101);
+      if (!bounded.tryBeginFrame(&blocked) || !blocked.ticket)
+        throw std::runtime_error("Acknowledgement did not free a video slot");
+      bounded.release(blocked.ticket);
+      bounded.markDirty(); bounded.markViewerReady(14);
+      RemoteFrameTrigger still;
+      if (!bounded.tryBeginFrame(&still, true))
+        throw std::runtime_error("Still path was blocked by video");
+      bounded.committed(still.ticket, 103);
+      bounded.markDirty(); bounded.markViewerReady(15);
+      if (bounded.tryBeginFrame(&blocked, true))
+        throw std::runtime_error("More than one still entered transport");
+      bounded.acknowledge(103);
+    }
     if (receiver.active() || !receiver.endpoint().empty())
       throw std::runtime_error("Receiver did not stop");
     if (!receiver.start(endpoint, queue, &flowControl))

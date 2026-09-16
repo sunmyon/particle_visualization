@@ -306,4 +306,17 @@ bool IsFrameRequest(std::string_view message)
     return false;
   }
 }
+
+std::optional<std::uint64_t> AcknowledgedFrameId(std::string_view message)
+{
+  if (!IsFrameRequest(message)) return std::nullopt;
+  try {
+    const Json json = Json::parse(message.begin(), message.end());
+    if (!json.contains("receivedFrameId") ||
+        !json["receivedFrameId"].is_number_unsigned()) return std::nullopt;
+    return json["receivedFrameId"].get<std::uint64_t>();
+  } catch (const Json::exception&) {
+    return std::nullopt;
+  }
+}
 } // namespace RemoteInputProtocol

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 
 class WindowContext;
 class GraphicsContext;
@@ -11,7 +12,9 @@ struct PresentOptions {
   bool readbackFrame = false;
   bool asyncReadback = false;
   bool contentChanged = false;
+  std::uint64_t appliedGeneration = 0;
   std::chrono::steady_clock::time_point frameStartedAt{};
+  std::chrono::steady_clock::time_point cameraUpdatedAt{};
   std::chrono::steady_clock::time_point renderStartedAt{};
   std::chrono::steady_clock::time_point renderFinishedAt{};
 };
@@ -36,6 +39,7 @@ struct PresentationSize {
 class IFramePresenter {
 public:
   virtual ~IFramePresenter() = default;
+  virtual bool shouldRender(std::uint64_t) const { return true; }
   virtual PresentResult present(const PresentOptions& options = {}) = 0;
   virtual bool resize(const PresentationSize& size) = 0;
 };
